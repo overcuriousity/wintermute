@@ -37,6 +37,20 @@ DATA_DIR = Path("data")
 REGISTRY_FILE = DATA_DIR / "reminders.json"
 SCHEDULER_DB = "data/scheduler.db"
 
+# Module-level reference so the job function below can be pickled by APScheduler.
+# Set by ReminderScheduler.start().
+_instance: Optional["ReminderScheduler"] = None
+
+
+async def _fire_reminder_job(job_id: str, message: str, ai_prompt: Optional[str]) -> None:
+    """
+    Module-level coroutine used as the APScheduler job callable.
+    Must be at module level so pickle can serialize it by reference
+    (pickle only stores the dotted name, not the function body).
+    """
+    if _instance is not None:
+        await _instance._fire_reminder(job_id, message, ai_prompt)
+
 
 @dataclass
 class SchedulerConfig:
@@ -69,6 +83,10 @@ class ReminderScheduler:
         )
         self._scheduler.start()
 
+        # Expose this instance so the module-level job function can reach it.
+        global _instance
+        _instance = self
+
         # Register the set_reminder callable into the tools module.
         tool_module.register_scheduler(self._schedule_reminder)
 
@@ -95,7 +113,7 @@ class ReminderScheduler:
         trigger = self._parse_trigger(time_spec, recurring)
 
         self._scheduler.add_job(
-            self._fire_reminder,
+            _fire_reminder_job,
             trigger=trigger,
             id=job_id,
             kwargs={
