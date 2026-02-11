@@ -304,12 +304,25 @@ class MatrixThread:
             await self.send_message("Heartbeat review triggered.", thread_id)
             return
 
-        reply = await self._llm.enqueue_user_message(text, thread_id)
+        await self._set_typing(thread_id, True)
+        try:
+            reply = await self._llm.enqueue_user_message(text, thread_id)
+        finally:
+            await self._set_typing(thread_id, False)
         await self.send_message(reply, thread_id)
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    async def _set_typing(self, room_id: str, typing: bool) -> None:
+        """Send a typing notification to a room. Silently ignored if client not ready."""
+        if self._client is None:
+            return
+        try:
+            await self._client.room_typing(room_id, typing=typing, timeout=30_000)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Typing notification failed for %s: %s", room_id, exc)
 
     def _is_user_allowed(self, user_id: str) -> bool:
         """Check if a user is in the allowed_users list (empty = allow all)."""
