@@ -9,10 +9,10 @@ multi-step tool-use loops), and delivers responses back through reply Futures.
 
 Public API used by other modules
 ---------------------------------
-  LLMThread.enqueue_user_message(text)  -> str  (awaitable)
-  LLMThread.enqueue_system_event(text)  -> None (fire-and-forget)
-  LLMThread.reset_session()
-  LLMThread.force_compact()
+  LLMThread.enqueue_user_message(text, thread_id)  -> str  (awaitable)
+  LLMThread.enqueue_system_event(text, thread_id)  -> None (fire-and-forget)
+  LLMThread.reset_session(thread_id)
+  LLMThread.force_compact(thread_id)
 """
 
 import asyncio
@@ -23,9 +23,9 @@ from typing import Optional
 
 from openai import AsyncOpenAI
 
-import database
-import prompt_assembler
-import tools as tool_module
+from ganglion import database
+from ganglion import prompt_assembler
+from ganglion import tools as tool_module
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,7 @@ class LLMConfig:
 @dataclass
 class _QueueItem:
     text: str
+    thread_id: str = "default"
     is_system_event: bool = False
     future: Optional[asyncio.Future] = field(default=None, compare=False)
 
@@ -72,39 +73,40 @@ class _QueueItem:
 class LLMThread:
     """Runs as an asyncio task within the shared event loop."""
 
-    def __init__(self, config: LLMConfig, matrix_send_fn) -> None:
+    def __init__(self, config: LLMConfig, broadcast_fn) -> None:
         self._cfg = config
-        self._matrix_send = matrix_send_fn  # async callable(text: str)
+        self._broadcast = broadcast_fn  # async callable(text: str, thread_id: str | None)
         self._queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         self._client = AsyncOpenAI(
             api_key=config.api_key,
             base_url=config.base_url,
         )
         self._running = False
-        self._compaction_summary: Optional[str] = None
+        # Per-thread compaction summaries: thread_id -> summary text
+        self._compaction_summaries: dict[str, Optional[str]] = {}
 
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
 
-    async def enqueue_user_message(self, text: str) -> str:
+    async def enqueue_user_message(self, text: str, thread_id: str = "default") -> str:
         """Submit a user message and await the AI reply."""
         loop = asyncio.get_event_loop()
         fut: asyncio.Future = loop.create_future()
-        await self._queue.put(_QueueItem(text=text, future=fut))
+        await self._queue.put(_QueueItem(text=text, thread_id=thread_id, future=fut))
         return await fut
 
-    async def enqueue_system_event(self, text: str) -> None:
+    async def enqueue_system_event(self, text: str, thread_id: str = "default") -> None:
         """Submit an autonomous system event (heartbeat, reminder, etc.)."""
-        await self._queue.put(_QueueItem(text=text, is_system_event=True))
+        await self._queue.put(_QueueItem(text=text, thread_id=thread_id, is_system_event=True))
 
-    async def reset_session(self) -> None:
-        database.clear_active_messages()
-        self._compaction_summary = None
-        logger.info("Session reset by /new command")
+    async def reset_session(self, thread_id: str = "default") -> None:
+        database.clear_active_messages(thread_id)
+        self._compaction_summaries.pop(thread_id, None)
+        logger.info("Session reset for thread %s", thread_id)
 
-    async def force_compact(self) -> None:
-        await self._compact_context()
+    async def force_compact(self, thread_id: str = "default") -> None:
+        await self._compact_context(thread_id)
 
     # ------------------------------------------------------------------
     # Main loop
@@ -112,7 +114,11 @@ class LLMThread:
 
     async def run(self) -> None:
         self._running = True
-        self._compaction_summary = database.load_latest_summary()
+        # Load summaries for all known threads
+        for tid in database.get_active_thread_ids():
+            summary = database.load_latest_summary(tid)
+            if summary:
+                self._compaction_summaries[tid] = summary
         logger.info("LLM thread started (endpoint=%s model=%s)", self._cfg.base_url, self._cfg.model)
 
         while self._running:
@@ -140,7 +146,8 @@ class LLMThread:
     # ------------------------------------------------------------------
 
     async def _process(self, item: _QueueItem) -> str:
-        messages = self._build_messages(item.text, item.is_system_event)
+        thread_id = item.thread_id
+        messages = self._build_messages(item.text, item.is_system_event, thread_id)
 
         history_tokens = sum(
             _count_tokens(m["content"] if isinstance(m["content"], str) else
@@ -151,27 +158,29 @@ class LLMThread:
         compaction_threshold = self._cfg.context_size - self._cfg.max_tokens - _SYSTEM_OVERHEAD_TOKENS
         if history_tokens > compaction_threshold:
             logger.info(
-                "History at %d tokens (threshold %d) – compacting before inference",
-                history_tokens, compaction_threshold,
+                "History at %d tokens (threshold %d) – compacting before inference (thread=%s)",
+                history_tokens, compaction_threshold, thread_id,
             )
-            await self._compact_context()
-            messages = self._build_messages(item.text, item.is_system_event)
+            await self._compact_context(thread_id)
+            messages = self._build_messages(item.text, item.is_system_event, thread_id)
 
         if not item.is_system_event:
-            database.save_message("user", item.text)
+            database.save_message("user", item.text, thread_id)
 
-        system_prompt = prompt_assembler.assemble(extra_summary=self._compaction_summary)
-        response_text = await self._inference_loop(system_prompt, messages)
+        summary = self._compaction_summaries.get(thread_id)
+        system_prompt = prompt_assembler.assemble(extra_summary=summary)
+        response_text = await self._inference_loop(system_prompt, messages, thread_id)
 
-        database.save_message("assistant", response_text)
-        await self._maybe_summarise_components()
+        database.save_message("assistant", response_text, thread_id)
+        await self._maybe_summarise_components(thread_id)
         return response_text
 
     # ------------------------------------------------------------------
     # OpenAI inference loop (handles tool-use rounds)
     # ------------------------------------------------------------------
 
-    async def _inference_loop(self, system_prompt: str, messages: list[dict]) -> str:
+    async def _inference_loop(self, system_prompt: str, messages: list[dict],
+                              thread_id: str = "default") -> str:
         """
         Repeatedly call the API until finish_reason is not 'tool_calls'.
         The system prompt is prepended as a role=system message each call
@@ -200,7 +209,8 @@ class LLMThread:
                         inputs = json.loads(tc.function.arguments)
                     except json.JSONDecodeError:
                         inputs = {}
-                    result = tool_module.execute_tool(tc.function.name, inputs)
+                    result = tool_module.execute_tool(tc.function.name, inputs,
+                                                     thread_id=thread_id)
                     logger.debug("Tool %s -> %s", tc.function.name, result[:200])
                     full_messages.append({
                         "role":         "tool",
@@ -216,8 +226,8 @@ class LLMThread:
     # Context compaction
     # ------------------------------------------------------------------
 
-    async def _compact_context(self) -> None:
-        rows = database.load_active_messages()
+    async def _compact_context(self, thread_id: str = "default") -> None:
+        rows = database.load_active_messages(thread_id)
         if len(rows) <= COMPACTION_KEEP_RECENT:
             return
 
@@ -241,13 +251,17 @@ class LLMThread:
         summary = (summary_response.choices[0].message.content or "").strip()
 
         if to_summarise:
-            database.archive_messages(to_summarise[-1]["id"])
-        database.save_summary(summary)
-        self._compaction_summary = summary
+            database.archive_messages(to_summarise[-1]["id"], thread_id)
+        database.save_summary(summary, thread_id)
+        self._compaction_summaries[thread_id] = summary
 
-        logger.info("Compacted %d messages into summary (%d chars)", len(to_summarise), len(summary))
+        logger.info("Compacted %d messages into summary (%d chars) for thread %s",
+                     len(to_summarise), len(summary), thread_id)
         try:
-            await self._matrix_send("📦 Context compacted: old messages archived and summarised.")
+            await self._broadcast(
+                "\U0001f4e6 Context compacted: old messages archived and summarised.",
+                thread_id,
+            )
         except Exception:  # noqa: BLE001
             pass
 
@@ -255,7 +269,7 @@ class LLMThread:
     # Component size monitoring
     # ------------------------------------------------------------------
 
-    async def _maybe_summarise_components(self) -> None:
+    async def _maybe_summarise_components(self, thread_id: str = "default") -> None:
         sizes = prompt_assembler.check_component_sizes()
         for component, oversized in sizes.items():
             if not oversized:
@@ -267,8 +281,11 @@ class LLMThread:
                 f"then update it using the appropriate tool."
             )
             try:
-                await self.enqueue_system_event(prompt)
-                await self._matrix_send(f"ℹ️ Auto-summarising {component} (size limit reached).")
+                await self.enqueue_system_event(prompt, thread_id)
+                await self._broadcast(
+                    f"\u2139\ufe0f Auto-summarising {component} (size limit reached).",
+                    thread_id,
+                )
             except Exception:  # noqa: BLE001
                 logger.exception("Could not request summarisation for %s", component)
 
@@ -276,8 +293,9 @@ class LLMThread:
     # Message list construction
     # ------------------------------------------------------------------
 
-    def _build_messages(self, new_text: str, is_system_event: bool) -> list[dict]:
-        rows = database.load_active_messages()
+    def _build_messages(self, new_text: str, is_system_event: bool,
+                        thread_id: str = "default") -> list[dict]:
+        rows = database.load_active_messages(thread_id)
         messages = [{"role": r["role"], "content": r["content"]} for r in rows]
         prefix = "[SYSTEM EVENT] " if is_system_event else ""
         messages.append({"role": "user", "content": f"{prefix}{new_text}"})

@@ -2,19 +2,19 @@
 Web Interface
 
 A minimal aiohttp HTTP + WebSocket server that mirrors the Matrix interface.
-Every connected browser tab is an independent chat session routed through the
-same LLM thread.  Supports all special commands (/new, /compact, /reminders,
-/heartbeat).
+Each WebSocket connection gets its own thread_id for independent conversation
+context.  Supports all special commands (/new, /compact, /reminders, /heartbeat).
 
 Works standalone when no Matrix account is configured.
 """
 
 import logging
+import secrets
 from typing import Optional
 
 from aiohttp import web
 
-import tools as tool_module
+from ganglion import tools as tool_module
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,10 @@ _HTML = """\
     background: #333; color: #aaa;
   }
   #status.connected { background: #0f3460; color: #a8d8ea; }
+  #thread-id {
+    font-size: .65rem; color: #666;
+    margin-left: auto;
+  }
   #log {
     flex: 1; overflow-y: auto;
     padding: 1rem;
@@ -102,11 +106,12 @@ _HTML = """\
 <body>
 <header>
   <h1>Ganglion</h1>
-  <span id="status">connecting…</span>
+  <span id="status">connecting\u2026</span>
+  <span id="thread-id"></span>
 </header>
 <div id="log"></div>
 <form id="form">
-  <input id="input" type="text" placeholder="Message or /command…" autocomplete="off" disabled>
+  <input id="input" type="text" placeholder="Message or /command\u2026" autocomplete="off" disabled>
   <button id="send" type="submit" disabled>Send</button>
 </form>
 <script>
@@ -115,6 +120,7 @@ const form   = document.getElementById('form');
 const input  = document.getElementById('input');
 const send   = document.getElementById('send');
 const status = document.getElementById('status');
+const threadEl = document.getElementById('thread-id');
 
 let ws;
 
@@ -154,11 +160,12 @@ function connect() {
 
   ws.onmessage = (e) => {
     const d = JSON.parse(e.data);
+    if (d.thread_id) threadEl.textContent = d.thread_id;
     addMsg(d.role, d.text);
   };
 
   ws.onclose = () => {
-    status.textContent = 'disconnected – retrying…';
+    status.textContent = 'disconnected \u2013 retrying\u2026';
     status.className = '';
     input.disabled = true;
     send.disabled  = true;
@@ -191,31 +198,38 @@ connect();
 class WebInterface:
     """
     Runs an aiohttp web server.
-    ``broadcast`` can be called from any task to push a message to all
-    currently connected browser tabs.
+    Each WebSocket connection gets its own thread_id.
+    ``broadcast`` can be called from any task to push a message to clients
+    in a specific thread.
     """
 
     def __init__(self, host: str, port: int, llm_thread) -> None:
         self._host = host
         self._port = port
         self._llm = llm_thread
-        self._clients: set[web.WebSocketResponse] = set()
+        # Map thread_id -> set of WebSocket connections
+        self._threads: dict[str, set[web.WebSocketResponse]] = {}
 
     # ------------------------------------------------------------------
     # Public
     # ------------------------------------------------------------------
 
-    async def broadcast(self, text: str) -> None:
-        """Push a message to every connected browser tab."""
+    async def broadcast(self, text: str, thread_id: str = None) -> None:
+        """Push a message to all connected clients in a specific thread."""
         import json
-        payload = json.dumps({"role": "assistant", "text": text})
+        if thread_id is None:
+            return
+        clients = self._threads.get(thread_id, set())
+        if not clients:
+            return
+        payload = json.dumps({"role": "assistant", "text": text, "thread_id": thread_id})
         dead = set()
-        for ws in self._clients:
+        for ws in clients:
             try:
                 await ws.send_str(payload)
             except Exception:  # noqa: BLE001
                 dead.add(ws)
-        self._clients -= dead
+        clients -= dead
 
     async def run(self) -> None:
         app = web.Application()
@@ -248,8 +262,17 @@ class WebInterface:
 
         ws = web.WebSocketResponse()
         await ws.prepare(request)
-        self._clients.add(ws)
-        logger.info("Web client connected (%d total)", len(self._clients))
+
+        thread_id = f"web_{secrets.token_hex(8)}"
+        self._threads.setdefault(thread_id, set()).add(ws)
+        logger.info("Web client connected as thread %s (%d threads total)",
+                     thread_id, len(self._threads))
+
+        # Notify client of its thread_id
+        await ws.send_str(json.dumps({
+            "role": "system", "text": f"Connected as thread {thread_id}",
+            "thread_id": thread_id,
+        }))
 
         try:
             async for msg in ws:
@@ -263,12 +286,17 @@ class WebInterface:
                 if not text:
                     continue
 
-                reply = await self._dispatch(text, ws)
+                reply = await self._dispatch(text, ws, thread_id)
                 if reply:
-                    await ws.send_str(json.dumps({"role": "assistant", "text": reply}))
+                    await ws.send_str(json.dumps({
+                        "role": "assistant", "text": reply, "thread_id": thread_id,
+                    }))
         finally:
-            self._clients.discard(ws)
-            logger.info("Web client disconnected (%d remaining)", len(self._clients))
+            clients = self._threads.get(thread_id, set())
+            clients.discard(ws)
+            if not clients:
+                self._threads.pop(thread_id, None)
+            logger.info("Web client disconnected from thread %s", thread_id)
 
         return ws
 
@@ -276,19 +304,22 @@ class WebInterface:
     # Command dispatch (mirrors matrix_thread.py)
     # ------------------------------------------------------------------
 
-    async def _dispatch(self, text: str, ws: web.WebSocketResponse) -> Optional[str]:
+    async def _dispatch(self, text: str, ws: web.WebSocketResponse,
+                        thread_id: str) -> Optional[str]:
         import json
 
         async def system(msg: str) -> None:
-            await ws.send_str(json.dumps({"role": "system", "text": msg}))
+            await ws.send_str(json.dumps({
+                "role": "system", "text": msg, "thread_id": thread_id,
+            }))
 
         if text == "/new":
-            await self._llm.reset_session()
+            await self._llm.reset_session(thread_id)
             await system("Session reset.")
             return None
 
         if text == "/compact":
-            await self._llm.force_compact()
+            await self._llm.force_compact(thread_id)
             await system("Context compaction complete.")
             return None
 
@@ -300,8 +331,9 @@ class WebInterface:
             await system("Heartbeat review triggered.")
             await self._llm.enqueue_system_event(
                 "The user manually triggered a heartbeat review. "
-                "Review your HEARTBEATS.txt and report what actions, if any, you take."
+                "Review your HEARTBEATS.txt and report what actions, if any, you take.",
+                thread_id,
             )
             return None
 
-        return await self._llm.enqueue_user_message(text)
+        return await self._llm.enqueue_user_message(text, thread_id)

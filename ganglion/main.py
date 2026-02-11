@@ -1,5 +1,5 @@
 """
-Ganglion – Matrix AI Reminder Assistant
+Ganglion - Multi-Thread AI Assistant
 Entry point and orchestration.
 
 Both Matrix and the web interface are optional; at least one must be enabled.
@@ -28,12 +28,12 @@ from typing import Optional
 
 import yaml
 
-import database
-from heartbeat import HeartbeatLoop
-from llm_thread import LLMConfig, LLMThread
-from matrix_thread import MatrixConfig, MatrixThread
-from scheduler_thread import ReminderScheduler, SchedulerConfig
-from web_interface import WebInterface
+from ganglion import database
+from ganglion.heartbeat import HeartbeatLoop
+from ganglion.llm_thread import LLMConfig, LLMThread
+from ganglion.matrix_thread import MatrixConfig, MatrixThread
+from ganglion.scheduler_thread import ReminderScheduler, SchedulerConfig
+from ganglion.web_interface import WebInterface
 
 CONFIG_FILE = Path("config.yaml")
 LOG_DIR = Path("logs")
@@ -186,7 +186,7 @@ async def main() -> None:
     web_enabled = web_cfg.get("enabled", True)
 
     if not matrix_enabled and not web_enabled:
-        logger.error("Neither Matrix nor web interface is enabled – nothing to do. Exiting.")
+        logger.error("Neither Matrix nor web interface is enabled - nothing to do. Exiting.")
         sys.exit(1)
 
     shutdown = ShutdownCoordinator()
@@ -197,48 +197,50 @@ async def main() -> None:
             homeserver=matrix_cfg_raw["homeserver"],
             user_id=matrix_cfg_raw["user_id"],
             access_token=matrix_cfg_raw["access_token"],
-            room_id=matrix_cfg_raw["room_id"],
+            allowed_users=matrix_cfg_raw.get("allowed_users", []),
+            allowed_rooms=matrix_cfg_raw.get("allowed_rooms", []),
         )
         matrix: Optional[MatrixThread] = MatrixThread(matrix_cfg, llm_thread=None)
     else:
-        logger.info("Matrix not configured – skipping Matrix interface")
+        logger.info("Matrix not configured - skipping Matrix interface")
         matrix = None
 
     # Build web interface.
-    web: Optional[WebInterface] = None
+    web_iface: Optional[WebInterface] = None
     if web_enabled:
-        web = WebInterface(
+        web_iface = WebInterface(
             host=web_cfg.get("host", "127.0.0.1"),
             port=web_cfg.get("port", 8080),
             llm_thread=None,  # injected below
         )
 
-    # Shared broadcast: fan-out to both interfaces.
-    async def broadcast(text: str) -> None:
-        if matrix:
-            await matrix.send_message(text)
-        if web:
-            await web.broadcast(text)
+    # Thread-aware broadcast: routes to the correct Matrix room or web client.
+    async def broadcast(text: str, thread_id: str = None) -> None:
+        if matrix and thread_id and not thread_id.startswith("web_") and thread_id != "default":
+            # thread_id is a Matrix room_id
+            await matrix.send_message(text, thread_id)
+        if web_iface and thread_id:
+            await web_iface.broadcast(text, thread_id)
 
     # Build LLM thread with the shared broadcast function.
-    llm = LLMThread(config=llm_cfg, matrix_send_fn=broadcast)
+    llm = LLMThread(config=llm_cfg, broadcast_fn=broadcast)
 
     # Inject LLM into interfaces.
     if matrix:
         matrix._llm = llm
-    if web:
-        web._llm = llm
+    if web_iface:
+        web_iface._llm = llm
 
     scheduler = ReminderScheduler(
         config=scheduler_cfg,
-        matrix_send_fn=broadcast,
+        broadcast_fn=broadcast,
         llm_enqueue_fn=llm.enqueue_system_event,
     )
 
     heartbeat_loop = HeartbeatLoop(
         interval_minutes=heartbeat_interval,
         llm_enqueue_fn=llm.enqueue_user_message,
-        matrix_send_fn=broadcast,
+        broadcast_fn=broadcast,
     )
 
     scheduler.start()
@@ -253,8 +255,8 @@ async def main() -> None:
     ]
     if matrix:
         tasks.append(asyncio.create_task(matrix.run(), name="matrix"))
-    if web:
-        tasks.append(asyncio.create_task(web.run(), name="web"))
+    if web_iface:
+        tasks.append(asyncio.create_task(web_iface.run(), name="web"))
 
     interfaces = []
     if matrix_enabled:
@@ -264,7 +266,7 @@ async def main() -> None:
     logger.info("All components started. Interfaces: %s", ", ".join(interfaces))
 
     await shutdown.wait()
-    logger.info("Shutdown requested – stopping components gracefully")
+    logger.info("Shutdown requested - stopping components gracefully")
 
     heartbeat_loop.stop()
     if matrix:
@@ -281,4 +283,9 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    asyncio.run(main())
+
+
+def run() -> None:
+    """Entry point for the `ganglion` console script."""
     asyncio.run(main())

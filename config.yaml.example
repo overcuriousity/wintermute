@@ -3,7 +3,9 @@ matrix:
   homeserver: https://matrix.org          # Your Matrix homeserver URL
   user_id: "@bot:matrix.org"              # Full Matrix user ID of the bot account
   access_token: "YOUR_MATRIX_ACCESS_TOKEN"
-  room_id: "!ROOMID:matrix.org"           # Room or DM to listen in
+  allowed_users:                          # Matrix user IDs allowed to interact
+    - "@admin:matrix.org"
+  allowed_rooms: []                       # Room ID whitelist (empty = any room if invited by allowed user)
 
 # Web interface is enabled by default.
 # Open http://127.0.0.1:8080 in your browser.

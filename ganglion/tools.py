@@ -10,9 +10,9 @@ import json
 import logging
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
-import prompt_assembler
+from ganglion import prompt_assembler
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ TOOL_SCHEMAS = [
                 },
                 "message": {
                     "type": "string",
-                    "description": "Human-readable reminder text sent to Matrix.",
+                    "description": "Human-readable reminder text sent to chat.",
                 },
                 "ai_prompt": {
                     "type": "string",
@@ -68,6 +68,13 @@ TOOL_SCHEMAS = [
                     "type": "string",
                     "enum": ["none", "daily", "weekly", "monthly"],
                     "description": "Recurrence type. Defaults to 'none'.",
+                },
+                "system": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, creates a system reminder not bound to any "
+                        "thread. It fires as a system event without chat delivery."
+                    ),
                 },
             },
             "required": ["time_spec", "message"],
@@ -203,10 +210,13 @@ def register_scheduler(fn) -> None:
     _scheduler_set_reminder = fn
 
 
-def _tool_set_reminder(inputs: dict) -> str:
+def _tool_set_reminder(inputs: dict, thread_id: Optional[str] = None) -> str:
     if _scheduler_set_reminder is None:
         return json.dumps({"error": "Scheduler not ready yet."})
     try:
+        # Pass thread_id through so the scheduler can bind the reminder
+        if thread_id and not inputs.get("system"):
+            inputs["thread_id"] = thread_id
         job_id = _scheduler_set_reminder(inputs)
         return json.dumps({"status": "scheduled", "job_id": job_id})
     except Exception as exc:  # noqa: BLE001
@@ -214,7 +224,7 @@ def _tool_set_reminder(inputs: dict) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _tool_update_memories(inputs: dict) -> str:
+def _tool_update_memories(inputs: dict, **_kw) -> str:
     try:
         prompt_assembler.update_memories(inputs["content"])
         return json.dumps({"status": "ok"})
@@ -223,7 +233,7 @@ def _tool_update_memories(inputs: dict) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _tool_update_heartbeats(inputs: dict) -> str:
+def _tool_update_heartbeats(inputs: dict, **_kw) -> str:
     try:
         prompt_assembler.update_heartbeats(inputs["content"])
         return json.dumps({"status": "ok"})
@@ -232,7 +242,7 @@ def _tool_update_heartbeats(inputs: dict) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _tool_add_skill(inputs: dict) -> str:
+def _tool_add_skill(inputs: dict, **_kw) -> str:
     try:
         prompt_assembler.add_skill(inputs["skill_name"], inputs["documentation"])
         return json.dumps({"status": "ok", "skill": inputs["skill_name"]})
@@ -241,7 +251,7 @@ def _tool_add_skill(inputs: dict) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _tool_execute_shell(inputs: dict) -> str:
+def _tool_execute_shell(inputs: dict, **_kw) -> str:
     command = inputs["command"]
     timeout = int(inputs.get("timeout", 30))
     logger.info("execute_shell: %s", command)
@@ -265,7 +275,7 @@ def _tool_execute_shell(inputs: dict) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _tool_read_file(inputs: dict) -> str:
+def _tool_read_file(inputs: dict, **_kw) -> str:
     path = Path(inputs["path"])
     try:
         return json.dumps({"content": path.read_text(encoding="utf-8")})
@@ -275,7 +285,7 @@ def _tool_read_file(inputs: dict) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _tool_write_file(inputs: dict) -> str:
+def _tool_write_file(inputs: dict, **_kw) -> str:
     path = Path(inputs["path"])
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -285,7 +295,7 @@ def _tool_write_file(inputs: dict) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _tool_list_reminders(_inputs: dict) -> str:
+def _tool_list_reminders(_inputs: dict, **_kw) -> str:
     registry = DATA_DIR / "reminders.json"
     try:
         return registry.read_text(encoding="utf-8")
@@ -311,10 +321,10 @@ _DISPATCH: dict[str, Any] = {
 }
 
 
-def execute_tool(name: str, inputs: dict) -> str:
+def execute_tool(name: str, inputs: dict, thread_id: Optional[str] = None) -> str:
     """Execute a tool by name and return its JSON-string result."""
     fn = _DISPATCH.get(name)
     if fn is None:
         return json.dumps({"error": f"Unknown tool: {name}"})
     logger.debug("Executing tool '%s' with inputs: %s", name, inputs)
-    return fn(inputs)
+    return fn(inputs, thread_id=thread_id)

@@ -29,7 +29,7 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from dateutil import parser as dateutil_parser
 
-import tools as tool_module
+from ganglion import tools as tool_module
 
 logger = logging.getLogger(__name__)
 
@@ -42,14 +42,15 @@ SCHEDULER_DB = "data/scheduler.db"
 _instance: Optional["ReminderScheduler"] = None
 
 
-async def _fire_reminder_job(job_id: str, message: str, ai_prompt: Optional[str]) -> None:
+async def _fire_reminder_job(job_id: str, message: str, ai_prompt: Optional[str],
+                             thread_id: Optional[str] = None) -> None:
     """
     Module-level coroutine used as the APScheduler job callable.
     Must be at module level so pickle can serialize it by reference
     (pickle only stores the dotted name, not the function body).
     """
     if _instance is not None:
-        await _instance._fire_reminder(job_id, message, ai_prompt)
+        await _instance._fire_reminder(job_id, message, ai_prompt, thread_id)
 
 
 @dataclass
@@ -60,10 +61,10 @@ class SchedulerConfig:
 class ReminderScheduler:
     """Wraps APScheduler and manages the reminder registry."""
 
-    def __init__(self, config: SchedulerConfig, matrix_send_fn, llm_enqueue_fn) -> None:
+    def __init__(self, config: SchedulerConfig, broadcast_fn, llm_enqueue_fn) -> None:
         self._cfg = config
-        self._matrix_send = matrix_send_fn   # async callable(text)
-        self._llm_enqueue = llm_enqueue_fn   # async callable(text) for system events
+        self._broadcast = broadcast_fn     # async callable(text, thread_id=None)
+        self._llm_enqueue = llm_enqueue_fn  # async callable(text, thread_id) for system events
         self._scheduler: Optional[AsyncIOScheduler] = None
 
     # ------------------------------------------------------------------
@@ -108,6 +109,7 @@ class ReminderScheduler:
         message    = inputs["message"]
         ai_prompt  = inputs.get("ai_prompt")
         recurring  = inputs.get("recurring", "none")
+        thread_id  = inputs.get("thread_id")  # None for system reminders
 
         job_id = f"reminder_{uuid.uuid4().hex[:8]}"
         trigger = self._parse_trigger(time_spec, recurring)
@@ -120,6 +122,7 @@ class ReminderScheduler:
                 "job_id":    job_id,
                 "message":   message,
                 "ai_prompt": ai_prompt,
+                "thread_id": thread_id,
             },
             replace_existing=True,
             misfire_grace_time=3600,  # allow up to 1h late execution
@@ -127,39 +130,48 @@ class ReminderScheduler:
 
         next_run = self._scheduler.get_job(job_id).next_run_time
         self._registry_add({
-            "id":       job_id,
-            "created":  datetime.now(timezone.utc).isoformat(),
-            "type":     recurring if recurring != "none" else "one-time",
-            "schedule": time_spec,
-            "message":  message,
+            "id":        job_id,
+            "created":   datetime.now(timezone.utc).isoformat(),
+            "type":      recurring if recurring != "none" else "one-time",
+            "schedule":  time_spec,
+            "message":   message,
             "ai_prompt": ai_prompt,
-            "next_run": next_run.isoformat() if next_run else None,
+            "thread_id": thread_id,
+            "next_run":  next_run.isoformat() if next_run else None,
         })
 
-        logger.info("Reminder scheduled: %s at %s", job_id, next_run)
+        logger.info("Reminder scheduled: %s at %s (thread=%s)", job_id, next_run, thread_id)
         return job_id
 
     # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
 
-    async def _fire_reminder(self, job_id: str, message: str, ai_prompt: Optional[str]) -> None:
-        logger.info("Firing reminder %s", job_id)
+    async def _fire_reminder(self, job_id: str, message: str, ai_prompt: Optional[str],
+                             thread_id: Optional[str] = None) -> None:
+        logger.info("Firing reminder %s (thread=%s)", job_id, thread_id)
         try:
             if ai_prompt:
+                # Fire as system event into the appropriate thread
                 await self._llm_enqueue(
                     f"[REMINDER {job_id}] {ai_prompt}\n\n"
-                    f"(Original reminder message: {message})"
+                    f"(Original reminder message: {message})",
+                    thread_id or "default",
                 )
             else:
-                await self._matrix_send(f"⏰ Reminder: {message}")
+                if thread_id:
+                    await self._broadcast(f"\u23f0 Reminder: {message}", thread_id)
+                else:
+                    # System reminder — log only, no chat delivery
+                    logger.info("System reminder %s: %s", job_id, message)
 
             self._registry_move(job_id, "completed")
         except Exception as exc:  # noqa: BLE001
             logger.exception("Reminder %s failed", job_id)
             self._registry_move(job_id, "failed", error=str(exc))
             try:
-                await self._matrix_send(f"❌ Reminder {job_id} failed: {exc}")
+                if thread_id:
+                    await self._broadcast(f"\u274c Reminder {job_id} failed: {exc}", thread_id)
             except Exception:  # noqa: BLE001
                 pass
 
