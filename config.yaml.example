@@ -3,6 +3,9 @@ matrix:
   homeserver: https://matrix.org          # Your Matrix homeserver URL
   user_id: "@bot:matrix.org"              # Full Matrix user ID of the bot account
   access_token: "YOUR_MATRIX_ACCESS_TOKEN"
+  device_id: ""                           # Optional but recommended: fix the device ID to avoid
+                                          # creating a new Olm session on every restart.
+                                          # Find it in Element: Settings → Security → Session ID.
   allowed_users:                          # Matrix user IDs allowed to interact
     - "@admin:matrix.org"
   allowed_rooms: []                       # Room ID whitelist (empty = any room if invited by allowed user)
@@ -40,6 +43,12 @@ context:
     memories: 10000                       # Chars before MEMORIES.txt gets summarised
     heartbeats: 5000                      # Chars before HEARTBEATS.txt gets summarised
     skills_total: 20000                   # Total chars across all skills before reorganise
+
+dreaming:
+  hour: 1                                 # Hour (0-23) to run nightly memory consolidation
+  minute: 0                               # Minute (0-59)
+  # Optional: use a dedicated model for dreaming. Falls back to compaction_model, then model.
+  # model: "qwen2.5:7b"
 
 scheduler:
   timezone: "UTC"                         # Timezone for reminder scheduling (e.g. Europe/Berlin)

@@ -5,6 +5,7 @@ config.yaml
 data/conversation.db
 data/scheduler.db
 data/reminders.json
+data/matrix_store/
 logs/
 
 # Python

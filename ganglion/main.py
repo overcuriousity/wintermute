@@ -32,7 +32,7 @@ from ganglion import database
 from ganglion.heartbeat import HeartbeatLoop
 from ganglion.llm_thread import LLMConfig, LLMThread
 from ganglion.matrix_thread import MatrixConfig, MatrixThread
-from ganglion.scheduler_thread import ReminderScheduler, SchedulerConfig
+from ganglion.scheduler_thread import DreamingConfig, ReminderScheduler, SchedulerConfig
 from ganglion.web_interface import WebInterface
 
 CONFIG_FILE = Path("config.yaml")
@@ -118,6 +118,8 @@ def bootstrap_data_files() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "skills").mkdir(exist_ok=True)
     (DATA_DIR / "scripts").mkdir(exist_ok=True)
+    (DATA_DIR / "archive" / "memories").mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / "matrix_store").mkdir(exist_ok=True)
 
     base = DATA_DIR / "BASE_PROMPT.txt"
     if not base.exists():
@@ -169,8 +171,15 @@ async def main() -> None:
         max_tokens=cfg["llm"].get("max_tokens", 4096),
         compaction_model=cfg["llm"].get("compaction_model"),
     )
+    dreaming_raw = cfg.get("dreaming", {})
+    dreaming_cfg = DreamingConfig(
+        hour=dreaming_raw.get("hour", 1),
+        minute=dreaming_raw.get("minute", 0),
+        model=dreaming_raw.get("model"),
+    )
     scheduler_cfg = SchedulerConfig(
         timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
+        dreaming=dreaming_cfg,
     )
     heartbeat_interval = cfg.get("heartbeat", {}).get("review_interval_minutes", 60)
 
@@ -197,6 +206,7 @@ async def main() -> None:
             homeserver=matrix_cfg_raw["homeserver"],
             user_id=matrix_cfg_raw["user_id"],
             access_token=matrix_cfg_raw["access_token"],
+            device_id=matrix_cfg_raw.get("device_id", ""),
             allowed_users=matrix_cfg_raw.get("allowed_users", []),
             allowed_rooms=matrix_cfg_raw.get("allowed_rooms", []),
         )
@@ -235,6 +245,9 @@ async def main() -> None:
         config=scheduler_cfg,
         broadcast_fn=broadcast,
         llm_enqueue_fn=llm.enqueue_system_event,
+        llm_client=llm._client,
+        llm_model=llm_cfg.model,
+        compaction_model=llm_cfg.compaction_model,
     )
 
     heartbeat_loop = HeartbeatLoop(

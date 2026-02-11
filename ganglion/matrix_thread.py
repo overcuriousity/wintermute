@@ -5,6 +5,10 @@ Connects to the Matrix homeserver, listens for messages in all joined/allowed
 rooms, and routes them to the LLM thread.  Each room is its own conversation
 thread.
 
+End-to-end encryption is enabled automatically when matrix-nio[e2e] is
+installed (which it is).  The Olm/Megolm session store is persisted to
+data/matrix_store/ so keys survive restarts.
+
 Special commands handled directly (before reaching the LLM):
   /new       - reset the conversation for the current room
   /compact   - force context compaction for the current room
@@ -15,21 +19,28 @@ Special commands handled directly (before reaching the LLM):
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from nio import (
     AsyncClient,
     AsyncClientConfig,
+    EncryptedToDeviceEvent,
     InviteMemberEvent,
     MatrixRoom,
+    MegolmEvent,
+    RoomEncryptionEvent,
     RoomMessageText,
     SyncError,
+    ToDeviceError,
 )
+from nio.store import SqliteStore
 
 logger = logging.getLogger(__name__)
 
-RECONNECT_DELAY_MIN = 5   # seconds
+RECONNECT_DELAY_MIN = 5    # seconds
 RECONNECT_DELAY_MAX = 300  # 5 minutes
+STORE_DIR = Path("data/matrix_store")
 
 
 @dataclass
@@ -37,6 +48,7 @@ class MatrixConfig:
     homeserver: str
     user_id: str
     access_token: str
+    device_id: str = ""
     allowed_users: list[str] = field(default_factory=list)
     allowed_rooms: list[str] = field(default_factory=list)
 
@@ -59,7 +71,7 @@ class MatrixThread:
     # ------------------------------------------------------------------
 
     async def send_message(self, text: str, room_id: str = None) -> None:
-        """Send a plain-text message to a specific room."""
+        """Send a message to a specific room, encrypted if the room requires it."""
         if self._client is None:
             logger.warning("send_message called before Matrix client is ready")
             return
@@ -68,15 +80,16 @@ class MatrixThread:
             return
         async with self._send_lock:
             try:
+                content = {
+                    "msgtype": "m.text",
+                    "body":    text,
+                    "format":  "org.matrix.custom.html",
+                    "formatted_body": _markdown_to_html(text),
+                }
                 await self._client.room_send(
                     room_id=room_id,
                     message_type="m.room.message",
-                    content={
-                        "msgtype": "m.text",
-                        "body":    text,
-                        "format":  "org.matrix.custom.html",
-                        "formatted_body": _markdown_to_html(text),
-                    },
+                    content=content,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.error("Failed to send Matrix message to %s: %s", room_id, exc)
@@ -108,30 +121,57 @@ class MatrixThread:
     # ------------------------------------------------------------------
 
     async def _connect_and_sync(self) -> None:
-        cfg = AsyncClientConfig(max_limit_exceeded=0, max_timeouts=0)
+        STORE_DIR.mkdir(parents=True, exist_ok=True)
+
+        cfg = AsyncClientConfig(
+            max_limit_exceeded=0,
+            max_timeouts=0,
+            store_sync_tokens=True,
+            encryption_enabled=True,
+        )
         client = AsyncClient(
             homeserver=self._cfg.homeserver,
             user=self._cfg.user_id,
+            device_id=self._cfg.device_id or None,
+            store_path=str(STORE_DIR),
             config=cfg,
+            store=SqliteStore,
         )
         client.access_token = self._cfg.access_token
         client.user_id = self._cfg.user_id
+
+        # Register event callbacks
+        client.add_event_callback(self._on_message, RoomMessageText)
+        client.add_event_callback(self._on_encrypted_message, MegolmEvent)
+        client.add_event_callback(self._on_invite, InviteMemberEvent)
+        client.add_event_callback(self._on_room_encryption, RoomEncryptionEvent)
+        client.add_to_device_callback(self._on_to_device, EncryptedToDeviceEvent)
+
         self._client = client
 
-        client.add_event_callback(self._on_message, RoomMessageText)
-        client.add_event_callback(self._on_invite, InviteMemberEvent)
+        logger.info("Connecting to Matrix homeserver %s (E2EE enabled)", self._cfg.homeserver)
 
-        logger.info("Connecting to Matrix homeserver %s", self._cfg.homeserver)
+        # Load the local key store and upload keys to the server if needed.
+        if client.should_upload_keys:
+            logger.info("Uploading encryption keys to homeserver")
+            await client.keys_upload()
 
         # Initial sync to get current state and mark old events as seen.
         response = await client.sync(timeout=30_000, full_state=True)
         if isinstance(response, SyncError):
             raise ConnectionError(f"Initial sync failed: {response.message}")
 
-        logger.info("Matrix connected. Listening in all allowed rooms.")
+        # Query and claim missing keys for any known devices.
+        await client.keys_query()
+
+        logger.info("Matrix connected with E2EE. Listening in all allowed rooms.")
 
         # Long-poll sync loop.
-        await client.sync_forever(timeout=30_000, full_state=False)
+        await client.sync_forever(
+            timeout=30_000,
+            full_state=False,
+            loop_sleep_time=100,
+        )
 
     # ------------------------------------------------------------------
     # Invite handler
@@ -162,8 +202,43 @@ class MatrixThread:
             logger.error("Failed to join room %s: %s", room.room_id, exc)
 
     # ------------------------------------------------------------------
-    # Message handler
+    # Encryption lifecycle callbacks
     # ------------------------------------------------------------------
+
+    async def _on_room_encryption(self, room: MatrixRoom,
+                                  event: RoomEncryptionEvent) -> None:
+        """Room has enabled encryption — share our keys with all members."""
+        logger.info("Room %s enabled encryption, sharing group session keys", room.room_id)
+        try:
+            await self._client.joined_members(room.room_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not fetch members for key sharing in %s: %s",
+                           room.room_id, exc)
+
+    async def _on_to_device(self, event: EncryptedToDeviceEvent) -> None:
+        """Handle incoming to-device messages (key exchanges, etc.)."""
+        logger.debug("Received to-device event: %s", type(event).__name__)
+
+    # ------------------------------------------------------------------
+    # Message handlers
+    # ------------------------------------------------------------------
+
+    async def _on_encrypted_message(self, room: MatrixRoom, event: MegolmEvent) -> None:
+        """
+        Received an encrypted message that nio could not decrypt.
+        This usually means we're missing the session key — request it.
+        """
+        if event.sender == self._cfg.user_id:
+            return
+
+        logger.warning(
+            "Could not decrypt message from %s in %s (session %s) — requesting key",
+            event.sender, room.room_id, event.session_id,
+        )
+        try:
+            await self._client.request_room_key(event, self._cfg.user_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Key request failed: %s", exc)
 
     async def _on_message(self, room: MatrixRoom, event: RoomMessageText) -> None:
         # Ignore our own messages.
@@ -185,7 +260,13 @@ class MatrixThread:
         thread_id = room.room_id
         logger.info("Received message from %s in %s: %s", event.sender, thread_id, text[:100])
 
-        # -- Special commands --
+        await self._dispatch(text, thread_id)
+
+    # ------------------------------------------------------------------
+    # Command dispatch
+    # ------------------------------------------------------------------
+
+    async def _dispatch(self, text: str, thread_id: str) -> None:
         if text == "/new":
             await self._llm.reset_session(thread_id)
             await self.send_message("Session reset. Starting fresh conversation.", thread_id)
@@ -211,7 +292,6 @@ class MatrixThread:
             await self.send_message("Heartbeat review triggered.", thread_id)
             return
 
-        # -- Normal message: route to LLM --
         reply = await self._llm.enqueue_user_message(text, thread_id)
         await self.send_message(reply, thread_id)
 
