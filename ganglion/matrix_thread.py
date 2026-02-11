@@ -112,8 +112,7 @@ class MatrixThread:
 
     def stop(self) -> None:
         self._running = False
-        if self._client:
-            asyncio.create_task(self._client.close())
+        # Client is closed by the finally block in _connect_and_sync.
 
     # ------------------------------------------------------------------
     # Connection lifecycle
@@ -121,6 +120,7 @@ class MatrixThread:
 
     async def _connect_and_sync(self) -> None:
         STORE_DIR.mkdir(parents=True, exist_ok=True)
+        client = None
 
         cfg = AsyncClientConfig(
             max_limit_exceeded=0,
@@ -138,6 +138,10 @@ class MatrixThread:
         client.access_token = self._cfg.access_token
         client.user_id = self._cfg.user_id
 
+        # Load (or create) the Olm account and session store from disk.
+        # Required when bypassing client.login() and setting access_token directly.
+        await client.load_store()
+
         # Register event callbacks
         client.add_event_callback(self._on_message, RoomMessageText)
         client.add_event_callback(self._on_encrypted_message, MegolmEvent)
@@ -147,29 +151,32 @@ class MatrixThread:
 
         self._client = client
 
-        logger.info("Connecting to Matrix homeserver %s (E2EE enabled)", self._cfg.homeserver)
+        try:
+            logger.info("Connecting to Matrix homeserver %s (E2EE enabled)", self._cfg.homeserver)
 
-        # Load the local key store and upload keys to the server if needed.
-        if client.should_upload_keys:
-            logger.info("Uploading encryption keys to homeserver")
-            await client.keys_upload()
+            # Load the local key store and upload keys to the server if needed.
+            if client.should_upload_keys:
+                logger.info("Uploading encryption keys to homeserver")
+                await client.keys_upload()
 
-        # Initial sync to get current state and mark old events as seen.
-        response = await client.sync(timeout=30_000, full_state=True)
-        if isinstance(response, SyncError):
-            raise ConnectionError(f"Initial sync failed: {response.message}")
+            # Initial sync to get current state and mark old events as seen.
+            response = await client.sync(timeout=30_000, full_state=True)
+            if isinstance(response, SyncError):
+                raise ConnectionError(f"Initial sync failed: {response.message}")
 
-        # Query and claim missing keys for any known devices.
-        await client.keys_query()
+            # Query and claim missing keys for any known devices.
+            await client.keys_query()
 
-        logger.info("Matrix connected with E2EE. Listening in all allowed rooms.")
+            logger.info("Matrix connected with E2EE. Listening in all allowed rooms.")
 
-        # Long-poll sync loop.
-        await client.sync_forever(
-            timeout=30_000,
-            full_state=False,
-            loop_sleep_time=100,
-        )
+            # Long-poll sync loop.
+            await client.sync_forever(
+                timeout=30_000,
+                full_state=False,
+                loop_sleep_time=100,
+            )
+        finally:
+            await client.close()
 
     # ------------------------------------------------------------------
     # Invite handler
