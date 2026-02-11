@@ -277,7 +277,10 @@ async def main() -> None:
     for task in tasks:
         if not task.done():
             task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
+    try:
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10.0)
+    except asyncio.TimeoutError:
+        logger.warning("Some tasks did not stop within 10 s — forcing exit")
 
     logger.info("Ganglion shutdown complete")
 

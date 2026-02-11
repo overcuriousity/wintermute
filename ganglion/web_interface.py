@@ -248,6 +248,11 @@ class WebInterface:
             while True:
                 await asyncio.sleep(3600)
         finally:
+            # Close all open WebSocket connections so runner.cleanup() doesn't hang.
+            for clients in list(self._threads.values()):
+                for ws in list(clients):
+                    await ws.close()
+            self._threads.clear()
             await runner.cleanup()
 
     # ------------------------------------------------------------------
