@@ -329,7 +329,9 @@ class MatrixThread:
         """
         if self._client is None:
             return
-        users = self._cfg.allowed_users if self._cfg.allowed_users else []
+        # Include the bot's own user_id — nio encrypts the Megolm key to every
+        # room member, including the sender itself.
+        users = set(self._cfg.allowed_users) | {self._cfg.user_id}
         for user_id in users:
             try:
                 for device in self._client.device_store.active_user_devices(user_id):
