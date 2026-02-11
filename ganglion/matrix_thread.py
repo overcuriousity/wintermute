@@ -14,6 +14,11 @@ Special commands handled directly (before reaching the LLM):
   /compact   - force context compaction for the current room
   /reminders - list active reminders
   /heartbeat - manually trigger heartbeat review
+
+SAS key verification:
+  Incoming verification requests from allowed_users are auto-accepted and
+  auto-confirmed so the bot's device is marked as verified in Element.
+  The SAS emojis are logged at INFO level for manual comparison if desired.
 """
 
 import asyncio
@@ -33,6 +38,12 @@ from nio import (
     RoomMessageText,
     SyncError,
     ToDeviceError,
+)
+from nio.events import (
+    KeyVerificationCancel,
+    KeyVerificationKey,
+    KeyVerificationMac,
+    KeyVerificationStart,
 )
 
 logger = logging.getLogger(__name__)
@@ -151,6 +162,10 @@ class MatrixThread:
         client.add_event_callback(self._on_invite, InviteMemberEvent)
         client.add_event_callback(self._on_room_encryption, RoomEncryptionEvent)
         client.add_to_device_callback(self._on_to_device, EncryptedToDeviceEvent)
+        client.add_to_device_callback(self._on_verification_start, KeyVerificationStart)
+        client.add_to_device_callback(self._on_verification_key, KeyVerificationKey)
+        client.add_to_device_callback(self._on_verification_mac, KeyVerificationMac)
+        client.add_to_device_callback(self._on_verification_cancel, KeyVerificationCancel)
 
         self._client = client
 
@@ -230,6 +245,60 @@ class MatrixThread:
     async def _on_to_device(self, event: EncryptedToDeviceEvent) -> None:
         """Handle incoming to-device messages (key exchanges, etc.)."""
         logger.debug("Received to-device event: %s", type(event).__name__)
+
+    # ------------------------------------------------------------------
+    # SAS key verification
+    # ------------------------------------------------------------------
+
+    async def _on_verification_start(self, event: KeyVerificationStart) -> None:
+        """Auto-accept SAS key verification requests from allowed users."""
+        if not self._is_user_allowed(event.sender):
+            logger.warning("Ignoring verification request from non-allowed user %s", event.sender)
+            await self._client.cancel_key_verification(event.transaction_id)
+            return
+        logger.info("SAS verification requested by %s (tx=%s) — accepting",
+                    event.sender, event.transaction_id)
+        response = await self._client.accept_key_verification(event.transaction_id)
+        if isinstance(response, ToDeviceError):
+            logger.error("Failed to accept verification (tx=%s): %s",
+                         event.transaction_id, response.message)
+
+    async def _on_verification_key(self, event: KeyVerificationKey) -> None:
+        """Log the SAS emojis and auto-confirm."""
+        sas = self._client.key_verifications.get(event.transaction_id)
+        if sas is None:
+            return
+        try:
+            emojis = sas.get_emoji()
+            lines = ["SAS emojis — compare these on both devices:"]
+            lines += [f"  {e[0]}  {e[1]}" for e in emojis]
+            logger.info("\n".join(lines))
+        except Exception:  # noqa: BLE001
+            pass
+        response = await self._client.confirm_short_auth_string(event.transaction_id)
+        if isinstance(response, ToDeviceError):
+            logger.error("Failed to confirm SAS (tx=%s): %s",
+                         event.transaction_id, response.message)
+        else:
+            logger.info("SAS confirmation sent (tx=%s)", event.transaction_id)
+
+    async def _on_verification_mac(self, event: KeyVerificationMac) -> None:
+        """Check whether verification completed and update local trust."""
+        sas = self._client.key_verifications.get(event.transaction_id)
+        if sas is None:
+            return
+        if sas.verified:
+            logger.info("Device %s of %s successfully verified via SAS",
+                        sas.other_olm_device.id, event.sender)
+            self._trust_allowed_devices()
+        elif sas.canceled:
+            logger.warning("SAS verification failed (tx=%s): %s",
+                           event.transaction_id, sas.cancel_reason)
+
+    async def _on_verification_cancel(self, event: KeyVerificationCancel) -> None:
+        """Log verification cancellations."""
+        logger.info("SAS verification canceled by %s (tx=%s): [%s] %s",
+                    event.sender, event.transaction_id, event.code, event.reason)
 
     # ------------------------------------------------------------------
     # Message handlers
