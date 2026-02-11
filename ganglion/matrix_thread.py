@@ -79,6 +79,8 @@ class MatrixThread:
             return
         async with self._send_lock:
             try:
+                # Trust any new devices that appeared since last send.
+                self._trust_allowed_devices()
                 content = {
                     "msgtype": "m.text",
                     "body":    text,
@@ -168,6 +170,9 @@ class MatrixThread:
             # Query keys for any devices that need it (skip if none pending).
             if client.users_for_key_query:
                 await client.keys_query()
+
+            # Auto-trust all known devices of allowed users so we can send to them.
+            self._trust_allowed_devices()
 
             logger.info("Matrix connected with E2EE. Listening in all allowed rooms.")
 
@@ -311,6 +316,28 @@ class MatrixThread:
         if not self._cfg.allowed_users:
             return True
         return user_id in self._cfg.allowed_users
+
+    def _trust_allowed_devices(self) -> None:
+        """
+        Auto-trust all unverified devices belonging to allowed users.
+
+        matrix-nio refuses to encrypt to unverified devices by default.  For a
+        personal assistant this is the wrong behaviour — the owner's devices
+        should be trusted automatically.  We call this after key queries and
+        before every send so that newly registered devices are picked up without
+        requiring a restart.
+        """
+        if self._client is None:
+            return
+        users = self._cfg.allowed_users if self._cfg.allowed_users else []
+        for user_id in users:
+            try:
+                for device in self._client.device_store.active_user_devices(user_id):
+                    if not device.verified and not device.blacklisted:
+                        self._client.verify_device(device)
+                        logger.info("Auto-trusted device %s for %s", device.id, user_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Could not trust devices for %s: %s", user_id, exc)
 
 
 # ---------------------------------------------------------------------------
