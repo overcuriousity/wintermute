@@ -140,7 +140,8 @@ class MatrixThread:
 
         # Load (or create) the Olm account and session store from disk.
         # Required when bypassing client.login() and setting access_token directly.
-        await client.load_store()
+        # Note: load_store() is synchronous in matrix-nio.
+        client.load_store()
 
         # Register event callbacks
         client.add_event_callback(self._on_message, RoomMessageText)
