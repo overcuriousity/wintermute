@@ -44,7 +44,9 @@ from nio.events import (
     KeyVerificationKey,
     KeyVerificationMac,
     KeyVerificationStart,
+    UnknownToDeviceEvent,
 )
+from nio.event_builders import ToDeviceMessage
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +164,7 @@ class MatrixThread:
         client.add_event_callback(self._on_invite, InviteMemberEvent)
         client.add_event_callback(self._on_room_encryption, RoomEncryptionEvent)
         client.add_to_device_callback(self._on_to_device, EncryptedToDeviceEvent)
+        client.add_to_device_callback(self._on_unknown_to_device, UnknownToDeviceEvent)
         client.add_to_device_callback(self._on_verification_start, KeyVerificationStart)
         client.add_to_device_callback(self._on_verification_key, KeyVerificationKey)
         client.add_to_device_callback(self._on_verification_mac, KeyVerificationMac)
@@ -250,6 +253,60 @@ class MatrixThread:
     # SAS key verification
     # ------------------------------------------------------------------
 
+    async def _on_unknown_to_device(self, event: UnknownToDeviceEvent) -> None:
+        """
+        Handle to-device event types that matrix-nio 0.25 doesn't model natively.
+
+        Modern Element uses a request/ready handshake before starting SAS:
+          1. Element sends  m.key.verification.request  (→ UnknownToDeviceEvent)
+          2. Bot replies    m.key.verification.ready
+          3. Element sends  m.key.verification.start    (→ KeyVerificationStart, handled below)
+          4. … SAS flow …
+          5. Element sends  m.key.verification.done     (→ UnknownToDeviceEvent, just logged)
+
+        Without step 2 the SAS flow never starts and verification silently stalls.
+        """
+        content = event.source.get("content", {})
+        tx_id = content.get("transaction_id")
+
+        if event.type == "m.key.verification.request":
+            if not self._is_user_allowed(event.sender):
+                return
+            from_device = content.get("from_device", "")
+            logger.info(
+                "SAS verification request from %s (device=%s tx=%s) — sending ready",
+                event.sender, from_device, tx_id,
+            )
+            await self._send_to_device(
+                event_type="m.key.verification.ready",
+                recipient=event.sender,
+                recipient_device=from_device,
+                content={
+                    "from_device": self._client.device_id,
+                    "methods": ["m.sas.v1"],
+                    "transaction_id": tx_id,
+                },
+            )
+
+        elif event.type == "m.key.verification.done":
+            logger.info("SAS done confirmed by %s (tx=%s)", event.sender, tx_id)
+
+    async def _send_to_device(self, event_type: str, recipient: str,
+                               recipient_device: str, content: dict) -> None:
+        """Send a raw to-device message via the Matrix client."""
+        msg = ToDeviceMessage(
+            type=event_type,
+            recipient=recipient,
+            recipient_device=recipient_device,
+            content=content,
+        )
+        try:
+            response = await self._client.to_device(msg)
+            if isinstance(response, ToDeviceError):
+                logger.error("to-device %s failed: %s", event_type, response.message)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("to-device %s error: %s", event_type, exc)
+
     async def _on_verification_start(self, event: KeyVerificationStart) -> None:
         """Auto-accept SAS key verification requests from allowed users."""
         if not self._is_user_allowed(event.sender):
@@ -283,7 +340,7 @@ class MatrixThread:
             logger.info("SAS confirmation sent (tx=%s)", event.transaction_id)
 
     async def _on_verification_mac(self, event: KeyVerificationMac) -> None:
-        """Check whether verification completed and update local trust."""
+        """Check whether verification completed, update local trust, send done."""
         sas = self._client.key_verifications.get(event.transaction_id)
         if sas is None:
             return
@@ -291,6 +348,12 @@ class MatrixThread:
             logger.info("Device %s of %s successfully verified via SAS",
                         sas.other_olm_device.id, event.sender)
             self._trust_allowed_devices()
+            await self._send_to_device(
+                event_type="m.key.verification.done",
+                recipient=event.sender,
+                recipient_device=sas.other_olm_device.id,
+                content={"transaction_id": event.transaction_id},
+            )
         elif sas.canceled:
             logger.warning("SAS verification failed (tx=%s): %s",
                            event.transaction_id, sas.cancel_reason)
