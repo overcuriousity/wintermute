@@ -34,7 +34,6 @@ from nio import (
     SyncError,
     ToDeviceError,
 )
-from nio.store import SqliteStore
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +134,6 @@ class MatrixThread:
             device_id=self._cfg.device_id or None,
             store_path=str(STORE_DIR),
             config=cfg,
-            store=SqliteStore,
         )
         client.access_token = self._cfg.access_token
         client.user_id = self._cfg.user_id
