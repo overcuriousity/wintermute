@@ -1,8 +1,16 @@
+# Matrix is optional. Remove or leave empty to disable.
 matrix:
   homeserver: https://matrix.org          # Your Matrix homeserver URL
   user_id: "@bot:matrix.org"              # Full Matrix user ID of the bot account
   access_token: "YOUR_MATRIX_ACCESS_TOKEN"
   room_id: "!ROOMID:matrix.org"           # Room or DM to listen in
+
+# Web interface is enabled by default.
+# Open http://127.0.0.1:8080 in your browser.
+web:
+  enabled: true
+  host: "127.0.0.1"   # Use 0.0.0.0 to listen on all interfaces
+  port: 8080
 
 llm:
   # Any OpenAI-compatible endpoint. Examples:

@@ -2,32 +2,29 @@
 Ganglion – Matrix AI Reminder Assistant
 Entry point and orchestration.
 
+Both Matrix and the web interface are optional; at least one must be enabled.
+
 Startup sequence:
   1. Load config.yaml
   2. Configure logging
   3. Initialise SQLite databases
   4. Ensure data/ files exist
   5. Restore APScheduler jobs (and execute missed reminders)
-  6. Connect to Matrix
+  6. Build shared broadcast function (Matrix + web)
   7. Start LLM inference task
-  8. Start heartbeat review task
-  9. Await shutdown signals
-
-Shutdown sequence:
-  1. Stop heartbeat loop
-  2. Stop Matrix connection
-  3. Stop LLM thread
-  4. Stop scheduler (job store flushed automatically)
-  5. Close any open resources
+  8. Start web interface task (if enabled)
+  9. Start Matrix task (if configured)
+  10. Start heartbeat review task
+  11. Await shutdown signals
 """
 
 import asyncio
 import logging
 import logging.handlers
-import os
 import signal
 import sys
 from pathlib import Path
+from typing import Optional
 
 import yaml
 
@@ -36,6 +33,7 @@ from heartbeat import HeartbeatLoop
 from llm_thread import LLMConfig, LLMThread
 from matrix_thread import MatrixConfig, MatrixThread
 from scheduler_thread import ReminderScheduler, SchedulerConfig
+from web_interface import WebInterface
 
 CONFIG_FILE = Path("config.yaml")
 LOG_DIR = Path("logs")
@@ -47,7 +45,7 @@ LOG_DIR = Path("logs")
 
 def load_config(path: Path = CONFIG_FILE) -> dict:
     if not path.exists():
-        print(f"ERROR: {path} not found. Copy config.yaml.example and fill in your credentials.")
+        print(f"ERROR: {path} not found. Copy config.yaml.example and fill in your settings.")
         sys.exit(1)
     with path.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh)
@@ -67,12 +65,10 @@ def setup_logging(cfg: dict) -> None:
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
 
-    # Console handler.
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(fmt)
     console.setLevel(level)
 
-    # Rotating file handler.
     fh = logging.handlers.TimedRotatingFileHandler(
         LOG_DIR / "ganglion.log",
         when="midnight",
@@ -95,7 +91,7 @@ def setup_logging(cfg: dict) -> None:
 DATA_DIR = Path("data")
 
 _DEFAULT_BASE_PROMPT = """\
-You are a personal AI assistant operating through Matrix.
+You are a personal AI assistant accessible via chat.
 
 You have a persistent memory system:
 - MEMORIES.txt stores long-term facts about your user.
@@ -114,7 +110,7 @@ Be concise, helpful, and proactive. Always confirm when you have taken an
 action (set a reminder, updated memories, etc.).
 """
 
-_DEFAULT_MEMORIES = "# User Memories\n\n(No memories recorded yet.)\n"
+_DEFAULT_MEMORIES   = "# User Memories\n\n(No memories recorded yet.)\n"
 _DEFAULT_HEARTBEATS = "# Active Heartbeats\n\n(No active heartbeats.)\n"
 
 
@@ -165,13 +161,6 @@ async def main() -> None:
     bootstrap_data_files()
     database.init_db()
 
-    # Build component configs.
-    matrix_cfg = MatrixConfig(
-        homeserver=cfg["matrix"]["homeserver"],
-        user_id=cfg["matrix"]["user_id"],
-        access_token=cfg["matrix"]["access_token"],
-        room_id=cfg["matrix"]["room_id"],
-    )
     llm_cfg = LLMConfig(
         api_key=cfg["llm"]["api_key"],
         base_url=cfg["llm"]["base_url"],
@@ -184,60 +173,104 @@ async def main() -> None:
     )
     heartbeat_interval = cfg.get("heartbeat", {}).get("review_interval_minutes", 60)
 
-    # Shutdown coordinator.
+    # --- Optional interfaces ---
+    matrix_cfg_raw: Optional[dict] = cfg.get("matrix")
+    web_cfg: dict = cfg.get("web", {"enabled": True, "host": "127.0.0.1", "port": 8080})
+
+    matrix_enabled = bool(
+        matrix_cfg_raw
+        and matrix_cfg_raw.get("homeserver")
+        and matrix_cfg_raw.get("access_token")
+    )
+    web_enabled = web_cfg.get("enabled", True)
+
+    if not matrix_enabled and not web_enabled:
+        logger.error("Neither Matrix nor web interface is enabled – nothing to do. Exiting.")
+        sys.exit(1)
+
     shutdown = ShutdownCoordinator()
 
-    # Construct components (order matters: Matrix send_fn needed by LLM).
-    matrix = MatrixThread(matrix_cfg, llm_thread=None)  # llm injected below
+    # Build Matrix (may be a no-op stub if not configured).
+    if matrix_enabled:
+        matrix_cfg = MatrixConfig(
+            homeserver=matrix_cfg_raw["homeserver"],
+            user_id=matrix_cfg_raw["user_id"],
+            access_token=matrix_cfg_raw["access_token"],
+            room_id=matrix_cfg_raw["room_id"],
+        )
+        matrix: Optional[MatrixThread] = MatrixThread(matrix_cfg, llm_thread=None)
+    else:
+        logger.info("Matrix not configured – skipping Matrix interface")
+        matrix = None
 
-    llm = LLMThread(
-        config=llm_cfg,
-        matrix_send_fn=matrix.send_message,
-    )
+    # Build web interface.
+    web: Optional[WebInterface] = None
+    if web_enabled:
+        web = WebInterface(
+            host=web_cfg.get("host", "127.0.0.1"),
+            port=web_cfg.get("port", 8080),
+            llm_thread=None,  # injected below
+        )
 
-    # Inject LLM back into Matrix.
-    matrix._llm = llm
+    # Shared broadcast: fan-out to both interfaces.
+    async def broadcast(text: str) -> None:
+        if matrix:
+            await matrix.send_message(text)
+        if web:
+            await web.broadcast(text)
+
+    # Build LLM thread with the shared broadcast function.
+    llm = LLMThread(config=llm_cfg, matrix_send_fn=broadcast)
+
+    # Inject LLM into interfaces.
+    if matrix:
+        matrix._llm = llm
+    if web:
+        web._llm = llm
 
     scheduler = ReminderScheduler(
         config=scheduler_cfg,
-        matrix_send_fn=matrix.send_message,
+        matrix_send_fn=broadcast,
         llm_enqueue_fn=llm.enqueue_system_event,
     )
 
     heartbeat_loop = HeartbeatLoop(
         interval_minutes=heartbeat_interval,
         llm_enqueue_fn=llm.enqueue_user_message,
-        matrix_send_fn=matrix.send_message,
+        matrix_send_fn=broadcast,
     )
 
-    # Start scheduler (synchronous APScheduler start).
     scheduler.start()
 
-    # Register OS signal handlers for graceful shutdown.
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, shutdown.request_shutdown)
 
-    # Launch async tasks.
     tasks = [
-        asyncio.create_task(llm.run(),        name="llm"),
-        asyncio.create_task(matrix.run(),     name="matrix"),
+        asyncio.create_task(llm.run(),            name="llm"),
         asyncio.create_task(heartbeat_loop.run(), name="heartbeat"),
     ]
+    if matrix:
+        tasks.append(asyncio.create_task(matrix.run(), name="matrix"))
+    if web:
+        tasks.append(asyncio.create_task(web.run(), name="web"))
 
-    logger.info("All components started. Awaiting shutdown signal.")
+    interfaces = []
+    if matrix_enabled:
+        interfaces.append("Matrix")
+    if web_enabled:
+        interfaces.append(f"web http://{web_cfg.get('host','127.0.0.1')}:{web_cfg.get('port',8080)}")
+    logger.info("All components started. Interfaces: %s", ", ".join(interfaces))
 
-    # Wait for shutdown signal.
     await shutdown.wait()
     logger.info("Shutdown requested – stopping components gracefully")
 
-    # Stop in reverse order.
     heartbeat_loop.stop()
-    matrix.stop()
+    if matrix:
+        matrix.stop()
     llm.stop()
     scheduler.stop()
 
-    # Cancel remaining tasks.
     for task in tasks:
         if not task.done():
             task.cancel()

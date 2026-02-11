@@ -11,6 +11,7 @@ new skills by documenting reusable procedures.
 - **Tool-calling AI** – any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI, …) with full tool access (shell, filesystem, scheduling)
 - **Heartbeat reviews** – periodic autonomous reviews of active goals
 - **Context compaction** – automatic summarisation when conversation history grows large
+- **Web interface** – built-in chat UI accessible at `http://localhost:8080`; works without Matrix
 - **Graceful shutdown** – SIGTERM/SIGINT handled cleanly
 
 ## Quick Start
@@ -21,13 +22,18 @@ pip install -r requirements.txt
 
 # 2. Configure
 cp config.yaml.example config.yaml
-$EDITOR config.yaml   # fill in Matrix credentials and LLM endpoint details
+$EDITOR config.yaml   # set LLM endpoint; Matrix is optional
 
 # 3. Run
 python main.py
+# Open http://127.0.0.1:8080 in your browser
 ```
 
-## Special Commands (in Matrix)
+Both Matrix and the web interface are optional — at least one must be enabled.
+Outgoing notifications (reminders, heartbeat results) are broadcast to all
+active interfaces simultaneously.
+
+## Special Commands (in Matrix or web UI)
 
 | Command      | Effect                                      |
 |--------------|---------------------------------------------|
@@ -42,6 +48,8 @@ python main.py
 main.py              – entry point, startup/shutdown orchestration
 matrix_thread.py     – Matrix connection and message routing
 llm_thread.py        – OpenAI-compatible API calls, conversation history, context compaction
+matrix_thread.py     – Matrix connection and message routing (optional)
+web_interface.py     – aiohttp HTTP + WebSocket server with embedded chat UI (optional)
 scheduler_thread.py  – APScheduler wrapper, reminder registry
 heartbeat.py         – periodic heartbeat review loop
 tools.py             – tool schemas and implementations
