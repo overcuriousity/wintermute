@@ -21,16 +21,19 @@ llm:
   base_url: "http://localhost:11434/v1"
   api_key: "ollama"                        # Use "ollama" for Ollama, actual key for OpenAI etc.
   model: "qwen2.5:72b"                     # Any model name the endpoint accepts
-  max_tokens: 4096
+  context_size: 32768                      # Total token window the model supports
+  max_tokens: 4096                         # Maximum tokens in a single response
   # Optional: use a smaller/faster model for context compaction summarisation.
   # Falls back to `model` if not set.
   compaction_model: "qwen2.5:7b"
+
+# Compaction fires when history tokens exceed: context_size - max_tokens - 2000 (system overhead).
+# No separate threshold setting is needed; adjust context_size and max_tokens above.
 
 heartbeat:
   review_interval_minutes: 60             # How often to auto-review HEARTBEATS.txt
 
 context:
-  compaction_threshold_chars: 150000      # Trigger compaction above this many chars
   component_size_limits:
     memories: 10000                       # Chars before MEMORIES.txt gets summarised
     heartbeats: 5000                      # Chars before HEARTBEATS.txt gets summarised

@@ -29,10 +29,27 @@ import tools as tool_module
 
 logger = logging.getLogger(__name__)
 
-# Approximate character count that triggers context compaction.
-COMPACTION_THRESHOLD_CHARS = 150_000
 # Keep the last N messages untouched during compaction.
 COMPACTION_KEEP_RECENT = 10
+# Reserve this many tokens for the system prompt + tool schemas overhead.
+_SYSTEM_OVERHEAD_TOKENS = 2_000
+
+
+def _count_tokens(text: str, model: str) -> int:
+    """
+    Estimate token count using tiktoken.
+    Falls back to cl100k_base (GPT-4 / DeepSeek / Qwen BPE) for unknown
+    model names, and to len//4 if tiktoken itself is unavailable.
+    """
+    try:
+        import tiktoken
+        try:
+            enc = tiktoken.encoding_for_model(model)
+        except KeyError:
+            enc = tiktoken.get_encoding("cl100k_base")
+        return len(enc.encode(text))
+    except Exception:  # noqa: BLE001
+        return len(text) // 4
 
 
 @dataclass
@@ -40,7 +57,8 @@ class LLMConfig:
     api_key: str
     base_url: str           # e.g. http://localhost:11434/v1  or  https://api.openai.com/v1
     model: str
-    max_tokens: int = 4096
+    context_size: int       # total token window the model supports (e.g. 65536)
+    max_tokens: int = 4096  # maximum tokens in a single response
     compaction_model: Optional[str] = None  # cheaper model for summarisation; falls back to model
 
 
@@ -124,13 +142,18 @@ class LLMThread:
     async def _process(self, item: _QueueItem) -> str:
         messages = self._build_messages(item.text, item.is_system_event)
 
-        total_chars = sum(
-            len(m["content"]) if isinstance(m["content"], str) else
-            sum(p.get("text", "") and len(p["text"]) for p in m["content"] if isinstance(p, dict))
+        history_tokens = sum(
+            _count_tokens(m["content"] if isinstance(m["content"], str) else
+                          " ".join(p.get("text", "") for p in m["content"] if isinstance(p, dict)),
+                          self._cfg.model)
             for m in messages
         )
-        if total_chars > COMPACTION_THRESHOLD_CHARS:
-            logger.info("Context at %d chars – compacting before inference", total_chars)
+        compaction_threshold = self._cfg.context_size - self._cfg.max_tokens - _SYSTEM_OVERHEAD_TOKENS
+        if history_tokens > compaction_threshold:
+            logger.info(
+                "History at %d tokens (threshold %d) – compacting before inference",
+                history_tokens, compaction_threshold,
+            )
             await self._compact_context()
             messages = self._build_messages(item.text, item.is_system_event)
 

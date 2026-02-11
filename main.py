@@ -165,6 +165,7 @@ async def main() -> None:
         api_key=cfg["llm"]["api_key"],
         base_url=cfg["llm"]["base_url"],
         model=cfg["llm"]["model"],
+        context_size=cfg["llm"]["context_size"],
         max_tokens=cfg["llm"].get("max_tokens", 4096),
         compaction_model=cfg["llm"].get("compaction_model"),
     )
