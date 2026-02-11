@@ -50,7 +50,8 @@ TOOL_SCHEMAS = [
                     "description": (
                         "When to fire. Natural language like 'in 2 hours', "
                         "'tomorrow 09:00', 'every day at 08:00', "
-                        "or ISO-8601 datetime."
+                        "or ISO-8601 datetime. For recurring='interval', "
+                        "specify the period: 'every 5 minutes', '30 minutes', '2 hours'."
                     ),
                 },
                 "message": {
@@ -66,8 +67,13 @@ TOOL_SCHEMAS = [
                 },
                 "recurring": {
                     "type": "string",
-                    "enum": ["none", "daily", "weekly", "monthly"],
-                    "description": "Recurrence type. Defaults to 'none'.",
+                    "enum": ["none", "daily", "weekly", "monthly", "interval"],
+                    "description": (
+                        "Recurrence type. Defaults to 'none'. "
+                        "Use 'interval' for fixed-period repetition; then "
+                        "time_spec must describe the interval, e.g. "
+                        "'every 5 minutes', '30 minutes', '2 hours'."
+                    ),
                 },
                 "system": {
                     "type": "boolean",
