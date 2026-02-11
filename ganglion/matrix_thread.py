@@ -165,8 +165,9 @@ class MatrixThread:
             if isinstance(response, SyncError):
                 raise ConnectionError(f"Initial sync failed: {response.message}")
 
-            # Query and claim missing keys for any known devices.
-            await client.keys_query()
+            # Query keys for any devices that need it (skip if none pending).
+            if client.users_for_key_query:
+                await client.keys_query()
 
             logger.info("Matrix connected with E2EE. Listening in all allowed rooms.")
 
