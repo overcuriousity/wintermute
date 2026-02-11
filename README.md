@@ -8,7 +8,7 @@ new skills by documenting reusable procedures.
 
 - **Persistent memory** – MEMORIES.txt, HEARTBEATS.txt, and skills/ survive restarts
 - **Reminder scheduler** – APScheduler with SQLite persistence; handles missed reminders on restart
-- **Tool-calling AI** – Anthropic Claude with full tool access (shell, filesystem, scheduling)
+- **Tool-calling AI** – any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI, …) with full tool access (shell, filesystem, scheduling)
 - **Heartbeat reviews** – periodic autonomous reviews of active goals
 - **Context compaction** – automatic summarisation when conversation history grows large
 - **Graceful shutdown** – SIGTERM/SIGINT handled cleanly
@@ -21,7 +21,7 @@ pip install -r requirements.txt
 
 # 2. Configure
 cp config.yaml.example config.yaml
-$EDITOR config.yaml   # fill in Matrix credentials and Anthropic API key
+$EDITOR config.yaml   # fill in Matrix credentials and LLM endpoint details
 
 # 3. Run
 python main.py
@@ -41,7 +41,7 @@ python main.py
 ```
 main.py              – entry point, startup/shutdown orchestration
 matrix_thread.py     – Matrix connection and message routing
-llm_thread.py        – Anthropic API calls, conversation history, context compaction
+llm_thread.py        – OpenAI-compatible API calls, conversation history, context compaction
 scheduler_thread.py  – APScheduler wrapper, reminder registry
 heartbeat.py         – periodic heartbeat review loop
 tools.py             – tool schemas and implementations
@@ -76,14 +76,12 @@ Three asyncio tasks run concurrently:
 
 The APScheduler runs within the same event loop using `AsyncIOExecutor`.
 
-## Cost Notes (approximate, Claude Opus)
+## Cost / Resource Notes
 
-| Activity              | Cost estimate     |
-|-----------------------|-------------------|
-| User message exchange | ~$0.015 each      |
-| Hourly heartbeat      | ~$0.01 each       |
-| Context compaction    | ~$0.002 each      |
-| Reminder AI prompt    | ~$0.01 each       |
-| Active user, 1 month  | ~$15–30           |
+Cost depends entirely on your chosen endpoint:
 
-Reduce cost by switching to a cheaper model or increasing heartbeat interval.
+- **Local models (Ollama, vLLM, LM Studio)** – no per-call cost; GPU/CPU time only.
+  Set `compaction_model` to a smaller model to reduce load for summarisation tasks.
+- **OpenAI or hosted APIs** – billed per token; a smaller `compaction_model` helps keep costs down.
+
+Heartbeat frequency (`review_interval_minutes`) is the main tuning knob for inference volume.
