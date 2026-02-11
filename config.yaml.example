@@ -1,0 +1,27 @@
+matrix:
+  homeserver: https://matrix.org          # Your Matrix homeserver URL
+  user_id: "@bot:matrix.org"              # Full Matrix user ID of the bot account
+  access_token: "YOUR_MATRIX_ACCESS_TOKEN"
+  room_id: "!ROOMID:matrix.org"           # Room or DM to listen in
+
+anthropic:
+  api_key: "YOUR_ANTHROPIC_API_KEY"
+  model: "claude-opus-4-5-20251101"       # Model to use for main conversations
+  max_tokens: 4096
+
+heartbeat:
+  review_interval_minutes: 60             # How often to auto-review HEARTBEATS.txt
+
+context:
+  compaction_threshold_chars: 150000      # Trigger compaction above this many chars
+  component_size_limits:
+    memories: 10000                       # Chars before MEMORIES.txt gets summarised
+    heartbeats: 5000                      # Chars before HEARTBEATS.txt gets summarised
+    skills_total: 20000                   # Total chars across all skills before reorganise
+
+scheduler:
+  timezone: "UTC"                         # Timezone for reminder scheduling (e.g. Europe/Berlin)
+
+logging:
+  level: "INFO"                           # DEBUG | INFO | WARN | ERROR
+  directory: "logs"

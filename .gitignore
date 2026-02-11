@@ -1,0 +1,23 @@
+# User config (contains secrets)
+config.yaml
+
+# Runtime data
+data/conversation.db
+data/scheduler.db
+data/reminders.json
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Editor
+.idea/
+.vscode/
+*.swp
