@@ -173,9 +173,11 @@ async def main() -> None:
         room_id=cfg["matrix"]["room_id"],
     )
     llm_cfg = LLMConfig(
-        api_key=cfg["anthropic"]["api_key"],
-        model=cfg["anthropic"].get("model", "claude-opus-4-5-20251101"),
-        max_tokens=cfg["anthropic"].get("max_tokens", 4096),
+        api_key=cfg["llm"]["api_key"],
+        base_url=cfg["llm"]["base_url"],
+        model=cfg["llm"]["model"],
+        max_tokens=cfg["llm"].get("max_tokens", 4096),
+        compaction_model=cfg["llm"].get("compaction_model"),
     )
     scheduler_cfg = SchedulerConfig(
         timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),

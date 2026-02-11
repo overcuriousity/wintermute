@@ -1,9 +1,9 @@
 """
 Tool definitions and execution for the AI assistant.
 
-All tools are expressed both as Anthropic tool schemas (for the API) and as
-Python callables.  The dispatcher ``execute_tool`` is the single entry point
-used by the LLM thread.
+Tools are expressed as OpenAI-compatible function-calling schemas so they work
+with any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI, etc.).
+The dispatcher ``execute_tool`` is the single entry point used by the LLM thread.
 """
 
 import json
@@ -19,18 +19,30 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path("data")
 
 # ---------------------------------------------------------------------------
-# Anthropic tool schemas
+# OpenAI-compatible tool schemas
 # ---------------------------------------------------------------------------
 
+def _fn(name: str, description: str, parameters: dict) -> dict:
+    """Wrap a function schema in the OpenAI tool envelope."""
+    return {
+        "type": "function",
+        "function": {
+            "name":        name,
+            "description": description,
+            "parameters":  parameters,
+        },
+    }
+
+
 TOOL_SCHEMAS = [
-    {
-        "name": "set_reminder",
-        "description": (
+    _fn(
+        "set_reminder",
+        (
             "Schedule a reminder. The scheduler thread will fire it at the "
             "specified time and optionally invoke a fresh AI inference with "
             "the given prompt."
         ),
-        "input_schema": {
+        {
             "type": "object",
             "properties": {
                 "time_spec": {
@@ -60,14 +72,14 @@ TOOL_SCHEMAS = [
             },
             "required": ["time_spec", "message"],
         },
-    },
-    {
-        "name": "update_memories",
-        "description": (
+    ),
+    _fn(
+        "update_memories",
+        (
             "Overwrite MEMORIES.txt with new content. Use this to persist "
             "important facts about the user. Pass the *full* desired content."
         ),
-        "input_schema": {
+        {
             "type": "object",
             "properties": {
                 "content": {
@@ -77,14 +89,14 @@ TOOL_SCHEMAS = [
             },
             "required": ["content"],
         },
-    },
-    {
-        "name": "update_heartbeats",
-        "description": (
+    ),
+    _fn(
+        "update_heartbeats",
+        (
             "Overwrite HEARTBEATS.txt with new content. Use this to update "
             "active goals and working memory. Pass the *full* desired content."
         ),
-        "input_schema": {
+        {
             "type": "object",
             "properties": {
                 "content": {
@@ -94,14 +106,14 @@ TOOL_SCHEMAS = [
             },
             "required": ["content"],
         },
-    },
-    {
-        "name": "add_skill",
-        "description": (
+    ),
+    _fn(
+        "add_skill",
+        (
             "Create or overwrite a skill documentation file in data/skills/. "
             "Skills are loaded into every system prompt automatically."
         ),
-        "input_schema": {
+        {
             "type": "object",
             "properties": {
                 "skill_name": {
@@ -115,15 +127,15 @@ TOOL_SCHEMAS = [
             },
             "required": ["skill_name", "documentation"],
         },
-    },
-    {
-        "name": "execute_shell",
-        "description": (
+    ),
+    _fn(
+        "execute_shell",
+        (
             "Run a bash command as the current user. Returns stdout, stderr, "
             "and the exit code. Use for reading files, running scripts, "
             "checking system state, etc."
         ),
-        "input_schema": {
+        {
             "type": "object",
             "properties": {
                 "command": {
@@ -137,11 +149,11 @@ TOOL_SCHEMAS = [
             },
             "required": ["command"],
         },
-    },
-    {
-        "name": "read_file",
-        "description": "Read a file from the filesystem and return its contents.",
-        "input_schema": {
+    ),
+    _fn(
+        "read_file",
+        "Read a file from the filesystem and return its contents.",
+        {
             "type": "object",
             "properties": {
                 "path": {
@@ -151,11 +163,11 @@ TOOL_SCHEMAS = [
             },
             "required": ["path"],
         },
-    },
-    {
-        "name": "write_file",
-        "description": "Write content to a file, creating parent directories as needed.",
-        "input_schema": {
+    ),
+    _fn(
+        "write_file",
+        "Write content to a file, creating parent directories as needed.",
+        {
             "type": "object",
             "properties": {
                 "path": {
@@ -169,15 +181,12 @@ TOOL_SCHEMAS = [
             },
             "required": ["path", "content"],
         },
-    },
-    {
-        "name": "list_reminders",
-        "description": "Return all reminders from the reminder registry.",
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-        },
-    },
+    ),
+    _fn(
+        "list_reminders",
+        "Return all reminders from the reminder registry.",
+        {"type": "object", "properties": {}},
+    ),
 ]
 
 # ---------------------------------------------------------------------------
