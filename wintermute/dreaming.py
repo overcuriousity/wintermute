@@ -92,7 +92,7 @@ async def run_dream_cycle(client: AsyncOpenAI, model: str) -> None:
     if pulse:
         try:
             consolidated = await _consolidate(
-                client, model, "PULSE.txt", _PULSE_PROMPT, heartbeats
+                client, model, "PULSE.txt", _PULSE_PROMPT, pulse
             )
             if consolidated:
                 prompt_assembler.update_pulse(consolidated)

@@ -87,7 +87,7 @@ TOOL_SCHEMAS = [
                         "How much of the system prompt to give the worker. "
                         "'minimal' (default) — lightweight execution agent, fastest and cheapest. "
                         "'base_only' — core instructions only. "
-                        "'full' — includes MEMORIES, HEARTBEATS, and SKILLS; use when the "
+                        "'full' — includes MEMORIES, pulse, and SKILLS; use when the "
                         "worker needs full user context. "
                         "'none' — bare tool-use loop, for purely mechanical tasks."
                     ),
@@ -664,7 +664,7 @@ _DISPATCH: dict[str, Any] = {
     "spawn_sub_session":  _tool_spawn_sub_session,
     "set_reminder":       _tool_set_reminder,
     "update_memories":    _tool_update_memories,
-    "update_pulse":  _tool_update_heartbeats,
+    "update_pulse":  _tool_update_pulse,
     "add_skill":          _tool_add_skill,
     "execute_shell":      _tool_execute_shell,
     "read_file":          _tool_read_file,

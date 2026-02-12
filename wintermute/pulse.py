@@ -2,7 +2,7 @@
 Pulse Review Loop
 
 Periodically invokes the LLM to review PULSE.txt and take autonomous
-actions.  Runs both a global heartbeat and per-thread heartbeats.
+actions.  Runs both a global heartbeat and per-thread pulse.
 
 Global pulse runs as an isolated sub-session (fire-and-forget, no parent
 thread) so it never pollutes any user-facing conversation history.
@@ -64,7 +64,7 @@ class PulseLoop:
         Global pulse review — fire-and-forget isolated sub-session.
 
         Uses 'full' system prompt so the worker has access to MEMORIES,
-        HEARTBEATS, and SKILLS — the same context it would have in a normal
+        pulse, and SKILLS — the same context it would have in a normal
         conversation, without polluting any user thread's history.
         """
         logger.info("Running global pulse review")

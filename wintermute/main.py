@@ -136,9 +136,9 @@ def bootstrap_data_files() -> None:
     if not memories.exists():
         memories.write_text(_DEFAULT_MEMORIES, encoding="utf-8")
 
-    heartbeats = DATA_DIR / "PULSE.txt"
-    if not heartbeats.exists():
-        heartbeats.write_text(_DEFAULT_PULSE, encoding="utf-8")
+    pulse = DATA_DIR / "PULSE.txt"
+    if not pulse.exists():
+        pulse.write_text(_DEFAULT_PULSE, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

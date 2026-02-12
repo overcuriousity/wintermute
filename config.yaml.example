@@ -36,12 +36,12 @@ llm:
 # No separate threshold setting is needed; adjust context_size and max_tokens above.
 
 heartbeat:
-  review_interval_minutes: 60             # How often to auto-review HEARTBEATS.txt
+  review_interval_minutes: 60             # How often to auto-review pulse.txt
 
 context:
   component_size_limits:
     memories: 10000                       # Chars before MEMORIES.txt gets summarised
-    heartbeats: 5000                      # Chars before HEARTBEATS.txt gets summarised
+    pulse: 5000                      # Chars before pulse.txt gets summarised
     skills_total: 20000                   # Total chars across all skills before reorganise
 
 dreaming:
