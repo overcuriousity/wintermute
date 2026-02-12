@@ -152,6 +152,14 @@ class SubSessionManager:
             if state.status == "running"
         ]
 
+    def list_all(self) -> list[dict]:
+        """Return serialisable state dicts for all known sub-sessions, newest first."""
+        return sorted(
+            [{k: v for k, v in state.__dict__.items()} for state in self._states.values()],
+            key=lambda s: s["created_at"],
+            reverse=True,
+        )
+
     # ------------------------------------------------------------------
     # Worker execution
     # ------------------------------------------------------------------

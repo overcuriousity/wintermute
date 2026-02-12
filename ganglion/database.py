@@ -129,3 +129,14 @@ def get_active_thread_ids() -> list[str]:
             "SELECT DISTINCT thread_id FROM messages WHERE archived=0"
         ).fetchall()
     return [r[0] for r in rows]
+
+
+def get_thread_stats(thread_id: str = "default") -> dict:
+    """Return message count and estimated token usage for a thread's active messages."""
+    with sqlite3.connect(CONVERSATION_DB) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(COALESCE(token_count, LENGTH(content)/4)), 0) "
+            "FROM messages WHERE archived=0 AND thread_id=?",
+            (thread_id,),
+        ).fetchone()
+    return {"msg_count": row[0], "token_used": int(row[1])}

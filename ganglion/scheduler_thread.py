@@ -131,6 +131,39 @@ class ReminderScheduler:
             self._scheduler.shutdown(wait=False)
             logger.info("Reminder scheduler stopped")
 
+    def delete_reminder(self, job_id: str) -> bool:
+        """Remove a reminder by job_id from both APScheduler and the registry.
+
+        Returns True if the job was found (in either place) and removed.
+        """
+        found_in_scheduler = False
+        if self._scheduler.get_job(job_id) is not None:
+            self._scheduler.remove_job(job_id)
+            found_in_scheduler = True
+
+        reg = _load_registry()
+        entry = next((e for e in reg["active"] if e["id"] == job_id), None)
+        if entry:
+            reg["active"].remove(entry)
+            entry["completed_at"] = datetime.now(timezone.utc).isoformat()
+            reg.setdefault("cancelled", []).append(entry)
+            _save_registry(reg)
+            return True
+        return found_in_scheduler
+
+    def list_jobs(self) -> list[dict]:
+        """Return serialisable info about all APScheduler jobs."""
+        result = []
+        for job in self._scheduler.get_jobs():
+            result.append({
+                "id": job.id,
+                "name": job.name,
+                "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
+                "trigger": str(job.trigger),
+                "kwargs": {k: str(v)[:300] for k, v in (job.kwargs or {}).items()},
+            })
+        return result
+
     # ------------------------------------------------------------------
     # Scheduling
     # ------------------------------------------------------------------

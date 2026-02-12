@@ -267,6 +267,13 @@ async def main() -> None:
         sub_session_manager=sub_sessions,
     )
 
+    # Inject debug dependencies into web interface (after scheduler is built).
+    if web_iface:
+        web_iface._sub_sessions = sub_sessions
+        web_iface._scheduler = scheduler
+        web_iface._matrix = matrix
+        web_iface._llm_cfg = llm_cfg
+
     heartbeat_loop = HeartbeatLoop(
         interval_minutes=heartbeat_interval,
         llm_enqueue_fn=llm.enqueue_user_message,

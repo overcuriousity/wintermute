@@ -34,8 +34,6 @@ logger = logging.getLogger(__name__)
 
 # Keep the last N messages untouched during compaction.
 COMPACTION_KEEP_RECENT = 10
-# Reserve this many tokens for the system prompt + tool schemas overhead.
-_SYSTEM_OVERHEAD_TOKENS = 2_000
 
 
 def _count_tokens(text: str, model: str) -> int:
@@ -121,6 +119,10 @@ class LLMThread:
     async def force_compact(self, thread_id: str = "default") -> None:
         await self._compact_context(thread_id)
 
+    def get_compaction_summary(self, thread_id: str = "default") -> Optional[str]:
+        """Return the current in-memory compaction summary for a thread, or None."""
+        return self._compaction_summaries.get(thread_id)
+
     # ------------------------------------------------------------------
     # Main loop
     # ------------------------------------------------------------------
@@ -162,26 +164,35 @@ class LLMThread:
         thread_id = item.thread_id
         messages = self._build_messages(item.text, item.is_system_event, thread_id)
 
+        # Assemble system prompt first so we can measure its real token cost.
+        summary = self._compaction_summaries.get(thread_id)
+        system_prompt = prompt_assembler.assemble(extra_summary=summary)
+        overhead_tokens = (
+            _count_tokens(system_prompt, self._cfg.model)
+            + _count_tokens(json.dumps(tool_module.TOOL_SCHEMAS), self._cfg.model)
+        )
+
         history_tokens = sum(
             _count_tokens(m["content"] if isinstance(m["content"], str) else
                           " ".join(p.get("text", "") for p in m["content"] if isinstance(p, dict)),
                           self._cfg.model)
             for m in messages
         )
-        compaction_threshold = self._cfg.context_size - self._cfg.max_tokens - _SYSTEM_OVERHEAD_TOKENS
+        compaction_threshold = self._cfg.context_size - self._cfg.max_tokens - overhead_tokens
         if history_tokens > compaction_threshold:
             logger.info(
-                "History at %d tokens (threshold %d) – compacting before inference (thread=%s)",
-                history_tokens, compaction_threshold, thread_id,
+                "History at %d tokens (overhead %d, threshold %d) – compacting before inference (thread=%s)",
+                history_tokens, overhead_tokens, compaction_threshold, thread_id,
             )
             await self._compact_context(thread_id)
             messages = self._build_messages(item.text, item.is_system_event, thread_id)
+            # Reassemble with the updated compaction summary.
+            summary = self._compaction_summaries.get(thread_id)
+            system_prompt = prompt_assembler.assemble(extra_summary=summary)
 
         if not item.is_system_event:
             database.save_message("user", item.text, thread_id)
 
-        summary = self._compaction_summaries.get(thread_id)
-        system_prompt = prompt_assembler.assemble(extra_summary=summary)
         response_text = await self._inference_loop(system_prompt, messages, thread_id)
 
         database.save_message("assistant", response_text, thread_id)
