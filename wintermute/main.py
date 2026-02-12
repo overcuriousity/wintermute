@@ -187,7 +187,9 @@ async def main() -> None:
         timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
         dreaming=dreaming_cfg,
     )
-    pulse_interval = cfg.get("pulse", {}).get("review_interval_minutes", 60)
+    pulse_cfg = cfg.get("pulse", {})
+    pulse_interval = pulse_cfg.get("review_interval_minutes", 60)
+    pulse_active_thread_hours = pulse_cfg.get("active_thread_hours", 24)
 
     # --- Optional interfaces ---
     matrix_cfg_raw: Optional[dict] = cfg.get("matrix")
@@ -276,9 +278,10 @@ async def main() -> None:
 
     pulse_loop = PulseLoop(
         interval_minutes=pulse_interval,
-        llm_enqueue_fn=llm.enqueue_user_message,
+        llm_enqueue_fn=llm.enqueue_system_event_with_reply,
         broadcast_fn=broadcast,
         sub_session_manager=sub_sessions,
+        active_thread_hours=pulse_active_thread_hours,
     )
 
     scheduler.start()

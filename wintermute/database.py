@@ -131,6 +131,17 @@ def get_active_thread_ids() -> list[str]:
     return [r[0] for r in rows]
 
 
+def get_recently_active_thread_ids(since: float) -> list[str]:
+    """Return thread_ids with at least one non-archived message after `since` (Unix timestamp)."""
+    with sqlite3.connect(CONVERSATION_DB) as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT thread_id FROM messages "
+            "WHERE archived=0 AND timestamp > ?",
+            (since,),
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
 def get_thread_stats(thread_id: str = "default") -> dict:
     """Return message count and estimated token usage for a thread's active messages."""
     with sqlite3.connect(CONVERSATION_DB) as conn:

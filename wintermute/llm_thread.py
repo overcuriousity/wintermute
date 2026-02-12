@@ -107,6 +107,19 @@ class LLMThread:
         """Submit an autonomous system event (heartbeat, reminder, etc.)."""
         await self._queue.put(_QueueItem(text=text, thread_id=thread_id, is_system_event=True))
 
+    async def enqueue_system_event_with_reply(self, text: str,
+                                              thread_id: str = "default") -> str:
+        """Submit a system event and await the AI reply.
+
+        Like enqueue_system_event but returns the reply text. The prompt is
+        NOT saved to the DB as a user message; only the assistant response is.
+        """
+        loop = asyncio.get_event_loop()
+        fut: asyncio.Future = loop.create_future()
+        await self._queue.put(_QueueItem(text=text, thread_id=thread_id,
+                                         is_system_event=True, future=fut))
+        return await fut
+
     async def reset_session(self, thread_id: str = "default") -> None:
         database.clear_active_messages(thread_id)
         self._compaction_summaries.pop(thread_id, None)

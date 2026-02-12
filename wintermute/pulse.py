@@ -13,7 +13,8 @@ delivered to the correct room/tab.
 
 import asyncio
 import logging
-from typing import Callable, Optional, TYPE_CHECKING
+import time
+from typing import Optional, TYPE_CHECKING
 
 from wintermute import database
 
@@ -37,17 +38,23 @@ class PulseLoop:
 
     def __init__(self, interval_minutes: int, llm_enqueue_fn,
                  broadcast_fn,
-                 sub_session_manager: "Optional[SubSessionManager]" = None) -> None:
+                 sub_session_manager: "Optional[SubSessionManager]" = None,
+                 active_thread_hours: int = 24) -> None:
         self._interval = interval_minutes * 60  # convert to seconds
-        self._llm_enqueue = llm_enqueue_fn   # async callable(text: str, thread_id: str) -> str
+        # async callable(text: str, thread_id: str) -> str
+        # Must be enqueue_system_event_with_reply — does NOT save the prompt
+        # to DB as a user message, only saves the assistant response.
+        self._llm_enqueue = llm_enqueue_fn
         self._broadcast = broadcast_fn       # async callable(text: str, thread_id: str)
         self._sub_sessions = sub_session_manager
+        self._active_thread_hours = active_thread_hours
         self._running = False
 
     async def run(self) -> None:
         self._running = True
         logger.info(
-            "Pulse loop started (interval=%dm)", self._interval // 60
+            "Pulse loop started (interval=%dm, active_thread_hours=%d)",
+            self._interval // 60, self._active_thread_hours,
         )
         while self._running:
             await asyncio.sleep(self._interval)
@@ -75,16 +82,13 @@ class PulseLoop:
                 system_prompt_mode="full",
             )
         else:
-            # Fallback if sub-session manager not yet wired (should not happen
-            # after the full startup sequence, but kept for safety).
             logger.warning("Global pulse: SubSessionManager not available, skipping")
 
     async def _review_per_thread(self) -> None:
-        """Per-thread pulse review — one review per active thread."""
-        thread_ids = database.get_active_thread_ids()
+        """Per-thread pulse review — one review per recently active thread."""
+        since = time.time() - self._active_thread_hours * 3600
+        thread_ids = database.get_recently_active_thread_ids(since)
         for tid in thread_ids:
-            if tid == "default":
-                continue  # already handled by global
             logger.info("Running pulse review for thread %s", tid)
             try:
                 reply = await self._llm_enqueue(PULSE_REVIEW_PROMPT, tid)
