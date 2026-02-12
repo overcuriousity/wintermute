@@ -511,7 +511,7 @@ class MatrixThread:
         if self._client is None:
             return
         try:
-            await self._client.room_typing(room_id, typing=typing, timeout=30_000)
+            await self._client.room_typing(room_id, typing_state=typing, timeout=30_000)
         except Exception as exc:  # noqa: BLE001
             logger.debug("Typing notification failed for %s: %s", room_id, exc)
 
