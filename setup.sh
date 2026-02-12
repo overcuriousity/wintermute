@@ -424,24 +424,64 @@ if ! $SKIP_CONFIG; then
     MATRIX_ENABLED=true
     echo ""
     echo -e "  ${C_DIM}  You need a dedicated bot account. Do not reuse your personal account.${C_RESET}"
-    echo -e "  ${C_DIM}  Register at your homeserver if you have not already.${C_RESET}"
     echo ""
     ask MATRIX_HS "Homeserver URL" "https://matrix.org"
     ask MATRIX_USER "Bot Matrix user ID (e.g. @wintermute:matrix.org)" ""
+    ask_secret _matrix_pass "Bot account password"
 
     echo ""
-    echo -e "  ${C_BOLD}  Obtain access token and device ID — run this in another terminal:${C_RESET}"
-    echo ""
-    _hs_escaped="${MATRIX_HS%/}"
-    echo -e "  ${C_YELLOW}  curl -s -X POST '${_hs_escaped}/_matrix/client/v3/login' \\${C_RESET}"
-    echo -e "  ${C_YELLOW}    -H 'Content-Type: application/json' \\${C_RESET}"
-    echo -e "  ${C_YELLOW}    -d '{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${MATRIX_USER}\"},\"password\":\"YOUR_PASSWORD\",\"initial_device_display_name\":\"Wintermute\"}' \\${C_RESET}"
-    echo -e "  ${C_YELLOW}    | python3 -m json.tool${C_RESET}"
-    echo ""
-    echo -e "  ${C_DIM}  Copy access_token and device_id from the response, then continue here.${C_RESET}"
-    echo ""
-    ask_secret MATRIX_TOKEN "access_token"
-    ask MATRIX_DEVICE "device_id" ""
+    info "Authenticating with ${MATRIX_HS} ..."
+    _hs_clean="${MATRIX_HS%/}"
+    _login_response=$(curl -sf --connect-timeout 10 \
+      -X POST "${_hs_clean}/_matrix/client/v3/login" \
+      -H "Content-Type: application/json" \
+      -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${MATRIX_USER}\"},\"password\":\"${_matrix_pass}\",\"initial_device_display_name\":\"Wintermute\"}" \
+      2>/dev/null || echo "")
+    unset _matrix_pass  # discard immediately
+
+    _matrix_errcode=$(echo "$_login_response" | python3 -c \
+      "import sys,json; d=json.load(sys.stdin); print(d.get('errcode',''))" 2>/dev/null || echo "ERR")
+
+    _matrix_manual=false
+    if [[ -z "$_login_response" ]]; then
+      warn "No response from homeserver."
+      _matrix_manual=true
+    elif [[ "$_matrix_errcode" == "ERR" ]]; then
+      warn "Could not parse homeserver response."
+      _matrix_manual=true
+    elif [[ -n "$_matrix_errcode" ]]; then
+      _matrix_errmsg=$(echo "$_login_response" | python3 -c \
+        "import sys,json; d=json.load(sys.stdin); print(d.get('error','unknown'))" 2>/dev/null || echo "unknown")
+      warn "Login failed: ${_matrix_errcode} — ${_matrix_errmsg}"
+      _matrix_manual=true
+    else
+      MATRIX_TOKEN=$(echo "$_login_response" | python3 -c \
+        "import sys,json; d=json.load(sys.stdin); print(d['access_token'])" 2>/dev/null || echo "")
+      MATRIX_DEVICE=$(echo "$_login_response" | python3 -c \
+        "import sys,json; d=json.load(sys.stdin); print(d['device_id'])" 2>/dev/null || echo "")
+      if [[ -n "$MATRIX_TOKEN" && -n "$MATRIX_DEVICE" ]]; then
+        ok "Login successful."
+        info "device_id:  ${C_WHITE}${MATRIX_DEVICE}${C_RESET}"
+        info "token:      ${C_DIM}${MATRIX_TOKEN:0:20}…${C_RESET}  (truncated)"
+      else
+        warn "Could not extract credentials from response."
+        _matrix_manual=true
+      fi
+    fi
+
+    if $_matrix_manual; then
+      echo ""
+      info "Fall back: run this in another terminal, then paste the values below."
+      echo ""
+      echo -e "  ${C_YELLOW}  curl -s -X POST '${_hs_clean}/_matrix/client/v3/login'"
+      echo -e "    -H 'Content-Type: application/json'"
+      echo -e "    -d '{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${MATRIX_USER}\"},\"password\":\"YOUR_PASSWORD\",\"initial_device_display_name\":\"Wintermute\"}'"
+      echo -e "    | python3 -m json.tool${C_RESET}"
+      echo ""
+      ask_secret MATRIX_TOKEN "access_token"
+      ask MATRIX_DEVICE "device_id" ""
+    fi
+
     ask MATRIX_OWNER "Your personal Matrix ID (e.g. @you:matrix.org)" ""
 
     echo ""
