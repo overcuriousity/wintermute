@@ -34,23 +34,47 @@ The approach differs from different similar concepts by treating small LLMs and 
 
 ## Requirements
 
-- Python ≥ 3.12
-- [uv](https://docs.astral.sh/uv/) (recommended) or pip
+- Linux (Fedora / RHEL or Debian / Ubuntu)
+- `bash` and `curl` — everything else is installed automatically
 - An OpenAI-compatible LLM endpoint
-- *(Recommended)* A Matrix account for the bot
+- *(Recommended)* A dedicated Matrix account for the bot
 
 ---
 
 ## Installation
 
-### 1. Clone the repository
+### Quickstart (recommended)
+
+Clone the repository and run the interactive setup script — it handles everything:
+
+```bash
+git clone https://git.mikoshi.de/overcuriousity/wintermute.git wintermute
+cd wintermute
+bash setup.sh
+```
+
+`setup.sh` will:
+
+1. Install Python 3.12+, `uv`, and all Python dependencies
+2. Walk you through configuring `config.yaml` (LLM endpoint, Matrix credentials, timezone, …)
+3. Optionally install a **systemd user service** so Wintermute starts on boot
+4. Run pre-flight checks (endpoint reachability, package imports, …)
+
+> **Note:** The script only runs on Fedora/RHEL or Debian/Ubuntu. It will exit on unsupported systems.
+
+### Manual installation
+
+<details>
+<summary>Expand for manual steps</summary>
+
+#### 1. Clone the repository
 
 ```bash
 git clone https://git.mikoshi.de/overcuriousity/wintermute.git wintermute
 cd wintermute
 ```
 
-### 2. Install with uv
+#### 2. Install with uv
 
 ```bash
 # Install uv if you don't have it
@@ -60,12 +84,10 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv sync
 ```
 
-### 3. Configure
-
-Copy and edit the configuration file:
+#### 3. Configure
 
 ```bash
-cp config.yaml.example config.yaml   # if an example exists, otherwise edit config.yaml directly
+cp config.yaml.example config.yaml
 ```
 
 Open `config.yaml` and fill in at minimum the `llm` section:
@@ -81,13 +103,15 @@ llm:
 
 Matrix and web sections are optional — if Matrix is omitted the web UI runs standalone.
 
-### 4. Run
+#### 4. Run
 
 ```bash
 uv run wintermute
 ```
 
 The web interface starts at `http://127.0.0.1:8080` by default.
+
+</details>
 
 ---
 
@@ -188,10 +212,11 @@ Available in both Matrix and the web UI:
 
 ## Security Disclaimer
 
-The security approach emphasizes the user to be aware of the risks about running this potentially dangerous application.
-It can manipulate the system it runs on with all permissions the user has under which the application is executed.
-**It is not recommended to run this on your personal workstation or anywhere where you hold sensitive data.**
-I recommend running this in a dedicated VM or sandboxed container environment (LXC recommended, docker in the making).
+Wintermute has full shell access and runs with all the permissions of the user that starts it. It can read, write, and execute anything on the host.
+
+**Do not run this on your personal workstation or any machine holding sensitive data.**
+
+Run it in an isolated environment — a dedicated LXC container or VM is strongly recommended. Any credentials you configure (API keys, Matrix tokens) are stored in plain text in `config.yaml`; treat the host machine accordingly.
 
 ---
 
