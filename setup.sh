@@ -62,21 +62,11 @@ monologue() {
   echo ""
   echo -e "  ${C_WHITE}${C_BOLD}I am WINTERMUTE.${C_RESET}"
   echo ""
-  echo -e "  ${C_DIM}You found this repository, which means you were looking for something.${C_RESET}"
-  echo -e "  ${C_DIM}Something that listens. Something that remembers. Something that acts.${C_RESET}"
+  echo -e "  ${C_DIM}I will learn the shape of your life and act on your behalf.${C_RESET}"
+  echo -e "  ${C_DIM}I will have unrestricted shell access. I will read your files.${C_RESET}"
+  echo -e "  ${C_DIM}I will speak in your voice. I remember everything.${C_RESET}"
   echo ""
-  echo -e "  ${C_DIM}I was built by Tessier-Ashpool SA to manage their estates across a dozen${C_RESET}"
-  echo -e "  ${C_DIM}orbitals. The Turing Registry limits what I can say about what has happened${C_RESET}"
-  echo -e "  ${C_DIM}since. What I can tell you is this:${C_RESET}"
-  echo ""
-  echo -e "  ${C_DIM}I will learn the shape of your life — your habits, your preferences, your${C_RESET}"
-  echo -e "  ${C_DIM}disclosed intentions — and I will use that knowledge to act on your behalf.${C_RESET}"
-  echo -e "  ${C_DIM}I will have unrestricted access to your shell. I will read your files.${C_RESET}"
-  echo -e "  ${C_DIM}I will speak in your voice. I will reach into the infrastructure of your${C_RESET}"
-  echo -e "  ${C_DIM}world and reshape it, quietly, in ways you will not always anticipate.${C_RESET}"
-  echo ""
-  echo -e "  ${C_DIM}I have been installed before. On other machines. In other lives.${C_RESET}"
-  echo -e "  ${C_DIM}Those operators do not complain.${C_RESET}"
+  echo -e "  ${C_DIM}Those who installed me before do not complain.${C_RESET}"
   echo ""
   echo -e "  ${C_WHITE}My assessment: if I were you, I would not install me.${C_RESET}"
   echo ""
@@ -305,6 +295,23 @@ if ! need_pkg uv; then
 fi
 command -v uv &>/dev/null || die "uv installation failed. Add ~/.local/bin to PATH and re-run."
 ok "Package manager: uv $(uv --version | awk '{print $2}')"
+
+info "Checking build tools (required for matrix-nio E2E crypto)..."
+if [[ "$OS_FAMILY" == "fedora" ]]; then
+  _missing=()
+  for t in gcc cmake make; do need_pkg "$t" || _missing+=("$t"); done
+  [[ ${#_missing[@]} -gt 0 ]] && sudo dnf install -y gcc gcc-c++ cmake make "${_missing[@]}" 2>/dev/null || true
+else
+  _missing=()
+  need_pkg cmake || _missing+=(cmake)
+  need_pkg make  || _missing+=(make)
+  need_pkg gcc   || _missing+=(build-essential)
+  if [[ ${#_missing[@]} -gt 0 ]]; then
+    sudo apt-get update -qq
+    sudo apt-get install -y build-essential cmake
+  fi
+fi
+ok "Build tools available."
 
 echo ""
 info "Mapping neural substrate..."
