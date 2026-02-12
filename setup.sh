@@ -297,21 +297,18 @@ command -v uv &>/dev/null || die "uv installation failed. Add ~/.local/bin to PA
 ok "Package manager: uv $(uv --version | awk '{print $2}')"
 
 info "Checking build tools (required for matrix-nio E2E crypto)..."
+_pyminver=$("$PYTHON" -c "import sys; print('%d.%d' % sys.version_info[:2])")
 if [[ "$OS_FAMILY" == "fedora" ]]; then
-  _missing=()
-  for t in gcc cmake make; do need_pkg "$t" || _missing+=("$t"); done
-  [[ ${#_missing[@]} -gt 0 ]] && sudo dnf install -y gcc gcc-c++ cmake make "${_missing[@]}" 2>/dev/null || true
+  sudo dnf install -y gcc gcc-c++ cmake make \
+    "python${_pyminver}-devel" 2>/dev/null || \
+    sudo dnf install -y python3-devel 2>/dev/null || true
 else
-  _missing=()
-  need_pkg cmake || _missing+=(cmake)
-  need_pkg make  || _missing+=(make)
-  need_pkg gcc   || _missing+=(build-essential)
-  if [[ ${#_missing[@]} -gt 0 ]]; then
-    sudo apt-get update -qq
-    sudo apt-get install -y build-essential cmake
-  fi
+  sudo apt-get update -qq
+  sudo apt-get install -y build-essential cmake \
+    "python${_pyminver}-dev" 2>/dev/null || \
+    sudo apt-get install -y python3-dev 2>/dev/null || true
 fi
-ok "Build tools available."
+ok "Build tools and Python headers available."
 
 echo ""
 info "Mapping neural substrate..."
