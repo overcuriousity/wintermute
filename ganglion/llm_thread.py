@@ -235,7 +235,7 @@ class LLMThread:
                         inputs = {}
                     result = tool_module.execute_tool(tc.function.name, inputs,
                                                      thread_id=thread_id,
-                                                     in_sub_session=False)
+                                                     nesting_depth=0)
                     logger.debug("Tool %s -> %s", tc.function.name, result[:200])
                     full_messages.append({
                         "role":         "tool",

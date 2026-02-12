@@ -4,19 +4,36 @@ Tool definitions and execution for the AI assistant.
 Tools are expressed as OpenAI-compatible function-calling schemas so they work
 with any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI, etc.).
 The dispatcher ``execute_tool`` is the single entry point used by the LLM thread.
+
+Tool categories
+---------------
+  "execution"     – shell, file I/O (available to all sub-session modes)
+  "research"      – web search, URL fetching (available to all sub-session modes)
+  "orchestration" – memory, reminders, skills, sub-session spawning (main agent
+                    and "full"-mode sub-sessions only)
 """
 
 import json
 import logging
+import os
 import subprocess
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Optional
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 from ganglion import prompt_assembler
 
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data")
+
+SEARXNG_URL = os.environ.get("GANGLION_SEARXNG_URL", "http://127.0.0.1:8888")
+
+# Maximum nesting depth for sub-session spawning.
+# 0 = main agent, 1 = sub-session, 2 = sub-sub-session (max).
+MAX_NESTING_DEPTH = 2
 
 # ---------------------------------------------------------------------------
 # OpenAI-compatible tool schemas
@@ -65,13 +82,22 @@ TOOL_SCHEMAS = [
                 },
                 "system_prompt_mode": {
                     "type": "string",
-                    "enum": ["full", "base_only", "none"],
+                    "enum": ["minimal", "full", "base_only", "none"],
                     "description": (
                         "How much of the system prompt to give the worker. "
-                        "'base_only' (default) — core instructions only, fastest and cheapest. "
+                        "'minimal' (default) — lightweight execution agent, fastest and cheapest. "
+                        "'base_only' — core instructions only. "
                         "'full' — includes MEMORIES, HEARTBEATS, and SKILLS; use when the "
                         "worker needs full user context. "
                         "'none' — bare tool-use loop, for purely mechanical tasks."
+                    ),
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": (
+                        "Maximum wall-clock seconds the worker may run before being stopped. "
+                        "Defaults to 300. Use a higher value for tasks known to be slow "
+                        "(e.g. large installations, long web scrapes)."
                     ),
                 },
             },
@@ -243,7 +269,89 @@ TOOL_SCHEMAS = [
         "Return all reminders from the reminder registry.",
         {"type": "object", "properties": {}},
     ),
+    _fn(
+        "search_web",
+        (
+            "Search the web using the local SearXNG instance. Returns a list of "
+            "results with title, URL, and snippet. Use this for factual queries, "
+            "current events, documentation lookups, etc."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query.",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of results to return. Defaults to 5.",
+                },
+            },
+            "required": ["query"],
+        },
+    ),
+    _fn(
+        "fetch_url",
+        (
+            "Fetch the content of a web page and return it as plain text. "
+            "HTML is stripped automatically. Use this to read documentation, "
+            "articles, or any web resource."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to fetch.",
+                },
+                "max_chars": {
+                    "type": "integer",
+                    "description": (
+                        "Maximum characters of content to return. "
+                        "Defaults to 20000. Use a lower value for summaries."
+                    ),
+                },
+            },
+            "required": ["url"],
+        },
+    ),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Tool categories — controls which tools sub-sessions receive
+# ---------------------------------------------------------------------------
+
+TOOL_CATEGORIES: dict[str, str] = {
+    "execute_shell":      "execution",
+    "read_file":          "execution",
+    "write_file":         "execution",
+    "search_web":         "research",
+    "fetch_url":          "research",
+    "spawn_sub_session":  "orchestration",
+    "set_reminder":       "orchestration",
+    "update_memories":    "orchestration",
+    "update_heartbeats":  "orchestration",
+    "add_skill":          "orchestration",
+    "list_reminders":     "orchestration",
+}
+
+
+def get_tool_schemas(categories: set[str] | None = None) -> list[dict]:
+    """Return tool schemas filtered by category.
+
+    If *categories* is None, return all schemas (used by the main agent).
+    Otherwise return only schemas whose tool name maps to one of the
+    requested categories.
+    """
+    if categories is None:
+        return TOOL_SCHEMAS
+    return [
+        schema for schema in TOOL_SCHEMAS
+        if TOOL_CATEGORIES.get(schema["function"]["name"]) in categories
+    ]
+
 
 # ---------------------------------------------------------------------------
 # Tool implementations
@@ -269,19 +377,32 @@ def register_sub_session_manager(fn) -> None:
 
 
 def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
-                            in_sub_session: bool = False, **_kw) -> str:
-    if in_sub_session:
-        return json.dumps({"error": "spawn_sub_session cannot be called from within a sub-session."})
+                            nesting_depth: int = 0, **_kw) -> str:
+    if nesting_depth >= MAX_NESTING_DEPTH:
+        return json.dumps({
+            "error": (
+                f"Maximum nesting depth ({MAX_NESTING_DEPTH}) reached. "
+                "Cannot spawn further sub-sessions."
+            )
+        })
     if _sub_session_spawn is None:
         return json.dumps({"error": "Sub-session manager not ready yet."})
     try:
-        session_id = _sub_session_spawn(
+        kwargs = dict(
             objective=inputs["objective"],
             context_blobs=inputs.get("context_blobs") or [],
             parent_thread_id=thread_id,
-            system_prompt_mode=inputs.get("system_prompt_mode", "base_only"),
+            system_prompt_mode=inputs.get("system_prompt_mode", "minimal"),
+            nesting_depth=nesting_depth + 1,
         )
-        return json.dumps({"status": "started", "session_id": session_id})
+        if "timeout" in inputs:
+            kwargs["timeout"] = int(inputs["timeout"])
+        session_id = _sub_session_spawn(**kwargs)
+        return json.dumps({
+            "status": "started",
+            "session_id": session_id,
+            "hint": "Acknowledge the background task to the user. Avoid heavy shell work yourself this turn.",
+        })
     except Exception as exc:  # noqa: BLE001
         logger.exception("spawn_sub_session failed")
         return json.dumps({"error": str(exc)})
@@ -383,6 +504,159 @@ def _tool_list_reminders(_inputs: dict, **_kw) -> str:
 
 
 # ---------------------------------------------------------------------------
+# HTML-to-text helper (stdlib only, no extra dependencies)
+# ---------------------------------------------------------------------------
+
+class _HTMLTextExtractor(HTMLParser):
+    """Minimal HTML-to-text converter that strips tags and scripts."""
+
+    _IGNORE_TAGS = frozenset({"script", "style", "noscript", "svg", "head"})
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._pieces: list[str] = []
+        self._ignore_depth = 0
+
+    def handle_starttag(self, tag: str, _attrs: list) -> None:
+        if tag in self._IGNORE_TAGS:
+            self._ignore_depth += 1
+        elif tag in ("br", "p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"):
+            self._pieces.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._IGNORE_TAGS:
+            self._ignore_depth = max(0, self._ignore_depth - 1)
+
+    def handle_data(self, data: str) -> None:
+        if self._ignore_depth == 0:
+            self._pieces.append(data)
+
+    def get_text(self) -> str:
+        import re
+        text = "".join(self._pieces)
+        # Collapse runs of whitespace but preserve paragraph breaks.
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+
+def _html_to_text(html: str) -> str:
+    """Convert HTML to readable plain text."""
+    parser = _HTMLTextExtractor()
+    parser.feed(html)
+    return parser.get_text()
+
+
+# ---------------------------------------------------------------------------
+# Research tool implementations
+# ---------------------------------------------------------------------------
+
+def _tool_search_web(inputs: dict, **_kw) -> str:
+    import urllib.parse
+    query = inputs["query"]
+    max_results = int(inputs.get("max_results", 5))
+    logger.info("search_web: %s", query)
+
+    # --- Try SearXNG first ---
+    try:
+        params = urllib.parse.urlencode({"q": query, "format": "json", "categories": "general"})
+        req = Request(f"{SEARXNG_URL}/search?{params}", headers={"User-Agent": "ganglion/0.1"})
+        with urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        results = [
+            {"title": item.get("title", ""), "url": item.get("url", ""), "snippet": item.get("content", "")}
+            for item in data.get("results", [])[:max_results]
+        ]
+        return json.dumps({"query": query, "source": "searxng", "results": results, "count": len(results)})
+    except URLError as exc:
+        reason = str(exc.reason) if hasattr(exc, "reason") else str(exc)
+        if not any(s in reason for s in ("Connection refused", "No route to host", "timed out")):
+            return json.dumps({"error": f"SearXNG request failed: {reason}"})
+        logger.warning("SearXNG unreachable (%s), falling back to curl", reason)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("SearXNG error (%s), falling back to curl", exc)
+
+    # --- Fallback: DuckDuckGo Instant Answer API via curl (no auth required) ---
+    try:
+        safe_q = urllib.parse.quote_plus(query)
+        proc = subprocess.run(
+            f'curl -s --max-time 15 -A "ganglion/0.1" '
+            f'"https://api.duckduckgo.com/?q={safe_q}&format=json&no_html=1&skip_disambig=1"',
+            shell=True, capture_output=True, text=True, timeout=20,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            raise RuntimeError(f"curl exited {proc.returncode}: {proc.stderr[:200]}")
+        data = json.loads(proc.stdout)
+        results = []
+        if data.get("AbstractText") and data.get("AbstractURL"):
+            results.append({"title": data.get("Heading", query), "url": data["AbstractURL"], "snippet": data["AbstractText"]})
+        for topic in data.get("RelatedTopics", []):
+            if len(results) >= max_results:
+                break
+            if "FirstURL" in topic:
+                results.append({"title": topic.get("Text", "")[:80], "url": topic["FirstURL"], "snippet": topic.get("Text", "")})
+            elif "Topics" in topic:
+                for sub in topic["Topics"]:
+                    if len(results) >= max_results:
+                        break
+                    if "FirstURL" in sub:
+                        results.append({"title": sub.get("Text", "")[:80], "url": sub["FirstURL"], "snippet": sub.get("Text", "")})
+        return json.dumps({
+            "query": query, "source": "duckduckgo_fallback",
+            "warning": "SearXNG unavailable. Start it with: cd ~/searxng-test && ./start-searxng.sh",
+            "results": results[:max_results], "count": len(results[:max_results]),
+        })
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("search_web fallback failed")
+        return json.dumps({"error": f"Both SearXNG and curl fallback failed: {exc}"})
+
+
+def _tool_fetch_url(inputs: dict, **_kw) -> str:
+    url = inputs["url"]
+    max_chars = int(inputs.get("max_chars", 20000))
+    logger.info("fetch_url: %s", url)
+
+    try:
+        req = Request(url, headers={
+            "User-Agent": (
+                "Mozilla/5.0 (compatible; ganglion/0.1; "
+                "+https://github.com/ganglion)"
+            ),
+            "Accept": "text/html,application/xhtml+xml,text/plain,*/*",
+        })
+        with urlopen(req, timeout=20) as resp:
+            content_type = resp.headers.get("Content-Type", "")
+            raw = resp.read()
+
+            # Detect encoding from Content-Type header, fall back to utf-8
+            charset = "utf-8"
+            if "charset=" in content_type:
+                charset = content_type.split("charset=")[-1].split(";")[0].strip()
+            body = raw.decode(charset, errors="replace")
+
+    except URLError as exc:
+        reason = str(exc.reason) if hasattr(exc, "reason") else str(exc)
+        return json.dumps({"error": f"Failed to fetch URL: {reason}"})
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("fetch_url failed")
+        return json.dumps({"error": str(exc)})
+
+    # Strip HTML if it looks like an HTML document.
+    if "html" in content_type or body.lstrip()[:15].lower().startswith(("<!doctype", "<html")):
+        body = _html_to_text(body)
+
+    if len(body) > max_chars:
+        body = body[:max_chars] + f"\n\n[... truncated at {max_chars} chars]"
+
+    return json.dumps({
+        "url": url,
+        "content_type": content_type,
+        "length": len(body),
+        "content": body,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -396,14 +670,16 @@ _DISPATCH: dict[str, Any] = {
     "read_file":          _tool_read_file,
     "write_file":         _tool_write_file,
     "list_reminders":     _tool_list_reminders,
+    "search_web":         _tool_search_web,
+    "fetch_url":          _tool_fetch_url,
 }
 
 
 def execute_tool(name: str, inputs: dict, thread_id: Optional[str] = None,
-                 in_sub_session: bool = False) -> str:
+                 nesting_depth: int = 0) -> str:
     """Execute a tool by name and return its JSON-string result."""
     fn = _DISPATCH.get(name)
     if fn is None:
         return json.dumps({"error": f"Unknown tool: {name}"})
     logger.debug("Executing tool '%s' with inputs: %s", name, inputs)
-    return fn(inputs, thread_id=thread_id, in_sub_session=in_sub_session)
+    return fn(inputs, thread_id=thread_id, nesting_depth=nesting_depth)

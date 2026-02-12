@@ -19,9 +19,29 @@ Lifecycle
 
 System prompt modes
 -------------------
+  "minimal"   – lightweight execution agent (default)
   "full"      – full assembled prompt (BASE + MEMORIES + HEARTBEATS + SKILLS)
-  "base_only" – BASE_PROMPT.txt only  (default for most worker tasks)
+  "base_only" – BASE_PROMPT.txt only
   "none"      – no system prompt (bare tool-use loop, e.g. pure script runner)
+
+Tool filtering by mode
+----------------------
+  "minimal", "base_only", "none" → execution + research tools only
+  "full"                          → all tools including orchestration
+
+Nesting
+-------
+  "full"-mode workers may spawn sub-sessions up to MAX_NESTING_DEPTH (2).
+  Other modes have no spawn_sub_session in their tool set at all.
+
+Continuation on timeout
+-----------------------
+When a worker times out, its full message history is stored on the state
+object (state.messages is updated after every tool call, not just at the
+end).  The timeout handler auto-spawns a continuation sub-session that
+receives the prior messages and appends a resumption note, so the new worker
+picks up exactly where the old one left off.  Up to MAX_CONTINUATION_DEPTH
+hops are allowed before the chain gives up and reports partial progress.
 """
 
 import asyncio
@@ -39,7 +59,16 @@ from ganglion import tools as tool_module
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT = 300  # seconds
+DEFAULT_TIMEOUT = 300       # seconds per hop
+MAX_CONTINUATION_DEPTH = 3  # max auto-continuation hops before giving up
+
+# Tool categories available per system_prompt_mode.
+_MODE_TOOL_CATEGORIES: dict[str, set[str]] = {
+    "minimal":   {"execution", "research"},
+    "base_only": {"execution", "research"},
+    "none":      {"execution", "research"},
+    "full":      {"execution", "research", "orchestration"},
+}
 
 
 # ---------------------------------------------------------------------------
@@ -51,12 +80,19 @@ class SubSessionState:
     session_id: str
     objective: str
     parent_thread_id: Optional[str]      # None = fire-and-forget
-    system_prompt_mode: str              # "full" | "base_only" | "none"
+    system_prompt_mode: str              # "full" | "base_only" | "minimal" | "none"
     status: str                          # "running" | "completed" | "failed" | "timeout"
     created_at: str                      # ISO-8601
+    nesting_depth: int = 1               # 1 = direct child, 2 = grandchild
     completed_at: Optional[str] = None
     result: Optional[str] = None
     error: Optional[str] = None
+    tool_calls_log: list = field(default_factory=list)  # [(tool_name, summary), ...]
+    # Full in-flight message history — updated after every tool call so it
+    # survives asyncio.wait_for cancellation and can be handed to a continuation.
+    messages: list = field(default_factory=list)
+    continuation_depth: int = 0          # how many hops deep this session is
+    continued_from: Optional[str] = None # session_id of predecessor, if any
 
 
 # ---------------------------------------------------------------------------
@@ -96,14 +132,21 @@ class SubSessionManager:
         objective: str,
         context_blobs: Optional[list[str]] = None,
         parent_thread_id: Optional[str] = None,
-        system_prompt_mode: str = "base_only",
+        system_prompt_mode: str = "minimal",
         timeout: int = DEFAULT_TIMEOUT,
+        nesting_depth: int = 1,
+        prior_messages: Optional[list[dict]] = None,
+        continuation_depth: int = 0,
+        continued_from: Optional[str] = None,
     ) -> str:
         """
         Start a worker sub-session and return its session_id immediately.
 
         The caller (orchestrator) is not blocked.  Results are delivered via
         enqueue_system_event when the worker finishes.
+
+        Pass prior_messages to resume from a previous session's message history
+        (used internally by the auto-continuation logic on timeout).
         """
         session_id = f"sub_{uuid.uuid4().hex[:8]}"
         state = SubSessionState(
@@ -113,6 +156,10 @@ class SubSessionManager:
             system_prompt_mode=system_prompt_mode,
             status="running",
             created_at=datetime.now(timezone.utc).isoformat(),
+            nesting_depth=nesting_depth,
+            messages=list(prior_messages) if prior_messages else [],
+            continuation_depth=continuation_depth,
+            continued_from=continued_from,
         )
         self._states[session_id] = state
 
@@ -124,8 +171,9 @@ class SubSessionManager:
         task.add_done_callback(lambda t: self._tasks.pop(session_id, None))
 
         logger.info(
-            "Sub-session %s spawned (parent=%s mode=%s timeout=%ds)",
+            "Sub-session %s spawned (parent=%s mode=%s timeout=%ds depth=%d nest=%d)",
             session_id, parent_thread_id, system_prompt_mode, timeout,
+            continuation_depth, nesting_depth,
         )
         return session_id
 
@@ -147,7 +195,7 @@ class SubSessionManager:
     def list_active(self) -> list[dict]:
         """Return serialisable state dicts for all non-completed sub-sessions."""
         return [
-            {k: v for k, v in state.__dict__.items()}
+            self._serialise(state)
             for state in self._states.values()
             if state.status == "running"
         ]
@@ -155,10 +203,15 @@ class SubSessionManager:
     def list_all(self) -> list[dict]:
         """Return serialisable state dicts for all known sub-sessions, newest first."""
         return sorted(
-            [{k: v for k, v in state.__dict__.items()} for state in self._states.values()],
+            [self._serialise(state) for state in self._states.values()],
             key=lambda s: s["created_at"],
             reverse=True,
         )
+
+    @staticmethod
+    def _serialise(state: SubSessionState) -> dict:
+        """Return state as a dict, omitting the (potentially large) messages list."""
+        return {k: v for k, v in state.__dict__.items() if k != "messages"}
 
     # ------------------------------------------------------------------
     # Worker execution
@@ -184,8 +237,62 @@ class SubSessionManager:
         except asyncio.TimeoutError:
             state.status = "timeout"
             state.completed_at = datetime.now(timezone.utc).isoformat()
-            msg = f"[SUB-SESSION {state.session_id} TIMEOUT] Task exceeded {timeout}s and was cancelled."
-            logger.warning("Sub-session %s timed out after %ds", state.session_id, timeout)
+            logger.warning(
+                "Sub-session %s timed out after %ds (depth=%d, tool_calls=%d)",
+                state.session_id, timeout, state.continuation_depth,
+                len(state.tool_calls_log),
+            )
+
+            if state.continuation_depth < MAX_CONTINUATION_DEPTH and state.messages:
+                # Auto-continue: spawn a new worker with the full message history.
+                # It will append a resumption note and pick up where we left off.
+                cont_id = self.spawn(
+                    objective=state.objective,
+                    context_blobs=[],
+                    parent_thread_id=state.parent_thread_id,
+                    system_prompt_mode=state.system_prompt_mode,
+                    timeout=timeout,
+                    nesting_depth=state.nesting_depth,
+                    prior_messages=state.messages,
+                    continuation_depth=state.continuation_depth + 1,
+                    continued_from=state.session_id,
+                )
+                msg = (
+                    f"[SUB-SESSION {state.session_id} TIMEOUT → CONTINUING as {cont_id}]\n"
+                    f"Exceeded {timeout}s after {len(state.tool_calls_log)} tool call(s). "
+                    f"Automatically resuming from where it left off in {cont_id} "
+                    f"(hop {state.continuation_depth + 1}/{MAX_CONTINUATION_DEPTH})."
+                )
+            else:
+                # Terminal timeout — report what was accomplished across the chain.
+                if state.continuation_depth > 0:
+                    chain_note = (
+                        f"Task chain exhausted all {MAX_CONTINUATION_DEPTH} continuation(s) "
+                        f"and still did not complete. "
+                    )
+                else:
+                    chain_note = ""
+
+                if state.tool_calls_log:
+                    steps = "\n".join(
+                        f"  {i+1}. {name}: {summary}"
+                        for i, (name, summary) in enumerate(state.tool_calls_log)
+                    )
+                    msg = (
+                        f"[SUB-SESSION {state.session_id} TIMEOUT — GIVING UP]\n"
+                        f"{chain_note}"
+                        f"Last session completed {len(state.tool_calls_log)} tool call(s) "
+                        f"in {timeout}s:\n{steps}\n\n"
+                        f"The task may need to be broken into smaller steps."
+                    )
+                else:
+                    msg = (
+                        f"[SUB-SESSION {state.session_id} TIMEOUT — GIVING UP]\n"
+                        f"{chain_note}"
+                        f"Timed out after {timeout}s with no tool calls completed. "
+                        f"The worker may have been stuck waiting for the first LLM response. "
+                        f"Consider retrying or checking model availability."
+                    )
             await self._report(state, msg)
 
         except asyncio.CancelledError:
@@ -219,32 +326,53 @@ class SubSessionManager:
         Run a full tool-use inference loop in isolation.
 
         The worker has its own in-memory message list — nothing is read from
-        or written to the conversation DB.  It has access to all tools except
-        spawn_sub_session (depth limit of 1).
-        """
-        system_prompt = self._build_system_prompt(
-            state.system_prompt_mode, state.objective, context_blobs
-        )
+        or written to the conversation DB.  Tool schemas are filtered by the
+        session's system_prompt_mode (e.g. "minimal" workers only get
+        execution + research tools).
 
-        # Seed the conversation with the objective as the first user message.
-        messages: list[dict] = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": state.objective},
-        ]
+        state.messages is used directly (not a local copy) so that the timeout
+        handler always has access to the latest message history for continuation.
+        """
+        # Build the tool set for this worker based on its mode.
+        categories = _MODE_TOOL_CATEGORIES.get(
+            state.system_prompt_mode, {"execution", "research"}
+        )
+        tool_schemas = tool_module.get_tool_schemas(categories)
+
+        if state.messages:
+            # Resuming from a prior timed-out session.  The full prior history
+            # is already in state.messages; just append a resumption note.
+            state.messages.append({
+                "role":    "user",
+                "content": (
+                    f"You were interrupted by a timeout "
+                    f"(this is continuation {state.continuation_depth}). "
+                    "Continue the task from exactly where you left off."
+                ),
+            })
+        else:
+            # Fresh start — build the initial conversation.
+            system_prompt = self._build_system_prompt(
+                state.system_prompt_mode, state.objective, context_blobs
+            )
+            state.messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": state.objective},
+            ]
 
         while True:
             response = await self._client.chat.completions.create(
                 model=self._cfg.model,
                 max_tokens=self._cfg.max_tokens,
-                tools=tool_module.TOOL_SCHEMAS,
+                tools=tool_schemas,
                 tool_choice="auto",
-                messages=messages,
+                messages=state.messages,
             )
 
             choice = response.choices[0]
 
             if choice.finish_reason == "tool_calls" and choice.message.tool_calls:
-                messages.append(choice.message)
+                state.messages.append(choice.message)
 
                 for tc in choice.message.tool_calls:
                     try:
@@ -256,11 +384,15 @@ class SubSessionManager:
                         tc.function.name,
                         inputs,
                         thread_id=state.session_id,
-                        in_sub_session=True,          # blocks recursive spawning
+                        nesting_depth=state.nesting_depth,
                     )
+                    # Track progress on state so the timeout handler can report
+                    # and continue from it.
+                    result_preview = result[:120].replace("\n", " ")
+                    state.tool_calls_log.append((tc.function.name, result_preview))
                     logger.debug("Sub-session %s tool %s -> %s",
                                  state.session_id, tc.function.name, result[:200])
-                    messages.append({
+                    state.messages.append({
                         "role":         "tool",
                         "tool_call_id": tc.id,
                         "content":      result,
@@ -281,9 +413,15 @@ class SubSessionManager:
     ) -> str:
         if mode == "none":
             base = ""
+        elif mode == "minimal":
+            base = (
+                "You are a background worker executing a specific task. "
+                "Use the available tools to complete the objective. "
+                "Be concise and report only what was done and any important results."
+            )
         elif mode == "full":
             base = prompt_assembler.assemble()
-        else:  # "base_only" (default)
+        else:  # "base_only"
             raw = prompt_assembler._read(prompt_assembler.BASE_PROMPT_FILE)
             base = f"# Core Instructions\n\n{raw}" if raw else ""
 
