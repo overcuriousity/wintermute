@@ -187,7 +187,7 @@ async def main() -> None:
         timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
         dreaming=dreaming_cfg,
     )
-    heartbeat_interval = cfg.get("heartbeat", {}).get("review_interval_minutes", 60)
+    pulse_interval = cfg.get("pulse", {}).get("review_interval_minutes", 60)
 
     # --- Optional interfaces ---
     matrix_cfg_raw: Optional[dict] = cfg.get("matrix")
@@ -274,8 +274,8 @@ async def main() -> None:
         web_iface._matrix = matrix
         web_iface._llm_cfg = llm_cfg
 
-    heartbeat_loop = PulseLoop(
-        interval_minutes=heartbeat_interval,
+    pulse_loop = PulseLoop(
+        interval_minutes=pulse_interval,
         llm_enqueue_fn=llm.enqueue_user_message,
         broadcast_fn=broadcast,
         sub_session_manager=sub_sessions,
@@ -289,7 +289,7 @@ async def main() -> None:
 
     tasks = [
         asyncio.create_task(llm.run(),            name="llm"),
-        asyncio.create_task(heartbeat_loop.run(), name="heartbeat"),
+        asyncio.create_task(pulse_loop.run(), name="pulse"),
     ]
     if matrix:
         tasks.append(asyncio.create_task(matrix.run(), name="matrix"))
@@ -306,7 +306,7 @@ async def main() -> None:
     await shutdown.wait()
     logger.info("Shutdown requested - stopping components gracefully")
 
-    heartbeat_loop.stop()
+    pulse_loop.stop()
     if matrix:
         matrix.stop()
     llm.stop()

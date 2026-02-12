@@ -35,8 +35,8 @@ llm:
 # Compaction fires when history tokens exceed: context_size - max_tokens - 2000 (system overhead).
 # No separate threshold setting is needed; adjust context_size and max_tokens above.
 
-heartbeat:
-  review_interval_minutes: 60             # How often to auto-review pulse.txt
+pulse:
+  review_interval_minutes: 60             # How often to auto-review PULSE.txt
 
 context:
   component_size_limits:
