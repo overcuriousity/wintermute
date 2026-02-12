@@ -22,3 +22,5 @@ build/
 .idea/
 .vscode/
 *.swp
+data/MEMORIES.txt
+=0.7.0

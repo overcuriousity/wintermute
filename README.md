@@ -18,7 +18,18 @@ web sessions, each with its own conversation context.
 
 ## Quick Start
 
-Requires [uv](https://docs.astral.sh/uv/).
+Requires [uv](https://docs.astral.sh/uv/) and **Python 3.12 or newer**.
+
+The `matrix-nio[e2e]` dependency includes a C extension (`python-olm`) that
+requires Python development headers. Install them before running `uv sync`:
+
+```bash
+# Fedora / RHEL
+sudo dnf install python3-devel
+
+# Debian / Ubuntu
+sudo apt install python3-dev
+```
 
 ```bash
 # 1. Install dependencies
@@ -72,14 +83,14 @@ curl -X POST \
 
 The response contains `access_token` and `device_id`.
 
-### 3. Obtain the device ID (recommended)
+### 3. Obtain the device ID (required)
 
-A stable `device_id` prevents Ganglion from creating a new Olm encryption
-session on every restart (which would invalidate existing E2EE sessions in rooms).
+`device_id` is required by matrix-nio's Olm store. Use the value from the
+login response in step 2 — it is returned alongside `access_token`.
 
-- From the login response above: use the `device_id` value.
-- From Element: **Settings → Security & Privacy → Session list** — copy the
-  Session ID of the bot's active session.
+Alternatively, find it in Element after logging in as the bot:
+**Settings → Security & Privacy → Session list** — copy the Session ID of the
+bot's active session.
 
 ### 4. Configure `config.yaml`
 
@@ -118,10 +129,12 @@ Both lists default to empty, which means the bot accepts all users/rooms —
 
 | Symptom | Likely cause |
 |---------|--------------|
+| `uv sync` fails building `python-olm` with `pyconfig.h: No such file or directory` | Python development headers are missing. Install `python3-devel` (Fedora/RHEL) or `python3-dev` (Debian/Ubuntu) and retry. |
 | Bot joins but messages show as undecrypted | The bot's Olm keys were not shared yet; send another message and allow a moment for key exchange, or restart the bot once. |
 | Bot does not join on invite | Sender is not in `allowed_users`, or room is not in `allowed_rooms`. Check logs. |
 | `Initial sync failed` on startup | Wrong `homeserver` URL or expired `access_token`. |
-| New Olm session on every restart | `device_id` is missing or wrong in config. |
+| `matrix.device_id is required` on startup | `device_id` is missing from config. See step 3 above. |
+| New Olm session on every restart | `device_id` is wrong or changed between runs. |
 
 ## Reminder Types
 

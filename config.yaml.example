@@ -3,9 +3,9 @@ matrix:
   homeserver: https://matrix.org          # Your Matrix homeserver URL
   user_id: "@bot:matrix.org"              # Full Matrix user ID of the bot account
   access_token: "YOUR_MATRIX_ACCESS_TOKEN"
-  device_id: ""                           # Optional but recommended: fix the device ID to avoid
-                                          # creating a new Olm session on every restart.
-                                          # Find it in Element: Settings → Security → Session ID.
+  device_id: ""                           # Required. Obtain from the login response (access_token
+                                          # curl command above) or from Element:
+                                          # Settings → Security & Privacy → Session list → Session ID.
   allowed_users:                          # Matrix user IDs allowed to interact
     - "@admin:matrix.org"
   allowed_rooms: []                       # Room ID whitelist (empty = any room if invited by allowed user)

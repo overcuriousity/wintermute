@@ -134,6 +134,12 @@ class MatrixThread:
     # ------------------------------------------------------------------
 
     async def _connect_and_sync(self) -> None:
+        if not self._cfg.device_id:
+            raise ValueError(
+                "matrix.device_id is required. "
+                "Obtain it from the login API response or from Element: "
+                "Settings → Security & Privacy → Session list → Session ID."
+            )
         STORE_DIR.mkdir(parents=True, exist_ok=True)
         client = None
 
@@ -157,6 +163,21 @@ class MatrixThread:
         # Required when bypassing client.login() and setting access_token directly.
         # Note: load_store() is synchronous in matrix-nio.
         client.load_store()
+
+        # Warn if the Olm store's device_id differs from the configured one.
+        # This indicates a mismatch: the access_token belongs to a different device
+        # than the one whose Olm keys are in the store. E2EE and verification will
+        # not work correctly in this state.
+        # When device_id is not configured (empty string), nio assigns one
+        # automatically — that is fine and requires no warning.
+        if self._cfg.device_id and client.device_id != self._cfg.device_id:
+            logger.warning(
+                "Device ID mismatch: config says '%s' but Olm store identifies as '%s'. "
+                "Delete data/matrix_store/ and restart to re-register with the configured device.",
+                self._cfg.device_id, client.device_id,
+            )
+        logger.info("Running as device_id=%s (configured: '%s')",
+                    client.device_id, self._cfg.device_id or "<auto>")
 
         # Register event callbacks
         client.add_event_callback(self._on_message, RoomMessageText)
@@ -186,6 +207,19 @@ class MatrixThread:
                 raise ConnectionError(f"Initial sync failed: {response.message}")
 
             # Query keys for any devices that need it (skip if none pending).
+            if client.users_for_key_query:
+                await client.keys_query()
+
+            # Proactively fetch device keys for the bot's own account and all
+            # allowed users. Without this, nio refuses to create SAS objects for
+            # "unknown devices" if a verification request arrives before the
+            # normal key-query cycle has run.
+            # keys_query() in this version of nio has no parameters — it queries
+            # whatever is in client.olm.users_for_key_query. We add our users
+            # to that set manually before calling it.
+            if client.olm:
+                users_to_prime = {self._cfg.user_id} | set(self._cfg.allowed_users)
+                client.olm.users_for_key_query.update(users_to_prime)
             if client.users_for_key_query:
                 await client.keys_query()
 
@@ -265,13 +299,25 @@ class MatrixThread:
           5. Element sends  m.key.verification.done     (→ UnknownToDeviceEvent, just logged)
 
         Without step 2 the SAS flow never starts and verification silently stalls.
+
+        Verification requests from the bot's own account (self._cfg.user_id) are also
+        accepted — this covers cross-device self-verification flows where Element routes
+        the request/start via the bot's own Matrix account.
         """
         content = event.source.get("content", {})
         tx_id = content.get("transaction_id")
 
         if event.type == "m.key.verification.request":
-            if not self._is_user_allowed(event.sender):
+            if not self._is_user_allowed(event.sender) and event.sender != self._cfg.user_id:
                 return
+            # Fetch device keys for the sender now, before the subsequent
+            # m.key.verification.start arrives. nio will refuse to create a SAS
+            # object for a device it hasn't seen, so we must ensure the device
+            # store is populated before that event is processed.
+            if self._client.olm:
+                self._client.olm.users_for_key_query.add(event.sender)
+            if self._client.users_for_key_query:
+                await self._client.keys_query()
             from_device = content.get("from_device", "")
             logger.info(
                 "SAS verification request from %s (device=%s tx=%s) — sending ready",
@@ -308,17 +354,30 @@ class MatrixThread:
             logger.error("to-device %s error: %s", event_type, exc)
 
     async def _on_verification_start(self, event: KeyVerificationStart) -> None:
-        """Auto-accept SAS key verification requests from allowed users."""
-        if not self._is_user_allowed(event.sender):
+        """Auto-accept SAS key verification requests from allowed users.
+
+        Also accepts starts from the bot's own account (self._cfg.user_id) to
+        support cross-device self-verification flows where Element routes the
+        start event via the bot's own Matrix account rather than the initiating
+        user's account.
+        """
+        sender_ok = self._is_user_allowed(event.sender) or event.sender == self._cfg.user_id
+        if not sender_ok:
             logger.warning("Ignoring verification request from non-allowed user %s", event.sender)
             await self._client.cancel_key_verification(event.transaction_id)
             return
         logger.info("SAS verification requested by %s (tx=%s) — accepting",
                     event.sender, event.transaction_id)
-        response = await self._client.accept_key_verification(event.transaction_id)
-        if isinstance(response, ToDeviceError):
-            logger.error("Failed to accept verification (tx=%s): %s",
-                         event.transaction_id, response.message)
+        try:
+            response = await self._client.accept_key_verification(event.transaction_id)
+            if isinstance(response, ToDeviceError):
+                logger.error("Failed to accept verification (tx=%s): %s",
+                             event.transaction_id, response.message)
+        except Exception as exc:  # noqa: BLE001
+            # Typically "transaction does not exist" — happens when nio didn't
+            # recognise the device during the start event (device store stale).
+            logger.error("accept_key_verification failed (tx=%s): %s",
+                         event.transaction_id, exc)
 
     async def _on_verification_key(self, event: KeyVerificationKey) -> None:
         """Log the SAS emojis and auto-confirm."""
