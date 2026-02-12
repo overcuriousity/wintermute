@@ -24,3 +24,6 @@ build/
 *.swp
 data/MEMORIES.txt
 =0.7.0
+static/*.png
+static/*.jpg
+static/*.webp

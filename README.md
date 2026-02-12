@@ -1,201 +1,295 @@
-# Ganglion – Multi-Interface Personal AI Assistant
+# Wintermute
 
-A Python-based personal AI assistant with persistent memory, reminder scheduling,
-and autonomous tool use. Supports multiple Matrix rooms and multiple independent
-web sessions, each with its own conversation context.
+![Wintermute](static/Gemini_Generated_Image_7cdpwp7cdpwp7cdp.png)
+
+**Wintermute** is a self-hosted personal AI assistant with persistent memory, autonomous background workers, and multi-interface support. It connects to any OpenAI-compatible LLM endpoint and reaches you via Matrix chat or a built-in web UI.
+
+---
+
+## Concept
+
+Most AI chat tools are stateless — every session starts from scratch. Wintermute is built around the opposite idea: the assistant accumulates knowledge about you over time, maintains an active working memory (*Pulse*), and learns reusable procedures as *skills*. Conversations across restarts are summarised and retained. A nightly *dreaming* pass consolidates memories autonomously while you sleep.
+
+For long-running or complex tasks, Wintermute spawns isolated background workers (*sub-sessions*) so the main conversation stays responsive. Workers can themselves spawn further workers for parallelisable tasks, up to a configurable nesting depth.
+
+---
 
 ## Features
 
-- **Multi-thread conversations** – each Matrix room and each browser tab has independent history and context compaction; memories/skills/heartbeats are shared
-- **Persistent memory** – `MEMORIES.txt`, `HEARTBEATS.txt`, and `skills/` survive restarts
-- **Reminder scheduler** – APScheduler with SQLite persistence; thread-bound or system-level reminders; handles missed reminders on restart
-- **Tool-calling AI** – any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI, …) with full tool access (shell, filesystem, scheduling)
-- **Heartbeat reviews** – periodic autonomous reviews run globally and per active thread
-- **Context compaction** – automatic summarisation when a thread's history grows large
-- **Matrix multi-room** – auto-joins rooms on invite from whitelisted users; optional room whitelist
-- **Web interface** – built-in chat UI at `http://localhost:8080`; each browser tab is an isolated session
-- **Graceful shutdown** – SIGTERM/SIGINT handled cleanly
+- **Persistent memory** — `MEMORIES.txt` (long-term facts), `PULSE.txt` (active goals / working memory), and `skills/*.md` (reusable procedures) survive restarts and are injected into every prompt
+- **Multi-interface** — Matrix chat (with E2E encryption) and a browser-based web UI run simultaneously; each room / tab has independent conversation history
+- **Sub-session workers** — long-running tasks are delegated to autonomous background agents that report back when done; the main agent stays responsive during execution; workers auto-resume after timeouts (up to 3 hops)
+- **Tool-filtered workers** — minimal workers receive only execution + research tools; `full`-mode workers get orchestration tools too, keeping context lean
+- **Web search** — `search_web` queries a local SearXNG instance and falls back to DuckDuckGo via `curl` when SearXNG is unavailable; `fetch_url` fetches and strips any web page
+- **Reminders & scheduler** — one-time and recurring reminders with optional AI inference on trigger; per-timezone scheduling
+- **Nightly dreaming** — automatic overnight consolidation of MEMORIES.txt and PULSE.txt via a direct LLM call (no tool loop, no conversation side effects)
+- **Pulse reviews** — periodic autonomous reviews of PULSE.txt; fires globally and per active conversation thread
+- **Context compaction** — when conversation history approaches the model's context window, older messages are summarised and retained as a rolling summary
+- **Debug panel** — `http://localhost:8080/debug` provides a live view of sessions, sub-sessions, scheduled jobs, reminders, and the current system prompt
+- **Any OpenAI-compatible backend** — Ollama, vLLM, LM Studio, OpenAI, or any compatible endpoint
 
-## Quick Start
+---
 
-Requires [uv](https://docs.astral.sh/uv/) and **Python 3.12 or newer**.
+## Requirements
 
-The `matrix-nio[e2e]` dependency includes a C extension (`python-olm`) that
-requires Python development headers. Install them before running `uv sync`:
+- Python ≥ 3.12
+- [uv](https://docs.astral.sh/uv/) (recommended) or pip
+- An OpenAI-compatible LLM endpoint
+- *(Optional)* A Matrix account for the bot
+
+---
+
+## Installation
+
+### 1. Clone the repository
 
 ```bash
-# Fedora / RHEL
-sudo dnf install python3-devel
-
-# Debian / Ubuntu
-sudo apt install python3-dev
+git clone https://git.mikoshi.de/overcuriousity/ganglion.git wintermute
+cd wintermute
 ```
 
+### 2. Install with uv
+
 ```bash
-# 1. Install dependencies
+# Install uv if you don't have it
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create venv and install all dependencies
 uv sync
-
-# 2. Configure
-cp config.yaml.example config.yaml
-$EDITOR config.yaml   # set LLM endpoint and Matrix credentials (see Matrix Setup below)
-
-# 3. Run
-uv run ganglion
-# Open http://127.0.0.1:8080 in your browser
 ```
 
-Both Matrix and the web interface are optional — at least one must be enabled.
+### 3. Configure
 
-## Special Commands (in any Matrix room or web UI tab)
-
-| Command      | Effect                                                        |
-|--------------|---------------------------------------------------------------|
-| `/new`       | Reset conversation for the current room/tab, start fresh     |
-| `/compact`   | Force immediate context compaction for the current room/tab  |
-| `/reminders` | List all scheduled reminders                                 |
-| `/heartbeat` | Manually trigger a heartbeat review                          |
-
-## Matrix Setup (Primary Interface)
-
-Matrix is the recommended primary interface. End-to-end encryption is enabled
-automatically, so the bot works in encrypted rooms without any extra steps.
-
-### 1. Create a bot account
-
-Register a dedicated Matrix account for the bot on any homeserver
-(e.g. [matrix.org](https://matrix.org), or your own Synapse instance).
-You can use Element or any other client for the registration.
-
-### 2. Obtain an access token
-
-Log into the bot account in **Element Web** (app.element.io or your homeserver):
-
-1. **Settings → Help & About → Advanced → Access Token** — copy the token.
-
-Alternatively, use the API directly:
+Copy and edit the configuration file:
 
 ```bash
-curl -X POST \
-  'https://YOUR_HOMESERVER/_matrix/client/v3/login' \
-  -H 'Content-Type: application/json' \
-  -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"botusername"},"password":"YOURPASSWORD"}'
+cp config.yaml.example config.yaml   # if an example exists, otherwise edit config.yaml directly
 ```
 
-The response contains `access_token` and `device_id`.
+Open `config.yaml` and fill in at minimum the `llm` section:
 
-### 3. Obtain the device ID (required)
+```yaml
+llm:
+  base_url: "https://api.openai.com/v1"   # or your local endpoint
+  api_key: "sk-..."
+  model: "gpt-4o"
+  context_size: 128000
+  max_tokens: 4096
+```
 
-`device_id` is required by matrix-nio's Olm store. Use the value from the
-login response in step 2 — it is returned alongside `access_token`.
+Matrix and web sections are optional — if Matrix is omitted the web UI runs standalone.
 
-Alternatively, find it in Element after logging in as the bot:
-**Settings → Security & Privacy → Session list** — copy the Session ID of the
-bot's active session.
+### 4. Run
 
-### 4. Configure `config.yaml`
+```bash
+uv run wintermute
+```
+
+The web interface starts at `http://127.0.0.1:8080` by default.
+
+---
+
+## Matrix Setup
+
+### Create a dedicated Matrix account
+
+Register a new account for the bot on your homeserver (e.g. via Element or the homeserver's registration page). The bot needs its own account — do not reuse your personal one.
+
+### Obtain an access token and device ID
+
+Log in once via curl to retrieve the credentials Wintermute needs:
+
+```bash
+curl -s -X POST \
+  'https://matrix.org/_matrix/client/v3/login' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "type": "m.login.password",
+    "identifier": {
+      "type": "m.id.user",
+      "user": "@your-bot-name:matrix.org"
+    },
+    "password": "your-password",
+    "initial_device_display_name": "Wintermute"
+  }' | python3 -m json.tool
+```
+
+The response contains:
+
+```json
+{
+  "access_token": "mct_...",
+  "device_id": "ABCDEFGHIJ",
+  "user_id": "@your-bot-name:matrix.org",
+  ...
+}
+```
+
+Copy `access_token` and `device_id` into `config.yaml`:
 
 ```yaml
 matrix:
-  homeserver: https://YOUR_HOMESERVER        # e.g. https://matrix.org
-  user_id: "@botusername:YOUR_HOMESERVER"    # full Matrix ID of the bot account
-  access_token: "syt_..."                    # access token from step 2
-  device_id: "ABCDEFGHIJ"                    # session/device ID from step 3
-  allowed_users:                             # Matrix IDs allowed to interact
-    - "@you:YOUR_HOMESERVER"
-  allowed_rooms: []                          # empty = any room invited by allowed_users
+  homeserver: https://matrix.org
+  user_id: "@your-bot-name:matrix.org"
+  access_token: "mct_..."
+  device_id: "ABCDEFGHIJ"
+  allowed_users:
+    - "@you:matrix.org"       # Your personal Matrix ID
+  allowed_rooms: []           # Empty = any room you invite the bot to
 ```
 
-### 5. Invite the bot and start chatting
+### Invite the bot and start chatting
 
-1. Start Ganglion: `uv run ganglion`
-2. In Element (or any Matrix client), open or create a room.
-3. Invite the bot account: **Invite → @botusername:YOUR_HOMESERVER**
-4. The bot auto-joins and is ready to chat immediately.
+1. Start Wintermute: `uv run wintermute`
+2. In Element (or any Matrix client), create a room or open a DM
+3. Invite `@your-bot-name:matrix.org`
+4. The bot joins and responds to messages from `allowed_users`
 
-For an encrypted room (padlock icon), Ganglion handles key exchange
-automatically — no manual steps required.
+**End-to-end encryption** is handled automatically — the bot's Olm/Megolm keys are persisted to `data/matrix_store/` so they survive restarts. Incoming SAS verification requests from allowed users are auto-accepted.
 
-### Access control
+---
 
-| Config field     | Behaviour                                                      |
-|------------------|----------------------------------------------------------------|
-| `allowed_users`  | Only listed user IDs can invite the bot or send it messages.  |
-| `allowed_rooms`  | If non-empty, the bot only joins/responds in listed room IDs. |
+## Web Search Setup (SearXNG)
 
-Both lists default to empty, which means the bot accepts all users/rooms —
-**set `allowed_users` before exposing to a shared homeserver.**
+`search_web` works immediately via a DuckDuckGo fallback, but for best results install SearXNG locally:
 
-### Troubleshooting
-
-| Symptom | Likely cause |
-|---------|--------------|
-| `uv sync` fails building `python-olm` with `pyconfig.h: No such file or directory` | Python development headers are missing. Install `python3-devel` (Fedora/RHEL) or `python3-dev` (Debian/Ubuntu) and retry. |
-| Bot joins but messages show as undecrypted | The bot's Olm keys were not shared yet; send another message and allow a moment for key exchange, or restart the bot once. |
-| Bot does not join on invite | Sender is not in `allowed_users`, or room is not in `allowed_rooms`. Check logs. |
-| `Initial sync failed` on startup | Wrong `homeserver` URL or expired `access_token`. |
-| `matrix.device_id is required` on startup | `device_id` is missing from config. See step 3 above. |
-| New Olm session on every restart | `device_id` is wrong or changed between runs. |
-
-## Reminder Types
-
-Reminders created via the `set_reminder` tool can be:
-
-- **Thread-bound** (default) – fires to the Matrix room or web tab where it was created
-- **System reminders** (`system: true`) – runs as an autonomous AI inference with no chat delivery; useful for background maintenance tasks
-
-## Project Layout
-
-```
-pyproject.toml           – project metadata and dependencies (uv)
-config.yaml.example      – configuration template
-
-ganglion/                – Python package
-  main.py                – entry point, startup/shutdown orchestration
-  database.py            – SQLite helpers for per-thread conversation history
-  llm_thread.py          – OpenAI-compatible API calls, conversation history, context compaction
-  matrix_thread.py       – Matrix connection, multi-room routing, auto-join
-  web_interface.py       – aiohttp HTTP + WebSocket server with embedded chat UI
-  scheduler_thread.py    – APScheduler wrapper, thread-bound reminder registry
-  heartbeat.py           – global + per-thread heartbeat review loop
-  tools.py               – tool schemas and implementations
-  prompt_assembler.py    – dynamic system prompt construction from data/ files
-
-data/
-  BASE_PROMPT.txt        – immutable core instructions (edit to change personality)
-  MEMORIES.txt           – long-term user facts (AI-editable, shared across threads)
-  HEARTBEATS.txt         – active goals / working memory (AI-editable, shared)
-  skills/                – capability documentation (AI-editable, shared)
-  scripts/               – auxiliary scripts created by the AI
-  conversation.db        – per-thread message history (gitignored)
-  scheduler.db           – APScheduler job store (gitignored)
-  reminders.json         – human-readable reminder registry (gitignored)
-
-logs/                    – rotating daily logs (gitignored)
+```bash
+cd ~
+git clone https://github.com/searxng/searxng.git searxng-test
+cd searxng-test
+# follow SearXNG quickstart or use the skills/searxng_installation.md guide
 ```
 
-## Configuration
+By default Wintermute expects SearXNG at `http://127.0.0.1:8888`. Override with:
 
-See `config.yaml.example` for all available options.
+```bash
+export WINTERMUTE_SEARXNG_URL=http://127.0.0.1:8888
+```
+
+---
+
+## Special Commands
+
+Available in both Matrix and the web UI:
+
+| Command | Effect |
+|---------|--------|
+| `/new` | Reset conversation history for the current thread |
+| `/compact` | Force context compaction now |
+| `/reminders` | List all scheduled reminders |
+| `/pulse` | Manually trigger a pulse review |
+
+---
+
+## Directory Structure
+
+```
+wintermute/
+├── config.yaml              — runtime configuration
+├── pyproject.toml
+├── static/                  — static assets (title image etc.)
+├── data/
+│   ├── BASE_PROMPT.txt      — core system prompt (edit to customise personality)
+│   ├── MEMORIES.txt         — long-term user facts (AI-maintained)
+│   ├── PULSE.txt            — active goals / working memory (AI-maintained)
+│   ├── skills/              — learned procedures in Markdown (AI-maintained)
+│   ├── conversation.db      — full conversation history (SQLite)
+│   └── reminders.json       — scheduled reminders registry
+├── logs/
+│   └── wintermute.log
+└── ganglion/                — Python package
+    ├── main.py              — startup and wiring
+    ├── llm_thread.py        — inference loop, context compaction
+    ├── tools.py             — all tool schemas and implementations
+    ├── sub_session.py       — background worker sub-sessions
+    ├── pulse.py             — periodic pulse review loop
+    ├── dreaming.py          — nightly memory consolidation
+    ├── scheduler_thread.py  — reminder scheduling (APScheduler)
+    ├── matrix_thread.py     — Matrix client (matrix-nio, E2E encryption)
+    ├── web_interface.py     — aiohttp web UI + debug panel
+    ├── prompt_assembler.py  — system prompt assembly from components
+    └── database.py          — conversation history (SQLAlchemy/SQLite)
+```
+
+---
 
 ## Architecture
 
-Multiple asyncio tasks run concurrently in a single event loop:
+```
+User (Matrix / Browser)
+        │
+        ▼
+  LLMThread  ←─── system prompt (BASE + MEMORIES + PULSE + SKILLS)
+  (asyncio)        assembled fresh each turn
+        │
+        ├── tool calls ──► execute_shell / read_file / write_file
+        │                  search_web / fetch_url
+        │                  update_memories / update_pulse / add_skill
+        │                  set_reminder / list_reminders
+        │
+        └── spawn_sub_session ──► SubSessionManager
+                                        │
+                                        ├── asyncio.Task (worker 1)
+                                        ├── asyncio.Task (worker 2)  [parallel]
+                                        └── ...
+                                              │
+                                              └── result ──► enqueue_system_event
+                                                              (back to LLMThread)
 
-1. **LLM task** – processes messages sequentially from a shared queue; each item carries a `thread_id`; loads and saves per-thread history; executes tool calls
-2. **Matrix task** – `sync_forever` loop; routes each room's messages to the LLM queue with the room's `room_id` as `thread_id`; auto-joins on invite
-3. **Web task** – aiohttp server; each WebSocket connection gets a `web_<hex>` thread_id
-4. **Heartbeat task** – periodically runs a global review + one review per active thread
-5. **APScheduler** – runs within the same event loop using `AsyncIOExecutor`; reminders carry a `thread_id` and are delivered to the correct room/tab
+PulseLoop ───────────────────────────────► fire-and-forget sub-session (full mode)
+ReminderScheduler ──────────────────────► LLMThread queue / sub-session
+DreamingJob (nightly) ──────────────────► direct LLM API call (no tool loop)
+```
 
-A thread-aware `broadcast(text, thread_id)` function routes outgoing messages to the correct Matrix room or web client set.
+---
 
-## Cost / Resource Notes
+## Configuration Reference
 
-Cost depends entirely on your chosen endpoint:
+```yaml
+matrix:
+  homeserver: https://matrix.org
+  user_id: "@bot:matrix.org"
+  access_token: "mct_..."
+  device_id: "DEVICEID"
+  allowed_users: ["@you:matrix.org"]
+  allowed_rooms: []              # empty = no room whitelist
 
-- **Local models (Ollama, vLLM, LM Studio)** – no per-call cost; GPU/CPU time only.
-  Set `compaction_model` to a smaller model to reduce load for summarisation tasks.
-- **OpenAI or hosted APIs** – billed per token; a smaller `compaction_model` helps.
+web:
+  enabled: true
+  host: "127.0.0.1"             # 0.0.0.0 to expose on network
+  port: 8080
 
-Heartbeat frequency (`review_interval_minutes`) and the number of active threads are
-the main tuning knobs for inference volume.
+llm:
+  base_url: "https://api.openai.com/v1"
+  api_key: "sk-..."
+  model: "gpt-4o"
+  context_size: 128000          # model's total token window
+  max_tokens: 4096              # max tokens per response
+  compaction_model: "gpt-4o-mini"  # optional: cheaper model for summaries
+
+heartbeat:
+  review_interval_minutes: 60   # how often pulse reviews run
+
+context:
+  component_size_limits:
+    memories: 10000             # chars before MEMORIES.txt is summarised
+    heartbeats: 5000            # chars before PULSE.txt is summarised
+    skills_total: 20000         # total skill chars before reorganise
+
+dreaming:
+  hour: 1                       # local hour for nightly consolidation
+  minute: 0
+
+scheduler:
+  timezone: "Europe/Berlin"     # IANA timezone string
+
+logging:
+  level: "INFO"
+  directory: "logs"
+```
+
+---
+
+## License
+
+MIT
