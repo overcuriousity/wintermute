@@ -2,15 +2,17 @@
 
 ![Wintermute](static/Gemini_Generated_Image_7cdpwp7cdpwp7cdp.png)
 
-**Wintermute** is a self-hosted personal AI assistant with persistent memory, autonomous background workers, and multi-interface support. It connects to any OpenAI-compatible LLM endpoint and reaches you via Matrix chat or a built-in web UI.
+**Wintermute** is a self-hosted personal AI assistant with persistent memory, autonomous background workers, and multi-interface support. It connects to any OpenAI-compatible LLM endpoint and reaches you via Matrix chat or a built-in web UI (for debuggging mainly).
 
 ---
 
 ## Concept
 
-Most AI chat tools are stateless — every session starts from scratch. Wintermute is built around the opposite idea: the assistant accumulates knowledge about you over time, maintains an active working memory (*Pulse*), and learns reusable procedures as *skills*. Conversations across restarts are summarised and retained. A nightly *dreaming* pass consolidates memories autonomously while you sleep.
+Wintermute accumulates knowledge about you over time, maintains an active working memory (*Pulse*), and learns reusable procedures as *skills*. Conversations across restarts are summarised and retained. A nightly *dreaming* pass consolidates memories autonomously while you sleep.
 
 For long-running or complex tasks, Wintermute spawns isolated background workers (*sub-sessions*) so the main conversation stays responsive. Workers can themselves spawn further workers for parallelisable tasks, up to a configurable nesting depth.
+
+The approach differs from different similar concepts by treating small LLMs and digital independence not as an afterthought, but from the beginning. It starts without corporate bloatware and emphasizes FOSS.
 
 ---
 
@@ -35,7 +37,7 @@ For long-running or complex tasks, Wintermute spawns isolated background workers
 - Python ≥ 3.12
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
 - An OpenAI-compatible LLM endpoint
-- *(Optional)* A Matrix account for the bot
+- *(Recommended)* A Matrix account for the bot
 
 ---
 
@@ -166,6 +168,8 @@ By default Wintermute expects SearXNG at `http://127.0.0.1:8888`. Override with:
 export WINTERMUTE_SEARXNG_URL=http://127.0.0.1:8888
 ```
 
+You can also pin searxng up via docker, which might be easier.
+
 ---
 
 ## Special Commands
@@ -178,38 +182,16 @@ Available in both Matrix and the web UI:
 | `/compact` | Force context compaction now |
 | `/reminders` | List all scheduled reminders |
 | `/pulse` | Manually trigger a pulse review |
+*more to come*
 
 ---
 
-## Directory Structure
+## Security Disclaimer
 
-```
-wintermute/
-├── config.yaml              — runtime configuration
-├── pyproject.toml
-├── static/                  — static assets (title image etc.)
-├── data/
-│   ├── BASE_PROMPT.txt      — core system prompt (edit to customise personality)
-│   ├── MEMORIES.txt         — long-term user facts (AI-maintained)
-│   ├── PULSE.txt            — active goals / working memory (AI-maintained)
-│   ├── skills/              — learned procedures in Markdown (AI-maintained)
-│   ├── conversation.db      — full conversation history (SQLite)
-│   └── reminders.json       — scheduled reminders registry
-├── logs/
-│   └── wintermute.log
-└── ganglion/                — Python package
-    ├── main.py              — startup and wiring
-    ├── llm_thread.py        — inference loop, context compaction
-    ├── tools.py             — all tool schemas and implementations
-    ├── sub_session.py       — background worker sub-sessions
-    ├── pulse.py             — periodic pulse review loop
-    ├── dreaming.py          — nightly memory consolidation
-    ├── scheduler_thread.py  — reminder scheduling (APScheduler)
-    ├── matrix_thread.py     — Matrix client (matrix-nio, E2E encryption)
-    ├── web_interface.py     — aiohttp web UI + debug panel
-    ├── prompt_assembler.py  — system prompt assembly from components
-    └── database.py          — conversation history (SQLAlchemy/SQLite)
-```
+The security approach emphasizes the user to be aware of the risks about running this potentially dangerous application.
+It can manipulate the system it runs on with all permissions the user has under which the application is executed.
+**It is not recommended to run this on your personal workstation or anywhere where you hold sensitive data.**
+I recommend running this in a dedicated VM or sandboxed container environment (LXC recommended, docker in the making).
 
 ---
 
@@ -241,54 +223,7 @@ ReminderScheduler ────────────────────�
 DreamingJob (nightly) ──────────────────► direct LLM API call (no tool loop)
 ```
 
----
 
-## Configuration Reference
-
-```yaml
-matrix:
-  homeserver: https://matrix.org
-  user_id: "@bot:matrix.org"
-  access_token: "mct_..."
-  device_id: "DEVICEID"
-  allowed_users: ["@you:matrix.org"]
-  allowed_rooms: []              # empty = no room whitelist
-
-web:
-  enabled: true
-  host: "127.0.0.1"             # 0.0.0.0 to expose on network
-  port: 8080
-
-llm:
-  base_url: "https://api.openai.com/v1"
-  api_key: "sk-..."
-  model: "gpt-4o"
-  context_size: 128000          # model's total token window
-  max_tokens: 4096              # max tokens per response
-  compaction_model: "gpt-4o-mini"  # optional: cheaper model for summaries
-
-heartbeat:
-  review_interval_minutes: 60   # how often pulse reviews run
-
-context:
-  component_size_limits:
-    memories: 10000             # chars before MEMORIES.txt is summarised
-    heartbeats: 5000            # chars before PULSE.txt is summarised
-    skills_total: 20000         # total skill chars before reorganise
-
-dreaming:
-  hour: 1                       # local hour for nightly consolidation
-  minute: 0
-
-scheduler:
-  timezone: "Europe/Berlin"     # IANA timezone string
-
-logging:
-  level: "INFO"
-  directory: "logs"
-```
-
----
 
 ## License
 
