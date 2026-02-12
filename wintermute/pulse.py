@@ -15,10 +15,10 @@ import asyncio
 import logging
 from typing import Callable, Optional, TYPE_CHECKING
 
-from ganglion import database
+from wintermute import database
 
 if TYPE_CHECKING:
-    from ganglion.sub_session import SubSessionManager
+    from wintermute.sub_session import SubSessionManager
 
 logger = logging.getLogger(__name__)
 

@@ -46,7 +46,7 @@ The approach differs from different similar concepts by treating small LLMs and 
 ### 1. Clone the repository
 
 ```bash
-git clone https://git.mikoshi.de/overcuriousity/ganglion.git wintermute
+git clone https://git.mikoshi.de/overcuriousity/wintermute.git wintermute
 cd wintermute
 ```
 

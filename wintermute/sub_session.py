@@ -54,8 +54,8 @@ from typing import Callable, Coroutine, Optional
 
 from openai import AsyncOpenAI
 
-from ganglion import prompt_assembler
-from ganglion import tools as tool_module
+from wintermute import prompt_assembler
+from wintermute import tools as tool_module
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ class SubSessionManager:
     def __init__(
         self,
         client: AsyncOpenAI,
-        llm_config,                          # ganglion.llm_thread.LLMConfig
+        llm_config,                          # wintermute.llm_thread.LLMConfig
         enqueue_system_event: Callable[..., Coroutine],
     ) -> None:
         self._client = client

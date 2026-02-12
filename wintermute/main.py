@@ -28,14 +28,14 @@ from typing import Optional
 
 import yaml
 
-from ganglion import database
-from ganglion import tools as tool_module
-from ganglion.pulse import PulseLoop
-from ganglion.llm_thread import LLMConfig, LLMThread
-from ganglion.matrix_thread import MatrixConfig, MatrixThread
-from ganglion.scheduler_thread import DreamingConfig, ReminderScheduler, SchedulerConfig
-from ganglion.sub_session import SubSessionManager
-from ganglion.web_interface import WebInterface
+from wintermute import database
+from wintermute import tools as tool_module
+from wintermute.pulse import PulseLoop
+from wintermute.llm_thread import LLMConfig, LLMThread
+from wintermute.matrix_thread import MatrixConfig, MatrixThread
+from wintermute.scheduler_thread import DreamingConfig, ReminderScheduler, SchedulerConfig
+from wintermute.sub_session import SubSessionManager
+from wintermute.web_interface import WebInterface
 
 CONFIG_FILE = Path("config.yaml")
 LOG_DIR = Path("logs")
@@ -328,5 +328,5 @@ if __name__ == "__main__":
 
 
 def run() -> None:
-    """Entry point for the `ganglion` console script."""
+    """Entry point for the `wintermute` console script."""
     asyncio.run(main())

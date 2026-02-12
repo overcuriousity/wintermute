@@ -23,7 +23,7 @@ from typing import Any, Optional
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from ganglion import prompt_assembler
+from wintermute import prompt_assembler
 
 logger = logging.getLogger(__name__)
 

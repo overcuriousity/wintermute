@@ -481,7 +481,7 @@ class MatrixThread:
             return
 
         if text == "/reminders":
-            from ganglion import tools as tool_module
+            from wintermute import tools as tool_module
             result = tool_module.execute_tool("list_reminders", {})
             await self.send_message(f"Reminders:\n```json\n{result}\n```", thread_id)
             return

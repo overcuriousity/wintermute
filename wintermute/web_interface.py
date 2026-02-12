@@ -22,7 +22,7 @@ from typing import Optional
 
 from aiohttp import web
 
-from ganglion import tools as tool_module
+from wintermute import tools as tool_module
 
 logger = logging.getLogger(__name__)
 
@@ -1273,7 +1273,7 @@ class WebInterface:
             return {"total_limit": 4096, "sp_tokens": 0, "tools_tokens": 0,
                     "hist_tokens": 0, "total_used": 0, "pct": 0.0}
 
-        from ganglion import database, prompt_assembler
+        from wintermute import database, prompt_assembler
 
         total_limit = max(self._llm_cfg.context_size - self._llm_cfg.max_tokens, 1)
         model = self._llm_cfg.model
@@ -1310,7 +1310,7 @@ class WebInterface:
     # ------------------------------------------------------------------
 
     async def _api_sessions(self, _request: web.Request) -> web.Response:
-        from ganglion import database
+        from wintermute import database
 
         db_threads = set(database.get_active_thread_ids())
         web_live = set(self._threads.keys())
@@ -1348,7 +1348,7 @@ class WebInterface:
         return self._json({"sessions": sessions})
 
     async def _api_session_messages(self, request: web.Request) -> web.Response:
-        from ganglion import database
+        from wintermute import database
 
         thread_id = request.match_info["thread_id"]
         msgs = database.load_active_messages(thread_id)
@@ -1402,7 +1402,7 @@ class WebInterface:
             return self._json({"error": str(exc)})
 
     async def _api_system_prompt(self, _request: web.Request) -> web.Response:
-        from ganglion import prompt_assembler
+        from wintermute import prompt_assembler
         try:
             prompt = prompt_assembler.assemble()
         except Exception as exc:  # noqa: BLE001

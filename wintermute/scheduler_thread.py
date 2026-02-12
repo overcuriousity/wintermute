@@ -31,11 +31,11 @@ from dateutil import parser as dateutil_parser
 
 from openai import AsyncOpenAI
 
-from ganglion import tools as tool_module
-from ganglion.dreaming import run_dream_cycle
+from wintermute import tools as tool_module
+from wintermute.dreaming import run_dream_cycle
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from ganglion.sub_session import SubSessionManager
+    from wintermute.sub_session import SubSessionManager
 
 logger = logging.getLogger(__name__)
 

@@ -23,12 +23,12 @@ from typing import Optional
 
 from openai import AsyncOpenAI
 
-from ganglion import database
-from ganglion import prompt_assembler
-from ganglion import tools as tool_module
+from wintermute import database
+from wintermute import prompt_assembler
+from wintermute import tools as tool_module
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from ganglion.sub_session import SubSessionManager
+    from wintermute.sub_session import SubSessionManager
 
 logger = logging.getLogger(__name__)
 

@@ -420,7 +420,7 @@ wheels = [
 ]
 
 [[package]]
-name = "ganglion"
+name = "wintermute"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

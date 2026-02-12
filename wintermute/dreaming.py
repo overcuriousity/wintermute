@@ -12,7 +12,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-from ganglion import prompt_assembler
+from wintermute import prompt_assembler
 
 logger = logging.getLogger(__name__)
 
