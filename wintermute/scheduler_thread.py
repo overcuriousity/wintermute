@@ -170,14 +170,13 @@ class ReminderScheduler:
 
     def _schedule_reminder(self, inputs: dict) -> str:
         """Called by the tools module. Parses inputs and creates the job."""
-        time_spec  = inputs["time_spec"]
-        message    = inputs["message"]
-        ai_prompt  = inputs.get("ai_prompt")
-        recurring  = inputs.get("recurring", "none")
-        thread_id  = inputs.get("thread_id")  # None for system reminders
+        message       = inputs["message"]
+        ai_prompt     = inputs.get("ai_prompt")
+        schedule_type = inputs.get("schedule_type", "once")
+        thread_id     = inputs.get("thread_id")  # None for system reminders
 
         job_id = f"reminder_{uuid.uuid4().hex[:8]}"
-        trigger = self._parse_trigger(time_spec, recurring)
+        trigger = self._parse_trigger(inputs)
 
         self._scheduler.add_job(
             _fire_reminder_job,
@@ -197,10 +196,8 @@ class ReminderScheduler:
         self._registry_add({
             "id":        job_id,
             "created":   datetime.now(timezone.utc).isoformat(),
-            "type":      recurring if recurring not in ("none", "interval") else (
-                             "one-time" if recurring == "none" else f"interval:{time_spec}"
-                         ),
-            "schedule":  time_spec,
+            "type":      schedule_type,
+            "schedule":  _describe_schedule(inputs),
             "message":   message,
             "ai_prompt": ai_prompt,
             "thread_id": thread_id,
@@ -337,34 +334,52 @@ class ReminderScheduler:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_trigger(time_spec: str, recurring: str):
-        """
-        Return an APScheduler trigger for the given time_spec + recurring type.
-        """
-        spec = time_spec.strip().lower()
+    def _parse_trigger(inputs: dict):
+        """Return an APScheduler trigger from structured schedule inputs."""
+        schedule_type = inputs.get("schedule_type", "once")
 
-        # Recurring types take priority if specified.
-        if recurring == "daily":
-            # Try to extract HH:MM from spec, default to 09:00.
-            hour, minute = _extract_time(spec)
-            return CronTrigger(hour=hour, minute=minute)
+        if schedule_type == "daily":
+            h, m = _parse_hhmm(inputs.get("at", "09:00"))
+            return CronTrigger(hour=h, minute=m)
 
-        if recurring == "weekly":
-            hour, minute = _extract_time(spec)
-            day = _extract_day_of_week(spec) or "mon"
-            return CronTrigger(day_of_week=day, hour=hour, minute=minute)
+        if schedule_type == "weekly":
+            h, m = _parse_hhmm(inputs.get("at", "09:00"))
+            day = inputs.get("day_of_week", "mon")
+            return CronTrigger(day_of_week=day, hour=h, minute=m)
 
-        if recurring == "monthly":
-            hour, minute = _extract_time(spec)
-            day = _extract_day_of_month(spec) or 1
-            return CronTrigger(day=day, hour=hour, minute=minute)
+        if schedule_type == "monthly":
+            h, m = _parse_hhmm(inputs.get("at", "09:00"))
+            day = int(inputs.get("day_of_month", 1))
+            return CronTrigger(day=day, hour=h, minute=m)
 
-        if recurring == "interval":
-            delta = _extract_interval(spec)
-            return IntervalTrigger(seconds=int(delta.total_seconds()))
+        if schedule_type == "interval":
+            interval_seconds = int(inputs["interval_seconds"])
+            window_start = inputs.get("window_start")
+            window_end   = inputs.get("window_end")
 
-        # One-time: relative or absolute.
-        fire_at = _parse_one_time(spec)
+            if window_start and window_end:
+                sh, sm = _parse_hhmm(window_start)
+                eh, _  = _parse_hhmm(window_end)
+
+                if interval_seconds >= 3600 and interval_seconds % 3600 == 0:
+                    # Whole-hour interval: enumerate firing hours explicitly.
+                    interval_hours = interval_seconds // 3600
+                    hours = list(range(sh, eh + 1, interval_hours))
+                    return CronTrigger(
+                        hour=",".join(str(h) for h in hours),
+                        minute=sm,
+                    )
+
+                if interval_seconds >= 60 and interval_seconds % 60 == 0:
+                    # Whole-minute interval: use */N within the hour window.
+                    interval_minutes = interval_seconds // 60
+                    minute_expr = f"{sm}/{interval_minutes}" if sm else f"*/{interval_minutes}"
+                    return CronTrigger(hour=f"{sh}-{eh}", minute=minute_expr)
+
+            return IntervalTrigger(seconds=interval_seconds)
+
+        # Default: once.
+        fire_at = _parse_once_at(inputs.get("at", ""))
         return DateTrigger(run_date=fire_at)
 
 
@@ -372,71 +387,22 @@ class ReminderScheduler:
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
-def _extract_time(spec: str):
-    """Return (hour, minute) from spec, defaulting to (9, 0)."""
+def _parse_hhmm(s: str) -> tuple[int, int]:
+    """Parse 'HH:MM' → (hour, minute). Defaults to (9, 0) on failure."""
     import re
-    m = re.search(r"(\d{1,2}):(\d{2})", spec)
+    m = re.match(r"(\d{1,2}):(\d{2})", s.strip())
     if m:
         return int(m.group(1)), int(m.group(2))
-    m = re.search(r"(\d{1,2})\s*(am|pm)", spec)
-    if m:
-        h = int(m.group(1))
-        if m.group(2) == "pm" and h != 12:
-            h += 12
-        if m.group(2) == "am" and h == 12:
-            h = 0
-        return h, 0
     return 9, 0
 
 
-def _extract_day_of_week(spec: str) -> Optional[str]:
-    days = {"monday": "mon", "tuesday": "tue", "wednesday": "wed",
-            "thursday": "thu", "friday": "fri", "saturday": "sat", "sunday": "sun"}
-    for name, abbr in days.items():
-        if name in spec or abbr in spec:
-            return abbr
-    return None
-
-
-def _extract_day_of_month(spec: str) -> Optional[int]:
-    import re
-    m = re.search(r"\b(\d{1,2})(st|nd|rd|th)?\b", spec)
-    if m:
-        return int(m.group(1))
-    return None
-
-
-def _extract_interval(spec: str) -> timedelta:
-    """
-    Parse an interval duration from natural language.
-    Examples: 'every 5 minutes', '30 minutes', '2 hours', '1 day'.
-    Defaults to 1 hour if nothing matches.
-    """
-    import re
-    spec = spec.lower()
-    m = re.search(r"(\d+)\s*(minute|min|hour|hr|day|second|sec)s?", spec)
-    if m:
-        amount = int(m.group(1))
-        unit = m.group(2)
-        if unit in ("minute", "min"):
-            return timedelta(minutes=amount)
-        if unit in ("hour", "hr"):
-            return timedelta(hours=amount)
-        if unit == "day":
-            return timedelta(days=amount)
-        if unit in ("second", "sec"):
-            return timedelta(seconds=amount)
-    logger.warning("Could not parse interval from '%s', defaulting to 1 hour", spec)
-    return timedelta(hours=1)
-
-
-def _parse_one_time(spec: str) -> datetime:
+def _parse_once_at(spec: str) -> datetime:
     """Parse a one-time fire datetime from natural language or ISO-8601."""
     now = datetime.now(timezone.utc)
+    s = spec.strip().lower()
 
     import re
-    # "in X minutes/hours/days"
-    m = re.match(r"in\s+(\d+)\s+(minute|hour|day)s?", spec)
+    m = re.match(r"in\s+(\d+)\s+(minute|hour|day)s?", s)
     if m:
         amount = int(m.group(1))
         unit   = m.group(2)
@@ -445,22 +411,40 @@ def _parse_one_time(spec: str) -> datetime:
                   "day":    timedelta(days=amount)}[unit]
         return now + delta
 
-    # "tomorrow [HH:MM]"
-    if spec.startswith("tomorrow"):
-        hour, minute = _extract_time(spec)
+    if s.startswith("tomorrow"):
+        h, minute = _parse_hhmm(spec)
         base = now + timedelta(days=1)
-        return base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        return base.replace(hour=h, minute=minute, second=0, microsecond=0)
 
-    # Try dateutil as fallback.
     try:
         dt = dateutil_parser.parse(spec, default=now.replace(tzinfo=None))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt
     except Exception:  # noqa: BLE001
-        # Last resort: 1 hour from now.
-        logger.warning("Could not parse time spec '%s', defaulting to +1h", spec)
+        logger.warning("Could not parse once_at '%s', defaulting to +1h", spec)
         return now + timedelta(hours=1)
+
+
+def _describe_schedule(inputs: dict) -> str:
+    """Build a human-readable schedule string from structured inputs."""
+    t = inputs.get("schedule_type", "once")
+    if t == "once":
+        return f"once at {inputs.get('at', '?')}"
+    if t == "daily":
+        return f"daily at {inputs.get('at', '?')}"
+    if t == "weekly":
+        return f"weekly on {inputs.get('day_of_week', '?')} at {inputs.get('at', '?')}"
+    if t == "monthly":
+        return f"monthly on day {inputs.get('day_of_month', '?')} at {inputs.get('at', '?')}"
+    if t == "interval":
+        secs = inputs.get("interval_seconds", "?")
+        desc = f"every {secs}s"
+        ws, we = inputs.get("window_start"), inputs.get("window_end")
+        if ws and we:
+            desc += f" from {ws} to {we}"
+        return desc
+    return str(inputs)
 
 
 # ---------------------------------------------------------------------------

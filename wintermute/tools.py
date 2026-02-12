@@ -114,15 +114,6 @@ TOOL_SCHEMAS = [
         {
             "type": "object",
             "properties": {
-                "time_spec": {
-                    "type": "string",
-                    "description": (
-                        "When to fire. Natural language like 'in 2 hours', "
-                        "'tomorrow 09:00', 'every day at 08:00', "
-                        "or ISO-8601 datetime. For recurring='interval', "
-                        "specify the period: 'every 5 minutes', '30 minutes', '2 hours'."
-                    ),
-                },
                 "message": {
                     "type": "string",
                     "description": "Human-readable reminder text sent to chat.",
@@ -134,14 +125,58 @@ TOOL_SCHEMAS = [
                         "with this prompt when the reminder fires."
                     ),
                 },
-                "recurring": {
+                "schedule_type": {
                     "type": "string",
-                    "enum": ["none", "daily", "weekly", "monthly", "interval"],
+                    "enum": ["once", "daily", "weekly", "monthly", "interval"],
                     "description": (
-                        "Recurrence type. Defaults to 'none'. "
-                        "Use 'interval' for fixed-period repetition; then "
-                        "time_spec must describe the interval, e.g. "
-                        "'every 5 minutes', '30 minutes', '2 hours'."
+                        "'once' — fire once at a specific time. "
+                        "'daily' — fire every day at a fixed time. "
+                        "'weekly' — fire once a week (requires day_of_week). "
+                        "'monthly' — fire once a month (requires day_of_month). "
+                        "'interval' — fire repeatedly every N seconds (requires interval_seconds; "
+                        "use window_start/window_end to restrict to daytime hours)."
+                    ),
+                },
+                "at": {
+                    "type": "string",
+                    "description": (
+                        "For 'once': ISO-8601 datetime or natural language "
+                        "like 'in 2 hours' or 'tomorrow 09:00'. "
+                        "For 'daily', 'weekly', 'monthly': time of day in HH:MM (24 h)."
+                    ),
+                },
+                "day_of_week": {
+                    "type": "string",
+                    "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+                    "description": "Required for 'weekly'. Day of the week to fire.",
+                },
+                "day_of_month": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 31,
+                    "description": "Required for 'monthly'. Day of the month to fire.",
+                },
+                "interval_seconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": (
+                        "Required for 'interval'. Number of seconds between firings. "
+                        "Common values: 300 (5 min), 1800 (30 min), 3600 (1 h), "
+                        "7200 (2 h), 10800 (3 h)."
+                    ),
+                },
+                "window_start": {
+                    "type": "string",
+                    "description": (
+                        "For 'interval': earliest time-of-day to fire, in HH:MM (24 h). "
+                        "Example: '08:00'. Firings outside this window are skipped."
+                    ),
+                },
+                "window_end": {
+                    "type": "string",
+                    "description": (
+                        "For 'interval': latest time-of-day to fire, in HH:MM (24 h). "
+                        "Example: '20:00'. Firings outside this window are skipped."
                     ),
                 },
                 "system": {
@@ -152,7 +187,7 @@ TOOL_SCHEMAS = [
                     ),
                 },
             },
-            "required": ["time_spec", "message"],
+            "required": ["message", "schedule_type"],
         },
     ),
     _fn(

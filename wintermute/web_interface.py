@@ -526,8 +526,43 @@ _DEBUG_HTML = """\
     <div class="tab-panel" id="panel-reminders">
       <form id="reminder-form" class="form-bar" onsubmit="createReminder(event)">
         <div class="form-group">
-          <label>Time spec</label>
-          <input name="time_spec" placeholder="e.g. in 2 hours / tomorrow 09:00" style="width:200px" required>
+          <label>Type</label>
+          <select name="schedule_type" onchange="onScheduleTypeChange(this.value)" required>
+            <option value="once">Once</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+            <option value="interval">Interval</option>
+          </select>
+        </div>
+        <div class="form-group" id="fg-at">
+          <label id="lbl-at">At (HH:MM or &ldquo;in 2 hours&rdquo;)</label>
+          <input name="at" placeholder="e.g. 09:00 / tomorrow 09:00" style="width:190px">
+        </div>
+        <div class="form-group" id="fg-dow" style="display:none">
+          <label>Day of week</label>
+          <select name="day_of_week">
+            <option value="mon">Mon</option><option value="tue">Tue</option>
+            <option value="wed">Wed</option><option value="thu">Thu</option>
+            <option value="fri">Fri</option><option value="sat">Sat</option>
+            <option value="sun">Sun</option>
+          </select>
+        </div>
+        <div class="form-group" id="fg-dom" style="display:none">
+          <label>Day of month</label>
+          <input name="day_of_month" type="number" min="1" max="31" style="width:70px" placeholder="1">
+        </div>
+        <div class="form-group" id="fg-interval" style="display:none">
+          <label>Interval (seconds)</label>
+          <input name="interval_seconds" type="number" min="1" style="width:100px" placeholder="3600">
+        </div>
+        <div class="form-group" id="fg-window" style="display:none">
+          <label>Window start (HH:MM)</label>
+          <input name="window_start" placeholder="08:00" style="width:70px">
+        </div>
+        <div class="form-group" id="fg-window-end" style="display:none">
+          <label>Window end (HH:MM)</label>
+          <input name="window_end" placeholder="20:00" style="width:70px">
         </div>
         <div class="form-group">
           <label>Message</label>
@@ -536,16 +571,6 @@ _DEBUG_HTML = """\
         <div class="form-group">
           <label>AI prompt (optional)</label>
           <input name="ai_prompt" placeholder="Prompt for AI when it fires" style="width:200px">
-        </div>
-        <div class="form-group">
-          <label>Recurring</label>
-          <select name="recurring">
-            <option value="none">One-time</option>
-            <option value="daily">Daily</option>
-            <option value="weekly">Weekly</option>
-            <option value="monthly">Monthly</option>
-            <option value="interval">Interval</option>
-          </select>
         </div>
         <div class="form-group" style="justify-content:flex-end">
           <label>&nbsp;</label>
@@ -1007,18 +1032,55 @@ async function deleteReminder(jobId) {
   else alert('Error: ' + (data.error || JSON.stringify(data)));
 }
 
+// Show/hide fields based on schedule type.
+function onScheduleTypeChange(val) {
+  document.getElementById('fg-at').style.display         = val === 'interval' ? 'none' : '';
+  document.getElementById('fg-dow').style.display        = val === 'weekly'   ? '' : 'none';
+  document.getElementById('fg-dom').style.display        = val === 'monthly'  ? '' : 'none';
+  document.getElementById('fg-interval').style.display   = val === 'interval' ? '' : 'none';
+  document.getElementById('fg-window').style.display     = val === 'interval' ? '' : 'none';
+  document.getElementById('fg-window-end').style.display = val === 'interval' ? '' : 'none';
+  const lbl = document.getElementById('lbl-at');
+  if (lbl) lbl.textContent = val === 'once'
+    ? 'At (HH:MM or \u201cin 2 hours\u201d)'
+    : 'Time (HH:MM)';
+}
+
 // Fill the create form with existing values so the user can edit and re-submit.
 // Stores the old job_id; on submit the old reminder is deleted after creating the new one.
 let _editReplaceId = null;
 
 function editReminder(rem) {
   const form = document.getElementById('reminder-form');
-  form.time_spec.value   = rem.schedule || '';
-  form.message.value     = rem.message  || '';
-  form.ai_prompt.value   = rem.ai_prompt || '';
-  form.recurring.value   = rem.type && !['one-time',''].includes(rem.type)
-    ? rem.type.split(':')[0] : 'none';
+  const stype = rem.type || 'once';
+  form.schedule_type.value    = stype;
+  form.message.value          = rem.message   || '';
+  form.ai_prompt.value        = rem.ai_prompt || '';
   form.system_reminder.checked = !rem.thread_id || rem.thread_id === 'system';
+  onScheduleTypeChange(stype);
+
+  // Populate type-specific fields from the registry schedule string where possible.
+  // The schedule field is a human-readable string built by _describe_schedule().
+  if (stype === 'interval') {
+    // "every 3600s from 08:00 to 20:00"
+    const mSec = (rem.schedule || '').match(/every\s+(\d+)s/);
+    if (mSec) form.interval_seconds.value = mSec[1];
+    const mWin = (rem.schedule || '').match(/from\s+(\d{1,2}:\d{2})\s+to\s+(\d{1,2}:\d{2})/);
+    if (mWin) { form.window_start.value = mWin[1]; form.window_end.value = mWin[2]; }
+  } else {
+    // "daily at 09:00" / "weekly on mon at 09:00" / "monthly on day 1 at 09:00" / "once at ..."
+    const mAt = (rem.schedule || '').match(/at\s+(.+)$/);
+    if (mAt) form.at.value = mAt[1].trim();
+    if (stype === 'weekly') {
+      const mDow = (rem.schedule || '').match(/on\s+(mon|tue|wed|thu|fri|sat|sun)/);
+      if (mDow) form.day_of_week.value = mDow[1];
+    }
+    if (stype === 'monthly') {
+      const mDom = (rem.schedule || '').match(/on day\s+(\d+)/);
+      if (mDom) form.day_of_month.value = mDom[1];
+    }
+  }
+
   _editReplaceId = rem.id;
   form.querySelector('[type=submit]').textContent = 'Save (replaces ' + rem.id + ')';
   form.scrollIntoView({behavior: 'smooth'});
@@ -1027,14 +1089,24 @@ function editReminder(rem) {
 async function createReminder(e) {
   e.preventDefault();
   const form = e.target;
+  const stype = form.schedule_type.value;
   const payload = {
-    time_spec: form.time_spec.value.trim(),
-    message:   form.message.value.trim(),
+    schedule_type: stype,
+    message:       form.message.value.trim(),
   };
+  const at = form.at.value.trim();
+  if (at && stype !== 'interval') payload.at = at;
+  if (stype === 'weekly')   payload.day_of_week   = form.day_of_week.value;
+  if (stype === 'monthly')  payload.day_of_month  = parseInt(form.day_of_month.value, 10) || 1;
+  if (stype === 'interval') {
+    payload.interval_seconds = parseInt(form.interval_seconds.value, 10);
+    const ws = form.window_start.value.trim();
+    const we = form.window_end.value.trim();
+    if (ws) payload.window_start = ws;
+    if (we) payload.window_end   = we;
+  }
   const aiPrompt = form.ai_prompt.value.trim();
   if (aiPrompt) payload.ai_prompt = aiPrompt;
-  const recurring = form.recurring.value;
-  if (recurring !== 'none') payload.recurring = recurring;
   if (form.system_reminder.checked) payload.system = true;
 
   const r = await fetch('/api/debug/reminders', {
@@ -1052,6 +1124,7 @@ async function createReminder(e) {
     form.querySelector('[type=submit]').textContent = '+ Create';
   }
   form.reset();
+  onScheduleTypeChange('once');
   await loadReminders();
 }
 
