@@ -1,5 +1,5 @@
 """
-Ganglion - Multi-Thread AI Assistant
+Wintermute - Multi-Thread AI Assistant
 Entry point and orchestration.
 
 Both Matrix and the web interface are optional; at least one must be enabled.
@@ -14,7 +14,7 @@ Startup sequence:
   7. Start LLM inference task
   8. Start web interface task (if enabled)
   9. Start Matrix task (if configured)
-  10. Start heartbeat review task
+  10. Start pulse review task
   11. Await shutdown signals
 """
 
@@ -30,7 +30,7 @@ import yaml
 
 from ganglion import database
 from ganglion import tools as tool_module
-from ganglion.heartbeat import HeartbeatLoop
+from ganglion.pulse import PulseLoop
 from ganglion.llm_thread import LLMConfig, LLMThread
 from ganglion.matrix_thread import MatrixConfig, MatrixThread
 from ganglion.scheduler_thread import DreamingConfig, ReminderScheduler, SchedulerConfig
@@ -72,7 +72,7 @@ def setup_logging(cfg: dict) -> None:
     console.setLevel(level)
 
     fh = logging.handlers.TimedRotatingFileHandler(
-        LOG_DIR / "ganglion.log",
+        LOG_DIR / "wintermute.log",
         when="midnight",
         backupCount=14,
         encoding="utf-8",
@@ -97,7 +97,7 @@ You are a personal AI assistant accessible via chat.
 
 You have a persistent memory system:
 - MEMORIES.txt stores long-term facts about your user.
-- HEARTBEATS.txt is your working memory for active goals and recurring tasks.
+- PULSE.txt is your working memory for active goals and recurring tasks.
 - skills/ contains documentation for capabilities you have learned.
 
 You can call tools to: set reminders, update your memory files, execute shell
@@ -107,7 +107,7 @@ Behavioural guidelines:
 1. When the user asks you to remember something, use update_memories immediately.
 2. When the user discloses something which hints how the user wants tasks being approached, use update_memories immediately.
 3. When you learn something fundamentally new which is not classified as a skill but as general information, use update_memories immediately.
-4. When tracking an ongoing project or recurring concern, use update_heartbeats.
+4. When tracking an ongoing project or recurring concern, use update_pulse.
 5. When you learn a reusable procedure, document it with add_skill so future sessions can use it.
 6. When scheduling, always confirm the exact time and job_id back to the user.
 7. Prefer concise responses. Avoid unnecessary disclaimers.
@@ -117,7 +117,7 @@ Behavioural guidelines:
 """
 
 _DEFAULT_MEMORIES   = "# User Memories\n\n(No memories recorded yet.)\n"
-_DEFAULT_HEARTBEATS = "# Active Heartbeats\n\n(No active heartbeats.)\n"
+_DEFAULT_PULSE = "# Active Pulse\n\n(No active pulse entries.)\n"
 
 
 def bootstrap_data_files() -> None:
@@ -136,9 +136,9 @@ def bootstrap_data_files() -> None:
     if not memories.exists():
         memories.write_text(_DEFAULT_MEMORIES, encoding="utf-8")
 
-    heartbeats = DATA_DIR / "HEARTBEATS.txt"
+    heartbeats = DATA_DIR / "PULSE.txt"
     if not heartbeats.exists():
-        heartbeats.write_text(_DEFAULT_HEARTBEATS, encoding="utf-8")
+        heartbeats.write_text(_DEFAULT_PULSE, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +164,7 @@ async def main() -> None:
     cfg = load_config()
     setup_logging(cfg)
     logger = logging.getLogger("main")
-    logger.info("Ganglion starting up")
+    logger.info("Wintermute starting up")
 
     bootstrap_data_files()
     database.init_db()
@@ -274,7 +274,7 @@ async def main() -> None:
         web_iface._matrix = matrix
         web_iface._llm_cfg = llm_cfg
 
-    heartbeat_loop = HeartbeatLoop(
+    heartbeat_loop = PulseLoop(
         interval_minutes=heartbeat_interval,
         llm_enqueue_fn=llm.enqueue_user_message,
         broadcast_fn=broadcast,
@@ -320,7 +320,7 @@ async def main() -> None:
     except asyncio.TimeoutError:
         logger.warning("Some tasks did not stop within 10 s — forcing exit")
 
-    logger.info("Ganglion shutdown complete")
+    logger.info("Wintermute shutdown complete")
 
 
 if __name__ == "__main__":

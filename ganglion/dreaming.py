@@ -2,7 +2,7 @@
 Dreaming – Nightly Memory Consolidation
 
 Called by the scheduler at a configurable hour to review and prune the
-persistent memory components (MEMORIES.txt, HEARTBEATS.txt) without user
+persistent memory components (MEMORIES.txt, PULSE.txt) without user
 interaction.  Uses a direct API call (no tool loop, no thread history) so it
 never interferes with ongoing conversations.
 """
@@ -35,8 +35,8 @@ explanation.
 {content}
 """
 
-_HEARTBEATS_PROMPT = """\
-Below is the current content of HEARTBEATS.txt — the active working memory \
+_PULSE_PROMPT = """\
+Below is the current content of PULSE.txt — the active pulse working memory \
 (ongoing goals, recurring tasks) for a personal AI assistant.
 
 Your task is to consolidate it:
@@ -45,10 +45,10 @@ Your task is to consolidate it:
 - Keep all genuinely active tasks.
 - Return the result as a concise, well-structured list.
 
-Return ONLY the consolidated HEARTBEATS.txt content, with no preamble or \
+Return ONLY the consolidated PULSE.txt content, with no preamble or \
 explanation.
 
---- HEARTBEATS.txt ---
+--- PULSE.txt ---
 {content}
 """
 
@@ -69,7 +69,7 @@ async def _consolidate(client: AsyncOpenAI, model: str,
 
 async def run_dream_cycle(client: AsyncOpenAI, model: str) -> None:
     """
-    Run a full nightly consolidation pass over MEMORIES.txt and HEARTBEATS.txt.
+    Run a full nightly consolidation pass over MEMORIES.txt and PULSE.txt.
 
     Skips any component that is empty or missing.  Each component is
     consolidated independently so a failure in one does not abort the other.
@@ -88,16 +88,16 @@ async def run_dream_cycle(client: AsyncOpenAI, model: str) -> None:
     else:
         logger.debug("Dreaming: MEMORIES.txt empty or missing, skipping")
 
-    heartbeats = prompt_assembler._read(prompt_assembler.HEARTBEATS_FILE)
-    if heartbeats:
+    pulse = prompt_assembler._read(prompt_assembler.PULSE_FILE)
+    if pulse:
         try:
             consolidated = await _consolidate(
-                client, model, "HEARTBEATS.txt", _HEARTBEATS_PROMPT, heartbeats
+                client, model, "PULSE.txt", _PULSE_PROMPT, heartbeats
             )
             if consolidated:
-                prompt_assembler.update_heartbeats(consolidated)
-                logger.info("Dreaming: HEARTBEATS.txt updated (%d chars)", len(consolidated))
+                prompt_assembler.update_pulse(consolidated)
+                logger.info("Dreaming: PULSE.txt updated (%d chars)", len(consolidated))
         except Exception:  # noqa: BLE001
-            logger.exception("Dreaming: failed to consolidate HEARTBEATS.txt")
+            logger.exception("Dreaming: failed to consolidate PULSE.txt")
     else:
-        logger.debug("Dreaming: HEARTBEATS.txt empty or missing, skipping")
+        logger.debug("Dreaming: PULSE.txt empty or missing, skipping")

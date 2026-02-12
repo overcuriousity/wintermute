@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data")
 
-SEARXNG_URL = os.environ.get("GANGLION_SEARXNG_URL", "http://127.0.0.1:8888")
+SEARXNG_URL = os.environ.get("WINTERMUTE_SEARXNG_URL", "http://127.0.0.1:8888")
 
 # Maximum nesting depth for sub-session spawning.
 # 0 = main agent, 1 = sub-session, 2 = sub-sub-session (max).
@@ -173,9 +173,9 @@ TOOL_SCHEMAS = [
         },
     ),
     _fn(
-        "update_heartbeats",
+        "update_pulse",
         (
-            "Overwrite HEARTBEATS.txt with new content. Use this to update "
+            "Overwrite PULSE.txt with new content. Use this to update "
             "active goals and working memory. Pass the *full* desired content."
         ),
         {
@@ -183,7 +183,7 @@ TOOL_SCHEMAS = [
             "properties": {
                 "content": {
                     "type": "string",
-                    "description": "Full replacement text for HEARTBEATS.txt.",
+                    "description": "Full replacement text for PULSE.txt.",
                 }
             },
             "required": ["content"],
@@ -332,7 +332,7 @@ TOOL_CATEGORIES: dict[str, str] = {
     "spawn_sub_session":  "orchestration",
     "set_reminder":       "orchestration",
     "update_memories":    "orchestration",
-    "update_heartbeats":  "orchestration",
+    "update_pulse":  "orchestration",
     "add_skill":          "orchestration",
     "list_reminders":     "orchestration",
 }
@@ -431,12 +431,12 @@ def _tool_update_memories(inputs: dict, **_kw) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _tool_update_heartbeats(inputs: dict, **_kw) -> str:
+def _tool_update_pulse(inputs: dict, **_kw) -> str:
     try:
-        prompt_assembler.update_heartbeats(inputs["content"])
+        prompt_assembler.update_pulse(inputs["content"])
         return json.dumps({"status": "ok"})
     except Exception as exc:  # noqa: BLE001
-        logger.exception("update_heartbeats failed")
+        logger.exception("update_pulse failed")
         return json.dumps({"error": str(exc)})
 
 
@@ -560,7 +560,7 @@ def _tool_search_web(inputs: dict, **_kw) -> str:
     # --- Try SearXNG first ---
     try:
         params = urllib.parse.urlencode({"q": query, "format": "json", "categories": "general"})
-        req = Request(f"{SEARXNG_URL}/search?{params}", headers={"User-Agent": "ganglion/0.1"})
+        req = Request(f"{SEARXNG_URL}/search?{params}", headers={"User-Agent": "wintermute/0.1"})
         with urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         results = [
@@ -580,7 +580,7 @@ def _tool_search_web(inputs: dict, **_kw) -> str:
     try:
         safe_q = urllib.parse.quote_plus(query)
         proc = subprocess.run(
-            f'curl -s --max-time 15 -A "ganglion/0.1" '
+            f'curl -s --max-time 15 -A "wintermute/0.1" '
             f'"https://api.duckduckgo.com/?q={safe_q}&format=json&no_html=1&skip_disambig=1"',
             shell=True, capture_output=True, text=True, timeout=20,
         )
@@ -619,8 +619,8 @@ def _tool_fetch_url(inputs: dict, **_kw) -> str:
     try:
         req = Request(url, headers={
             "User-Agent": (
-                "Mozilla/5.0 (compatible; ganglion/0.1; "
-                "+https://github.com/ganglion)"
+                "Mozilla/5.0 (compatible; wintermute/0.1; "
+                "+https://github.com/wintermute)"
             ),
             "Accept": "text/html,application/xhtml+xml,text/plain,*/*",
         })
@@ -664,7 +664,7 @@ _DISPATCH: dict[str, Any] = {
     "spawn_sub_session":  _tool_spawn_sub_session,
     "set_reminder":       _tool_set_reminder,
     "update_memories":    _tool_update_memories,
-    "update_heartbeats":  _tool_update_heartbeats,
+    "update_pulse":  _tool_update_heartbeats,
     "add_skill":          _tool_add_skill,
     "execute_shell":      _tool_execute_shell,
     "read_file":          _tool_read_file,

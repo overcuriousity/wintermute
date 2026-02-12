@@ -4,7 +4,7 @@ Assembles the complete system prompt from individual file components.
 Order:
   1. BASE_PROMPT.txt   – immutable core
   2. MEMORIES.txt      – long-term user facts
-  3. HEARTBEATS.txt    – active goals / working memory
+  3. PULSE.txt         – active goals / working memory
   4. skills/*.md       – capability documentation
 """
 
@@ -17,13 +17,13 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path("data")
 BASE_PROMPT_FILE  = DATA_DIR / "BASE_PROMPT.txt"
 MEMORIES_FILE     = DATA_DIR / "MEMORIES.txt"
-HEARTBEATS_FILE   = DATA_DIR / "HEARTBEATS.txt"
+PULSE_FILE        = DATA_DIR / "PULSE.txt"
 SKILLS_DIR        = DATA_DIR / "skills"
 
 # Size thresholds (characters) that trigger AI summarisation
-MEMORIES_LIMIT   = 10_000
-HEARTBEATS_LIMIT = 5_000
-SKILLS_LIMIT     = 20_000
+MEMORIES_LIMIT = 10_000
+PULSE_LIMIT    = 5_000
+SKILLS_LIMIT   = 20_000
 
 
 def _read(path: Path, default: str = "") -> str:
@@ -52,7 +52,7 @@ def assemble(extra_summary: Optional[str] = None) -> str:
     Build and return the full system prompt string.
 
     ``extra_summary`` is an optional compaction summary injected between
-    HEARTBEATS and SKILLS when context has been compacted.
+    Pulse and SKILLS when context has been compacted.
     """
     sections: list[str] = []
 
@@ -66,9 +66,9 @@ def assemble(extra_summary: Optional[str] = None) -> str:
     if memories:
         sections.append(f"# User Memories\n\n{memories}")
 
-    heartbeats = _read(HEARTBEATS_FILE)
-    if heartbeats:
-        sections.append(f"# Active Heartbeats\n\n{heartbeats}")
+    pulse = _read(PULSE_FILE)
+    if pulse:
+        sections.append(f"# Active Pulse\n\n{pulse}")
 
     if extra_summary:
         sections.append(f"# Conversation Summary\n\n{extra_summary}")
@@ -83,16 +83,16 @@ def assemble(extra_summary: Optional[str] = None) -> str:
 def check_component_sizes() -> dict[str, bool]:
     """
     Return a dict indicating which components exceed their size thresholds.
-    Keys: 'memories', 'heartbeats', 'skills'
+    Keys: 'memories', 'pulse', 'skills'
     """
-    memories_len   = len(_read(MEMORIES_FILE))
-    heartbeats_len = len(_read(HEARTBEATS_FILE))
-    skills_len     = len(_read_skills())
+    memories_len = len(_read(MEMORIES_FILE))
+    pulse_len    = len(_read(PULSE_FILE))
+    skills_len   = len(_read_skills())
 
     return {
-        "memories":   memories_len   > MEMORIES_LIMIT,
-        "heartbeats": heartbeats_len > HEARTBEATS_LIMIT,
-        "skills":     skills_len     > SKILLS_LIMIT,
+        "memories": memories_len > MEMORIES_LIMIT,
+        "pulse":    pulse_len    > PULSE_LIMIT,
+        "skills":   skills_len   > SKILLS_LIMIT,
     }
 
 
@@ -102,10 +102,10 @@ def update_memories(content: str) -> None:
     logger.info("MEMORIES.txt updated (%d chars)", len(content))
 
 
-def update_heartbeats(content: str) -> None:
+def update_pulse(content: str) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    HEARTBEATS_FILE.write_text(content, encoding="utf-8")
-    logger.info("HEARTBEATS.txt updated (%d chars)", len(content))
+    PULSE_FILE.write_text(content, encoding="utf-8")
+    logger.info("PULSE.txt updated (%d chars)", len(content))
 
 
 def add_skill(skill_name: str, documentation: str) -> None:

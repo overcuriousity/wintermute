@@ -1,5 +1,5 @@
 [project]
-name = "ganglion"
+name = "wintermute"
 version = "0.1.0"
 description = "A multi-interface personal AI assistant with persistent memory, reminders, and tool-calling"
 readme = "README.md"
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-ganglion = "ganglion.main:run"
+wintermute = "ganglion.main:run"
 
 [build-system]
 requires = ["hatchling"]

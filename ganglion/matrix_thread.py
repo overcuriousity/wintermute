@@ -13,7 +13,7 @@ Special commands handled directly (before reaching the LLM):
   /new       - reset the conversation for the current room
   /compact   - force context compaction for the current room
   /reminders - list active reminders
-  /heartbeat - manually trigger heartbeat review
+  /pulse - manually trigger pulse review
 
 SAS key verification:
   Incoming verification requests from allowed_users are auto-accepted and
@@ -486,13 +486,13 @@ class MatrixThread:
             await self.send_message(f"Reminders:\n```json\n{result}\n```", thread_id)
             return
 
-        if text == "/heartbeat":
+        if text == "/pulse":
             await self._llm.enqueue_system_event(
-                "The user manually triggered a heartbeat review. "
-                "Review your HEARTBEATS.txt and report what actions, if any, you take.",
+                "The user manually triggered a pulse review. "
+                "Review your PULSE.txt and report what actions, if any, you take.",
                 thread_id,
             )
-            await self.send_message("Heartbeat review triggered.", thread_id)
+            await self.send_message("Pulse review triggered.", thread_id)
             return
 
         await self._set_typing(thread_id, True)

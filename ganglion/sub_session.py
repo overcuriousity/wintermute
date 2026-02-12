@@ -14,13 +14,13 @@ Lifecycle
 3. On completion the worker calls back via enqueue_system_event so the result
    enters the parent thread as a system event.  The orchestrator then
    formulates the final user-facing reply.
-4. If parent_thread_id is None (fire-and-forget mode, used by global heartbeat
+4. If parent_thread_id is None (fire-and-forget mode, used by global pulse
    and system reminders) the result is only logged.
 
 System prompt modes
 -------------------
   "minimal"   – lightweight execution agent (default)
-  "full"      – full assembled prompt (BASE + MEMORIES + HEARTBEATS + SKILLS)
+  "full"      – full assembled prompt (BASE + MEMORIES + PULSE + SKILLS)
   "base_only" – BASE_PROMPT.txt only
   "none"      – no system prompt (bare tool-use loop, e.g. pure script runner)
 

@@ -1,13 +1,13 @@
 """
-Heartbeat Review Loop
+Pulse Review Loop
 
-Periodically invokes the LLM to review HEARTBEATS.txt and take autonomous
+Periodically invokes the LLM to review PULSE.txt and take autonomous
 actions.  Runs both a global heartbeat and per-thread heartbeats.
 
-Global heartbeat runs as an isolated sub-session (fire-and-forget, no parent
+Global pulse runs as an isolated sub-session (fire-and-forget, no parent
 thread) so it never pollutes any user-facing conversation history.
 
-Per-thread heartbeats run through the normal LLM queue so their results are
+Per-thread pulse reviews run through the normal LLM queue so their results are
 delivered to the correct room/tab.
 """
 
@@ -22,18 +22,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-HEARTBEAT_REVIEW_PROMPT = (
-    "This is an automatic heartbeat review. "
-    "Please read your current HEARTBEATS.txt using the read_file tool, "
+PULSE_REVIEW_PROMPT = (
+    "This is an automatic pulse review. "
+    "Please read your current PULSE.txt using the read_file tool, "
     "then review each item and take any appropriate actions (set reminders, "
     "update memories, run shell commands, etc.). "
-    "If you update heartbeats or take actions, briefly summarise what you did. "
+    "If you update your pulse or take actions, briefly summarise what you did. "
     "If nothing needs attention right now, respond with a short status note."
 )
 
 
-class HeartbeatLoop:
-    """Runs as an asyncio task, periodically triggering heartbeat reviews."""
+class PulseLoop:
+    """Runs as an asyncio task, periodically triggering pulse reviews."""
 
     def __init__(self, interval_minutes: int, llm_enqueue_fn,
                  broadcast_fn,
@@ -47,7 +47,7 @@ class HeartbeatLoop:
     async def run(self) -> None:
         self._running = True
         logger.info(
-            "Heartbeat loop started (interval=%dm)", self._interval // 60
+            "Pulse loop started (interval=%dm)", self._interval // 60
         )
         while self._running:
             await asyncio.sleep(self._interval)
@@ -61,39 +61,39 @@ class HeartbeatLoop:
 
     async def _review_global(self) -> None:
         """
-        Global heartbeat review — fire-and-forget isolated sub-session.
+        Global pulse review — fire-and-forget isolated sub-session.
 
         Uses 'full' system prompt so the worker has access to MEMORIES,
         HEARTBEATS, and SKILLS — the same context it would have in a normal
         conversation, without polluting any user thread's history.
         """
-        logger.info("Running global heartbeat review")
+        logger.info("Running global pulse review")
         if self._sub_sessions is not None:
             self._sub_sessions.spawn(
-                objective=HEARTBEAT_REVIEW_PROMPT,
+                objective=PULSE_REVIEW_PROMPT,
                 parent_thread_id=None,   # fire-and-forget
                 system_prompt_mode="full",
             )
         else:
             # Fallback if sub-session manager not yet wired (should not happen
             # after the full startup sequence, but kept for safety).
-            logger.warning("Global heartbeat: SubSessionManager not available, skipping")
+            logger.warning("Global pulse: SubSessionManager not available, skipping")
 
     async def _review_per_thread(self) -> None:
-        """Per-thread heartbeat review — one review per active thread."""
+        """Per-thread pulse review — one review per active thread."""
         thread_ids = database.get_active_thread_ids()
         for tid in thread_ids:
             if tid == "default":
                 continue  # already handled by global
-            logger.info("Running heartbeat review for thread %s", tid)
+            logger.info("Running pulse review for thread %s", tid)
             try:
-                reply = await self._llm_enqueue(HEARTBEAT_REVIEW_PROMPT, tid)
+                reply = await self._llm_enqueue(PULSE_REVIEW_PROMPT, tid)
                 if reply and not _is_silent(reply):
                     await self._broadcast(
-                        f"\U0001f493 Heartbeat review:\n\n{reply}", tid
+                        f"\U0001f493 Pulse review:\n\n{reply}", tid
                     )
             except Exception as exc:  # noqa: BLE001
-                logger.exception("Heartbeat review failed for thread %s: %s", tid, exc)
+                logger.exception("Pulse review failed for thread %s: %s", tid, exc)
 
 
 def _is_silent(reply: str) -> bool:

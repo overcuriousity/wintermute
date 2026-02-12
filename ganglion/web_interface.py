@@ -3,7 +3,7 @@ Web Interface
 
 A minimal aiohttp HTTP + WebSocket server that mirrors the Matrix interface.
 Each WebSocket connection gets its own thread_id for independent conversation
-context.  Supports all special commands (/new, /compact, /reminders, /heartbeat).
+context.  Supports all special commands (/new, /compact, /reminders, /pulse).
 
 Debug panel
 -----------
@@ -36,7 +36,7 @@ _CHAT_HTML = """\
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ganglion</title>
+<title>Wintermute</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -114,7 +114,7 @@ _CHAT_HTML = """\
 </head>
 <body>
 <header>
-  <h1>Ganglion</h1>
+  <h1>Wintermute</h1>
   <span id="status">connecting\u2026</span>
   <span id="thread-id"></span>
   <a href="/debug">Debug \u2197</a>
@@ -210,7 +210,7 @@ _DEBUG_HTML = """\
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Ganglion Debug</title>
+<title>Wintermute Debug</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -442,7 +442,7 @@ _DEBUG_HTML = """\
 </head>
 <body>
 <header>
-  <h1>Ganglion Debug</h1>
+  <h1>Wintermute Debug</h1>
   <a href="/">&#8592; Chat</a>
   <div class="header-right">
     <span id="refresh-status"></span>
@@ -1220,11 +1220,11 @@ class WebInterface:
             result = tool_module.execute_tool("list_reminders", {})
             return result
 
-        if text == "/heartbeat":
-            await system("Heartbeat review triggered.")
+        if text == "/pulse":
+            await system("Pulse review triggered.")
             await self._llm.enqueue_system_event(
-                "The user manually triggered a heartbeat review. "
-                "Review your HEARTBEATS.txt and report what actions, if any, you take.",
+                "The user manually triggered a pulse review. "
+                "Review your PULSE.txt and report what actions, if any, you take.",
                 thread_id,
             )
             return None

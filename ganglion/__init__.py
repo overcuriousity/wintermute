@@ -1,1 +1,1 @@
-"""Ganglion – multi-interface personal AI assistant."""
+"""Wintermute – multi-interface personal AI assistant."""
