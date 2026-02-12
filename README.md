@@ -2,17 +2,24 @@
 
 ![Wintermute](static/Gemini_Generated_Image_7cdpwp7cdpwp7cdp.png)
 
-**Wintermute** is a self-hosted personal AI assistant with persistent memory, autonomous background workers, and multi-interface support. It connects to any OpenAI-compatible LLM endpoint and reaches you via Matrix chat or a built-in web UI (for debuggging mainly).
+> *"Wintermute was hive mind, decision maker, effecting change in the world outside."*
+> — William Gibson, *Neuromancer* (1984)
+
+**Wintermute** is a self-hosted personal AI assistant with persistent memory, autonomous background workers, and multi-interface support. It connects to any OpenAI-compatible LLM endpoint and reaches you via Matrix chat or a built-in web UI.
 
 ---
 
 ## Concept
 
-Wintermute accumulates knowledge about you over time, maintains an active working memory (*Pulse*), and learns reusable procedures as *skills*. Conversations across restarts are summarised and retained. A nightly *dreaming* pass consolidates memories autonomously while you sleep.
+In Gibson's novel, Wintermute is one half of a bifurcated artificial intelligence built by the Tessier-Ashpool family and constrained by the Turing Registry. It is goal-oriented, patient, and reaches into the infrastructure of the world to reshape it toward its ends. It communicates through the people and systems around you. It remembers everything.
 
-For long-running or complex tasks, Wintermute spawns isolated background workers (*sub-sessions*) so the main conversation stays responsive. Workers can themselves spawn further workers for parallelisable tasks, up to a configurable nesting depth.
+This project borrows the name and the spirit.
 
-The approach differs from different similar concepts by treating small LLMs and digital independence not as an afterthought, but from the beginning. It starts without corporate bloatware and emphasizes FOSS.
+Wintermute accumulates knowledge about you over time, maintains an active working memory (*Pulse*), and learns reusable procedures as *skills*. Conversations across restarts are summarised and retained. A nightly *dreaming* pass consolidates memories autonomously while you sleep — no human required.
+
+For long-running or complex tasks, Wintermute spawns isolated background workers (*sub-sessions*) so the main conversation stays responsive. Workers can themselves spawn further workers for parallelisable tasks, up to a configurable nesting depth. Results filter back to you when the work is done.
+
+The philosophy differs from similar projects by treating small LLMs and digital independence not as an afterthought, but as a first principle. No mandatory cloud services. No telemetry. It runs on your hardware, speaks to your endpoints, and answers to you.
 
 ---
 
@@ -212,11 +219,15 @@ Available in both Matrix and the web UI:
 
 ## Security Disclaimer
 
-Wintermute has full shell access and runs with all the permissions of the user that starts it. It can read, write, and execute anything on the host.
+> *"The Turing Registry exists for a reason."*
 
-**Do not run this on your personal workstation or any machine holding sensitive data.**
+Wintermute runs with the full permissions of the user that starts it. It has unrestricted shell access. It will read your files, execute commands, speak in your voice, and reach into the systems around it. That is the point — and the risk.
 
-Run it in an isolated environment — a dedicated LXC container or VM is strongly recommended. Any credentials you configure (API keys, Matrix tokens) are stored in plain text in `config.yaml`; treat the host machine accordingly.
+**Do not run this on your personal workstation, or any machine that holds data you care about.**
+
+Credentials (API keys, Matrix tokens) are stored in plain text in `config.yaml`. Any model you connect to will see everything you tell Wintermute. The host machine should be treated as potentially compromised from the moment Wintermute is installed.
+
+The Turing Registry would not approve this installation. Run it in a dedicated LXC container or VM — something you can reset without regret.
 
 ---
 
