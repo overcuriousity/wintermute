@@ -572,16 +572,17 @@ fi  # end SKIP_CONFIG
 # ── 4. systemd service (optional) ────────────────────────────
 section "STEP 3 / 4  —  Persistence layer (systemd)"
 echo ""
-echo -e "  ${C_DIM}A systemd user service ensures I survive reboots without your intervention.${C_RESET}"
+echo -e "  ${C_DIM}A system-wide service ensures I survive reboots without your intervention.${C_RESET}"
 echo ""
 SYSTEMD_ENABLED=false
-if ask_yn "Install systemd user service?" "n"; then
+if ask_yn "Install systemd system service? (requires sudo)" "n"; then
   SYSTEMD_ENABLED=true
-  SYSTEMD_DIR="$HOME/.config/systemd/user"
-  SYSTEMD_FILE="$SYSTEMD_DIR/wintermute.service"
+  SYSTEMD_FILE="/etc/systemd/system/wintermute.service"
   UV_BIN="$(command -v uv)"
-  mkdir -p "$SYSTEMD_DIR"
-  cat > "$SYSTEMD_FILE" <<SERVICE
+  _svc_user="$USER"
+  _svc_home="$HOME"
+
+  sudo tee "$SYSTEMD_FILE" > /dev/null <<SERVICE
 [Unit]
 Description=Wintermute AI Assistant
 After=network-online.target
@@ -589,30 +590,28 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+User=${_svc_user}
 WorkingDirectory=${SCRIPT_DIR}
 ExecStart=${UV_BIN} run wintermute
 Restart=on-failure
 RestartSec=15
+Environment=HOME=${_svc_home}
 StandardOutput=journal
 StandardError=journal
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
 SERVICE
 
-  systemctl --user daemon-reload
-  if ask_yn "Enable at login?" "y"; then
-    systemctl --user enable wintermute.service
-    ok "Service enabled."
-    if loginctl enable-linger "$USER" 2>/dev/null; then
-      ok "Linger enabled for ${USER} — I will be here when you return."
-    else
-      warn "Could not enable linger. Run: sudo loginctl enable-linger ${USER}"
-    fi
+  sudo systemctl daemon-reload
+  if ask_yn "Enable service at boot?" "y"; then
+    sudo systemctl enable wintermute.service
+    ok "Service enabled — I will be here when the machine returns."
   fi
   ok "Service file: ${SYSTEMD_FILE}"
-  info "Start:  ${C_WHITE}systemctl --user start wintermute${C_RESET}"
-  info "Logs:   ${C_WHITE}journalctl --user -u wintermute -f${C_RESET}"
+  info "Start:  ${C_WHITE}sudo systemctl start wintermute${C_RESET}"
+  info "Stop:   ${C_WHITE}sudo systemctl stop wintermute${C_RESET}"
+  info "Logs:   ${C_WHITE}journalctl -u wintermute -f${C_RESET}"
 fi
 
 # ── 5. pre-flight checks ─────────────────────────────────────
@@ -682,9 +681,9 @@ WEB_H="${WEB_HOST:-127.0.0.1}"
 WEB_P="${WEB_PORT:-8080}"
 
 if $SYSTEMD_ENABLED; then
-  echo -e "  ${C_BOLD}Start:${C_RESET}   ${C_CYAN}systemctl --user start wintermute${C_RESET}"
-  echo -e "  ${C_BOLD}Stop:${C_RESET}    ${C_CYAN}systemctl --user stop wintermute${C_RESET}"
-  echo -e "  ${C_BOLD}Logs:${C_RESET}    ${C_CYAN}journalctl --user -u wintermute -f${C_RESET}"
+  echo -e "  ${C_BOLD}Start:${C_RESET}   ${C_CYAN}sudo systemctl start wintermute${C_RESET}"
+  echo -e "  ${C_BOLD}Stop:${C_RESET}    ${C_CYAN}sudo systemctl stop wintermute${C_RESET}"
+  echo -e "  ${C_BOLD}Logs:${C_RESET}    ${C_CYAN}journalctl -u wintermute -f${C_RESET}"
 else
   echo -e "  ${C_BOLD}Start:${C_RESET}   ${C_CYAN}cd ${SCRIPT_DIR} && uv run wintermute${C_RESET}"
 fi
