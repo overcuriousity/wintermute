@@ -86,6 +86,13 @@ info() { echo -e "  ${C_BCYAN}·${C_RESET}  ${1}"; }
 warn() { echo -e "  ${C_YELLOW}⚠${C_RESET}  ${1}"; }
 die()  { echo -e "\n  ${C_BRED}✗  FATAL: ${1}${C_RESET}\n"; exit 1; }
 
+_strip_ctrl() {
+  # Remove stray control characters (backspace 0x08, DEL 0x7f, and all
+  # other non-printable chars) that some terminals embed literally into
+  # read input instead of processing them as editing keys.
+  printf '%s' "$1" | tr -d '\001-\010\013-\037\177'
+}
+
 ask() {
   local _var="$1" _prompt="$2" _default="${3:-}"
   local _hint=""
@@ -94,6 +101,7 @@ ask() {
   local _val
   read -r _val
   [[ -z "$_val" && -n "$_default" ]] && _val="$_default"
+  _val="$(_strip_ctrl "$_val")"
   printf -v "$_var" '%s' "$_val"
 }
 
@@ -103,6 +111,7 @@ ask_secret() {
   local _val
   read -rs _val
   echo ""
+  _val="$(_strip_ctrl "$_val")"
   printf -v "$_var" '%s' "$_val"
 }
 
@@ -566,6 +575,14 @@ YAML
   } > "$CONFIG"
 
   ok "Configuration written."
+  info "Validating config.yaml..."
+  if uv run python -c "import yaml; yaml.safe_load(open('$CONFIG'))" 2>/dev/null; then
+    ok "Configuration is valid YAML."
+  else
+    warn "config.yaml failed YAML validation."
+    warn "This usually means a value contains special characters (quotes, colons, backslashes)."
+    warn "Edit ${C_WHITE}${CONFIG}${C_RESET} manually before starting Wintermute."
+  fi
 
 fi  # end SKIP_CONFIG
 
