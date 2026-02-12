@@ -33,6 +33,9 @@ from openai import AsyncOpenAI
 
 from ganglion import tools as tool_module
 from ganglion.dreaming import run_dream_cycle
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from ganglion.sub_session import SubSessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -84,13 +87,15 @@ class ReminderScheduler:
     def __init__(self, config: SchedulerConfig, broadcast_fn, llm_enqueue_fn,
                  llm_client: Optional[AsyncOpenAI] = None,
                  llm_model: Optional[str] = None,
-                 compaction_model: Optional[str] = None) -> None:
+                 compaction_model: Optional[str] = None,
+                 sub_session_manager: "Optional[SubSessionManager]" = None) -> None:
         self._cfg = config
         self._broadcast = broadcast_fn     # async callable(text, thread_id=None)
-        self._llm_enqueue = llm_enqueue_fn  # async callable(text, thread_id) for system events
+        self._llm_enqueue = llm_enqueue_fn  # async callable(text, thread_id) for thread-bound events
         self._llm_client = llm_client
         self._llm_model = llm_model
         self._compaction_model = compaction_model
+        self._sub_sessions = sub_session_manager
         self._scheduler: Optional[AsyncIOScheduler] = None
 
     # ------------------------------------------------------------------
@@ -181,17 +186,37 @@ class ReminderScheduler:
         logger.info("Firing reminder %s (thread=%s)", job_id, thread_id)
         try:
             if ai_prompt:
-                # Fire as system event into the appropriate thread
-                await self._llm_enqueue(
-                    f"[REMINDER {job_id}] {ai_prompt}\n\n"
-                    f"(Original reminder message: {message})",
-                    thread_id or "default",
-                )
+                if thread_id:
+                    # Thread-bound reminder with AI prompt: goes through the
+                    # normal LLM queue so the result is delivered back to the
+                    # originating room/tab in conversation context.
+                    await self._llm_enqueue(
+                        f"[REMINDER {job_id}] {ai_prompt}\n\n"
+                        f"(Original reminder message: {message})",
+                        thread_id,
+                    )
+                else:
+                    # System reminder with AI prompt: run in an isolated
+                    # sub-session — no thread history, no chat delivery.
+                    if self._sub_sessions is not None:
+                        self._sub_sessions.spawn(
+                            objective=(
+                                f"[REMINDER {job_id}] {ai_prompt}\n\n"
+                                f"(Original reminder message: {message})"
+                            ),
+                            parent_thread_id=None,   # fire-and-forget
+                            system_prompt_mode="base_only",
+                        )
+                    else:
+                        logger.warning(
+                            "System reminder %s has ai_prompt but SubSessionManager "
+                            "is not available — skipping AI execution", job_id
+                        )
             else:
                 if thread_id:
                     await self._broadcast(f"\u23f0 Reminder: {message}", thread_id)
                 else:
-                    # System reminder — log only, no chat delivery
+                    # System reminder without AI prompt — log only.
                     logger.info("System reminder %s: %s", job_id, message)
 
             # If the job is still scheduled (recurring), update next_run in registry.

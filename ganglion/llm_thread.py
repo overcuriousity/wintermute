@@ -26,6 +26,9 @@ from openai import AsyncOpenAI
 from ganglion import database
 from ganglion import prompt_assembler
 from ganglion import tools as tool_module
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from ganglion.sub_session import SubSessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +76,11 @@ class _QueueItem:
 class LLMThread:
     """Runs as an asyncio task within the shared event loop."""
 
-    def __init__(self, config: LLMConfig, broadcast_fn) -> None:
+    def __init__(self, config: LLMConfig, broadcast_fn,
+                 sub_session_manager: "Optional[SubSessionManager]" = None) -> None:
         self._cfg = config
         self._broadcast = broadcast_fn  # async callable(text: str, thread_id: str | None)
+        self._sub_sessions = sub_session_manager  # set post-init via inject_sub_session_manager
         self._queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         self._client = AsyncOpenAI(
             api_key=config.api_key,
@@ -84,6 +89,10 @@ class LLMThread:
         self._running = False
         # Per-thread compaction summaries: thread_id -> summary text
         self._compaction_summaries: dict[str, Optional[str]] = {}
+
+    def inject_sub_session_manager(self, manager: "SubSessionManager") -> None:
+        """Called after construction once SubSessionManager is built."""
+        self._sub_sessions = manager
 
     # ------------------------------------------------------------------
     # Public interface
@@ -103,6 +112,10 @@ class LLMThread:
     async def reset_session(self, thread_id: str = "default") -> None:
         database.clear_active_messages(thread_id)
         self._compaction_summaries.pop(thread_id, None)
+        if self._sub_sessions:
+            n = self._sub_sessions.cancel_for_thread(thread_id)
+            if n:
+                logger.info("Cancelled %d sub-session(s) for reset thread %s", n, thread_id)
         logger.info("Session reset for thread %s", thread_id)
 
     async def force_compact(self, thread_id: str = "default") -> None:
@@ -210,7 +223,8 @@ class LLMThread:
                     except json.JSONDecodeError:
                         inputs = {}
                     result = tool_module.execute_tool(tc.function.name, inputs,
-                                                     thread_id=thread_id)
+                                                     thread_id=thread_id,
+                                                     in_sub_session=False)
                     logger.debug("Tool %s -> %s", tc.function.name, result[:200])
                     full_messages.append({
                         "role":         "tool",

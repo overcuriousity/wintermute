@@ -36,6 +36,49 @@ def _fn(name: str, description: str, parameters: dict) -> dict:
 
 TOOL_SCHEMAS = [
     _fn(
+        "spawn_sub_session",
+        (
+            "Spawn an isolated background worker to handle a complex, multi-step task. "
+            "Returns immediately with a session_id. The worker runs autonomously using "
+            "all available tools and reports its result back to this thread when done. "
+            "Use this when a task would take many tool calls or a long time, so you can "
+            "remain responsive to the user."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "objective": {
+                    "type": "string",
+                    "description": (
+                        "Full description of the task for the worker to complete. "
+                        "Be specific — the worker has no access to the current conversation."
+                    ),
+                },
+                "context_blobs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Optional list of context snippets to pass to the worker "
+                        "(e.g. relevant memory excerpts, file contents, user preferences). "
+                        "Only include what is directly relevant to the task."
+                    ),
+                },
+                "system_prompt_mode": {
+                    "type": "string",
+                    "enum": ["full", "base_only", "none"],
+                    "description": (
+                        "How much of the system prompt to give the worker. "
+                        "'base_only' (default) — core instructions only, fastest and cheapest. "
+                        "'full' — includes MEMORIES, HEARTBEATS, and SKILLS; use when the "
+                        "worker needs full user context. "
+                        "'none' — bare tool-use loop, for purely mechanical tasks."
+                    ),
+                },
+            },
+            "required": ["objective"],
+        },
+    ),
+    _fn(
         "set_reminder",
         (
             "Schedule a reminder. The scheduler thread will fire it at the "
@@ -209,6 +252,9 @@ TOOL_SCHEMAS = [
 # This will be injected by the scheduler thread at startup.
 _scheduler_set_reminder = None  # Callable[[dict], str]
 
+# This will be injected by the SubSessionManager at startup.
+_sub_session_spawn = None  # Callable[[dict, str], str]
+
 
 def register_scheduler(fn) -> None:
     """Called once by the scheduler thread to provide the set_reminder hook."""
@@ -216,7 +262,32 @@ def register_scheduler(fn) -> None:
     _scheduler_set_reminder = fn
 
 
-def _tool_set_reminder(inputs: dict, thread_id: Optional[str] = None) -> str:
+def register_sub_session_manager(fn) -> None:
+    """Called once by SubSessionManager to provide the spawn hook."""
+    global _sub_session_spawn
+    _sub_session_spawn = fn
+
+
+def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
+                            in_sub_session: bool = False, **_kw) -> str:
+    if in_sub_session:
+        return json.dumps({"error": "spawn_sub_session cannot be called from within a sub-session."})
+    if _sub_session_spawn is None:
+        return json.dumps({"error": "Sub-session manager not ready yet."})
+    try:
+        session_id = _sub_session_spawn(
+            objective=inputs["objective"],
+            context_blobs=inputs.get("context_blobs") or [],
+            parent_thread_id=thread_id,
+            system_prompt_mode=inputs.get("system_prompt_mode", "base_only"),
+        )
+        return json.dumps({"status": "started", "session_id": session_id})
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("spawn_sub_session failed")
+        return json.dumps({"error": str(exc)})
+
+
+def _tool_set_reminder(inputs: dict, thread_id: Optional[str] = None, **_kw) -> str:
     if _scheduler_set_reminder is None:
         return json.dumps({"error": "Scheduler not ready yet."})
     try:
@@ -316,21 +387,23 @@ def _tool_list_reminders(_inputs: dict, **_kw) -> str:
 # ---------------------------------------------------------------------------
 
 _DISPATCH: dict[str, Any] = {
-    "set_reminder":     _tool_set_reminder,
-    "update_memories":  _tool_update_memories,
-    "update_heartbeats": _tool_update_heartbeats,
-    "add_skill":        _tool_add_skill,
-    "execute_shell":    _tool_execute_shell,
-    "read_file":        _tool_read_file,
-    "write_file":       _tool_write_file,
-    "list_reminders":   _tool_list_reminders,
+    "spawn_sub_session":  _tool_spawn_sub_session,
+    "set_reminder":       _tool_set_reminder,
+    "update_memories":    _tool_update_memories,
+    "update_heartbeats":  _tool_update_heartbeats,
+    "add_skill":          _tool_add_skill,
+    "execute_shell":      _tool_execute_shell,
+    "read_file":          _tool_read_file,
+    "write_file":         _tool_write_file,
+    "list_reminders":     _tool_list_reminders,
 }
 
 
-def execute_tool(name: str, inputs: dict, thread_id: Optional[str] = None) -> str:
+def execute_tool(name: str, inputs: dict, thread_id: Optional[str] = None,
+                 in_sub_session: bool = False) -> str:
     """Execute a tool by name and return its JSON-string result."""
     fn = _DISPATCH.get(name)
     if fn is None:
         return json.dumps({"error": f"Unknown tool: {name}"})
     logger.debug("Executing tool '%s' with inputs: %s", name, inputs)
-    return fn(inputs, thread_id=thread_id)
+    return fn(inputs, thread_id=thread_id, in_sub_session=in_sub_session)

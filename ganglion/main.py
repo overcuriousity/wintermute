@@ -29,10 +29,12 @@ from typing import Optional
 import yaml
 
 from ganglion import database
+from ganglion import tools as tool_module
 from ganglion.heartbeat import HeartbeatLoop
 from ganglion.llm_thread import LLMConfig, LLMThread
 from ganglion.matrix_thread import MatrixConfig, MatrixThread
 from ganglion.scheduler_thread import DreamingConfig, ReminderScheduler, SchedulerConfig
+from ganglion.sub_session import SubSessionManager
 from ganglion.web_interface import WebInterface
 
 CONFIG_FILE = Path("config.yaml")
@@ -239,6 +241,16 @@ async def main() -> None:
     # Build LLM thread with the shared broadcast function.
     llm = LLMThread(config=llm_cfg, broadcast_fn=broadcast)
 
+    # Build SubSessionManager — shares the LLM client, reports back via
+    # enqueue_system_event so results enter the parent thread's queue.
+    sub_sessions = SubSessionManager(
+        client=llm._client,
+        llm_config=llm_cfg,
+        enqueue_system_event=llm.enqueue_system_event,
+    )
+    llm.inject_sub_session_manager(sub_sessions)
+    tool_module.register_sub_session_manager(sub_sessions.spawn)
+
     # Inject LLM into interfaces.
     if matrix:
         matrix._llm = llm
@@ -252,12 +264,14 @@ async def main() -> None:
         llm_client=llm._client,
         llm_model=llm_cfg.model,
         compaction_model=llm_cfg.compaction_model,
+        sub_session_manager=sub_sessions,
     )
 
     heartbeat_loop = HeartbeatLoop(
         interval_minutes=heartbeat_interval,
         llm_enqueue_fn=llm.enqueue_user_message,
         broadcast_fn=broadcast,
+        sub_session_manager=sub_sessions,
     )
 
     scheduler.start()
