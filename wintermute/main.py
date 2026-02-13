@@ -125,7 +125,7 @@ def bootstrap_data_files() -> None:
     (DATA_DIR / "skills").mkdir(exist_ok=True)
     (DATA_DIR / "scripts").mkdir(exist_ok=True)
     (DATA_DIR / "archive" / "memories").mkdir(parents=True, exist_ok=True)
-    (DATA_DIR / "matrix_store").mkdir(exist_ok=True)
+    # matrix_crypto.db is created automatically by mautrix on first run
 
     base = DATA_DIR / "BASE_PROMPT.txt"
     if not base.exists():

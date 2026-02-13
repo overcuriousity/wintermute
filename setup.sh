@@ -285,7 +285,7 @@ fi
 command -v uv &>/dev/null || die "uv installation failed. Add ~/.local/bin to PATH and re-run."
 ok "Package manager: uv $(uv --version | awk '{print $2}')"
 
-info "Checking build tools (required for matrix-nio E2E crypto)..."
+info "Checking build tools (required for E2E encryption dependencies)..."
 _pyminver=$("$PYTHON" -c "import sys; print('%d.%d' % sys.version_info[:2])")
 if [[ "$OS_FAMILY" == "fedora" ]]; then
   sudo dnf install -y gcc gcc-c++ cmake make \

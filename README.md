@@ -174,7 +174,7 @@ matrix:
 3. Invite `@your-bot-name:matrix.org`
 4. The bot joins and responds to messages from `allowed_users`
 
-**End-to-end encryption** is handled automatically — the bot's Olm/Megolm keys are persisted to `data/matrix_store/` so they survive restarts. Incoming SAS verification requests from allowed users are auto-accepted.
+**End-to-end encryption** is handled automatically — the bot's crypto keys are persisted to `data/matrix_crypto.db` and the device is cross-signed at startup so Element and other clients trust it without manual verification. A recovery key is logged on first run; save it to recover the crypto identity later if needed.
 
 ---
 

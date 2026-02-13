@@ -1389,9 +1389,9 @@ class WebInterface:
         web_live = set(self._threads.keys())
 
         matrix_rooms: set[str] = set()
-        if self._matrix is not None and self._matrix._client is not None:
+        if self._matrix is not None:
             try:
-                matrix_rooms = set(self._matrix._client.rooms.keys())
+                matrix_rooms = self._matrix.joined_room_ids
             except Exception:  # noqa: BLE001
                 pass
 
