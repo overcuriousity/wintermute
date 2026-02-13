@@ -163,13 +163,14 @@ class LLMThread:
 
             if item.future and not item.future.done():
                 item.future.set_result(reply)
-            elif item.is_system_event and not item.future and reply:
+            elif item.is_system_event and not item.future:
                 # System events without a future (sub-session results,
                 # reminders, /pulse commands) have no caller waiting for
                 # the reply.  Broadcast the LLM's response directly so
                 # it reaches the user.
+                text_to_send = reply or item.text  # fallback to raw event
                 try:
-                    await self._broadcast(reply, item.thread_id)
+                    await self._broadcast(text_to_send, item.thread_id)
                 except Exception:  # noqa: BLE001
                     logger.exception("Failed to broadcast system-event reply for thread %s",
                                      item.thread_id)
@@ -213,10 +214,16 @@ class LLMThread:
             summary = self._compaction_summaries.get(thread_id)
             system_prompt = prompt_assembler.assemble(extra_summary=summary)
 
+        is_sub_session_result = item.is_system_event and "[SUB-SESSION " in item.text
         if not item.is_system_event:
             database.save_message("user", item.text, thread_id)
+        elif is_sub_session_result:
+            database.save_message("user", f"[SYSTEM EVENT] {item.text}", thread_id)
 
-        response_text = await self._inference_loop(system_prompt, messages, thread_id)
+        response_text = await self._inference_loop(
+            system_prompt, messages, thread_id,
+            disable_tools=is_sub_session_result,
+        )
 
         database.save_message("assistant", response_text, thread_id)
         await self._maybe_summarise_components(thread_id)
@@ -227,7 +234,8 @@ class LLMThread:
     # ------------------------------------------------------------------
 
     async def _inference_loop(self, system_prompt: str, messages: list[dict],
-                              thread_id: str = "default") -> str:
+                              thread_id: str = "default",
+                              disable_tools: bool = False) -> str:
         """
         Repeatedly call the API until finish_reason is not 'tool_calls'.
         The system prompt is prepended as a role=system message each call
@@ -236,13 +244,20 @@ class LLMThread:
         full_messages = [{"role": "system", "content": system_prompt}] + messages
 
         while True:
-            response = await self._client.chat.completions.create(
-                model=self._cfg.model,
-                max_tokens=self._cfg.max_tokens,
-                tools=tool_module.TOOL_SCHEMAS,
-                tool_choice="auto",
-                messages=full_messages,
-            )
+            if disable_tools:
+                response = await self._client.chat.completions.create(
+                    model=self._cfg.model,
+                    max_tokens=self._cfg.max_tokens,
+                    messages=full_messages,
+                )
+            else:
+                response = await self._client.chat.completions.create(
+                    model=self._cfg.model,
+                    max_tokens=self._cfg.max_tokens,
+                    tools=tool_module.TOOL_SCHEMAS,
+                    tool_choice="auto",
+                    messages=full_messages,
+                )
 
             choice = response.choices[0]
 
