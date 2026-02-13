@@ -476,10 +476,44 @@ class SubSessionManager:
             reverse=True,
         )
 
-    @staticmethod
-    def _serialise(state: SubSessionState) -> dict:
+    def _serialise(self, state: SubSessionState) -> dict:
         """Return state as a dict, omitting the (potentially large) messages list."""
-        return {k: v for k, v in state.__dict__.items() if k != "messages"}
+        d = {k: v for k, v in state.__dict__.items() if k != "messages"}
+        # Enrich with workflow metadata.
+        wf_id = self._session_to_workflow.get(state.session_id)
+        d["workflow_id"] = wf_id
+        if wf_id:
+            wf = self._workflows.get(wf_id)
+            node = wf.nodes.get(state.session_id) if wf else None
+            d["depends_on"] = node.depends_on if node else []
+        else:
+            d["depends_on"] = []
+        return d
+
+    def list_workflows(self) -> list[dict]:
+        """Return serialisable workflow dicts, newest first."""
+        result = []
+        for wf in self._workflows.values():
+            nodes = []
+            for n in wf.nodes.values():
+                nodes.append({
+                    "node_id": n.node_id,
+                    "objective": n.objective,
+                    "status": n.status,
+                    "depends_on": n.depends_on,
+                    "result_preview": (n.result or "")[:120] if n.result else None,
+                    "error": n.error,
+                })
+            result.append({
+                "workflow_id": wf.workflow_id,
+                "parent_thread_id": wf.parent_thread_id,
+                "status": wf.status,
+                "created_at": wf.created_at,
+                "node_count": len(wf.nodes),
+                "nodes": nodes,
+            })
+        result.sort(key=lambda w: w["created_at"], reverse=True)
+        return result
 
     # ------------------------------------------------------------------
     # Worker execution

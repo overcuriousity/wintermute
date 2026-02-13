@@ -354,6 +354,7 @@ _DEBUG_HTML = """\
   .badge-completed{ background: #1a3a1a; color: #90ee90; }
   .badge-failed   { background: #3a1a1a; color: #ff9090; }
   .badge-timeout  { background: #3a2a1a; color: #ffcc90; }
+  .badge-pending  { background: #2a2a1a; color: #cccc80; }
   .badge-cancelled{ background: #2a2a2a; color: #999; }
   /* Scrollable area */
   .scroll-area { flex: 1; overflow-y: auto; padding: .6rem 1rem; }
@@ -457,6 +458,9 @@ _DEBUG_HTML = """\
     <button class="tab-btn" data-tab="subsessions" onclick="showTab('subsessions')">
       Sub-sessions <span class="tab-count" id="cnt-subsessions">0</span>
     </button>
+    <button class="tab-btn" data-tab="workflows" onclick="showTab('workflows')">
+      Workflows <span class="tab-count" id="cnt-workflows">0</span>
+    </button>
     <button class="tab-btn" data-tab="jobs" onclick="showTab('jobs')">
       Jobs <span class="tab-count" id="cnt-jobs">0</span>
     </button>
@@ -494,15 +498,22 @@ _DEBUG_HTML = """\
         <table class="data-table">
           <thead>
             <tr>
-              <th>ID</th><th>Parent</th><th>Status</th>
+              <th>ID</th><th>Workflow</th><th>Deps</th><th>Parent</th><th>Status</th>
               <th>Objective</th><th>Mode</th>
               <th>Created</th><th>Duration</th><th>Result / Error</th>
             </tr>
           </thead>
           <tbody id="subsessions-body">
-            <tr><td colspan="8" class="empty">Loading\u2026</td></tr>
+            <tr><td colspan="10" class="empty">Loading\u2026</td></tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- ── Workflows ── -->
+    <div class="tab-panel" id="panel-workflows">
+      <div class="scroll-area" id="workflows-area">
+        <div class="empty">Loading\u2026</div>
       </div>
     </div>
 
@@ -648,6 +659,7 @@ async function loadTab(name) {
     switch (name) {
       case 'sessions':    await loadSessions(); break;
       case 'subsessions': await loadSubSessions(); break;
+      case 'workflows':   await loadWorkflows(); break;
       case 'jobs':        await loadJobs(); break;
       case 'reminders':   await loadReminders(); break;
     }
@@ -910,7 +922,7 @@ async function loadSubSessions() {
   document.getElementById('cnt-subsessions').textContent = sessions.length;
   const tbody = document.getElementById('subsessions-body');
   if (!sessions.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty">No sub-sessions recorded</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">No sub-sessions recorded</td></tr>';
     return;
   }
   tbody.innerHTML = sessions.map(s => {
@@ -921,8 +933,13 @@ async function loadSubSessions() {
     const parentShort = s.parent_thread_id
       ? (s.parent_thread_id.length > 20 ? s.parent_thread_id.slice(0, 18) + '\u2026' : s.parent_thread_id)
       : '\u2014';
+    const wfShort = s.workflow_id || '\u2014';
+    const deps = (s.depends_on || []);
+    const depsStr = deps.length ? deps.join(', ') : '\u2014';
     return `<tr>
       <td class="mono">${esc(s.session_id)}</td>
+      <td class="mono dim">${esc(wfShort)}</td>
+      <td class="mono dim" title="${esc(depsStr)}">${deps.length ? esc(deps.map(d => d.slice(0,12)).join(', ')) : '\u2014'}</td>
       <td class="mono dim" title="${esc(s.parent_thread_id || '')}">${esc(parentShort)}</td>
       <td>${badge(s.status, s.status)}</td>
       <td class="trunc" title="${esc(s.objective)}">${esc(s.objective.slice(0, 60))}${s.objective.length > 60 ? '\u2026' : ''}</td>
@@ -931,6 +948,51 @@ async function loadSubSessions() {
       <td class="dim" style="white-space:nowrap">${duration}</td>
       <td class="trunc" title="${esc(resultText)}">${esc(resultText)}</td>
     </tr>`;
+  }).join('');
+}
+
+// ── Workflows ──
+async function loadWorkflows() {
+  const r = await fetch('/api/debug/workflows');
+  const data = await r.json();
+  const workflows = data.workflows || [];
+  document.getElementById('cnt-workflows').textContent = workflows.length;
+  const area = document.getElementById('workflows-area');
+  if (!workflows.length) {
+    area.innerHTML = '<div class="empty">No workflows recorded</div>';
+    return;
+  }
+  area.innerHTML = workflows.map(wf => {
+    const nodesHtml = wf.nodes.map(n => {
+      const depsStr = n.depends_on.length ? ' \u2190 ' + n.depends_on.join(', ') : '';
+      const detail = n.error ? '\u26a0 ' + esc(n.error)
+        : (n.result_preview ? esc(n.result_preview) : '');
+      return `<tr>
+        <td class="mono">${esc(n.node_id)}</td>
+        <td>${badge(n.status, n.status)}</td>
+        <td class="trunc" title="${esc(n.objective)}">${esc(n.objective.slice(0, 80))}${n.objective.length > 80 ? '\u2026' : ''}</td>
+        <td class="mono dim">${esc(depsStr || 'none')}</td>
+        <td class="trunc dim" title="${esc(detail)}">${detail.slice(0, 100)}${detail.length > 100 ? '\u2026' : ''}</td>
+      </tr>`;
+    }).join('');
+    return `
+      <div class="section-hdr open" onclick="toggleSection(this)">
+        <span>
+          <span class="mono" style="font-size:.78rem">${esc(wf.workflow_id)}</span>
+          ${badge(wf.status, wf.status)}
+          <span class="dim">${wf.node_count} node${wf.node_count !== 1 ? 's' : ''}</span>
+          <span class="dim">${esc(wf.parent_thread_id || 'no parent')}</span>
+        </span>
+        <span>\u25bc</span>
+      </div>
+      <div class="section-body">
+        <table class="data-table">
+          <thead><tr>
+            <th>Node ID</th><th>Status</th><th>Objective</th><th>Depends On</th><th>Result / Error</th>
+          </tr></thead>
+          <tbody>${nodesHtml}</tbody>
+        </table>
+      </div>`;
   }).join('');
 }
 
@@ -1202,6 +1264,7 @@ class WebInterface:
         app.router.add_post("/api/debug/sessions/{thread_id}/delete",   self._api_session_delete)
         app.router.add_post("/api/debug/sessions/{thread_id}/compact",  self._api_session_compact)
         app.router.add_get("/api/debug/subsessions",                    self._api_subsessions)
+        app.router.add_get("/api/debug/workflows",                     self._api_workflows)
         app.router.add_get("/api/debug/jobs",                           self._api_jobs)
         app.router.add_get("/api/debug/system-prompt",                  self._api_system_prompt)
         app.router.add_get("/api/debug/reminders",                      self._api_reminders)
@@ -1506,6 +1569,11 @@ class WebInterface:
         if self._sub_sessions is None:
             return self._json({"sessions": []})
         return self._json({"sessions": self._sub_sessions.list_all()})
+
+    async def _api_workflows(self, _request: web.Request) -> web.Response:
+        if self._sub_sessions is None:
+            return self._json({"workflows": []})
+        return self._json({"workflows": self._sub_sessions.list_workflows()})
 
     # ------------------------------------------------------------------
     # Debug REST API — scheduler jobs
