@@ -1,21 +1,33 @@
 """
-Agentic Sub-sessions
+Agentic Sub-sessions with Workflow DAG
 
-An isolated, ephemeral worker that runs a multi-step tool loop in the
-background without touching any user-facing thread's history.
+Isolated, ephemeral workers that run multi-step tool loops in the background
+without touching any user-facing thread's history.  Every sub-session is
+tracked as a node in a lightweight workflow DAG so that multi-step tasks
+(research A + B → upload both) execute deterministically without relying on
+the LLM to remember follow-up steps.
 
 Lifecycle
 ---------
-1. Orchestrator calls spawn_sub_session tool (from within its normal inference
-   loop).  SubSessionManager.spawn() creates an asyncio.Task and immediately
-   returns the session_id to the orchestrator.
+1. Orchestrator calls spawn_sub_session (optionally with depends_on).
+   SubSessionManager.spawn() registers a TaskNode in a Workflow DAG and
+   either starts the worker immediately (no deps / all deps done) or
+   defers it as "pending".
 2. Worker runs _worker_loop(): its own inference + tool-call loop with a
    focused system prompt and an in-memory message list (never persisted).
-3. On completion the worker calls back via enqueue_system_event so the result
-   enters the parent thread as a system event.  The orchestrator then
-   formulates the final user-facing reply.
-4. If parent_thread_id is None (fire-and-forget mode, used by global pulse
-   and system reminders) the result is only logged.
+3. On completion, _resolve_dependents() checks if any pending nodes can
+   now start.  Dependency results are passed as context_blobs.
+4. The result enters the parent thread via enqueue_system_event.
+   If parent_thread_id is None (fire-and-forget) the result is only logged.
+
+Workflow DAG
+------------
+  - Every sub-session is a node in a Workflow (auto-created if needed).
+  - depends_on: list of session_ids that must complete first.
+  - Fan-in: task C depends_on=[A, B] — auto-starts when both finish.
+  - Failure propagation: if a dependency fails, all transitive dependents
+    are marked failed and reported.
+  - Resolution is event-driven (no polling): each completion triggers a check.
 
 System prompt modes
 -------------------
@@ -95,13 +107,43 @@ class SubSessionState:
     continued_from: Optional[str] = None # session_id of predecessor, if any
 
 
+@dataclass
+class TaskNode:
+    """A node in a workflow DAG."""
+    node_id: str                          # == session_id
+    objective: str
+    context_blobs: list[str]
+    system_prompt_mode: str
+    timeout: int
+    depends_on: list[str]                 # node_ids that must complete first
+    nesting_depth: int = 1
+    parent_thread_id: Optional[str] = None
+    status: str = "pending"               # pending | running | completed | failed
+    result: Optional[str] = None
+    error: Optional[str] = None
+
+
+@dataclass
+class Workflow:
+    """A DAG of TaskNodes."""
+    workflow_id: str
+    parent_thread_id: Optional[str]
+    nodes: dict[str, TaskNode] = field(default_factory=dict)
+    created_at: str = ""
+    status: str = "running"               # running | completed | failed
+
+
 # ---------------------------------------------------------------------------
 # Manager
 # ---------------------------------------------------------------------------
 
 class SubSessionManager:
     """
-    Manages background worker sub-sessions.
+    Manages background worker sub-sessions and workflow DAGs.
+
+    Every sub-session is tracked as a node in a Workflow.  When a node
+    specifies depends_on, it stays pending until all dependencies finish,
+    then auto-starts with their results as context.
 
     Injected dependencies
     ---------------------
@@ -122,6 +164,9 @@ class SubSessionManager:
         self._enqueue = enqueue_system_event
         self._states: dict[str, SubSessionState] = {}
         self._tasks: dict[str, asyncio.Task] = {}
+        # DAG workflow tracking
+        self._workflows: dict[str, Workflow] = {}
+        self._session_to_workflow: dict[str, str] = {}  # session_id -> workflow_id
 
     # ------------------------------------------------------------------
     # Public API
@@ -138,25 +183,169 @@ class SubSessionManager:
         prior_messages: Optional[list[dict]] = None,
         continuation_depth: int = 0,
         continued_from: Optional[str] = None,
+        depends_on: Optional[list[str]] = None,
     ) -> str:
         """
-        Start a worker sub-session and return its session_id immediately.
+        Register a sub-session and start it immediately (or defer if deps pending).
 
-        The caller (orchestrator) is not blocked.  Results are delivered via
-        enqueue_system_event when the worker finishes.
+        Every sub-session is tracked as a node in a workflow DAG.  When
+        *depends_on* lists session_ids that haven't completed yet, the node
+        stays pending and is auto-started once all dependencies finish.
+        Results from completed dependencies are prepended to *context_blobs*.
 
         Pass prior_messages to resume from a previous session's message history
         (used internally by the auto-continuation logic on timeout).
         """
         session_id = f"sub_{uuid.uuid4().hex[:8]}"
+        now = datetime.now(timezone.utc).isoformat()
+        deps = depends_on or []
+
+        # -- Register the node in a workflow --
+        node = TaskNode(
+            node_id=session_id,
+            objective=objective,
+            context_blobs=list(context_blobs or []),
+            system_prompt_mode=system_prompt_mode,
+            timeout=timeout,
+            depends_on=list(deps),
+            nesting_depth=nesting_depth,
+            parent_thread_id=parent_thread_id,
+        )
+
+        if deps:
+            # Find or create a workflow that contains any of the dependencies.
+            workflow_id = None
+            for dep_id in deps:
+                wf_id = self._session_to_workflow.get(dep_id)
+                if wf_id:
+                    workflow_id = wf_id
+                    break
+            if workflow_id is None:
+                # deps reference sessions that weren't in a workflow yet —
+                # create one and retroactively register them.
+                workflow_id = f"wf_{uuid.uuid4().hex[:8]}"
+                wf = Workflow(
+                    workflow_id=workflow_id,
+                    parent_thread_id=parent_thread_id,
+                    created_at=now,
+                )
+                self._workflows[workflow_id] = wf
+                for dep_id in deps:
+                    dep_state = self._states.get(dep_id)
+                    if dep_id not in self._session_to_workflow and dep_state:
+                        dep_node = TaskNode(
+                            node_id=dep_id,
+                            objective=dep_state.objective,
+                            context_blobs=[],
+                            system_prompt_mode=dep_state.system_prompt_mode,
+                            timeout=DEFAULT_TIMEOUT,
+                            depends_on=[],
+                            nesting_depth=dep_state.nesting_depth,
+                            parent_thread_id=dep_state.parent_thread_id,
+                            status=dep_state.status,
+                            result=dep_state.result,
+                            error=dep_state.error,
+                        )
+                        wf.nodes[dep_id] = dep_node
+                        self._session_to_workflow[dep_id] = workflow_id
+
+            wf = self._workflows[workflow_id]
+            wf.nodes[session_id] = node
+            self._session_to_workflow[session_id] = workflow_id
+
+            # Check if all deps are already done.
+            all_done = all(
+                self._states.get(d) and self._states[d].status in ("completed", "timeout")
+                for d in deps
+            )
+            any_failed = any(
+                self._states.get(d) and self._states[d].status == "failed"
+                for d in deps
+            )
+
+            if any_failed:
+                node.status = "failed"
+                node.error = "dependency failed before task was started"
+                logger.info("Sub-session %s skipped (dependency failed)", session_id)
+                # Create a minimal state so _report and list_all work.
+                state = SubSessionState(
+                    session_id=session_id, objective=objective,
+                    parent_thread_id=parent_thread_id,
+                    system_prompt_mode=system_prompt_mode,
+                    status="failed", created_at=now,
+                    error=node.error,
+                )
+                self._states[session_id] = state
+                asyncio.get_event_loop().create_task(
+                    self._report(state, f"[SUB-SESSION {session_id} FAILED] dependency failed")
+                )
+                return session_id
+
+            if not all_done:
+                node.status = "pending"
+                # Create a placeholder state so list_all/cancel work.
+                state = SubSessionState(
+                    session_id=session_id, objective=objective,
+                    parent_thread_id=parent_thread_id,
+                    system_prompt_mode=system_prompt_mode,
+                    status="pending", created_at=now,
+                    nesting_depth=nesting_depth,
+                )
+                self._states[session_id] = state
+                logger.info(
+                    "Sub-session %s registered as pending (deps=%s, workflow=%s)",
+                    session_id, deps, workflow_id,
+                )
+                return session_id
+
+            # All deps done — collect their results as context.
+            node.context_blobs = self._collect_dep_results(deps) + node.context_blobs
+        else:
+            # No dependencies — create a single-node workflow.
+            workflow_id = f"wf_{uuid.uuid4().hex[:8]}"
+            wf = Workflow(
+                workflow_id=workflow_id,
+                parent_thread_id=parent_thread_id,
+                created_at=now,
+            )
+            wf.nodes[session_id] = node
+            self._workflows[workflow_id] = wf
+            self._session_to_workflow[session_id] = workflow_id
+
+        # -- Spawn immediately --
+        return self._start_node(node, prior_messages, continuation_depth, continued_from)
+
+    def _collect_dep_results(self, dep_ids: list[str]) -> list[str]:
+        """Gather result texts from completed dependency sessions."""
+        blobs = []
+        for dep_id in dep_ids:
+            dep_state = self._states.get(dep_id)
+            if dep_state and dep_state.result:
+                blobs.append(
+                    f"[Result from {dep_id} ({dep_state.objective[:80]})]\n"
+                    f"{dep_state.result}"
+                )
+        return blobs
+
+    def _start_node(
+        self,
+        node: TaskNode,
+        prior_messages: Optional[list[dict]] = None,
+        continuation_depth: int = 0,
+        continued_from: Optional[str] = None,
+    ) -> str:
+        """Create the SubSessionState + asyncio.Task and start the worker."""
+        session_id = node.node_id
+        node.status = "running"
+
         state = SubSessionState(
             session_id=session_id,
-            objective=objective,
-            parent_thread_id=parent_thread_id,
-            system_prompt_mode=system_prompt_mode,
+            objective=node.objective,
+            parent_thread_id=node.parent_thread_id,
+            system_prompt_mode=node.system_prompt_mode,
             status="running",
             created_at=datetime.now(timezone.utc).isoformat(),
-            nesting_depth=nesting_depth,
+            nesting_depth=node.nesting_depth,
             messages=list(prior_messages) if prior_messages else [],
             continuation_depth=continuation_depth,
             continued_from=continued_from,
@@ -164,7 +353,7 @@ class SubSessionManager:
         self._states[session_id] = state
 
         task = asyncio.create_task(
-            self._run(state, context_blobs or [], timeout),
+            self._run(state, node.context_blobs, node.timeout),
             name=f"sub_session_{session_id}",
         )
         self._tasks[session_id] = task
@@ -172,24 +361,103 @@ class SubSessionManager:
 
         logger.info(
             "Sub-session %s spawned (parent=%s mode=%s timeout=%ds depth=%d nest=%d)",
-            session_id, parent_thread_id, system_prompt_mode, timeout,
-            continuation_depth, nesting_depth,
+            session_id, node.parent_thread_id, node.system_prompt_mode,
+            node.timeout, continuation_depth, node.nesting_depth,
         )
         return session_id
 
+    async def _resolve_dependents(self, session_id: str) -> None:
+        """Check if any pending nodes can now be started after *session_id* finished."""
+        workflow_id = self._session_to_workflow.get(session_id)
+        if not workflow_id:
+            return
+        wf = self._workflows.get(workflow_id)
+        if not wf:
+            return
+
+        # Sync the node's status from SubSessionState.
+        state = self._states.get(session_id)
+        node = wf.nodes.get(session_id)
+        if node and state:
+            node.status = state.status
+            node.result = state.result
+            node.error = state.error
+
+        completed = sum(1 for n in wf.nodes.values() if n.status == "completed")
+        total = len(wf.nodes)
+
+        for nid, n in list(wf.nodes.items()):
+            if n.status != "pending":
+                continue
+
+            dep_states = {d: self._states.get(d) for d in n.depends_on}
+            any_failed = any(
+                s and s.status == "failed" for s in dep_states.values()
+            )
+            all_done = all(
+                s and s.status in ("completed", "timeout") for s in dep_states.values()
+            )
+
+            if any_failed:
+                n.status = "failed"
+                n.error = "dependency failed"
+                # Update the placeholder SubSessionState too.
+                placeholder = self._states.get(nid)
+                if placeholder:
+                    placeholder.status = "failed"
+                    placeholder.error = n.error
+                    placeholder.completed_at = datetime.now(timezone.utc).isoformat()
+                await self._report(
+                    placeholder or SubSessionState(
+                        session_id=nid, objective=n.objective,
+                        parent_thread_id=n.parent_thread_id,
+                        system_prompt_mode=n.system_prompt_mode,
+                        status="failed", created_at="",
+                        error=n.error,
+                    ),
+                    f"[SUB-SESSION {nid} FAILED] dependency failed",
+                )
+                # Recursively resolve anything depending on this now-failed node.
+                await self._resolve_dependents(nid)
+
+            elif all_done:
+                n.context_blobs = self._collect_dep_results(n.depends_on) + n.context_blobs
+                logger.info(
+                    "All deps ready for %s — auto-starting (workflow=%s, %d/%d done)",
+                    nid, workflow_id, completed, total,
+                )
+                self._start_node(n)
+
+        # Check if the whole workflow is terminal.
+        all_terminal = all(
+            n.status in ("completed", "failed", "timeout") for n in wf.nodes.values()
+        )
+        if all_terminal:
+            any_fail = any(n.status == "failed" for n in wf.nodes.values())
+            wf.status = "failed" if any_fail else "completed"
+            logger.info("Workflow %s %s (%d nodes)", workflow_id, wf.status, total)
+
     def cancel_for_thread(self, thread_id: str) -> int:
         """
-        Cancel all running sub-sessions whose parent is thread_id.
+        Cancel all running/pending sub-sessions whose parent is thread_id.
         Returns the number of sessions cancelled.
         """
         cancelled = 0
         for sid, state in list(self._states.items()):
-            if state.parent_thread_id == thread_id and state.status == "running":
+            if state.parent_thread_id != thread_id:
+                continue
+            if state.status == "running":
                 task = self._tasks.get(sid)
                 if task and not task.done():
                     task.cancel()
                     logger.info("Cancelled sub-session %s (thread reset)", sid)
                     cancelled += 1
+            elif state.status == "pending":
+                state.status = "failed"
+                state.error = "Cancelled"
+                state.completed_at = datetime.now(timezone.utc).isoformat()
+                logger.info("Cancelled pending sub-session %s (thread reset)", sid)
+                cancelled += 1
         return cancelled
 
     def list_active(self) -> list[dict]:
@@ -197,7 +465,7 @@ class SubSessionManager:
         return [
             self._serialise(state)
             for state in self._states.values()
-            if state.status == "running"
+            if state.status in ("running", "pending")
         ]
 
     def list_all(self) -> list[dict]:
@@ -233,6 +501,7 @@ class SubSessionManager:
             state.completed_at = datetime.now(timezone.utc).isoformat()
             logger.info("Sub-session %s completed (%d chars)", state.session_id, len(result or ""))
             await self._report(state, f"[SUB-SESSION {state.session_id} RESULT]\n\n{result}")
+            await self._resolve_dependents(state.session_id)
 
         except asyncio.TimeoutError:
             state.status = "timeout"
@@ -294,6 +563,7 @@ class SubSessionManager:
                         f"Consider retrying or checking model availability."
                     )
             await self._report(state, msg)
+            await self._resolve_dependents(state.session_id)
 
         except asyncio.CancelledError:
             state.status = "failed"
@@ -310,9 +580,28 @@ class SubSessionManager:
             msg = f"[SUB-SESSION {state.session_id} FAILED] {exc}"
             logger.exception("Sub-session %s failed", state.session_id)
             await self._report(state, msg)
+            await self._resolve_dependents(state.session_id)
 
     async def _report(self, state: SubSessionState, text: str) -> None:
         """Deliver result to parent thread, or log if fire-and-forget."""
+        # Append workflow progress if this session is part of a DAG.
+        wf_id = self._session_to_workflow.get(state.session_id)
+        if wf_id:
+            wf = self._workflows.get(wf_id)
+            if wf and len(wf.nodes) > 1:
+                done = sum(
+                    1 for n in wf.nodes.values()
+                    if n.status in ("completed", "failed", "timeout")
+                )
+                total = len(wf.nodes)
+                text += f"\n\n(workflow {wf_id}: {done}/{total} nodes complete)"
+                if done == total:
+                    any_fail = any(n.status == "failed" for n in wf.nodes.values())
+                    if any_fail:
+                        text += f"\n[WORKFLOW {wf_id} FINISHED WITH ERRORS]"
+                    else:
+                        text += f"\n[WORKFLOW {wf_id} COMPLETE]"
+
         if state.parent_thread_id:
             try:
                 await self._enqueue(text, state.parent_thread_id)

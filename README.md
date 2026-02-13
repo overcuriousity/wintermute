@@ -13,7 +13,7 @@
 
 Wintermute accumulates knowledge about you over time, maintains an active working memory (*Pulse*), and learns reusable procedures as *skills*. Conversations across restarts are summarised and retained. A nightly *dreaming* pass consolidates memories autonomously while you sleep — no human required.
 
-For long-running or complex tasks, Wintermute spawns isolated background workers (*sub-sessions*) so the main conversation stays responsive. Workers can themselves spawn further workers for parallelisable tasks, up to a configurable nesting depth. Results filter back to you when the work is done.
+For long-running or complex tasks, Wintermute spawns isolated background workers (*sub-sessions*) so the main conversation stays responsive. Multi-step requests are expressed as workflow DAGs: the orchestrator defines all stages upfront with `depends_on` dependencies, and downstream tasks auto-start when their prerequisites complete — no human nudging required. Workers can themselves spawn further workers up to a configurable nesting depth.
 
 The philosophy differs from similar projects by treating small LLMs and digital independence not as an afterthought, but as a first principle. No cloud services. No telemetry. It runs on your hardware, speaks to your endpoints, and answers to you.
 
@@ -24,6 +24,7 @@ The philosophy differs from similar projects by treating small LLMs and digital 
 - **Persistent memory** — `MEMORIES.txt` (long-term facts), `PULSE.txt` (active goals / working memory), and `skills/*.md` (reusable procedures) survive restarts and are injected into every prompt
 - **Multi-interface** — Matrix chat (with E2E encryption) and a browser-based web UI run simultaneously; each room / tab has independent conversation history
 - **Sub-session workers** — long-running tasks are delegated to autonomous background agents that report back when done; the main agent stays responsive during execution; workers auto-resume after timeouts (up to 3 hops)
+- **Workflow DAG** — multi-step tasks are expressed as dependency graphs via `depends_on`; downstream tasks auto-start when their dependencies complete, with results passed as context — no LLM decision-making needed after the initial plan
 - **Tool-filtered workers** — minimal workers receive only execution + research tools; `full`-mode workers get orchestration tools too, keeping context lean
 - **Web search** — `search_web` queries a local SearXNG instance and falls back to DuckDuckGo via `curl` when SearXNG is unavailable; `fetch_url` fetches and strips any web page
 - **Reminders & scheduler** — one-time and recurring reminders with optional AI inference on trigger; per-timezone scheduling
@@ -277,12 +278,14 @@ User (Matrix / Browser)
         │
         └── spawn_sub_session ──► SubSessionManager
                                         │
-                                        ├── asyncio.Task (worker 1)
-                                        ├── asyncio.Task (worker 2)  [parallel]
-                                        └── ...
-                                              │
-                                              └── result ──► enqueue_system_event
-                                                              (back to LLMThread)
+                                        ├── Workflow DAG
+                                        │   ├── worker A (no deps) ──► starts immediately
+                                        │   ├── worker B (no deps) ──► starts immediately
+                                        │   └── worker C (depends_on=[A,B]) ──► auto-starts
+                                        │       when A and B complete; receives their results
+                                        │
+                                        └── result ──► enqueue_system_event
+                                                        (back to LLMThread)
 
 PulseLoop ───────────────────────────────► fire-and-forget sub-session (full mode)
 ReminderScheduler ──────────────────────► LLMThread queue / sub-session

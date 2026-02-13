@@ -56,8 +56,10 @@ TOOL_SCHEMAS = [
         "spawn_sub_session",
         (
             "Spawn an isolated background worker to handle a complex, multi-step task. "
-            "Returns immediately with a session_id. The worker runs autonomously using "
-            "all available tools and reports its result back to this thread when done. "
+            "Returns immediately with a session_id. The worker runs autonomously and "
+            "reports its result back to this thread when done. "
+            "Use depends_on to chain tasks: a task with depends_on waits for those "
+            "sessions to finish, then starts automatically with their results as context. "
             "Use this when a task would take many tool calls or a long time, so you can "
             "remain responsive to the user."
         ),
@@ -98,6 +100,17 @@ TOOL_SCHEMAS = [
                         "Maximum wall-clock seconds the worker may run before being stopped. "
                         "Defaults to 300. Use a higher value for tasks known to be slow "
                         "(e.g. large installations, long web scrapes)."
+                    ),
+                },
+                "depends_on": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "List of session_ids (from previous spawn_sub_session calls) "
+                        "that must complete before this task starts. Their results are "
+                        "automatically passed as context to this worker. Use this for "
+                        "multi-step workflows: e.g. spawn research tasks first, then "
+                        "spawn an upload task that depends_on both research session_ids."
                     ),
                 },
             },
@@ -432,9 +445,13 @@ def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
         )
         if "timeout" in inputs:
             kwargs["timeout"] = int(inputs["timeout"])
+        if "depends_on" in inputs:
+            kwargs["depends_on"] = inputs["depends_on"]
         session_id = _sub_session_spawn(**kwargs)
+        has_deps = bool(inputs.get("depends_on"))
+        status = "pending (waiting for dependencies)" if has_deps else "started"
         return json.dumps({
-            "status": "started",
+            "status": status,
             "session_id": session_id,
             "IMPORTANT": (
                 "The worker is now running in the background. "
