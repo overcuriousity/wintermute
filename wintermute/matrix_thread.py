@@ -28,6 +28,7 @@ import base64 as _base64
 import hashlib as _hashlib
 import json as _json
 import logging
+import re as _re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -58,6 +59,29 @@ CRYPTO_DB_PATH = Path("data/matrix_crypto.db")
 CRYPTO_MARKER_PATH = Path("data/matrix_signed.marker")
 CRYPTO_RECOVERY_KEY_PATH = Path("data/matrix_recovery.key")
 CRYPTO_PICKLE_KEY = "wintermute"
+CONFIG_PATH = Path("config.yaml")
+
+
+def _update_config_yaml(access_token: str, device_id: str) -> None:
+    """Write new access_token and device_id back into config.yaml (in-place).
+
+    Replaces just those two lines, preserving all other content and formatting.
+    """
+    if not CONFIG_PATH.exists():
+        return
+    text = CONFIG_PATH.read_text()
+    text = _re.sub(
+        r"(^\s*access_token:\s*).*$",
+        rf'\g<1>"{access_token}"',
+        text, count=1, flags=_re.MULTILINE,
+    )
+    text = _re.sub(
+        r"(^\s*device_id:\s*).*$",
+        rf'\g<1>"{device_id}"',
+        text, count=1, flags=_re.MULTILINE,
+    )
+    CONFIG_PATH.write_text(text)
+
 
 # SAS (m.sas.v1) to-device event types
 _VERIFY_REQUEST = EventType.find("m.key.verification.request", EventType.Class.TO_DEVICE)
@@ -151,8 +175,9 @@ class _CryptoMemoryStateStore(MemoryStateStore):
 class MatrixConfig:
     homeserver: str
     user_id: str
-    access_token: str
+    access_token: str = ""
     device_id: str = ""
+    password: str = ""
     allowed_users: list[str] = field(default_factory=list)
     allowed_rooms: list[str] = field(default_factory=list)
 
@@ -210,72 +235,148 @@ class MatrixThread:
 
     async def run(self) -> None:
         self._running = True
+
+        # Auto-login if no token but password is configured.
+        if not self._cfg.access_token and self._cfg.password:
+            await self._auto_login()
+        elif not self._cfg.access_token:
+            logger.error(
+                "Matrix: no access_token and no password configured. "
+                "Set at least one in config.yaml.",
+            )
+            return
+
         try:
-            client = await self._setup_client()
-            self._client = client
-            try:
-                await self._setup_crypto(client)
-            except MUnknownToken:
-                raise
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Crypto setup failed (%s). "
-                    "Wiping stale crypto store and retrying once...", exc,
-                )
-                _wipe_crypto_db()
-                await self._setup_crypto(client)
-            logger.info("Matrix connected with E2EE. Listening.")
-
-            # Cross-sign after the first sync so device keys are in the server's
-            # registry before sign_own_device() queries them.
-            _done = asyncio.Event()
-
-            async def _on_first_sync(*_args: object, **_kw: object) -> None:
-                if not _done.is_set():
-                    _done.set()
-                    asyncio.create_task(
-                        self._ensure_cross_signed(client.crypto),
-                        name="cross-sign",
-                    )
-
-            client.add_event_handler(InternalEventType.SYNC_SUCCESSFUL, _on_first_sync)
-
-            # client.start() creates a sync task with built-in exponential
-            # backoff (5 s → 320 s).  Awaiting the returned task blocks
-            # until stop() cancels it or a fatal error occurs.
-            client.ignore_initial_sync = True
-            await client.start(filter_data=None)
+            await self._connect_and_serve()
         except asyncio.CancelledError:
             logger.info("Matrix task cancelled")
         except MUnknownToken:
-            logger.error(
-                "Matrix access token is invalid or expired.\n"
-                "  Get a new token by logging in again:\n"
-                "    curl -s -X POST '%s/_matrix/client/v3/login' \\\n"
-                "      -H 'Content-Type: application/json' \\\n"
-                "      -d '{\"type\":\"m.login.password\","
-                "\"identifier\":{\"type\":\"m.id.user\",\"user\":\"BOT_USER\"},"
-                "\"password\":\"BOT_PASSWORD\","
-                "\"initial_device_display_name\":\"Wintermute\"}' | python3 -m json.tool\n"
-                "  Then update access_token (and device_id if changed) in config.yaml and restart.",
-                self._cfg.homeserver,
-            )
+            if self._cfg.password:
+                logger.info("Token expired — re-authenticating with stored password...")
+                await self._cleanup()
+                _wipe_crypto_db()
+                try:
+                    await self._auto_login()
+                    await self._connect_and_serve()
+                except MUnknownToken:
+                    logger.error(
+                        "Re-login succeeded but the new token was also rejected. "
+                        "Check your homeserver or account status.",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Re-login or reconnect failed: %s", exc, exc_info=True)
+            else:
+                logger.error(
+                    "Matrix access token is invalid or expired.\n"
+                    "  Option A: add 'password' to the matrix section of config.yaml\n"
+                    "            for automatic re-login.\n"
+                    "  Option B: get a new token manually:\n"
+                    "    curl -s -X POST '%s/_matrix/client/v3/login' \\\n"
+                    "      -H 'Content-Type: application/json' \\\n"
+                    "      -d '{\"type\":\"m.login.password\","
+                    "\"identifier\":{\"type\":\"m.id.user\",\"user\":\"BOT_USER\"},"
+                    "\"password\":\"BOT_PASSWORD\","
+                    "\"initial_device_display_name\":\"Wintermute\"}' | python3 -m json.tool\n"
+                    "  Then update access_token and device_id in config.yaml and restart.",
+                    self._cfg.homeserver,
+                )
         except Exception as exc:  # noqa: BLE001
             logger.error("Matrix fatal error: %s", exc, exc_info=True)
         finally:
-            if self._client is not None:
-                self._client.stop()
-                try:
-                    await self._client.api.session.close()
-                except Exception:  # noqa: BLE001
-                    pass
-            if self._crypto_db is not None:
-                await self._crypto_db.stop()
+            await self._cleanup()
 
     def stop(self) -> None:
         self._running = False
         if self._client is not None:
             self._client.stop()
+
+    # ------------------------------------------------------------------
+    # Connection lifecycle
+    # ------------------------------------------------------------------
+
+    async def _connect_and_serve(self) -> None:
+        """Set up client + crypto, start sync loop.  Blocks until stop().
+
+        Raises MUnknownToken if the access token is invalid.
+        """
+        client = await self._setup_client()
+        self._client = client
+
+        try:
+            await self._setup_crypto(client)
+        except MUnknownToken:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Crypto setup failed (%s). "
+                "Wiping stale crypto store and retrying once...", exc,
+            )
+            _wipe_crypto_db()
+            await self._setup_crypto(client)
+
+        logger.info("Matrix connected with E2EE. Listening.")
+
+        # Cross-sign after the first sync so device keys are in the server's
+        # registry before sign_own_device() queries them.
+        _done = asyncio.Event()
+
+        async def _on_first_sync(*_args: object, **_kw: object) -> None:
+            if not _done.is_set():
+                _done.set()
+                asyncio.create_task(
+                    self._ensure_cross_signed(client.crypto),
+                    name="cross-sign",
+                )
+
+        client.add_event_handler(InternalEventType.SYNC_SUCCESSFUL, _on_first_sync)
+
+        client.ignore_initial_sync = True
+        await client.start(filter_data=None)
+
+    async def _cleanup(self) -> None:
+        """Tear down client and crypto DB so a fresh connect can follow."""
+        if self._client is not None:
+            self._client.stop()
+            try:
+                await self._client.api.session.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._client = None
+        if self._crypto_db is not None:
+            await self._crypto_db.stop()
+            self._crypto_db = None
+
+    async def _auto_login(self) -> None:
+        """Login via Matrix password API, update config in memory and on disk."""
+        import aiohttp
+
+        hs = self._cfg.homeserver.rstrip("/")
+        url = f"{hs}/_matrix/client/v3/login"
+        payload = {
+            "type": "m.login.password",
+            "identifier": {"type": "m.id.user", "user": self._cfg.user_id},
+            "password": self._cfg.password,
+            "initial_device_display_name": "Wintermute",
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload) as resp:
+                data = await resp.json()
+
+        if "access_token" not in data:
+            raise RuntimeError(
+                f"Matrix login failed: {data.get('error', 'unknown error')} "
+                f"({data.get('errcode', '')})"
+            )
+
+        new_token = data["access_token"]
+        new_device = data["device_id"]
+        self._cfg.access_token = new_token
+        self._cfg.device_id = new_device
+        _update_config_yaml(new_token, new_device)
+        logger.info(
+            "Auto-login successful. device_id=%s, credentials written to config.yaml",
+            new_device,
+        )
 
     # ------------------------------------------------------------------
     # Setup helpers
@@ -285,8 +386,8 @@ class MatrixThread:
         if not self._cfg.device_id:
             raise ValueError(
                 "matrix.device_id is required.  "
-                "Obtain it from the login API response or from Element: "
-                "Settings -> Security & Privacy -> Session list -> Session ID."
+                "Set 'password' in config.yaml to let Wintermute login automatically, "
+                "or obtain it from the login API response."
             )
 
         state_store = _CryptoMemoryStateStore()

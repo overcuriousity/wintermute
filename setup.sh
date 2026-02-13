@@ -426,7 +426,6 @@ if ! $SKIP_CONFIG; then
       -H "Content-Type: application/json" \
       -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${MATRIX_USER}\"},\"password\":\"${_matrix_pass}\",\"initial_device_display_name\":\"Wintermute\"}" \
       2>/dev/null || echo "")
-    unset _matrix_pass  # discard immediately
 
     _matrix_errcode=$(echo "$_login_response" | python3 -c \
       "import sys,json; d=json.load(sys.stdin); print(d.get('errcode',''))" 2>/dev/null || echo "ERR")
@@ -452,6 +451,20 @@ if ! $SKIP_CONFIG; then
         ok "Login successful."
         info "device_id:  ${C_WHITE}${MATRIX_DEVICE}${C_RESET}"
         info "token:      ${C_DIM}${MATRIX_TOKEN:0:20}…${C_RESET}  (truncated)"
+
+        # Validate token with whoami
+        _whoami=$(curl -sf --connect-timeout 5 \
+          -H "Authorization: Bearer ${MATRIX_TOKEN}" \
+          "${_hs_clean}/_matrix/client/v3/account/whoami" 2>/dev/null || echo "")
+        if [[ -n "$_whoami" ]]; then
+          _who_user=$(echo "$_whoami" | python3 -c \
+            "import sys,json; d=json.load(sys.stdin); print(d.get('user_id',''))" 2>/dev/null || echo "")
+          if [[ "$_who_user" == "$MATRIX_USER" ]]; then
+            ok "Token validated — logged in as ${_who_user}"
+          elif [[ -n "$_who_user" ]]; then
+            warn "Token belongs to ${_who_user}, expected ${MATRIX_USER}"
+          fi
+        fi
       else
         warn "Could not extract credentials from response."
         _matrix_manual=true
@@ -469,7 +482,23 @@ if ! $SKIP_CONFIG; then
       echo ""
       ask_secret MATRIX_TOKEN "access_token"
       ask MATRIX_DEVICE "device_id" ""
+      if [[ -z "$MATRIX_DEVICE" ]]; then
+        warn "device_id is empty — Wintermute will fail to start without it."
+        warn "Re-run setup or fill in device_id manually in config.yaml."
+      fi
     fi
+
+    # Offer to store password for automatic re-login
+    MATRIX_STORE_PASS=false
+    echo ""
+    if ask_yn "Store password in config.yaml for automatic token refresh?" "y"; then
+      MATRIX_STORE_PASS=true
+      MATRIX_PASS="$_matrix_pass"
+      echo -e "  ${C_DIM}Token expiry will be handled automatically. No manual curl needed.${C_RESET}"
+    else
+      echo -e "  ${C_DIM}You will need to refresh the token manually if it expires.${C_RESET}"
+    fi
+    unset _matrix_pass  # discard now that the question has been asked
 
     ask MATRIX_OWNER "Your personal Matrix ID (e.g. @you:matrix.org)" ""
 
@@ -481,13 +510,7 @@ if ! $SKIP_CONFIG; then
     echo -e "  ${C_DIM}  Some homeservers (e.g. matrix.org) require you to approve this${C_RESET}"
     echo -e "  ${C_DIM}  via a browser link — Wintermute will log the exact URL.${C_RESET}"
     echo -e "  ${C_DIM}  The recovery key is saved automatically to data/matrix_recovery.key.${C_RESET}"
-    echo -e "  ${C_DIM}  It is reused across restarts so the cross-signing identity stays stable.${C_RESET}"
-    echo ""
-    echo -e "  ${C_DIM}  To reset the crypto store (keep same cross-signing identity):${C_RESET}"
-    echo -e "  ${C_DIM}    1. Delete the Wintermute session in Element (Settings → Security → Sessions)${C_RESET}"
-    echo -e "  ${C_DIM}    2. Log in again with curl, update config.yaml with new device_id/token${C_RESET}"
-    echo -e "  ${C_DIM}    3. Delete: data/matrix_crypto.db*  data/matrix_signed.marker${C_RESET}"
-    echo -e "  ${C_DIM}    (Keep data/matrix_recovery.key to reuse the same cross-signing MSK)${C_RESET}"
+    echo -e "  ${C_DIM}  After first start, verify in Element: Settings → Security → Verify Session.${C_RESET}"
   fi
 
   # ── write config.yaml ────────────────────────────────────────
@@ -498,6 +521,12 @@ if ! $SKIP_CONFIG; then
 matrix:
   homeserver: ${MATRIX_HS}
   user_id: "${MATRIX_USER}"
+YAML
+      if $MATRIX_STORE_PASS; then
+        echo "  password: \"${MATRIX_PASS}\""
+      fi
+      unset MATRIX_PASS
+      cat <<YAML
   access_token: "${MATRIX_TOKEN}"
   device_id: "${MATRIX_DEVICE}"
   allowed_users:

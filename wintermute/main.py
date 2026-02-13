@@ -198,7 +198,7 @@ async def main() -> None:
     matrix_enabled = bool(
         matrix_cfg_raw
         and matrix_cfg_raw.get("homeserver")
-        and matrix_cfg_raw.get("access_token")
+        and (matrix_cfg_raw.get("access_token") or matrix_cfg_raw.get("password"))
     )
     web_enabled = web_cfg.get("enabled", True)
 
@@ -213,8 +213,9 @@ async def main() -> None:
         matrix_cfg = MatrixConfig(
             homeserver=matrix_cfg_raw["homeserver"],
             user_id=matrix_cfg_raw["user_id"],
-            access_token=matrix_cfg_raw["access_token"],
+            access_token=matrix_cfg_raw.get("access_token", ""),
             device_id=matrix_cfg_raw.get("device_id", ""),
+            password=matrix_cfg_raw.get("password", ""),
             allowed_users=matrix_cfg_raw.get("allowed_users", []),
             allowed_rooms=matrix_cfg_raw.get("allowed_rooms", []),
         )

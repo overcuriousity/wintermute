@@ -124,48 +124,36 @@ The web interface starts at `http://127.0.0.1:8080` by default.
 
 Register a new account for the bot on your homeserver (e.g. via Element or the homeserver's registration page). The bot needs its own account — do not reuse your personal one.
 
-### Obtain an access token and device ID
+### Configure credentials
 
-Log in once via curl to retrieve the credentials Wintermute needs:
+There are two ways to provide Matrix credentials:
 
-```bash
-curl -s -X POST \
-  'https://matrix.org/_matrix/client/v3/login' \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "type": "m.login.password",
-    "identifier": {
-      "type": "m.id.user",
-      "user": "@your-bot-name:matrix.org"
-    },
-    "password": "your-password",
-    "initial_device_display_name": "Wintermute"
-  }' | python3 -m json.tool
-```
-
-The response contains:
-
-```json
-{
-  "access_token": "mct_...",
-  "device_id": "ABCDEFGHIJ",
-  "user_id": "@your-bot-name:matrix.org",
-  ...
-}
-```
-
-Copy `access_token` and `device_id` into `config.yaml`:
+**Option A — Password (recommended).** Supply the bot's password and let Wintermute handle login, device creation, and token refresh automatically:
 
 ```yaml
 matrix:
   homeserver: https://matrix.org
   user_id: "@your-bot-name:matrix.org"
-  access_token: "mct_..."
-  device_id: "ABCDEFGHIJ"
+  password: "bot-account-password"
+  access_token: ""                    # auto-filled on first start
+  device_id: ""                       # auto-filled on first start
   allowed_users:
-    - "@you:matrix.org"       # Your personal Matrix ID
-  allowed_rooms: []           # Empty = any room you invite the bot to
+    - "@you:matrix.org"
+  allowed_rooms: []
 ```
+
+On startup Wintermute logs in, writes the new `access_token` and `device_id` back into `config.yaml`, and refreshes them automatically if they expire.
+
+**Option B — Manual token.** If you prefer not to store the password, obtain a token via curl and fill it in yourself:
+
+```bash
+curl -s -X POST 'https://matrix.org/_matrix/client/v3/login' \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"@your-bot-name:matrix.org"},"password":"...","initial_device_display_name":"Wintermute"}' \
+  | python3 -m json.tool
+```
+
+Copy `access_token` and `device_id` from the response into `config.yaml`. You will need to repeat this if the token expires.
 
 ### Invite the bot and start chatting
 
@@ -192,7 +180,7 @@ Alternatively, send `/fingerprint` in a Matrix room to retrieve the Ed25519 key 
 
 #### Token expired (`MUnknownToken`)
 
-Wintermute logs the exact `curl` command needed to obtain a new token. Run it, then update `access_token` (and `device_id` if it changed) in `config.yaml` and restart.
+If `password` is set in `config.yaml`, Wintermute re-authenticates automatically — no action needed. Otherwise, Wintermute logs the exact `curl` command to obtain a new token. Run it, update `config.yaml`, and restart. Alternatively, add `password` to avoid this in the future.
 
 #### Cross-signing requires approval (first run only)
 
@@ -209,17 +197,12 @@ After approval, restart once. The recovery key is saved to `data/matrix_recovery
 
 #### Stale crypto store
 
-To reset the crypto store cleanly, delete the device session first to avoid one-time key conflicts:
+To reset the crypto store cleanly:
 
 1. In Element: **Settings → Security & Privacy → Sessions** → find the Wintermute session → **Delete / Log out**
-2. Log in again via `curl` (command above) to get a new `device_id`, update `config.yaml`
-3. Delete the local store (keep `matrix_recovery.key` if you want the same cross-signing identity):
-
-```bash
-rm -f data/matrix_crypto.db data/matrix_crypto.db-wal data/matrix_crypto.db-shm data/matrix_signed.marker
-```
-
-If you skip step 1 and keep the same `device_id`, expect transient `MUnknown: One time key already exists` errors in the logs. These are non-fatal and stop once the server drains the old keys.
+1. Delete the local store (keep `matrix_recovery.key` to reuse the same cross-signing identity):
+   `rm -f data/matrix_crypto.db data/matrix_crypto.db-wal data/matrix_crypto.db-shm data/matrix_signed.marker`
+1. Restart Wintermute. If `password` is set, it logs in with a fresh device automatically. Otherwise, run the `curl` login command and update `config.yaml` before restarting.
 
 To also reset the cross-signing identity (forces re-verification in Element):
 

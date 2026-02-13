@@ -2,9 +2,15 @@
 matrix:
   homeserver: https://matrix.org          # Your Matrix homeserver URL
   user_id: "@bot:matrix.org"              # Full Matrix user ID of the bot account
-  access_token: "YOUR_MATRIX_ACCESS_TOKEN"
-  device_id: ""                           # Required. Obtain from the login response.
+
+  # Option A (recommended): supply password — Wintermute logs in automatically,
+  # fills in access_token/device_id below, and refreshes them on expiry.
+  password: ""
+  # Option B: supply token + device_id from a manual login (leave password empty).
+  access_token: ""
+  device_id: ""                           # Auto-filled when using password login.
                                           # The bot cross-signs this device automatically at startup.
+
   allowed_users:                          # Matrix user IDs allowed to interact
     - "@admin:matrix.org"
   allowed_rooms: []                       # Room ID whitelist (empty = any room if invited by allowed user)
