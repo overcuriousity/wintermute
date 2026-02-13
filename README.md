@@ -197,11 +197,18 @@ After approval, restart Wintermute and cross-signing completes automatically.
 
 #### Stale crypto store (after server identity reset)
 
-If you reset your Matrix crypto identity (e.g. via Element → Settings → Security → Reset cross-signing), delete the local store so Wintermute rebuilds it from scratch:
+**Always delete the device session first** before wiping the local store, to avoid one-time key conflicts:
+
+1. In Element: **Settings → Security & Privacy → Sessions** → find the Wintermute session → **Delete / Log out**
+2. Get fresh credentials via the `curl` login command above (you'll get a new `device_id`)
+3. Update `access_token` and `device_id` in `config.yaml`
+4. Delete the local store:
 
 ```bash
 rm -f data/matrix_crypto.db data/matrix_crypto.db-wal data/matrix_crypto.db-shm data/matrix_signed.marker
 ```
+
+If you skip step 1 and wipe the DB while keeping the same `device_id`, the server retains old one-time keys from the previous Olm identity. The new identity generates keys with the same IDs, causing transient `MUnknown: One time key already exists` errors in the logs. These are non-fatal — mautrix handles them gracefully and the bot continues working. New messages are encrypted and decrypted correctly; only messages sent before the wipe cannot be decrypted (those session keys are gone).
 
 Wintermute tracks whether the current device identity has been cross-signed via `data/matrix_signed.marker`. Deleting the crypto store automatically invalidates the marker, so Wintermute re-establishes cross-signing on the next start (which may require the homeserver approval step again). Wintermute also detects most crypto-store corruption at startup and wipes the files automatically.
 

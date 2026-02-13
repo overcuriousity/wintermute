@@ -482,8 +482,10 @@ if ! $SKIP_CONFIG; then
     echo -e "  ${C_DIM}  via a browser link — Wintermute will log the exact URL.${C_RESET}"
     echo -e "  ${C_DIM}  The recovery key printed in the logs should be saved securely.${C_RESET}"
     echo ""
-    echo -e "  ${C_DIM}  If you ever reset your crypto identity on the server, delete:${C_RESET}"
-    echo -e "  ${C_DIM}    data/matrix_crypto.db  data/matrix_crypto.db-wal  data/matrix_crypto.db-shm  data/matrix_signed.marker${C_RESET}"
+    echo -e "  ${C_DIM}  If you ever need to reset the crypto identity:${C_RESET}"
+    echo -e "  ${C_DIM}    1. In Element: Settings → Security → Sessions → delete the Wintermute session${C_RESET}"
+    echo -e "  ${C_DIM}    2. Log in again with curl to get new credentials, update config.yaml${C_RESET}"
+    echo -e "  ${C_DIM}    3. Delete: data/matrix_crypto.db*  data/matrix_signed.marker${C_RESET}"
     echo -e "  ${C_DIM}  Wintermute will rebuild the crypto store and re-sign on the next start.${C_RESET}"
   fi
 
