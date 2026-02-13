@@ -480,13 +480,14 @@ if ! $SKIP_CONFIG; then
     echo -e "  ${C_DIM}  On first start, Wintermute will cross-sign its device automatically.${C_RESET}"
     echo -e "  ${C_DIM}  Some homeservers (e.g. matrix.org) require you to approve this${C_RESET}"
     echo -e "  ${C_DIM}  via a browser link — Wintermute will log the exact URL.${C_RESET}"
-    echo -e "  ${C_DIM}  The recovery key printed in the logs should be saved securely.${C_RESET}"
+    echo -e "  ${C_DIM}  The recovery key is saved automatically to data/matrix_recovery.key.${C_RESET}"
+    echo -e "  ${C_DIM}  It is reused across restarts so the cross-signing identity stays stable.${C_RESET}"
     echo ""
-    echo -e "  ${C_DIM}  If you ever need to reset the crypto identity:${C_RESET}"
-    echo -e "  ${C_DIM}    1. In Element: Settings → Security → Sessions → delete the Wintermute session${C_RESET}"
-    echo -e "  ${C_DIM}    2. Log in again with curl to get new credentials, update config.yaml${C_RESET}"
+    echo -e "  ${C_DIM}  To reset the crypto store (keep same cross-signing identity):${C_RESET}"
+    echo -e "  ${C_DIM}    1. Delete the Wintermute session in Element (Settings → Security → Sessions)${C_RESET}"
+    echo -e "  ${C_DIM}    2. Log in again with curl, update config.yaml with new device_id/token${C_RESET}"
     echo -e "  ${C_DIM}    3. Delete: data/matrix_crypto.db*  data/matrix_signed.marker${C_RESET}"
-    echo -e "  ${C_DIM}  Wintermute will rebuild the crypto store and re-sign on the next start.${C_RESET}"
+    echo -e "  ${C_DIM}    (Keep data/matrix_recovery.key to reuse the same cross-signing MSK)${C_RESET}"
   fi
 
   # ── write config.yaml ────────────────────────────────────────

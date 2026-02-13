@@ -6,28 +6,45 @@ in all joined/allowed rooms, and routes them to the LLM thread.  Each room
 is its own conversation thread.
 
 End-to-end encryption is handled by mautrix's OlmMachine backed by a
-SQLite crypto store at data/matrix_crypto.db.  Cross-signing is performed
-automatically at startup via generate_recovery_key() so the bot's device
-is verified without manual SAS.
+SQLite crypto store at data/matrix_crypto.db.  The bot's cross-signing
+identity is established on first start and persisted via a recovery key
+(data/matrix_recovery.key) so DB wipes never require UIA approval again.
+
+SAS (emoji) verification is supported: when an allowed user taps
+"Verify Session" in Element the bot completes the m.sas.v1 handshake
+automatically, skipping the emoji-comparison step.  After completion the
+device shows as verified (green shield) in Element.
 
 Special commands handled directly (before reaching the LLM):
-  /new       - reset the conversation for the current room
-  /compact   - force context compaction for the current room
-  /reminders - list active reminders
-  /pulse     - manually trigger pulse review
+  /new         - reset the conversation for the current room
+  /compact     - force context compaction for the current room
+  /reminders   - list active reminders
+  /pulse       - manually trigger pulse review
+  /fingerprint - print the Ed25519 device fingerprint
 """
 
 import asyncio
+import base64 as _base64
+import hashlib as _hashlib
+import json as _json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+try:
+    import olm as _olm
+    _HAS_OLM = True
+except ImportError:
+    _olm = None  # type: ignore[assignment]
+    _HAS_OLM = False
 
 from mautrix.client import Client, InternalEventType
 from mautrix.crypto import OlmMachine
 from mautrix.crypto.store import PgCryptoStore
 from mautrix.errors import MUnknownToken
 from mautrix.types import (
+    DeviceID,
     EventType,
     MessageType,
     RoomID,
@@ -39,7 +56,40 @@ logger = logging.getLogger(__name__)
 
 CRYPTO_DB_PATH = Path("data/matrix_crypto.db")
 CRYPTO_MARKER_PATH = Path("data/matrix_signed.marker")
+CRYPTO_RECOVERY_KEY_PATH = Path("data/matrix_recovery.key")
 CRYPTO_PICKLE_KEY = "wintermute"
+
+# SAS (m.sas.v1) to-device event types
+_VERIFY_REQUEST = EventType.find("m.key.verification.request", EventType.Class.TO_DEVICE)
+_VERIFY_READY   = EventType.find("m.key.verification.ready",   EventType.Class.TO_DEVICE)
+_VERIFY_START   = EventType.find("m.key.verification.start",   EventType.Class.TO_DEVICE)
+_VERIFY_ACCEPT  = EventType.find("m.key.verification.accept",  EventType.Class.TO_DEVICE)
+_VERIFY_KEY     = EventType.find("m.key.verification.key",     EventType.Class.TO_DEVICE)
+_VERIFY_MAC     = EventType.find("m.key.verification.mac",     EventType.Class.TO_DEVICE)
+_VERIFY_DONE    = EventType.find("m.key.verification.done",    EventType.Class.TO_DEVICE)
+_VERIFY_CANCEL  = EventType.find("m.key.verification.cancel",  EventType.Class.TO_DEVICE)
+
+
+def _canonical_json(data: dict) -> str:
+    return _json.dumps(data, separators=(",", ":"), sort_keys=True, ensure_ascii=False)
+
+
+def _v_field(content, key: str, default=""):
+    """Get a field from event content regardless of whether it is a dict or typed object."""
+    if isinstance(content, dict):
+        return content.get(key, default)
+    v = getattr(content, key, None)
+    return v if v is not None else default
+
+
+@dataclass
+class _SasState:
+    """Per-transaction SAS verification state."""
+    sas: object                          # _olm.Sas instance (set on start)
+    their_user_id: str
+    their_device_id: str
+    txn_id: str
+    start_content: dict = field(default_factory=dict)
 
 
 def _wipe_crypto_db() -> None:
@@ -52,6 +102,9 @@ def _wipe_crypto_db() -> None:
     if CRYPTO_MARKER_PATH.exists():
         CRYPTO_MARKER_PATH.unlink()
         logger.info("Removed cross-sign marker")
+    # Intentionally NOT deleting CRYPTO_RECOVERY_KEY_PATH — the recovery key
+    # is reusable across DB wipes to restore the same cross-signing identity
+    # without requiring UIA approval again.
 
 
 def _extract_uia_url(exc: Exception) -> str | None:
@@ -117,6 +170,7 @@ class MatrixThread:
         self._crypto_db: Optional[Database] = None
         self._running = False
         self._send_lock = asyncio.Lock()
+        self._verifications: dict[str, _SasState] = {}
 
     # ------------------------------------------------------------------
     # Public interface
@@ -252,6 +306,14 @@ class MatrixThread:
             InternalEventType.SYNC_ERRORED, self._on_sync_error,
         )
 
+        # SAS verification (m.sas.v1) — to-device events
+        if _HAS_OLM:
+            client.add_event_handler(_VERIFY_REQUEST, self._on_verify_request)
+            client.add_event_handler(_VERIFY_START,   self._on_verify_start)
+            client.add_event_handler(_VERIFY_KEY,     self._on_verify_key)
+            client.add_event_handler(_VERIFY_MAC,     self._on_verify_mac)
+            client.add_event_handler(_VERIFY_CANCEL,  self._on_verify_cancel)
+
         logger.info(
             "Running as device_id=%s, homeserver=%s",
             self._cfg.device_id, self._cfg.homeserver,
@@ -295,19 +357,35 @@ class MatrixThread:
         )
 
     async def _ensure_cross_signed(self, olm: OlmMachine) -> None:
-        """Cross-sign the bot's own device when the Olm identity changes.
+        """Cross-sign the bot's own device, keeping the same cross-signing identity
+        across restarts and crypto-store wipes.
 
-        A marker file records the Ed25519 signing key of the last successfully
-        cross-signed identity.  On every restart we compare the current key
-        against the marker:
-          - Match  → device is already signed, nothing to do.
-          - Mismatch / absent → new identity (after DB wipe or first run);
-            generate_recovery_key() uploads fresh cross-signing keys and signs
-            the current device.  On matrix.org this requires a one-time
-            interactive approval — Wintermute logs the exact URL.
+        State files:
+          CRYPTO_MARKER_PATH       — Ed25519 signing key of the last signed identity.
+                                     If it matches the current key, device is already
+                                     signed and nothing needs to be done.
+          CRYPTO_RECOVERY_KEY_PATH — SSSS recovery key from the last successful
+                                     generate_recovery_key() call.  Preserved across
+                                     DB wipes so the same cross-signing MSK is reused.
+
+        Decision tree:
+          1. Marker matches current key → already signed, skip.
+          2. Marker missing / mismatch (new Olm identity):
+             a. Recovery key file present → verify_with_recovery_key():
+                  fetches cross-signing private keys from SSSS, re-signs the new
+                  device.  No UIA, no browser interaction — works headlessly.
+             b. No recovery key (or SSSS cleared) → generate_recovery_key():
+                  generates fresh cross-signing keys, requires UIA on matrix.org
+                  the first time.  The new recovery key is saved to disk so future
+                  DB wipes use path (a) automatically.
         """
         try:
             current_key = olm.account.signing_key
+            logger.info(
+                "Device fingerprint (Ed25519, for manual verification): %s",
+                olm.account.fingerprint,
+            )
+
             if CRYPTO_MARKER_PATH.exists():
                 if CRYPTO_MARKER_PATH.read_text().strip() == current_key:
                     logger.info("Device already cross-signed.")
@@ -316,12 +394,37 @@ class MatrixThread:
                     "Signing key changed since last cross-sign "
                     "(crypto store was reset) — re-establishing cross-signing."
                 )
+
+            # Path (a): reuse existing cross-signing identity via stored recovery key.
+            if CRYPTO_RECOVERY_KEY_PATH.exists():
+                stored_key = CRYPTO_RECOVERY_KEY_PATH.read_text().strip()
+                try:
+                    await olm.verify_with_recovery_key(stored_key)
+                    CRYPTO_MARKER_PATH.write_text(current_key)
+                    logger.info(
+                        "Cross-signing restored from stored recovery key.  "
+                        "Same MSK reused — no re-verification needed."
+                    )
+                    return
+                except Exception as restore_exc:  # noqa: BLE001
+                    logger.info(
+                        "Stored recovery key unusable (%s) — "
+                        "generating fresh cross-signing keys.",
+                        restore_exc,
+                    )
+
+            # Path (b): generate fresh cross-signing keys (first run or SSSS wiped).
             recovery_key = await olm.generate_recovery_key()
+            CRYPTO_RECOVERY_KEY_PATH.write_text(recovery_key)
             CRYPTO_MARKER_PATH.write_text(current_key)
             logger.info(
-                "Cross-signing complete.  Recovery key (store securely): %s",
-                recovery_key,
+                "Cross-signing complete.  Recovery key saved to %s\n"
+                "  Verify the bot in Element: Settings → Security → Sessions → Verify Session.\n"
+                "  The bot will complete the SAS handshake automatically.\n"
+                "  All future restarts and DB wipes will reuse this identity automatically.",
+                CRYPTO_RECOVERY_KEY_PATH,
             )
+
         except Exception as exc:  # noqa: BLE001
             approval_url = _extract_uia_url(exc)
             if approval_url:
@@ -389,6 +492,193 @@ class MatrixThread:
         logger.warning("Matrix sync error: %s", error)
 
     # ------------------------------------------------------------------
+    # SAS (m.sas.v1) interactive verification
+    #
+    # Flow initiated by the other side (e.g. Element "Verify Session"):
+    #   1. Other side sends m.key.verification.request  → we send ready
+    #   2. Other side sends m.key.verification.start    → we send accept
+    #   3. Other side sends m.key.verification.key      → we send our key
+    #   4. Other side confirms emoji and sends mac      → we send mac + done
+    # We auto-accept without prompting for emoji confirmation, which is safe
+    # because we only respond to verification from allowed_users.
+    # ------------------------------------------------------------------
+
+    async def _send_to_device(
+        self, event_type: EventType, user_id: str, device_id: str, content: dict,
+    ) -> None:
+        """Send a single to-device message."""
+        try:
+            await self._client.api.send_to_device(
+                event_type,
+                {UserID(user_id): {DeviceID(device_id): content}},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Failed to send to-device %s to %s/%s: %s",
+                event_type, user_id, device_id, exc,
+            )
+
+    async def _send_verify_cancel(
+        self, user_id: str, device_id: str, txn_id: str, code: str, reason: str,
+    ) -> None:
+        await self._send_to_device(_VERIFY_CANCEL, user_id, device_id, {
+            "transaction_id": txn_id,
+            "code": code,
+            "reason": reason,
+        })
+
+    async def _on_verify_request(self, evt) -> None:
+        """m.key.verification.request — accept with ready."""
+        c = evt.content
+        sender = str(evt.sender)
+        if not self._is_user_allowed(sender):
+            return
+        txn_id     = _v_field(c, "transaction_id")
+        from_dev   = _v_field(c, "from_device")
+        methods    = _v_field(c, "methods") or []
+        if isinstance(methods, str):
+            methods = [methods]
+        if "m.sas.v1" not in methods:
+            await self._send_verify_cancel(
+                sender, from_dev, txn_id,
+                "m.unknown_method", "Only m.sas.v1 is supported",
+            )
+            return
+        self._verifications[txn_id] = _SasState(
+            sas=None,
+            their_user_id=sender,
+            their_device_id=from_dev,
+            txn_id=txn_id,
+        )
+        await self._send_to_device(_VERIFY_READY, sender, from_dev, {
+            "transaction_id": txn_id,
+            "from_device": self._cfg.device_id,
+            "methods": ["m.sas.v1"],
+        })
+        logger.info("SAS: accepted verification request from %s (txn=%s)", sender, txn_id)
+
+    async def _on_verify_start(self, evt) -> None:
+        """m.key.verification.start — create SAS, send accept with commitment."""
+        c      = evt.content
+        sender = str(evt.sender)
+        txn_id = _v_field(c, "transaction_id")
+        state  = self._verifications.get(txn_id)
+        if state is None:
+            return
+        if _v_field(c, "method") != "m.sas.v1":
+            await self._send_verify_cancel(
+                sender, state.their_device_id, txn_id,
+                "m.unknown_method", "Unknown method",
+            )
+            del self._verifications[txn_id]
+            return
+
+        sas = _olm.Sas()
+        state.sas = sas
+        # Snapshot the start content for commitment (must be canonical JSON)
+        state.start_content = dict(c) if isinstance(c, dict) else {
+            k: v for k, v in vars(c).items() if not k.startswith("_")
+        }
+        # commitment = base64(sha256(our_pubkey_b64_string || canonical_json(start)))
+        canonical  = _canonical_json(state.start_content)
+        commitment = _base64.b64encode(
+            _hashlib.sha256((sas.pubkey + canonical).encode()).digest()
+        ).decode()
+
+        await self._send_to_device(_VERIFY_ACCEPT, sender, state.their_device_id, {
+            "transaction_id": txn_id,
+            "key_agreement_protocol": "curve25519-hkdf-sha256",
+            "hash": "sha256",
+            "message_authentication_code": "hkdf-hmac-sha256.v2",
+            "short_authentication_string": ["decimal", "emoji"],
+            "commitment": commitment,
+        })
+        logger.info("SAS: sent accept to %s (txn=%s)", sender, txn_id)
+
+    async def _on_verify_key(self, evt) -> None:
+        """m.key.verification.key — set their pubkey, reply with ours."""
+        c      = evt.content
+        txn_id = _v_field(c, "transaction_id")
+        state  = self._verifications.get(txn_id)
+        if state is None or state.sas is None:
+            return
+        their_key = _v_field(c, "key")
+        try:
+            state.sas.set_their_pubkey(their_key)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("SAS: key exchange failed for %s: %s", txn_id, exc)
+            await self._send_verify_cancel(
+                state.their_user_id, state.their_device_id, txn_id,
+                "m.key_mismatch", str(exc),
+            )
+            del self._verifications[txn_id]
+            return
+        await self._send_to_device(_VERIFY_KEY, state.their_user_id, state.their_device_id, {
+            "transaction_id": txn_id,
+            "key": state.sas.pubkey,
+        })
+        logger.info(
+            "SAS: key exchange done with %s (txn=%s) — auto-accepting, awaiting MAC",
+            state.their_user_id, txn_id,
+        )
+
+    async def _on_verify_mac(self, evt) -> None:
+        """m.key.verification.mac — send our MAC, send done, log completion."""
+        c      = evt.content
+        txn_id = _v_field(c, "transaction_id")
+        state  = self._verifications.get(txn_id)
+        if state is None or state.sas is None:
+            return
+
+        olm_m      = self._client.crypto
+        our_user   = self._cfg.user_id
+        our_device = self._cfg.device_id
+        their_user = state.their_user_id
+        their_dev  = state.their_device_id
+
+        # MAC info prefix — we are the sender of this MAC message
+        info_pfx = (
+            f"MATRIX_KEY_VERIFICATION_MAC"
+            f"|{our_user}|{our_device}"
+            f"|{their_user}|{their_dev}"
+            f"|{txn_id}"
+        )
+        our_ed25519 = olm_m.account.fingerprint
+        our_key_id  = f"ed25519:{our_device}"
+
+        key_mac  = state.sas.calculate_mac_fixed_base64(
+            our_ed25519, f"{info_pfx}|{our_key_id}",
+        )
+        keys_mac = state.sas.calculate_mac_fixed_base64(
+            our_key_id, f"{info_pfx}|KEY_IDS",
+        )
+
+        await self._send_to_device(_VERIFY_MAC, their_user, their_dev, {
+            "transaction_id": txn_id,
+            "mac":  {our_key_id: key_mac},
+            "keys": keys_mac,
+        })
+        await self._send_to_device(_VERIFY_DONE, their_user, their_dev, {
+            "transaction_id": txn_id,
+        })
+        del self._verifications[txn_id]
+        logger.info(
+            "SAS: verification complete with %s device %s (txn=%s) — "
+            "device should show as verified in Element.",
+            their_user, their_dev, txn_id,
+        )
+
+    async def _on_verify_cancel(self, evt) -> None:
+        """m.key.verification.cancel — clean up state."""
+        c      = evt.content
+        txn_id = _v_field(c, "transaction_id")
+        self._verifications.pop(txn_id, None)
+        logger.info(
+            "SAS: verification cancelled by %s (txn=%s): %s",
+            evt.sender, txn_id, _v_field(c, "reason", "no reason"),
+        )
+
+    # ------------------------------------------------------------------
     # Command dispatch
     # ------------------------------------------------------------------
 
@@ -416,6 +706,20 @@ class MatrixThread:
                 thread_id,
             )
             await self.send_message("Pulse review triggered.", thread_id)
+            return
+
+        if text == "/fingerprint":
+            if self._client is not None and self._client.crypto is not None:
+                fp = self._client.crypto.account.fingerprint
+                await self.send_message(
+                    f"Device fingerprint (Ed25519):\n```\n{fp}\n```\n"
+                    "To verify: in Element go to Settings → Security → Sessions, "
+                    "select this session and tap **Verify Session**. "
+                    "The bot will complete the SAS handshake automatically.",
+                    thread_id,
+                )
+            else:
+                await self.send_message("Crypto not initialised yet.", thread_id)
             return
 
         await self._set_typing(thread_id, True)

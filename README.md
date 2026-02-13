@@ -174,7 +174,19 @@ matrix:
 3. Invite `@your-bot-name:matrix.org`
 4. The bot joins and responds to messages from `allowed_users`
 
-**End-to-end encryption** is handled automatically — the bot's crypto keys are persisted to `data/matrix_crypto.db` and the device is cross-signed at startup so Element and other clients trust it without manual verification. A recovery key is logged on first run; save it to recover the crypto identity later if needed.
+**End-to-end encryption** is handled automatically — the bot's crypto keys are persisted to `data/matrix_crypto.db` and the device is cross-signed at startup. The device fingerprint is logged on every start and retrievable via `/fingerprint` in the chat.
+
+#### Cross-signing and device verification
+
+On first start, Wintermute calls `generate_recovery_key()` to establish its cross-signing identity and saves the recovery key to `data/matrix_recovery.key`. On every subsequent start — including after the crypto store is wiped — it calls `verify_with_recovery_key()` to re-sign the current device using the stored key, with no browser interaction and no UIA approval required.
+
+Wintermute implements the **m.sas.v1** (emoji) interactive verification protocol. To verify the device:
+
+1. In Element go to **Settings → Security → Sessions**, select Wintermute's session, and tap **Verify Session**.
+2. Element will start an emoji handshake. Wintermute auto-accepts from allowed users, skipping the emoji-comparison step.
+3. After a moment the device shows a green shield (**Verified**) in Element.
+
+Alternatively, send `/fingerprint` in a Matrix room to retrieve the Ed25519 key for manual out-of-band comparison.
 
 ### Troubleshooting
 
@@ -182,9 +194,9 @@ matrix:
 
 Wintermute logs the exact `curl` command needed to obtain a new token. Run it, then update `access_token` (and `device_id` if it changed) in `config.yaml` and restart.
 
-#### Cross-signing requires approval
+#### Cross-signing requires approval (first run only)
 
-Some homeservers (including matrix.org) require you to approve a cross-signing reset via your account page. Wintermute logs the exact URL when this happens:
+On first start, some homeservers (including matrix.org) require you to approve the cross-signing key upload via your account page. Wintermute logs the exact URL:
 
 ```text
 Cross-signing requires interactive approval from your homeserver.
@@ -193,24 +205,27 @@ Cross-signing requires interactive approval from your homeserver.
   3. Restart Wintermute.
 ```
 
-After approval, restart Wintermute and cross-signing completes automatically.
+After approval, restart once. The recovery key is saved to `data/matrix_recovery.key` and all future starts are fully automatic.
 
-#### Stale crypto store (after server identity reset)
+#### Stale crypto store
 
-**Always delete the device session first** before wiping the local store, to avoid one-time key conflicts:
+To reset the crypto store cleanly, delete the device session first to avoid one-time key conflicts:
 
 1. In Element: **Settings → Security & Privacy → Sessions** → find the Wintermute session → **Delete / Log out**
-2. Get fresh credentials via the `curl` login command above (you'll get a new `device_id`)
-3. Update `access_token` and `device_id` in `config.yaml`
-4. Delete the local store:
+2. Log in again via `curl` (command above) to get a new `device_id`, update `config.yaml`
+3. Delete the local store (keep `matrix_recovery.key` if you want the same cross-signing identity):
 
 ```bash
 rm -f data/matrix_crypto.db data/matrix_crypto.db-wal data/matrix_crypto.db-shm data/matrix_signed.marker
 ```
 
-If you skip step 1 and wipe the DB while keeping the same `device_id`, the server retains old one-time keys from the previous Olm identity. The new identity generates keys with the same IDs, causing transient `MUnknown: One time key already exists` errors in the logs. These are non-fatal — mautrix handles them gracefully and the bot continues working. New messages are encrypted and decrypted correctly; only messages sent before the wipe cannot be decrypted (those session keys are gone).
+If you skip step 1 and keep the same `device_id`, expect transient `MUnknown: One time key already exists` errors in the logs. These are non-fatal and stop once the server drains the old keys.
 
-Wintermute tracks whether the current device identity has been cross-signed via `data/matrix_signed.marker`. Deleting the crypto store automatically invalidates the marker, so Wintermute re-establishes cross-signing on the next start (which may require the homeserver approval step again). Wintermute also detects most crypto-store corruption at startup and wipes the files automatically.
+To also reset the cross-signing identity (forces re-verification in Element):
+
+```bash
+rm -f data/matrix_crypto.db* data/matrix_signed.marker data/matrix_recovery.key
+```
 
 ---
 
@@ -245,7 +260,7 @@ Available in both Matrix and the web UI:
 | `/compact` | Force context compaction now |
 | `/reminders` | List all scheduled reminders |
 | `/pulse` | Manually trigger a pulse review |
-*more to come*
+| `/fingerprint` | Show the bot's Ed25519 fingerprint for manual device verification |
 
 ---
 
