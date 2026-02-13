@@ -436,7 +436,14 @@ def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
         return json.dumps({
             "status": "started",
             "session_id": session_id,
-            "hint": "Acknowledge the background task to the user. Avoid heavy shell work yourself this turn.",
+            "IMPORTANT": (
+                "The worker is now running in the background. "
+                "You do NOT have its results yet. "
+                "Tell the user you started the task and STOP. "
+                "Do NOT fabricate, guess, or anticipate what the worker will find. "
+                "The results will be delivered to you later as a [SYSTEM EVENT]. "
+                "Only then should you report them to the user."
+            ),
         })
     except Exception as exc:  # noqa: BLE001
         logger.exception("spawn_sub_session failed")
