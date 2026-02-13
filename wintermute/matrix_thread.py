@@ -30,7 +30,6 @@ from mautrix.types import (
     EventType,
     MessageType,
     RoomID,
-    TrustState,
     UserID,
 )
 from mautrix.util.async_db import Database
@@ -131,7 +130,21 @@ class MatrixThread:
             client = await self._setup_client()
             self._client = client
             await self._setup_crypto(client)
-            logger.info("Matrix connected with E2EE (cross-signed). Listening.")
+            logger.info("Matrix connected with E2EE. Listening.")
+
+            # Cross-sign after the first sync so device keys are in the server's
+            # registry before sign_own_device() queries them.
+            _done = asyncio.Event()
+
+            async def _on_first_sync(**_: object) -> None:
+                if not _done.is_set():
+                    _done.set()
+                    asyncio.create_task(
+                        self._ensure_cross_signed(client.crypto),
+                        name="cross-sign",
+                    )
+
+            client.add_event_handler(InternalEventType.SYNC_SUCCESSFUL, _on_first_sync)
 
             # client.start() creates a sync task with built-in exponential
             # backoff (5 s → 320 s).  Awaiting the returned task blocks
@@ -223,31 +236,30 @@ class MatrixThread:
         logger.info("Sharing encryption keys with homeserver")
         await olm.share_keys()
 
-        # Cross-sign this device so Element and other clients trust it.
-        await self._ensure_cross_signed(olm)
-
         logger.info(
             "Crypto ready for device_id=%s (store=%s)",
             self._cfg.device_id, CRYPTO_DB_PATH,
         )
 
     async def _ensure_cross_signed(self, olm: OlmMachine) -> None:
-        """Cross-sign the bot's own device if not already verified."""
-        try:
-            own = olm.own_identity
-            if own is not None:
-                trust = await olm.resolve_trust(own)
-                if trust >= TrustState.CROSS_SIGNED_UNTRUSTED:
-                    logger.info("Device already cross-signed (trust=%s)", trust.name)
-                    return
+        """Cross-sign the bot's own device if not already done.
 
+        Called once after the first sync so device keys are queryable.
+        Uses get_own_cross_signing_public_keys() to avoid regenerating keys
+        (which would invalidate existing trust) on every restart.
+        """
+        try:
+            existing = await olm.get_own_cross_signing_public_keys()
+            if existing is not None:
+                logger.info("Cross-signing keys already present on server")
+                return
             recovery_key = await olm.generate_recovery_key()
             logger.info(
                 "Cross-signing complete.  Recovery key (store securely): %s",
                 recovery_key,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Cross-signing failed (non-fatal): %s", exc)
+            logger.warning("Cross-signing failed (non-fatal, retry on next restart): %s", exc)
 
     # ------------------------------------------------------------------
     # Event handlers
