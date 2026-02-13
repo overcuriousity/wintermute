@@ -11,15 +11,11 @@
 
 ## Concept
 
-In Gibson's novel, Wintermute is one half of a bifurcated artificial intelligence built by the Tessier-Ashpool family and constrained by the Turing Registry. It is goal-oriented, patient, and reaches into the infrastructure of the world to reshape it toward its ends. It communicates through the people and systems around you. It remembers everything.
-
-This project borrows the name and the spirit.
-
 Wintermute accumulates knowledge about you over time, maintains an active working memory (*Pulse*), and learns reusable procedures as *skills*. Conversations across restarts are summarised and retained. A nightly *dreaming* pass consolidates memories autonomously while you sleep — no human required.
 
 For long-running or complex tasks, Wintermute spawns isolated background workers (*sub-sessions*) so the main conversation stays responsive. Workers can themselves spawn further workers for parallelisable tasks, up to a configurable nesting depth. Results filter back to you when the work is done.
 
-The philosophy differs from similar projects by treating small LLMs and digital independence not as an afterthought, but as a first principle. No mandatory cloud services. No telemetry. It runs on your hardware, speaks to your endpoints, and answers to you.
+The philosophy differs from similar projects by treating small LLMs and digital independence not as an afterthought, but as a first principle. No cloud services. No telemetry. It runs on your hardware, speaks to your endpoints, and answers to you.
 
 ---
 

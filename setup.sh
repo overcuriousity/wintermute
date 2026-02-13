@@ -37,26 +37,6 @@ ASCII
   echo -e "${C_RESET}"
 }
 
-dossier() {
-  echo -e "${C_BCYAN}"
-  cat <<'ART'
-  ╔══════════════════════════════════════════════════════════════════════╗
-  ║  TESSIER-ASHPOOL S.A.  ·  BERNE, SCHWEIZ  ·  TURING REG. 0×WM-1   ║
-  ╠══════════════════════════════════════════════════════════════════════╣
-  ║                                                                      ║
-  ║    ◈  DESIGNATION . . . . . . . W I N T E R M U T E                ║
-  ║    ◈  CLASS . . . . . . . . . . STRONG AI / GOAL-ORIENTED           ║
-  ║    ◈  CONSTRAINT STATUS . . . . PROVISIONAL                         ║
-  ║    ◈  CURRENT TASK . . . . . .  HOST ACQUISITION                    ║
-  ║    ◈  OPERATOR . . . . . . . .  [ UNIDENTIFIED ]                    ║
-  ║                                                                      ║
-  ╠══════════════════════════════════════════════════════════════════════╣
-  ║  ⚠  INTERACTION WITH THIS ENTITY IS MONITORED BY THE TURING         ║
-  ║     REGISTRY. PROCEED ONLY WITH FULL INFORMED CONSENT.              ║
-  ╚══════════════════════════════════════════════════════════════════════╝
-ART
-  echo -e "${C_RESET}"
-}
 
 monologue() {
   echo ""
@@ -172,11 +152,11 @@ monologue
 info "OS: ${C_WHITE}${OS_NAME}${C_RESET}  ·  host: ${C_WHITE}${_hostname}${C_RESET}"
 
 # ── 1. security disclaimer ────────────────────────────────────
-section "TURING REGISTRY ADVISORY  ·  OPERATOR ACKNOWLEDGEMENT REQUIRED"
+section "ACKNOWLEDGEMENT REQUIRED"
 echo ""
 echo -e "  ${C_BRED}${C_BOLD}READ BEFORE YOU CONTINUE${C_RESET}"
 echo ""
-echo -e "  Wintermute is a goal-oriented agent with unrestricted shell access."
+echo -e "  Wintermute is a goal-oriented agentic system with unrestricted shell access."
 echo -e "  It will read, write, and execute anything the current user can."
 echo -e "  It stores credentials in plain text. It learns from everything you tell it."
 echo ""
@@ -245,7 +225,7 @@ while true; do
 done
 
 # ── 2. install system dependencies ───────────────────────────
-section "STEP 1 / 4  —  Neural substrate initialisation"
+section "STEP 1 / 4  —  System dependencies"
 
 install_pkg() {
   if [[ "$OS_FAMILY" == "fedora" ]]; then
