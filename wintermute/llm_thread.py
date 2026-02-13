@@ -163,6 +163,16 @@ class LLMThread:
 
             if item.future and not item.future.done():
                 item.future.set_result(reply)
+            elif item.is_system_event and not item.future and reply:
+                # System events without a future (sub-session results,
+                # reminders, /pulse commands) have no caller waiting for
+                # the reply.  Broadcast the LLM's response directly so
+                # it reaches the user.
+                try:
+                    await self._broadcast(reply, item.thread_id)
+                except Exception:  # noqa: BLE001
+                    logger.exception("Failed to broadcast system-event reply for thread %s",
+                                     item.thread_id)
 
             self._queue.task_done()
 
