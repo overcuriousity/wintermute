@@ -176,6 +176,35 @@ matrix:
 
 **End-to-end encryption** is handled automatically — the bot's crypto keys are persisted to `data/matrix_crypto.db` and the device is cross-signed at startup so Element and other clients trust it without manual verification. A recovery key is logged on first run; save it to recover the crypto identity later if needed.
 
+### Troubleshooting
+
+#### Token expired (`MUnknownToken`)
+
+Wintermute logs the exact `curl` command needed to obtain a new token. Run it, then update `access_token` (and `device_id` if it changed) in `config.yaml` and restart.
+
+#### Cross-signing requires approval
+
+Some homeservers (including matrix.org) require you to approve a cross-signing reset via your account page. Wintermute logs the exact URL when this happens:
+
+```text
+Cross-signing requires interactive approval from your homeserver.
+  1. Open this URL in your browser: https://account.matrix.org/account/?action=org.matrix.cross_signing_reset
+  2. Approve the cross-signing reset request.
+  3. Restart Wintermute.
+```
+
+After approval, restart Wintermute and cross-signing completes automatically.
+
+#### Stale crypto store (after server identity reset)
+
+If you reset your Matrix crypto identity (e.g. via Element → Settings → Security → Reset cross-signing), delete the local store so Wintermute rebuilds it from scratch:
+
+```bash
+rm -f data/matrix_crypto.db data/matrix_crypto.db-wal data/matrix_crypto.db-shm
+```
+
+Wintermute detects most crypto-store mismatches at startup and wipes the files automatically with a log message. Manual deletion is only needed when the automatic recovery also fails.
+
 ---
 
 ## Web Search Setup (SearXNG)

@@ -26,6 +26,7 @@ from typing import Optional
 from mautrix.client import Client, InternalEventType
 from mautrix.crypto import OlmMachine
 from mautrix.crypto.store import PgCryptoStore
+from mautrix.errors import MUnknownToken
 from mautrix.types import (
     EventType,
     MessageType,
@@ -38,6 +39,31 @@ logger = logging.getLogger(__name__)
 
 CRYPTO_DB_PATH = Path("data/matrix_crypto.db")
 CRYPTO_PICKLE_KEY = "wintermute"
+
+
+def _wipe_crypto_db() -> None:
+    """Delete the SQLite crypto store and its WAL/SHM files."""
+    for suffix in ("", "-wal", "-shm"):
+        p = Path(str(CRYPTO_DB_PATH) + suffix)
+        if p.exists():
+            p.unlink()
+            logger.info("Removed stale crypto file: %s", p)
+
+
+def _extract_uia_url(exc: Exception) -> str | None:
+    """Return the interactive-auth approval URL embedded in a mautrix exception, if any.
+
+    When a homeserver requires UIA for cross-signing reset it returns a response
+    like: {"params": {"org.matrix.cross_signing_reset": {"url": "https://..."}}}
+    mautrix stores the parsed body in exc.data (or exc.body on some versions).
+    """
+    for attr in ("data", "body"):
+        data = getattr(exc, attr, None)
+        if isinstance(data, dict):
+            for stage_params in data.get("params", {}).values():
+                if isinstance(stage_params, dict) and "url" in stage_params:
+                    return stage_params["url"]
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +155,17 @@ class MatrixThread:
         try:
             client = await self._setup_client()
             self._client = client
-            await self._setup_crypto(client)
+            try:
+                await self._setup_crypto(client)
+            except MUnknownToken:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Crypto setup failed (%s). "
+                    "Wiping stale crypto store and retrying once...", exc,
+                )
+                _wipe_crypto_db()
+                await self._setup_crypto(client)
             logger.info("Matrix connected with E2EE. Listening.")
 
             # Cross-sign after the first sync so device keys are in the server's
@@ -153,6 +189,19 @@ class MatrixThread:
             await client.start(filter_data=None)
         except asyncio.CancelledError:
             logger.info("Matrix task cancelled")
+        except MUnknownToken:
+            logger.error(
+                "Matrix access token is invalid or expired.\n"
+                "  Get a new token by logging in again:\n"
+                "    curl -s -X POST '%s/_matrix/client/v3/login' \\\n"
+                "      -H 'Content-Type: application/json' \\\n"
+                "      -d '{\"type\":\"m.login.password\","
+                "\"identifier\":{\"type\":\"m.id.user\",\"user\":\"BOT_USER\"},"
+                "\"password\":\"BOT_PASSWORD\","
+                "\"initial_device_display_name\":\"Wintermute\"}' | python3 -m json.tool\n"
+                "  Then update access_token (and device_id if changed) in config.yaml and restart.",
+                self._cfg.homeserver,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.error("Matrix fatal error: %s", exc, exc_info=True)
         finally:
@@ -259,7 +308,23 @@ class MatrixThread:
                 recovery_key,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Cross-signing failed (non-fatal, retry on next restart): %s", exc)
+            approval_url = _extract_uia_url(exc)
+            if approval_url:
+                logger.warning(
+                    "Cross-signing requires interactive approval from your homeserver.\n"
+                    "  1. Open this URL in your browser: %s\n"
+                    "  2. Approve the cross-signing reset request.\n"
+                    "  3. Restart Wintermute.\n"
+                    "  If that doesn't help, also delete data/matrix_crypto.db* and restart.",
+                    approval_url,
+                )
+            else:
+                logger.warning(
+                    "Cross-signing failed (non-fatal): %s\n"
+                    "  If you reset your crypto identity on the server, delete\n"
+                    "  data/matrix_crypto.db (and .db-wal, .db-shm) and restart.",
+                    exc,
+                )
 
     # ------------------------------------------------------------------
     # Event handlers
