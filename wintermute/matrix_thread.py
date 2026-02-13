@@ -136,7 +136,7 @@ class MatrixThread:
             # registry before sign_own_device() queries them.
             _done = asyncio.Event()
 
-            async def _on_first_sync(**_: object) -> None:
+            async def _on_first_sync(*_args: object, **_kw: object) -> None:
                 if not _done.is_set():
                     _done.set()
                     asyncio.create_task(
