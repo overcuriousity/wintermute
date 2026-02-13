@@ -38,16 +38,20 @@ from mautrix.util.async_db import Database
 logger = logging.getLogger(__name__)
 
 CRYPTO_DB_PATH = Path("data/matrix_crypto.db")
+CRYPTO_MARKER_PATH = Path("data/matrix_signed.marker")
 CRYPTO_PICKLE_KEY = "wintermute"
 
 
 def _wipe_crypto_db() -> None:
-    """Delete the SQLite crypto store and its WAL/SHM files."""
+    """Delete the SQLite crypto store, its WAL/SHM files, and the cross-sign marker."""
     for suffix in ("", "-wal", "-shm"):
         p = Path(str(CRYPTO_DB_PATH) + suffix)
         if p.exists():
             p.unlink()
             logger.info("Removed stale crypto file: %s", p)
+    if CRYPTO_MARKER_PATH.exists():
+        CRYPTO_MARKER_PATH.unlink()
+        logger.info("Removed cross-sign marker")
 
 
 def _extract_uia_url(exc: Exception) -> str | None:
@@ -291,18 +295,29 @@ class MatrixThread:
         )
 
     async def _ensure_cross_signed(self, olm: OlmMachine) -> None:
-        """Cross-sign the bot's own device if not already done.
+        """Cross-sign the bot's own device when the Olm identity changes.
 
-        Called once after the first sync so device keys are queryable.
-        Uses get_own_cross_signing_public_keys() to avoid regenerating keys
-        (which would invalidate existing trust) on every restart.
+        A marker file records the Ed25519 signing key of the last successfully
+        cross-signed identity.  On every restart we compare the current key
+        against the marker:
+          - Match  → device is already signed, nothing to do.
+          - Mismatch / absent → new identity (after DB wipe or first run);
+            generate_recovery_key() uploads fresh cross-signing keys and signs
+            the current device.  On matrix.org this requires a one-time
+            interactive approval — Wintermute logs the exact URL.
         """
         try:
-            existing = await olm.get_own_cross_signing_public_keys()
-            if existing is not None:
-                logger.info("Cross-signing keys already present on server")
-                return
+            current_key = olm.account.signing_key
+            if CRYPTO_MARKER_PATH.exists():
+                if CRYPTO_MARKER_PATH.read_text().strip() == current_key:
+                    logger.info("Device already cross-signed.")
+                    return
+                logger.info(
+                    "Signing key changed since last cross-sign "
+                    "(crypto store was reset) — re-establishing cross-signing."
+                )
             recovery_key = await olm.generate_recovery_key()
+            CRYPTO_MARKER_PATH.write_text(current_key)
             logger.info(
                 "Cross-signing complete.  Recovery key (store securely): %s",
                 recovery_key,
@@ -315,7 +330,7 @@ class MatrixThread:
                     "  1. Open this URL in your browser: %s\n"
                     "  2. Approve the cross-signing reset request.\n"
                     "  3. Restart Wintermute.\n"
-                    "  If that doesn't help, also delete data/matrix_crypto.db* and restart.",
+                    "  If the error persists, also delete data/matrix_crypto.db* and restart.",
                     approval_url,
                 )
             else:

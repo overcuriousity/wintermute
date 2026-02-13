@@ -483,8 +483,8 @@ if ! $SKIP_CONFIG; then
     echo -e "  ${C_DIM}  The recovery key printed in the logs should be saved securely.${C_RESET}"
     echo ""
     echo -e "  ${C_DIM}  If you ever reset your crypto identity on the server, delete:${C_RESET}"
-    echo -e "  ${C_DIM}    data/matrix_crypto.db  data/matrix_crypto.db-wal  data/matrix_crypto.db-shm${C_RESET}"
-    echo -e "  ${C_DIM}  Wintermute will rebuild the crypto store on the next start.${C_RESET}"
+    echo -e "  ${C_DIM}    data/matrix_crypto.db  data/matrix_crypto.db-wal  data/matrix_crypto.db-shm  data/matrix_signed.marker${C_RESET}"
+    echo -e "  ${C_DIM}  Wintermute will rebuild the crypto store and re-sign on the next start.${C_RESET}"
   fi
 
   # ── write config.yaml ────────────────────────────────────────

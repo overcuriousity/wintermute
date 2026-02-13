@@ -200,10 +200,10 @@ After approval, restart Wintermute and cross-signing completes automatically.
 If you reset your Matrix crypto identity (e.g. via Element → Settings → Security → Reset cross-signing), delete the local store so Wintermute rebuilds it from scratch:
 
 ```bash
-rm -f data/matrix_crypto.db data/matrix_crypto.db-wal data/matrix_crypto.db-shm
+rm -f data/matrix_crypto.db data/matrix_crypto.db-wal data/matrix_crypto.db-shm data/matrix_signed.marker
 ```
 
-Wintermute detects most crypto-store mismatches at startup and wipes the files automatically with a log message. Manual deletion is only needed when the automatic recovery also fails.
+Wintermute tracks whether the current device identity has been cross-signed via `data/matrix_signed.marker`. Deleting the crypto store automatically invalidates the marker, so Wintermute re-establishes cross-signing on the next start (which may require the homeserver approval step again). Wintermute also detects most crypto-store corruption at startup and wipes the files automatically.
 
 ---
 

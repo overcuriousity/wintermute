@@ -9,6 +9,7 @@ data/matrix_store/
 data/matrix_crypto.db
 data/matrix_crypto.db-wal
 data/matrix_crypto.db-shm
+data/matrix_signed.marker
 logs/
 
 # Python
