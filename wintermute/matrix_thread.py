@@ -531,7 +531,9 @@ class MatrixThread:
         """m.key.verification.request — accept with ready."""
         c = evt.content
         sender = str(evt.sender)
-        if not self._is_user_allowed(sender):
+        # Accept from allowed users AND from the bot's own account
+        # (same-account cross-device verification, e.g. Element logged in as the bot).
+        if sender != self._cfg.user_id and not self._is_user_allowed(sender):
             return
         txn_id     = _v_field(c, "transaction_id")
         from_dev   = _v_field(c, "from_device")
@@ -741,7 +743,7 @@ class MatrixThread:
             timeout = 30_000 if typing else 0
             await self._client.set_typing(RoomID(room_id), timeout=timeout)
         except Exception as exc:  # noqa: BLE001
-            logger.debug("Typing notification failed for %s: %s", room_id, exc)
+            logger.warning("Typing notification failed for %s: %s", room_id, exc)
 
     def _is_user_allowed(self, user_id: str) -> bool:
         """Check if a user is in the allowed_users list (empty = allow all)."""
