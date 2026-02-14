@@ -31,9 +31,13 @@ import yaml
 from wintermute import database
 from wintermute import tools as tool_module
 from wintermute.pulse import PulseLoop
-from wintermute.llm_thread import LLMConfig, LLMThread
+from wintermute.llm_thread import LLMConfig, LLMThread, _DEFAULT_COMPACTION_PROMPT, COMPACTION_PROMPT_FILE
 from wintermute.matrix_thread import MatrixConfig, MatrixThread
-from wintermute.dreaming import DreamingConfig, DreamingLoop
+from wintermute.dreaming import (
+    DreamingConfig, DreamingLoop,
+    _DEFAULT_MEMORIES_PROMPT, _DEFAULT_PULSE_PROMPT,
+    DREAM_MEMORIES_PROMPT_FILE, DREAM_PULSE_PROMPT_FILE,
+)
 from wintermute.scheduler_thread import ReminderScheduler, SchedulerConfig
 from wintermute.sub_session import SubSessionManager
 from wintermute.web_interface import WebInterface
@@ -140,6 +144,18 @@ def bootstrap_data_files() -> None:
     pulse = DATA_DIR / "PULSE.txt"
     if not pulse.exists():
         pulse.write_text(_DEFAULT_PULSE, encoding="utf-8")
+
+    if not DREAM_MEMORIES_PROMPT_FILE.exists():
+        DREAM_MEMORIES_PROMPT_FILE.write_text(_DEFAULT_MEMORIES_PROMPT, encoding="utf-8")
+        logging.getLogger(__name__).info("Created default DREAM_MEMORIES_PROMPT.txt")
+
+    if not DREAM_PULSE_PROMPT_FILE.exists():
+        DREAM_PULSE_PROMPT_FILE.write_text(_DEFAULT_PULSE_PROMPT, encoding="utf-8")
+        logging.getLogger(__name__).info("Created default DREAM_PULSE_PROMPT.txt")
+
+    if not COMPACTION_PROMPT_FILE.exists():
+        COMPACTION_PROMPT_FILE.write_text(_DEFAULT_COMPACTION_PROMPT, encoding="utf-8")
+        logging.getLogger(__name__).info("Created default COMPACTION_PROMPT.txt")
 
 
 # ---------------------------------------------------------------------------

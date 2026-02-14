@@ -23,6 +23,8 @@ from typing import Optional
 
 from openai import AsyncOpenAI
 
+from pathlib import Path
+
 from wintermute import database
 from wintermute import prompt_assembler
 from wintermute import tools as tool_module
@@ -34,6 +36,26 @@ logger = logging.getLogger(__name__)
 
 # Keep the last N messages untouched during compaction.
 COMPACTION_KEEP_RECENT = 10
+
+COMPACTION_PROMPT_FILE = Path("data") / "COMPACTION_PROMPT.txt"
+
+_DEFAULT_COMPACTION_PROMPT = (
+    "Summarise the following conversation history concisely, "
+    "preserving all important facts, decisions, and context:\n\n"
+)
+
+
+def _load_compaction_prompt() -> str:
+    """Load the compaction prompt from a file, falling back to the built-in default."""
+    try:
+        text = COMPACTION_PROMPT_FILE.read_text(encoding="utf-8").strip()
+        if text:
+            return text
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.error("Cannot read %s: %s", COMPACTION_PROMPT_FILE, exc)
+    return _DEFAULT_COMPACTION_PROMPT
 
 
 def _count_tokens(text: str, model: str) -> int:
@@ -333,11 +355,11 @@ class LLMThread:
         history_text = "\n".join(
             f"{r['role'].upper()}: {r['content']}" for r in to_summarise
         )
-        summary_prompt = (
-            "Summarise the following conversation history concisely, "
-            "preserving all important facts, decisions, and context:\n\n"
-            + history_text
-        )
+        compaction_prompt = _load_compaction_prompt()
+        if "{history}" in compaction_prompt:
+            summary_prompt = compaction_prompt.format(history=history_text)
+        else:
+            summary_prompt = compaction_prompt + history_text
 
         compact_model = self._cfg.compaction_model or self._cfg.model
         summary_response = await self._client.chat.completions.create(

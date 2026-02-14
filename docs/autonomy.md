@@ -18,6 +18,8 @@ A nightly consolidation pass that reviews and prunes MEMORIES.txt and PULSE.txt.
 - MEMORIES.txt: removes duplicates, merges related facts, preserves distinct useful facts
 - PULSE.txt: removes completed/stale items, merges overlapping goals, keeps active tasks
 
+The prompts used for consolidation are stored in `data/DREAM_MEMORIES_PROMPT.txt` and `data/DREAM_PULSE_PROMPT.txt` and can be customised. See [system-prompts.md](system-prompts.md#customisable-prompt-templates).
+
 ## Pulse Reviews
 
 **Module:** `wintermute/pulse.py`
@@ -91,6 +93,7 @@ Automatic conversation history management:
 
 - Triggers when history tokens exceed: `context_size - max_tokens - system_prompt_tokens`
 - Summarises older messages using a dedicated compaction model (or the main model)
+- The summarisation prompt is stored in `data/COMPACTION_PROMPT.txt` and can be customised (see [system-prompts.md](system-prompts.md#customisable-prompt-templates))
 - Keeps the last 10 messages intact
 - Summary is injected into the system prompt as a "Conversation Summary" section
 - Can be manually triggered via the `/compact` command

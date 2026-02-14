@@ -19,6 +19,10 @@ from wintermute import prompt_assembler
 
 logger = logging.getLogger(__name__)
 
+DATA_DIR = Path("data")
+DREAM_MEMORIES_PROMPT_FILE = DATA_DIR / "DREAM_MEMORIES_PROMPT.txt"
+DREAM_PULSE_PROMPT_FILE    = DATA_DIR / "DREAM_PULSE_PROMPT.txt"
+
 
 @dataclass
 class DreamingConfig:
@@ -26,7 +30,7 @@ class DreamingConfig:
     minute: int = 0
     model: Optional[str] = None  # None = fall back to compaction_model, then main model
 
-_MEMORIES_PROMPT = """\
+_DEFAULT_MEMORIES_PROMPT = """\
 Below is the current content of MEMORIES.txt — the long-term memory store for \
 a personal AI assistant.
 
@@ -43,7 +47,7 @@ explanation.
 {content}
 """
 
-_PULSE_PROMPT = """\
+_DEFAULT_PULSE_PROMPT = """\
 Below is the current content of PULSE.txt — the active pulse working memory \
 (ongoing goals, recurring tasks) for a personal AI assistant.
 
@@ -61,10 +65,27 @@ explanation.
 """
 
 
+def _load_prompt(path: Path, default: str) -> str:
+    """Load a prompt template from a file, falling back to the built-in default."""
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+        if text:
+            return text
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.error("Cannot read %s: %s", path, exc)
+    return default
+
+
 async def _consolidate(client: AsyncOpenAI, model: str,
                         label: str, prompt_template: str, content: str) -> str:
     """Call the LLM to consolidate a single memory component."""
-    prompt = prompt_template.format(content=content)
+    prompt = prompt_template
+    if "{content}" in prompt:
+        prompt = prompt.format(content=content)
+    else:
+        prompt = prompt + "\n\n" + content
     response = await client.chat.completions.create(
         model=model,
         max_tokens=2048,
@@ -85,8 +106,9 @@ async def run_dream_cycle(client: AsyncOpenAI, model: str) -> None:
     memories = prompt_assembler._read(prompt_assembler.MEMORIES_FILE)
     if memories:
         try:
+            mem_prompt = _load_prompt(DREAM_MEMORIES_PROMPT_FILE, _DEFAULT_MEMORIES_PROMPT)
             consolidated = await _consolidate(
-                client, model, "MEMORIES.txt", _MEMORIES_PROMPT, memories
+                client, model, "MEMORIES.txt", mem_prompt, memories
             )
             if consolidated:
                 prompt_assembler.update_memories(consolidated)
@@ -99,8 +121,9 @@ async def run_dream_cycle(client: AsyncOpenAI, model: str) -> None:
     pulse = prompt_assembler._read(prompt_assembler.PULSE_FILE)
     if pulse:
         try:
+            pulse_prompt = _load_prompt(DREAM_PULSE_PROMPT_FILE, _DEFAULT_PULSE_PROMPT)
             consolidated = await _consolidate(
-                client, model, "PULSE.txt", _PULSE_PROMPT, pulse
+                client, model, "PULSE.txt", pulse_prompt, pulse
             )
             if consolidated:
                 prompt_assembler.update_pulse(consolidated)

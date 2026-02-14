@@ -93,3 +93,15 @@ Each component has a configurable character limit (set in `config.yaml` under `c
 When a component exceeds its limit after any inference, a system event is enqueued asking the AI to read the component, condense it, and update it using the appropriate tool.
 
 The nightly dreaming loop also consolidates MEMORIES.txt and PULSE.txt independently using a direct LLM call (no tool loop).
+
+## Customisable Prompt Templates
+
+The following prompt templates are stored as editable files in `data/`. They are created with sensible defaults on first run and can be freely modified.
+
+| File | Used By | Placeholder | Purpose |
+|------|---------|-------------|---------|
+| `DREAM_MEMORIES_PROMPT.txt` | Dreaming loop | `{content}` | Instructions for consolidating MEMORIES.txt overnight |
+| `DREAM_PULSE_PROMPT.txt` | Dreaming loop | `{content}` | Instructions for consolidating PULSE.txt overnight |
+| `COMPACTION_PROMPT.txt` | Context compaction | `{history}` | Instructions for summarising old conversation history |
+
+Templates support an optional placeholder (`{content}` or `{history}`). If present, the relevant text is substituted in. If absent, it is appended to the end of the prompt. This means you can write free-form instructions without worrying about placeholder syntax.

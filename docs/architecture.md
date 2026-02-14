@@ -96,10 +96,13 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 
 ```
 data/
-  BASE_PROMPT.txt    -- Immutable core instructions
-  MEMORIES.txt       -- Long-term user facts (updated via update_memories tool)
-  PULSE.txt          -- Active goals / working memory (updated via update_pulse tool)
-  skills/            -- Learned procedures as *.md files (updated via add_skill tool)
-  matrix_crypto.db   -- Matrix E2E encryption keys
-  matrix_recovery.key -- Cross-signing recovery key
+  BASE_PROMPT.txt            -- Immutable core instructions
+  MEMORIES.txt               -- Long-term user facts (updated via update_memories tool)
+  PULSE.txt                  -- Active goals / working memory (updated via update_pulse tool)
+  skills/                    -- Learned procedures as *.md files (updated via add_skill tool)
+  DREAM_MEMORIES_PROMPT.txt  -- Customisable dreaming prompt for MEMORIES consolidation
+  DREAM_PULSE_PROMPT.txt     -- Customisable dreaming prompt for PULSE consolidation
+  COMPACTION_PROMPT.txt      -- Customisable prompt for context compaction summarisation
+  matrix_crypto.db           -- Matrix E2E encryption keys
+  matrix_recovery.key        -- Cross-signing recovery key
 ```
