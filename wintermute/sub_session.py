@@ -93,8 +93,8 @@ class SubSessionState:
     session_id: str
     objective: str
     parent_thread_id: Optional[str]      # None = fire-and-forget
-    root_thread_id: Optional[str] = None # original user-facing thread (for nested routing)
     system_prompt_mode: str              # "full" | "base_only" | "minimal" | "none"
+    root_thread_id: Optional[str] = None # original user-facing thread (for nested routing)
     status: str                          # "running" | "completed" | "failed" | "timeout"
     created_at: str                      # ISO-8601
     nesting_depth: int = 1               # 1 = direct child, 2 = grandchild
