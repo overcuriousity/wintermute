@@ -4,7 +4,7 @@ config.yaml
 # Runtime data
 data/conversation.db
 data/scheduler.db
-data/reminders.json
+data/reminder_history.json
 data/matrix_store/
 data/matrix_crypto.db
 data/matrix_crypto.db-wal

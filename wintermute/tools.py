@@ -405,8 +405,9 @@ def get_tool_schemas(categories: set[str] | None = None) -> list[dict]:
 # Tool implementations
 # ---------------------------------------------------------------------------
 
-# This will be injected by the scheduler thread at startup.
+# These will be injected by the scheduler thread at startup.
 _scheduler_set_reminder = None  # Callable[[dict], str]
+_scheduler_list_reminders = None  # Callable[[], dict]
 
 # This will be injected by the SubSessionManager at startup.
 _sub_session_spawn = None  # Callable[[dict, str], str]
@@ -416,6 +417,12 @@ def register_scheduler(fn) -> None:
     """Called once by the scheduler thread to provide the set_reminder hook."""
     global _scheduler_set_reminder
     _scheduler_set_reminder = fn
+
+
+def register_reminder_lister(fn) -> None:
+    """Called once by the scheduler thread to provide the list_reminders hook."""
+    global _scheduler_list_reminders
+    _scheduler_list_reminders = fn
 
 
 def register_sub_session_manager(fn) -> None:
@@ -553,13 +560,9 @@ def _tool_write_file(inputs: dict, **_kw) -> str:
 
 
 def _tool_list_reminders(_inputs: dict, **_kw) -> str:
-    registry = DATA_DIR / "reminders.json"
-    try:
-        return registry.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return json.dumps({"active": [], "completed": [], "failed": []})
-    except OSError as exc:
-        return json.dumps({"error": str(exc)})
+    if _scheduler_list_reminders is not None:
+        return json.dumps(_scheduler_list_reminders(), indent=2, ensure_ascii=False)
+    return json.dumps({"active": [], "completed": [], "failed": []})
 
 
 # ---------------------------------------------------------------------------
