@@ -42,8 +42,6 @@ llm:
 
 pulse:
   review_interval_minutes: 60             # How often to auto-review PULSE.txt
-  active_thread_hours: 24                 # Only run per-thread reviews for threads
-                                          # with activity in the last N hours (0 = all threads)
 
 context:
   component_size_limits:

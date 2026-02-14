@@ -33,7 +33,8 @@ from wintermute import tools as tool_module
 from wintermute.pulse import PulseLoop
 from wintermute.llm_thread import LLMConfig, LLMThread
 from wintermute.matrix_thread import MatrixConfig, MatrixThread
-from wintermute.scheduler_thread import DreamingConfig, ReminderScheduler, SchedulerConfig
+from wintermute.dreaming import DreamingConfig, DreamingLoop
+from wintermute.scheduler_thread import ReminderScheduler, SchedulerConfig
 from wintermute.sub_session import SubSessionManager
 from wintermute.web_interface import WebInterface
 
@@ -185,11 +186,9 @@ async def main() -> None:
     )
     scheduler_cfg = SchedulerConfig(
         timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
-        dreaming=dreaming_cfg,
     )
     pulse_cfg = cfg.get("pulse", {})
     pulse_interval = pulse_cfg.get("review_interval_minutes", 60)
-    pulse_active_thread_hours = pulse_cfg.get("active_thread_hours", 24)
 
     # --- Optional interfaces ---
     matrix_cfg_raw: Optional[dict] = cfg.get("matrix")
@@ -264,9 +263,6 @@ async def main() -> None:
         config=scheduler_cfg,
         broadcast_fn=broadcast,
         llm_enqueue_fn=llm.enqueue_system_event,
-        llm_client=llm._client,
-        llm_model=llm_cfg.model,
-        compaction_model=llm_cfg.compaction_model,
         sub_session_manager=sub_sessions,
     )
 
@@ -279,10 +275,14 @@ async def main() -> None:
 
     pulse_loop = PulseLoop(
         interval_minutes=pulse_interval,
-        llm_enqueue_fn=llm.enqueue_system_event_with_reply,
-        broadcast_fn=broadcast,
         sub_session_manager=sub_sessions,
-        active_thread_hours=pulse_active_thread_hours,
+    )
+
+    dreaming_loop = DreamingLoop(
+        config=dreaming_cfg,
+        llm_client=llm._client,
+        llm_model=llm_cfg.model,
+        compaction_model=llm_cfg.compaction_model,
     )
 
     scheduler.start()
@@ -292,8 +292,9 @@ async def main() -> None:
         loop.add_signal_handler(sig, shutdown.request_shutdown)
 
     tasks = [
-        asyncio.create_task(llm.run(),            name="llm"),
-        asyncio.create_task(pulse_loop.run(), name="pulse"),
+        asyncio.create_task(llm.run(),              name="llm"),
+        asyncio.create_task(pulse_loop.run(),        name="pulse"),
+        asyncio.create_task(dreaming_loop.run(),     name="dreaming"),
     ]
     if matrix:
         tasks.append(asyncio.create_task(matrix.run(), name="matrix"))
@@ -311,6 +312,7 @@ async def main() -> None:
     logger.info("Shutdown requested - stopping components gracefully")
 
     pulse_loop.stop()
+    dreaming_loop.stop()
     if matrix:
         matrix.stop()
     llm.stop()
