@@ -1,6 +1,6 @@
 # Tools
 
-Wintermute exposes 11 tools as OpenAI-compatible function-calling schemas, compatible with any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI, etc.).
+Wintermute exposes 12 tools as OpenAI-compatible function-calling schemas, compatible with any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI, etc.).
 
 ## Tool Categories
 
@@ -10,7 +10,7 @@ Tools are grouped into three categories that control which tools are available i
 |----------|-------------|-------|
 | **execution** | All agents | `execute_shell`, `read_file`, `write_file` |
 | **research** | All agents | `search_web`, `fetch_url` |
-| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `set_reminder`, `update_memories`, `update_pulse`, `add_skill`, `list_reminders` |
+| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `set_reminder`, `append_memory`, `update_memories`, `update_pulse`, `add_skill`, `list_reminders` |
 
 ## Tool Filtering by Sub-session Mode
 
@@ -116,9 +116,19 @@ Schedule a reminder with optional AI inference on trigger.
 
 Returns: `status`, `job_id`
 
+#### `append_memory`
+
+Append a new fact to MEMORIES.txt. Preferred for day-to-day memory storage — no need to reproduce existing content. Nightly consolidation handles deduplication automatically.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `entry` | string | yes | The fact or note to append (one logical entry) |
+
+Returns: `status`, `total_chars`
+
 #### `update_memories`
 
-Overwrite MEMORIES.txt with new content. Pass the full desired content.
+Overwrite MEMORIES.txt with new content. Use only for restructuring or removing specific entries — for adding new facts, use `append_memory` instead.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -126,7 +136,7 @@ Overwrite MEMORIES.txt with new content. Pass the full desired content.
 
 #### `update_pulse`
 
-Overwrite PULSE.txt with new content. Pass the full desired content.
+Overwrite PULSE.txt with new content. Include only active items; omit completed goals.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -143,6 +153,6 @@ Create or overwrite a skill documentation file in `data/skills/`.
 
 #### `list_reminders`
 
-Return all reminders from the reminder registry. No parameters.
+Returns active, completed, and failed reminders. No parameters. History is capped at the 200 most recent entries per category.
 
 Returns: `active[]`, `completed[]`, `failed[]`

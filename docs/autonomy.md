@@ -95,7 +95,10 @@ Automatic conversation history management:
 - Summarises older messages using a dedicated compaction model (or the main model)
 - The summarisation prompt is stored in `data/COMPACTION_PROMPT.txt` and can be customised (see [system-prompts.md](system-prompts.md#customisable-prompt-templates))
 - Keeps the last 10 messages intact
+- **Chained summaries**: each compaction includes the prior summary in its input, so context is preserved across compaction cycles rather than lost. The compaction prompt merges `[PRIOR SUMMARY]` and `[NEW MESSAGES]` into a single cohesive summary.
+- Only one summary is kept per thread (old summaries are replaced, not accumulated)
 - Summary is injected into the system prompt as a "Conversation Summary" section
+- Archived messages older than 30 days are automatically purged from the database
 - Can be manually triggered via the `/compact` command
 
 ## Component Auto-summarisation

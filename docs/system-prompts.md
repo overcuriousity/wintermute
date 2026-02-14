@@ -8,22 +8,29 @@ Wintermute assembles its system prompt fresh on every inference call from indivi
 
 ### 1. BASE_PROMPT.txt — Core Instructions
 
-The immutable foundation. Created automatically on first run with sensible defaults. Editable by the user.
+The foundation of every prompt. Shipped with the repository and editable by the user.
 
-Default content covers:
+Content covers:
 
-- Role definition (personal AI assistant)
-- Memory system usage (when to update MEMORIES, PULSE, skills)
-- Behavioural guidelines (concise responses, credential awareness, confidence)
-- Tool-use patterns
+- Role definition (personal AI assistant via Matrix chat)
+- Memory system: clear boundary between MEMORIES (long-term facts) and PULSE (active working memory)
+- Background process awareness (pulse reviews, nightly dreaming, context compaction)
+- Tool usage patterns and categories
+- Sub-session delegation and workflow DAGs with `depends_on`
+- System event handling (sub-session results, reminders, errors, timeouts)
+- Behavioural guidelines (concise responses, credential policy, confidence)
 
 ### 2. MEMORIES.txt — Long-Term Facts
 
-Stores persistent facts about the user. Updated by the AI via the `update_memories` tool whenever the user shares important information. Survives restarts.
+Stores persistent facts about the user — preferences, biographical details, established decisions. Updated day-to-day via `append_memory` (preferred) or restructured via `update_memories` (full rewrite). Consolidated nightly by the dreaming loop to merge duplicates and prune outdated entries.
+
+Key rule: if information would still matter in a month with no active project around it, it belongs in MEMORIES.
 
 ### 3. PULSE.txt — Working Memory
 
-Active goals, ongoing projects, and recurring concerns. Updated via the `update_pulse` tool. Reviewed periodically by the pulse loop and consolidated nightly by the dreaming loop.
+Active goals, ongoing projects, time-sensitive tasks, and open questions. Updated via `update_pulse` (full rewrite — drop completed items, keep active ones). Reviewed autonomously every 60 minutes by the pulse loop and consolidated nightly by the dreaming loop.
+
+Key rule: if it only matters because something is in progress right now, it belongs in PULSE.
 
 ### 4. skills/*.md — Learned Procedures
 
@@ -96,7 +103,7 @@ The nightly dreaming loop also consolidates MEMORIES.txt and PULSE.txt independe
 
 ## Customisable Prompt Templates
 
-The following prompt templates are stored as editable files in `data/`. They are created with sensible defaults on first run and can be freely modified.
+The following prompt templates are stored as editable files in `data/` and shipped with the repository. They can be freely modified.
 
 | File | Used By | Placeholder | Purpose |
 |------|---------|-------------|---------|

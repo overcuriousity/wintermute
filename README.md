@@ -21,7 +21,7 @@ The philosophy differs from similar projects by treating small LLMs and digital 
 
 ## Features
 
-- **Persistent memory** — `MEMORIES.txt` (long-term facts), `PULSE.txt` (active goals / working memory), and `skills/*.md` (reusable procedures) survive restarts and are injected into every prompt
+- **Persistent memory** — `MEMORIES.txt` (long-term facts, append-based), `PULSE.txt` (active goals / working memory), and `skills/*.md` (reusable procedures) survive restarts and are injected into every prompt
 - **Multi-interface** — Matrix chat (with E2E encryption) and a browser-based web UI run simultaneously; each room / tab has independent conversation history
 - **Sub-session workers** — long-running tasks are delegated to autonomous background agents that report back when done; the main agent stays responsive during execution; workers auto-resume after timeouts (up to 3 hops)
 - **Workflow DAG** — multi-step tasks are expressed as dependency graphs via `depends_on`; downstream tasks auto-start when their dependencies complete, with results passed as context — no LLM decision-making needed after the initial plan
@@ -30,7 +30,7 @@ The philosophy differs from similar projects by treating small LLMs and digital 
 - **Reminders & scheduler** — one-time and recurring reminders with optional AI inference on trigger; per-timezone scheduling
 - **Nightly dreaming** — automatic overnight consolidation of MEMORIES.txt and PULSE.txt via a direct LLM call (no tool loop, no conversation side effects)
 - **Pulse reviews** — periodic autonomous reviews of PULSE.txt via an isolated sub-session (no conversation pollution)
-- **Context compaction** — when conversation history approaches the model's context window, older messages are summarised and retained as a rolling summary
+- **Context compaction** — when conversation history approaches the model's context window, older messages are summarised and chained into a rolling summary that preserves context across compaction cycles
 - **Debug panel** — `http://localhost:8080/debug` provides a live view of sessions, sub-sessions, scheduled jobs, reminders, and the current system prompt
 - **Any OpenAI-compatible backend** — Ollama, vLLM, LM Studio, OpenAI, or any compatible endpoint
 
@@ -41,6 +41,7 @@ The philosophy differs from similar projects by treating small LLMs and digital 
 - Linux (Fedora / RHEL or Debian / Ubuntu)
 - `bash` and `curl` — everything else is installed automatically
 - An OpenAI-compatible LLM endpoint
+- *(Strongly recommended)* A local [SearXNG](https://docs.searxng.org/) instance for web search
 - *(Recommended)* A dedicated Matrix account for the bot
 
 ---
@@ -80,7 +81,7 @@ The Turing Registry would not approve this installation. Run it in a dedicated L
 | [Matrix Setup](docs/matrix-setup.md) | Account creation, credentials, E2E encryption, troubleshooting |
 | [Architecture](docs/architecture.md) | Component overview, diagrams, data flow |
 | [System Prompts](docs/system-prompts.md) | Prompt assembly, components, size limits |
-| [Tools](docs/tools.md) | All 11 tools with parameters and categories |
+| [Tools](docs/tools.md) | All 12 tools with parameters and categories |
 | [Commands](docs/commands.md) | Slash commands (`/new`, `/compact`, `/pulse`, etc.) |
 | [Web Interface](docs/web-interface.md) | Chat UI, debug panel, REST API |
 | [Autonomy](docs/autonomy.md) | Dreaming, pulse reviews, sub-sessions, workflows |

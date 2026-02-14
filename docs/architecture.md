@@ -27,7 +27,7 @@ User (Matrix / Browser)
         |
         |-- tool calls --> execute_shell / read_file / write_file
         |                  search_web / fetch_url
-        |                  update_memories / update_pulse / add_skill
+        |                  append_memory / update_memories / update_pulse / add_skill
         |                  set_reminder / list_reminders
         |
         +-- spawn_sub_session --> SubSessionManager
@@ -51,7 +51,7 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 1. Load `config.yaml`
 2. Configure logging (console + rotating file)
 3. Initialise SQLite databases
-4. Bootstrap `data/` files (BASE_PROMPT.txt, MEMORIES.txt, PULSE.txt, skills/)
+4. Bootstrap `data/` directories (skills/, scripts/, archive/)
 5. Restore APScheduler jobs (and execute missed reminders)
 6. Build shared broadcast function (routes to Matrix rooms or web clients)
 7. Start LLM inference task
@@ -97,7 +97,7 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 ```
 data/
   BASE_PROMPT.txt            -- Immutable core instructions
-  MEMORIES.txt               -- Long-term user facts (updated via update_memories tool)
+  MEMORIES.txt               -- Long-term user facts (updated via append_memory / update_memories)
   PULSE.txt                  -- Active goals / working memory (updated via update_pulse tool)
   skills/                    -- Learned procedures as *.md files (updated via add_skill tool)
   DREAM_MEMORIES_PROMPT.txt  -- Customisable dreaming prompt for MEMORIES consolidation
