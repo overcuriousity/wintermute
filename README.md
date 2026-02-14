@@ -29,7 +29,7 @@ The philosophy differs from similar projects by treating small LLMs and digital 
 - **Web search** — `search_web` queries a local SearXNG instance and falls back to DuckDuckGo via `curl` when SearXNG is unavailable; `fetch_url` fetches and strips any web page
 - **Reminders & scheduler** — one-time and recurring reminders with optional AI inference on trigger; per-timezone scheduling
 - **Nightly dreaming** — automatic overnight consolidation of MEMORIES.txt and PULSE.txt via a direct LLM call (no tool loop, no conversation side effects)
-- **Pulse reviews** — periodic autonomous reviews of PULSE.txt; fires globally and per active conversation thread
+- **Pulse reviews** — periodic autonomous reviews of PULSE.txt via an isolated sub-session (no conversation pollution)
 - **Context compaction** — when conversation history approaches the model's context window, older messages are summarised and retained as a rolling summary
 - **Debug panel** — `http://localhost:8080/debug` provides a live view of sessions, sub-sessions, scheduled jobs, reminders, and the current system prompt
 - **Any OpenAI-compatible backend** — Ollama, vLLM, LM Studio, OpenAI, or any compatible endpoint
@@ -289,7 +289,7 @@ User (Matrix / Browser)
 
 PulseLoop ───────────────────────────────► fire-and-forget sub-session (full mode)
 ReminderScheduler ──────────────────────► LLMThread queue / sub-session
-DreamingJob (nightly) ──────────────────► direct LLM API call (no tool loop)
+DreamingLoop (nightly) ─────────────────► direct LLM API call (no tool loop)
 ```
 
 
