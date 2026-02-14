@@ -584,6 +584,10 @@ class MatrixThread:
 
         thread_id = str(evt.room_id)
         logger.info("Received message from %s in %s: %s", evt.sender, thread_id, text[:100])
+
+        # Mark message as read so the sender sees it was received.
+        await self._send_read_receipt(thread_id, evt.event_id)
+
         await self._dispatch(text, thread_id)
 
     async def _on_invite(self, evt) -> None:
@@ -842,10 +846,17 @@ class MatrixThread:
             await self._handle_dream_command(thread_id)
             return
 
-        await self._set_typing(thread_id, True)
+        typing_task = asyncio.create_task(
+            self._typing_loop(thread_id), name=f"typing_{thread_id}",
+        )
         try:
             reply = await self._llm.enqueue_user_message(text, thread_id)
         finally:
+            typing_task.cancel()
+            try:
+                await typing_task
+            except asyncio.CancelledError:
+                pass
             await self._set_typing(thread_id, False)
         await self.send_message(reply, thread_id)
 
@@ -941,6 +952,29 @@ class MatrixThread:
             await self._client.set_typing(RoomID(room_id), timeout=timeout)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Typing notification failed for %s: %s", room_id, exc)
+
+    async def _typing_loop(self, room_id: str) -> None:
+        """Continuously refresh the typing indicator every 25 seconds.
+
+        The Matrix typing timeout is 30 s.  By re-sending every 25 s the
+        indicator stays visible for the entire duration of inference,
+        including multi-step tool-call loops.
+        """
+        try:
+            while True:
+                await self._set_typing(room_id, True)
+                await asyncio.sleep(25)
+        except asyncio.CancelledError:
+            pass
+
+    async def _send_read_receipt(self, room_id: str, event_id) -> None:
+        """Mark an event as read so the sender sees it was received."""
+        if self._client is None:
+            return
+        try:
+            await self._client.send_receipt(RoomID(room_id), event_id, "m.read")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Read receipt failed for %s/%s: %s", room_id, event_id, exc)
 
     def _is_user_allowed(self, user_id: str) -> bool:
         """Check if a user is in the allowed_users list (empty = allow all)."""
