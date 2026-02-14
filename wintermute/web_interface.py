@@ -1271,7 +1271,7 @@ class WebInterface:
         app.router.add_post("/api/debug/reminders",                     self._api_reminder_create)
         app.router.add_delete("/api/debug/reminders/{job_id}",          self._api_reminder_delete)
 
-        runner = web.AppRunner(app)
+        runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         site = web.TCPSite(runner, self._host, self._port)
         await site.start()
