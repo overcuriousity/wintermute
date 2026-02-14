@@ -1379,6 +1379,19 @@ class WebInterface:
             await self._handle_dream_command(system)
             return None
 
+        if text == "/commands":
+            await system(
+                "**Available commands:**\n"
+                "- `/new` – Reset conversation history\n"
+                "- `/compact` – Compact context (summarise old messages)\n"
+                "- `/reminders` – List active reminders\n"
+                "- `/pulse` – Trigger a pulse review\n"
+                "- `/status` – Show system status\n"
+                "- `/dream` – Trigger a dream cycle\n"
+                "- `/commands` – Show this list"
+            )
+            return None
+
         return await self._llm.enqueue_user_message(text, thread_id)
 
     # ------------------------------------------------------------------

@@ -10,3 +10,4 @@ All commands are available in both Matrix and the web UI.
 | `/pulse` | Manually trigger a pulse review. Enqueues a system event asking the AI to review PULSE.txt and report any actions taken. |
 | `/status` | Show detailed system status: running asyncio tasks, active sub-sessions, workflow state, pulse/dreaming loop status, and reminder count. |
 | `/dream` | Manually trigger the nightly dreaming consolidation of MEMORIES.txt and PULSE.txt. Shows before/after character counts. |
+| `/commands` | List all available slash commands with short descriptions. |
