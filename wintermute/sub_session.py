@@ -206,7 +206,21 @@ class SubSessionManager:
         """
         session_id = f"sub_{uuid.uuid4().hex[:8]}"
         now = datetime.now(timezone.utc).isoformat()
-        deps = depends_on or []
+        raw_deps = depends_on or []
+
+        # Validate dependency IDs — strip any that don't correspond to a known
+        # session.  This prevents permanent deadlocks caused by hallucinated or
+        # mistyped session IDs in depends_on.
+        deps = []
+        for dep_id in raw_deps:
+            if dep_id in self._states:
+                deps.append(dep_id)
+            else:
+                logger.warning(
+                    "Sub-session %s: dropping unknown dependency '%s' "
+                    "(session does not exist — possibly hallucinated by LLM)",
+                    session_id, dep_id,
+                )
 
         # Derive root_thread_id: the original user-facing thread.
         # When a sub-session spawns children, parent_thread_id is "sub_xxxx".
