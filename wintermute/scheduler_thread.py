@@ -435,8 +435,18 @@ def _save_history(history: dict) -> None:
     )
 
 
+MAX_HISTORY_PER_BUCKET = 200
+
+
 def _append_history(bucket: str, entry: dict) -> None:
-    """Append an entry to the history log under the given bucket."""
+    """Append an entry to the history log under the given bucket.
+
+    Keeps only the most recent MAX_HISTORY_PER_BUCKET entries per bucket
+    to prevent unbounded growth over long-running deployments.
+    """
     history = _load_history()
-    history.setdefault(bucket, []).append(entry)
+    items = history.setdefault(bucket, [])
+    items.append(entry)
+    if len(items) > MAX_HISTORY_PER_BUCKET:
+        history[bucket] = items[-MAX_HISTORY_PER_BUCKET:]
     _save_history(history)

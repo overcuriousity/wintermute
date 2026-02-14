@@ -55,13 +55,8 @@ TOOL_SCHEMAS = [
     _fn(
         "spawn_sub_session",
         (
-            "Spawn an isolated background worker to handle a complex, multi-step task. "
-            "Returns immediately with a session_id. The worker runs autonomously and "
-            "reports its result back to this thread when done. "
-            "Use depends_on to chain tasks: a task with depends_on waits for those "
-            "sessions to finish, then starts automatically with their results as context. "
-            "Use this when a task would take many tool calls or a long time, so you can "
-            "remain responsive to the user."
+            "Spawn an autonomous background worker. Returns a session_id immediately; "
+            "the result arrives later as a [SYSTEM EVENT]."
         ),
         {
             "type": "object",
@@ -69,48 +64,39 @@ TOOL_SCHEMAS = [
                 "objective": {
                     "type": "string",
                     "description": (
-                        "Full description of the task for the worker to complete. "
-                        "Be specific — the worker has no access to the current conversation."
+                        "Full task description. Be specific — the worker has "
+                        "no access to the current conversation."
                     ),
                 },
                 "context_blobs": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": (
-                        "Optional list of context snippets to pass to the worker "
-                        "(e.g. relevant memory excerpts, file contents, user preferences). "
-                        "Only include what is directly relevant to the task."
+                        "Manual context snippets for the worker. Not needed when "
+                        "using depends_on (dependency results are passed automatically)."
                     ),
                 },
                 "system_prompt_mode": {
                     "type": "string",
                     "enum": ["minimal", "full", "base_only", "none"],
                     "description": (
-                        "How much of the system prompt to give the worker. "
-                        "'minimal' (default) — lightweight execution agent, fastest and cheapest. "
+                        "Worker context level. "
+                        "'minimal' (default) — execution agent. "
+                        "'full' — includes memories, pulse, skills. "
                         "'base_only' — core instructions only. "
-                        "'full' — includes MEMORIES, pulse, and SKILLS; use when the "
-                        "worker needs full user context. "
-                        "'none' — bare tool-use loop, for purely mechanical tasks."
+                        "'none' — bare tool loop."
                     ),
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": (
-                        "Maximum wall-clock seconds the worker may run before being stopped. "
-                        "Defaults to 300. Use a higher value for tasks known to be slow "
-                        "(e.g. large installations, long web scrapes)."
-                    ),
+                    "description": "Max seconds before timeout. Default 300.",
                 },
                 "depends_on": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": (
-                        "List of session_ids (from previous spawn_sub_session calls) "
-                        "that must complete before this task starts. Their results are "
-                        "automatically passed as context to this worker. Use this for "
-                        "multi-step workflows: e.g. spawn research tasks first, then "
-                        "spawn an upload task that depends_on both research session_ids."
+                        "Session IDs that must complete first. Their results are "
+                        "auto-passed as context to this worker."
                     ),
                 },
             },
@@ -119,95 +105,96 @@ TOOL_SCHEMAS = [
     ),
     _fn(
         "set_reminder",
-        (
-            "Schedule a reminder. The scheduler thread will fire it at the "
-            "specified time and optionally invoke a fresh AI inference with "
-            "the given prompt."
-        ),
+        "Schedule a one-time or recurring reminder.",
         {
             "type": "object",
             "properties": {
                 "message": {
                     "type": "string",
-                    "description": "Human-readable reminder text sent to chat.",
+                    "description": "Reminder text delivered to chat when it fires.",
                 },
                 "ai_prompt": {
                     "type": "string",
                     "description": (
-                        "Optional. If set, an isolated AI inference is run "
-                        "with this prompt when the reminder fires."
+                        "If set, a background AI inference runs with this prompt "
+                        "when the reminder fires. The result is not sent to chat."
                     ),
                 },
                 "schedule_type": {
                     "type": "string",
                     "enum": ["once", "daily", "weekly", "monthly", "interval"],
                     "description": (
-                        "'once' — fire once at a specific time. "
-                        "'daily' — fire every day at a fixed time. "
-                        "'weekly' — fire once a week (requires day_of_week). "
-                        "'monthly' — fire once a month (requires day_of_month). "
-                        "'interval' — fire repeatedly every N seconds (requires interval_seconds; "
-                        "use window_start/window_end to restrict to daytime hours)."
+                        "'once' — fire at a specific time. "
+                        "'daily' — every day at a fixed time. "
+                        "'weekly' — requires day_of_week. "
+                        "'monthly' — requires day_of_month. "
+                        "'interval' — every N seconds (requires interval_seconds)."
                     ),
                 },
                 "at": {
                     "type": "string",
                     "description": (
-                        "For 'once': ISO-8601 datetime or natural language "
-                        "like 'in 2 hours' or 'tomorrow 09:00'. "
-                        "For 'daily', 'weekly', 'monthly': time of day in HH:MM (24 h)."
+                        "Required for all types except 'interval'. "
+                        "For 'once': ISO-8601 or natural language ('in 2 hours', 'tomorrow 09:00'). "
+                        "For recurring types: HH:MM (24h)."
                     ),
                 },
                 "day_of_week": {
                     "type": "string",
                     "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
-                    "description": "Required for 'weekly'. Day of the week to fire.",
+                    "description": "Required for 'weekly'.",
                 },
                 "day_of_month": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 31,
-                    "description": "Required for 'monthly'. Day of the month to fire.",
+                    "description": "Required for 'monthly'.",
                 },
                 "interval_seconds": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": (
-                        "Required for 'interval'. Number of seconds between firings. "
-                        "Common values: 300 (5 min), 1800 (30 min), 3600 (1 h), "
-                        "7200 (2 h), 10800 (3 h)."
-                    ),
+                    "description": "Required for 'interval'. Seconds between firings.",
                 },
                 "window_start": {
                     "type": "string",
-                    "description": (
-                        "For 'interval': earliest time-of-day to fire, in HH:MM (24 h). "
-                        "Example: '08:00'. Firings outside this window are skipped."
-                    ),
+                    "description": "For 'interval': earliest fire time, HH:MM (24h).",
                 },
                 "window_end": {
                     "type": "string",
-                    "description": (
-                        "For 'interval': latest time-of-day to fire, in HH:MM (24 h). "
-                        "Example: '20:00'. Firings outside this window are skipped."
-                    ),
+                    "description": "For 'interval': latest fire time, HH:MM (24h).",
                 },
                 "system": {
                     "type": "boolean",
-                    "description": (
-                        "If true, creates a system reminder not bound to any "
-                        "thread. It fires as a system event without chat delivery."
-                    ),
+                    "description": "If true, fires as a system event without chat delivery.",
                 },
             },
             "required": ["message", "schedule_type"],
         },
     ),
     _fn(
+        "append_memory",
+        (
+            "Append a new fact to MEMORIES.txt. Use this for day-to-day memory "
+            "storage. Each call adds one entry — no need to reproduce existing content. "
+            "Nightly consolidation handles deduplication and pruning automatically."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "entry": {
+                    "type": "string",
+                    "description": "The fact or note to append (one logical entry).",
+                }
+            },
+            "required": ["entry"],
+        },
+    ),
+    _fn(
         "update_memories",
         (
-            "Overwrite MEMORIES.txt with new content. Use this to persist "
-            "important facts about the user. Pass the *full* desired content."
+            "Overwrite MEMORIES.txt with new content. Use ONLY for restructuring "
+            "or removing specific entries. For adding new facts, use append_memory instead. "
+            "Pass the *full* desired content."
         ),
         {
             "type": "object",
@@ -223,8 +210,8 @@ TOOL_SCHEMAS = [
     _fn(
         "update_pulse",
         (
-            "Overwrite PULSE.txt with new content. Use this to update "
-            "active goals and working memory. Pass the *full* desired content."
+            "Overwrite PULSE.txt. Include only active items; omit completed goals. "
+            "Pass the *full* desired content."
         ),
         {
             "type": "object",
@@ -261,9 +248,9 @@ TOOL_SCHEMAS = [
     _fn(
         "execute_shell",
         (
-            "Run a bash command as the current user. Returns stdout, stderr, "
-            "and the exit code. Use for reading files, running scripts, "
-            "checking system state, etc."
+            "Run a shell command. Returns stdout, stderr, and exit code. "
+            "Use for system operations, package management, and tasks "
+            "not covered by read_file/write_file."
         ),
         {
             "type": "object",
@@ -314,16 +301,12 @@ TOOL_SCHEMAS = [
     ),
     _fn(
         "list_reminders",
-        "Return all reminders from the reminder registry.",
+        "Returns active, completed, and failed reminders.",
         {"type": "object", "properties": {}},
     ),
     _fn(
         "search_web",
-        (
-            "Search the web using the local SearXNG instance. Returns a list of "
-            "results with title, URL, and snippet. Use this for factual queries, "
-            "current events, documentation lookups, etc."
-        ),
+        "Search the web via SearXNG. Returns titles, URLs, and snippets.",
         {
             "type": "object",
             "properties": {
@@ -341,11 +324,7 @@ TOOL_SCHEMAS = [
     ),
     _fn(
         "fetch_url",
-        (
-            "Fetch the content of a web page and return it as plain text. "
-            "HTML is stripped automatically. Use this to read documentation, "
-            "articles, or any web resource."
-        ),
+        "Fetch a web page and return it as plain text (HTML stripped).",
         {
             "type": "object",
             "properties": {
@@ -379,6 +358,7 @@ TOOL_CATEGORIES: dict[str, str] = {
     "fetch_url":          "research",
     "spawn_sub_session":  "orchestration",
     "set_reminder":       "orchestration",
+    "append_memory":      "orchestration",
     "update_memories":    "orchestration",
     "update_pulse":  "orchestration",
     "add_skill":          "orchestration",
@@ -485,6 +465,15 @@ def _tool_set_reminder(inputs: dict, thread_id: Optional[str] = None, **_kw) -> 
         return json.dumps({"status": "scheduled", "job_id": job_id})
     except Exception as exc:  # noqa: BLE001
         logger.exception("set_reminder failed")
+        return json.dumps({"error": str(exc)})
+
+
+def _tool_append_memory(inputs: dict, **_kw) -> str:
+    try:
+        total_len = prompt_assembler.append_memory(inputs["entry"])
+        return json.dumps({"status": "ok", "total_chars": total_len})
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("append_memory failed")
         return json.dumps({"error": str(exc)})
 
 
@@ -725,6 +714,7 @@ def _tool_fetch_url(inputs: dict, **_kw) -> str:
 _DISPATCH: dict[str, Any] = {
     "spawn_sub_session":  _tool_spawn_sub_session,
     "set_reminder":       _tool_set_reminder,
+    "append_memory":      _tool_append_memory,
     "update_memories":    _tool_update_memories,
     "update_pulse":  _tool_update_pulse,
     "add_skill":          _tool_add_skill,

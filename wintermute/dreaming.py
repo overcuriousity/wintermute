@@ -11,6 +11,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time as dt_time, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 from openai import AsyncOpenAI
@@ -32,13 +33,15 @@ class DreamingConfig:
 
 _DEFAULT_MEMORIES_PROMPT = """\
 Below is the current content of MEMORIES.txt — the long-term memory store for \
-a personal AI assistant.
+a personal AI assistant. Memories are appended throughout the day and may \
+contain duplicates or near-duplicates.
 
 Your task is to consolidate it:
-- Remove duplicate or outdated entries.
-- Merge closely related facts into single concise statements.
+- Merge duplicate and near-duplicate entries into single concise statements.
+- Remove entries that are clearly outdated or contradicted by newer entries.
 - Preserve all distinct, useful facts exactly.
 - Keep the result as short as possible without losing information.
+- Maintain a flat, scannable structure (one fact per line or short paragraph).
 
 Return ONLY the consolidated MEMORIES.txt content, with no preamble or \
 explanation.

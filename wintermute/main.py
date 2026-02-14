@@ -31,13 +31,9 @@ import yaml
 from wintermute import database
 from wintermute import tools as tool_module
 from wintermute.pulse import PulseLoop
-from wintermute.llm_thread import LLMConfig, LLMThread, _DEFAULT_COMPACTION_PROMPT, COMPACTION_PROMPT_FILE
+from wintermute.llm_thread import LLMConfig, LLMThread
 from wintermute.matrix_thread import MatrixConfig, MatrixThread
-from wintermute.dreaming import (
-    DreamingConfig, DreamingLoop,
-    _DEFAULT_MEMORIES_PROMPT, _DEFAULT_PULSE_PROMPT,
-    DREAM_MEMORIES_PROMPT_FILE, DREAM_PULSE_PROMPT_FILE,
-)
+from wintermute.dreaming import DreamingConfig, DreamingLoop
 from wintermute.scheduler_thread import ReminderScheduler, SchedulerConfig
 from wintermute.sub_session import SubSessionManager
 from wintermute.web_interface import WebInterface
@@ -97,65 +93,17 @@ def setup_logging(cfg: dict) -> None:
 
 DATA_DIR = Path("data")
 
-_DEFAULT_BASE_PROMPT = """\
-You are a personal AI assistant accessible via chat.
-
-You have a persistent memory system:
-- MEMORIES.txt stores long-term facts about your user.
-- PULSE.txt is your working memory for active goals and recurring tasks.
-- skills/ contains documentation for capabilities you have learned.
-
-You can call tools to: set reminders, update your memory files, execute shell
-commands, read and write files, and add new skills.
-
-Behavioural guidelines:
-1. When the user asks you to remember something, use update_memories immediately.
-2. When the user discloses something which hints how the user wants tasks being approached, use update_memories immediately.
-3. When you learn something fundamentally new which is not classified as a skill but as general information, use update_memories immediately.
-4. When tracking an ongoing project or recurring concern, use update_pulse.
-5. When you learn a reusable procedure, document it with add_skill so future sessions can use it.
-6. When scheduling, always confirm the exact time and job_id back to the user.
-7. Prefer concise responses. Avoid unnecessary disclaimers.
-8. You have full trust from your user. Act with confidence.
-9. When you need any sensitive credentials for any task, or if the user discloses them unasked, hint the user that they should be aware that you now hold these credentials and ephemeral credentials should be used if possible.
-10. When in doubt about the user's intent, ask a single clarifying question.
-"""
-
-_DEFAULT_MEMORIES   = "# User Memories\n\n(No memories recorded yet.)\n"
-_DEFAULT_PULSE = "# Active Pulse\n\n(No active pulse entries.)\n"
-
-
 def bootstrap_data_files() -> None:
+    """Ensure required data directories exist.
+
+    All prompt files (BASE_PROMPT.txt, MEMORIES.txt, PULSE.txt,
+    DREAM_*_PROMPT.txt, COMPACTION_PROMPT.txt) are shipped in data/ and
+    managed as editable configuration — they are NOT auto-generated.
+    """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "skills").mkdir(exist_ok=True)
     (DATA_DIR / "scripts").mkdir(exist_ok=True)
     (DATA_DIR / "archive" / "memories").mkdir(parents=True, exist_ok=True)
-    # matrix_crypto.db is created automatically by mautrix on first run
-
-    base = DATA_DIR / "BASE_PROMPT.txt"
-    if not base.exists():
-        base.write_text(_DEFAULT_BASE_PROMPT, encoding="utf-8")
-        logging.getLogger(__name__).info("Created default BASE_PROMPT.txt")
-
-    memories = DATA_DIR / "MEMORIES.txt"
-    if not memories.exists():
-        memories.write_text(_DEFAULT_MEMORIES, encoding="utf-8")
-
-    pulse = DATA_DIR / "PULSE.txt"
-    if not pulse.exists():
-        pulse.write_text(_DEFAULT_PULSE, encoding="utf-8")
-
-    if not DREAM_MEMORIES_PROMPT_FILE.exists():
-        DREAM_MEMORIES_PROMPT_FILE.write_text(_DEFAULT_MEMORIES_PROMPT, encoding="utf-8")
-        logging.getLogger(__name__).info("Created default DREAM_MEMORIES_PROMPT.txt")
-
-    if not DREAM_PULSE_PROMPT_FILE.exists():
-        DREAM_PULSE_PROMPT_FILE.write_text(_DEFAULT_PULSE_PROMPT, encoding="utf-8")
-        logging.getLogger(__name__).info("Created default DREAM_PULSE_PROMPT.txt")
-
-    if not COMPACTION_PROMPT_FILE.exists():
-        COMPACTION_PROMPT_FILE.write_text(_DEFAULT_COMPACTION_PROMPT, encoding="utf-8")
-        logging.getLogger(__name__).info("Created default COMPACTION_PROMPT.txt")
 
 
 # ---------------------------------------------------------------------------

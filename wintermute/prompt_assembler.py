@@ -102,6 +102,19 @@ def update_memories(content: str) -> None:
     logger.info("MEMORIES.txt updated (%d chars)", len(content))
 
 
+def append_memory(entry: str) -> int:
+    """Append a memory entry to MEMORIES.txt. Returns the new total length."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    existing = _read(MEMORIES_FILE)
+    if existing:
+        new_content = existing + "\n" + entry.strip()
+    else:
+        new_content = entry.strip()
+    MEMORIES_FILE.write_text(new_content, encoding="utf-8")
+    logger.info("MEMORIES.txt appended (%d chars total)", len(new_content))
+    return len(new_content)
+
+
 def update_pulse(content: str) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     PULSE_FILE.write_text(content, encoding="utf-8")

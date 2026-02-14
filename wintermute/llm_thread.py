@@ -40,8 +40,21 @@ COMPACTION_KEEP_RECENT = 10
 COMPACTION_PROMPT_FILE = Path("data") / "COMPACTION_PROMPT.txt"
 
 _DEFAULT_COMPACTION_PROMPT = (
-    "Summarise the following conversation history concisely, "
-    "preserving all important facts, decisions, and context:\n\n"
+    "Summarise the following into a single structured reference document. "
+    "This summary will be injected into a system prompt, so optimise for quick "
+    "scanning by an AI assistant.\n\n"
+    "The input may contain a [PRIOR SUMMARY] section (from an earlier compaction) "
+    "followed by [NEW MESSAGES]. Merge both into one cohesive summary — do not "
+    "keep them separate. When new information supersedes prior summary content, "
+    "keep only the latest state.\n\n"
+    "Preserve: decisions made and their reasoning, facts learned about the user, "
+    "task outcomes and current status of ongoing work, file paths, URLs, "
+    "credentials references, and technical details mentioned, any commitments "
+    "or promises made to the user.\n\n"
+    "Omit: greetings, pleasantries, filler, superseded information (only keep "
+    "the latest state), tool call details unless the outcome matters.\n\n"
+    "Format as a concise bulleted list grouped by topic. Do not add commentary.\n\n"
+    "--- conversation history ---\n"
 )
 
 
@@ -352,9 +365,17 @@ class LLMThread:
 
         to_summarise = rows[:-COMPACTION_KEEP_RECENT]
 
-        history_text = "\n".join(
+        # Include the previous compaction summary so information chains
+        # across compaction cycles instead of being lost.
+        prior_summary = self._compaction_summaries.get(thread_id)
+        parts = []
+        if prior_summary:
+            parts.append(f"[PRIOR SUMMARY]\n{prior_summary}\n")
+        parts.append("[NEW MESSAGES]\n" + "\n".join(
             f"{r['role'].upper()}: {r['content']}" for r in to_summarise
-        )
+        ))
+        history_text = "\n\n".join(parts)
+
         compaction_prompt = _load_compaction_prompt()
         if "{history}" in compaction_prompt:
             summary_prompt = compaction_prompt.format(history=history_text)

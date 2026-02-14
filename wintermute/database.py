@@ -83,18 +83,38 @@ def load_active_messages(thread_id: str = "default") -> list[dict]:
 
 
 def archive_messages(before_id: int, thread_id: str = "default") -> None:
-    """Mark messages with id <= before_id as archived for a specific thread."""
+    """Mark messages with id <= before_id as archived for a specific thread.
+
+    Also deletes archived messages older than 30 days to prevent unbounded
+    DB growth. Archived messages are never queried operationally — the
+    compaction summary preserves their information.
+    """
+    cutoff = time.time() - 30 * 86400  # 30 days
     with sqlite3.connect(CONVERSATION_DB) as conn:
         conn.execute(
             "UPDATE messages SET archived=1 WHERE id <= ? AND thread_id=?",
             (before_id, thread_id),
         )
+        deleted = conn.execute(
+            "DELETE FROM messages WHERE archived=1 AND timestamp < ?",
+            (cutoff,),
+        ).rowcount
         conn.commit()
+    if deleted:
+        logger.info("Purged %d archived messages older than 30 days", deleted)
 
 
 def save_summary(content: str, thread_id: str = "default") -> None:
-    """Persist a compaction summary for a thread."""
+    """Persist a compaction summary for a thread.
+
+    Keeps only the latest summary per thread to prevent unbounded growth.
+    Old summaries are superseded by the chained compaction approach.
+    """
     with sqlite3.connect(CONVERSATION_DB) as conn:
+        conn.execute(
+            "DELETE FROM summaries WHERE thread_id=?",
+            (thread_id,),
+        )
         conn.execute(
             "INSERT INTO summaries (timestamp, content, thread_id) VALUES (?, ?, ?)",
             (time.time(), content, thread_id),

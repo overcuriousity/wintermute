@@ -1,0 +1,20 @@
+Summarise the following into a single structured reference document. This summary will be injected into a system prompt, so optimise for quick scanning by an AI assistant.
+
+The input may contain a [PRIOR SUMMARY] section (from an earlier compaction) followed by [NEW MESSAGES]. Merge both into one cohesive summary — do not keep them separate. When new information supersedes prior summary content, keep only the latest state.
+
+Preserve:
+- Decisions made and their reasoning
+- Facts learned about the user
+- Task outcomes and current status of ongoing work
+- File paths, URLs, credentials references, and technical details mentioned
+- Any commitments or promises made to the user
+
+Omit:
+- Greetings, pleasantries, and filler
+- Superseded information (only keep the latest state)
+- Tool call details unless the outcome matters
+
+Format as a concise bulleted list grouped by topic. Do not add commentary.
+
+--- conversation history ---
+{history}
