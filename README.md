@@ -45,11 +45,7 @@ The philosophy differs from similar projects by treating small LLMs and digital 
 
 ---
 
-## Installation
-
-### Quickstart (recommended)
-
-Clone the repository and run the interactive setup script — it handles everything:
+## Quickstart
 
 ```bash
 git clone https://git.mikoshi.de/overcuriousity/wintermute.git wintermute
@@ -57,193 +53,7 @@ cd wintermute
 bash setup.sh
 ```
 
-`setup.sh` will:
-
-1. Install Python 3.12+, `uv`, and all Python dependencies
-2. Walk you through configuring `config.yaml` (LLM endpoint, Matrix credentials, timezone, …)
-3. Optionally install a **systemd user service** so Wintermute starts on boot
-4. Run pre-flight checks (endpoint reachability, package imports, …)
-
-> **Note:** The script only runs on Fedora/RHEL or Debian/Ubuntu. It will exit on unsupported systems.
-
-### Manual installation
-
-<details>
-<summary>Expand for manual steps</summary>
-
-#### 1. Clone the repository
-
-```bash
-git clone https://git.mikoshi.de/overcuriousity/wintermute.git wintermute
-cd wintermute
-```
-
-#### 2. Install with uv
-
-```bash
-# Install uv if you don't have it
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Create venv and install all dependencies
-uv sync
-```
-
-#### 3. Configure
-
-```bash
-cp config.yaml.example config.yaml
-```
-
-Open `config.yaml` and fill in at minimum the `llm` section:
-
-```yaml
-llm:
-  base_url: "https://api.openai.com/v1"   # or your local endpoint
-  api_key: "sk-..."
-  model: "gpt-4o"
-  context_size: 128000
-  max_tokens: 4096
-```
-
-Matrix and web sections are optional — if Matrix is omitted the web UI runs standalone.
-
-#### 4. Run
-
-```bash
-uv run wintermute
-```
-
-The web interface starts at `http://127.0.0.1:8080` by default.
-
-</details>
-
----
-
-## Matrix Setup
-
-### Create a dedicated Matrix account
-
-Register a new account for the bot on your homeserver (e.g. via Element or the homeserver's registration page). The bot needs its own account — do not reuse your personal one.
-
-### Configure credentials
-
-There are two ways to provide Matrix credentials:
-
-**Option A — Password (recommended).** Supply the bot's password and let Wintermute handle login, device creation, and token refresh automatically:
-
-```yaml
-matrix:
-  homeserver: https://matrix.org
-  user_id: "@your-bot-name:matrix.org"
-  password: "bot-account-password"
-  access_token: ""                    # auto-filled on first start
-  device_id: ""                       # auto-filled on first start
-  allowed_users:
-    - "@you:matrix.org"
-  allowed_rooms: []
-```
-
-On startup Wintermute logs in, writes the new `access_token` and `device_id` back into `config.yaml`, and refreshes them automatically if they expire.
-
-**Option B — Manual token.** If you prefer not to store the password, obtain a token via curl and fill it in yourself:
-
-```bash
-curl -s -X POST 'https://matrix.org/_matrix/client/v3/login' \
-  -H 'Content-Type: application/json' \
-  -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"@your-bot-name:matrix.org"},"password":"...","initial_device_display_name":"Wintermute"}' \
-  | python3 -m json.tool
-```
-
-Copy `access_token` and `device_id` from the response into `config.yaml`. You will need to repeat this if the token expires.
-
-### Invite the bot and start chatting
-
-1. Start Wintermute: `uv run wintermute`
-2. In Element (or any Matrix client), create a room or open a DM
-3. Invite `@your-bot-name:matrix.org`
-4. The bot joins and responds to messages from `allowed_users`
-
-**End-to-end encryption** is handled automatically — the bot's crypto keys are persisted to `data/matrix_crypto.db` and the device is cross-signed at startup. The device fingerprint is logged on every start.
-
-#### Cross-signing and device verification
-
-On first start, Wintermute calls `generate_recovery_key()` to establish its cross-signing identity and saves the recovery key to `data/matrix_recovery.key`. On every subsequent start — including after the crypto store is wiped — it calls `verify_with_recovery_key()` to re-sign the current device using the stored key, with no browser interaction and no UIA approval required.
-
-Wintermute implements the **m.sas.v1** (emoji) interactive verification protocol. To verify the device:
-
-1. In Element go to **Settings → Security → Sessions**, select Wintermute's session, and tap **Verify Session**.
-2. Element will start an emoji handshake. Wintermute auto-accepts from allowed users, skipping the emoji-comparison step.
-3. After a moment the device shows a green shield (**Verified**) in Element.
-
-### Troubleshooting
-
-#### Token expired (`MUnknownToken`)
-
-If `password` is set in `config.yaml`, Wintermute re-authenticates automatically — no action needed. Otherwise, Wintermute logs the exact `curl` command to obtain a new token. Run it, update `config.yaml`, and restart. Alternatively, add `password` to avoid this in the future.
-
-#### Cross-signing requires approval (first run only)
-
-On first start, some homeservers (including matrix.org) require you to approve the cross-signing key upload via your account page. Wintermute logs the exact URL:
-
-```text
-Cross-signing requires interactive approval from your homeserver.
-  1. Open this URL in your browser: https://account.matrix.org/account/?action=org.matrix.cross_signing_reset
-  2. Approve the cross-signing reset request.
-  3. Restart Wintermute.
-```
-
-After approval, restart once. The recovery key is saved to `data/matrix_recovery.key` and all future starts are fully automatic.
-
-#### Stale crypto store
-
-To reset the crypto store cleanly:
-
-1. In Element: **Settings → Security & Privacy → Sessions** → find the Wintermute session → **Delete / Log out**
-1. Delete the local store (keep `matrix_recovery.key` to reuse the same cross-signing identity):
-   `rm -f data/matrix_crypto.db data/matrix_crypto.db-wal data/matrix_crypto.db-shm data/matrix_signed.marker`
-1. Restart Wintermute. If `password` is set, it logs in with a fresh device automatically. Otherwise, run the `curl` login command and update `config.yaml` before restarting.
-
-To also reset the cross-signing identity (forces re-verification in Element):
-
-```bash
-rm -f data/matrix_crypto.db* data/matrix_signed.marker data/matrix_recovery.key
-```
-
----
-
-## Web Search Setup (SearXNG)
-
-`search_web` works immediately via a DuckDuckGo fallback, but for best results install SearXNG locally:
-
-```bash
-cd ~
-git clone https://github.com/searxng/searxng.git searxng-test
-cd searxng-test
-# follow SearXNG quickstart or use the skills/searxng_installation.md guide
-```
-
-By default Wintermute expects SearXNG at `http://127.0.0.1:8888`. Override with:
-
-```bash
-export WINTERMUTE_SEARXNG_URL=http://127.0.0.1:8888
-```
-
-You can also pin searxng up via docker, which might be easier.
-
----
-
-## Special Commands
-
-Available in both Matrix and the web UI:
-
-| Command | Effect |
-|---------|--------|
-| `/new` | Reset conversation history for the current thread |
-| `/compact` | Force context compaction — shows before/after token counts |
-| `/reminders` | List all scheduled reminders |
-| `/pulse` | Manually trigger a pulse review |
-| `/status` | Show detailed system status: active tasks, sub-sessions, workflows, pulse/dreaming loops, reminders |
-| `/dream` | Manually trigger the nightly dreaming consolidation of MEMORIES.txt and PULSE.txt |
+See [docs/installation.md](docs/installation.md) for manual installation, systemd setup, and more.
 
 ---
 
@@ -261,37 +71,21 @@ The Turing Registry would not approve this installation. Run it in a dedicated L
 
 ---
 
-## Architecture
+## Documentation
 
-```
-User (Matrix / Browser)
-        │
-        ▼
-  LLMThread  ←─── system prompt (BASE + MEMORIES + PULSE + SKILLS)
-  (asyncio)        assembled fresh each turn
-        │
-        ├── tool calls ──► execute_shell / read_file / write_file
-        │                  search_web / fetch_url
-        │                  update_memories / update_pulse / add_skill
-        │                  set_reminder / list_reminders
-        │
-        └── spawn_sub_session ──► SubSessionManager
-                                        │
-                                        ├── Workflow DAG
-                                        │   ├── worker A (no deps) ──► starts immediately
-                                        │   ├── worker B (no deps) ──► starts immediately
-                                        │   └── worker C (depends_on=[A,B]) ──► auto-starts
-                                        │       when A and B complete; receives their results
-                                        │
-                                        └── result ──► enqueue_system_event
-                                                        (back to LLMThread)
+| Guide | Description |
+|-------|-------------|
+| [Installation](docs/installation.md) | Quickstart, manual setup, systemd service |
+| [Configuration](docs/configuration.md) | Full `config.yaml` reference |
+| [Matrix Setup](docs/matrix-setup.md) | Account creation, credentials, E2E encryption, troubleshooting |
+| [Architecture](docs/architecture.md) | Component overview, diagrams, data flow |
+| [System Prompts](docs/system-prompts.md) | Prompt assembly, components, size limits |
+| [Tools](docs/tools.md) | All 11 tools with parameters and categories |
+| [Commands](docs/commands.md) | Slash commands (`/new`, `/compact`, `/pulse`, etc.) |
+| [Web Interface](docs/web-interface.md) | Chat UI, debug panel, REST API |
+| [Autonomy](docs/autonomy.md) | Dreaming, pulse reviews, sub-sessions, workflows |
 
-PulseLoop ───────────────────────────────► fire-and-forget sub-session (full mode)
-ReminderScheduler ──────────────────────► LLMThread queue / sub-session
-DreamingLoop (nightly) ─────────────────► direct LLM API call (no tool loop)
-```
-
-
+---
 
 ## License
 
