@@ -54,7 +54,9 @@ cd wintermute
 bash setup.sh
 ```
 
-See [docs/installation.md](docs/installation.md) for manual installation, systemd setup, and more.
+The setup script installs all dependencies, walks you through configuration (LLM endpoint, Matrix, timezone), installs a systemd user service, runs pre-flight checks, and offers to start the daemon immediately. One command, working service.
+
+See [docs/installation.md](docs/installation.md) for manual installation, setup script options (`--dry-run`, `--no-matrix`, etc.), and more.
 
 ---
 
