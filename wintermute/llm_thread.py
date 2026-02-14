@@ -136,6 +136,36 @@ class LLMThread:
         """Return the current in-memory compaction summary for a thread, or None."""
         return self._compaction_summaries.get(thread_id)
 
+    def get_token_budget(self, thread_id: str = "default") -> dict:
+        """Return precise token accounting for a thread."""
+        total_limit = max(self._cfg.context_size - self._cfg.max_tokens, 1)
+        model = self._cfg.model
+
+        summary = self._compaction_summaries.get(thread_id)
+        try:
+            sp_text = prompt_assembler.assemble(extra_summary=summary)
+        except Exception:  # noqa: BLE001
+            sp_text = ""
+        sp_tokens = _count_tokens(sp_text, model)
+
+        tools_tokens = _count_tokens(json.dumps(tool_module.TOOL_SCHEMAS), model)
+
+        stats = database.get_thread_stats(thread_id)
+        hist_tokens = stats["token_used"]
+
+        total_used = sp_tokens + tools_tokens + hist_tokens
+        pct = round(min(total_used / total_limit * 100, 100), 1)
+
+        return {
+            "total_limit": total_limit,
+            "sp_tokens": sp_tokens,
+            "tools_tokens": tools_tokens,
+            "hist_tokens": hist_tokens,
+            "total_used": total_used,
+            "pct": pct,
+            "msg_count": stats["msg_count"],
+        }
+
     # ------------------------------------------------------------------
     # Main loop
     # ------------------------------------------------------------------

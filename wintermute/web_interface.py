@@ -1348,8 +1348,14 @@ class WebInterface:
             return None
 
         if text == "/compact":
+            before = self._llm.get_token_budget(thread_id)
             await self._llm.force_compact(thread_id)
-            await system("Context compaction complete.")
+            after = self._llm.get_token_budget(thread_id)
+            await system(
+                f"Context compacted.\n"
+                f"Before: {before['total_used']} tokens ({before['msg_count']} msgs, {before['pct']}%)\n"
+                f"After: {after['total_used']} tokens ({after['msg_count']} msgs, {after['pct']}%)"
+            )
             return None
 
         if text == "/reminders":
@@ -1365,7 +1371,93 @@ class WebInterface:
             )
             return None
 
+        if text == "/status":
+            await self._handle_status_command(system)
+            return None
+
+        if text == "/dream":
+            await self._handle_dream_command(system)
+            return None
+
         return await self._llm.enqueue_user_message(text, thread_id)
+
+    # ------------------------------------------------------------------
+    # /status and /dream command helpers
+    # ------------------------------------------------------------------
+
+    async def _handle_status_command(self, system) -> None:
+        import asyncio as _asyncio
+        lines = ["**Wintermute Status**\n"]
+
+        # Asyncio tasks
+        tasks = sorted(_asyncio.all_tasks(), key=lambda t: t.get_name())
+        running_names = [t.get_name() for t in tasks if not t.done()]
+        lines.append(f"**Core tasks:** {', '.join(running_names)}\n")
+
+        # Sub-sessions
+        if self._sub_sessions:
+            active = self._sub_sessions.list_active()
+            if active:
+                lines.append(f"**Active sub-sessions ({len(active)}):**")
+                for s in active:
+                    lines.append(f"- `{s['session_id']}` [{s['status']}] {s['objective'][:80]}")
+            else:
+                lines.append("**Sub-sessions:** none active")
+            workflows = self._sub_sessions.list_workflows()
+            running_wfs = [w for w in workflows if w["status"] == "running"]
+            if running_wfs:
+                lines.append(f"\n**Active workflows ({len(running_wfs)}):**")
+                for w in running_wfs:
+                    nodes_summary = ", ".join(
+                        f"{n['node_id']}[{n['status']}]" for n in w["nodes"]
+                    )
+                    lines.append(f"- `{w['workflow_id']}`: {nodes_summary}")
+        else:
+            lines.append("**Sub-sessions:** not available")
+
+        # Pulse loop
+        if hasattr(self, "_pulse_loop") and self._pulse_loop:
+            state = "running" if self._pulse_loop._running else "stopped"
+            lines.append(f"\n**Pulse loop:** {state} (interval: {self._pulse_loop._interval // 60}m)")
+
+        # Dreaming loop
+        if hasattr(self, "_dreaming_loop") and self._dreaming_loop:
+            state = "running" if self._dreaming_loop._running else "stopped"
+            lines.append(f"**Dreaming loop:** {state} (target: {self._dreaming_loop._cfg.hour:02d}:{self._dreaming_loop._cfg.minute:02d} UTC, model: {self._dreaming_loop._model})")
+
+        # Scheduler
+        if hasattr(self, "_scheduler") and self._scheduler:
+            reminders = self._scheduler.list_reminders()
+            lines.append(f"**Reminders:** {len(reminders.get('active', []))} active")
+
+        await system("\n".join(lines))
+
+    async def _handle_dream_command(self, system) -> None:
+        from wintermute import dreaming, prompt_assembler
+
+        if not hasattr(self, "_dreaming_loop") or not self._dreaming_loop:
+            await system("Dreaming loop not available.")
+            return
+
+        dl = self._dreaming_loop
+        mem_before = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
+        pulse_before = len(prompt_assembler._read(prompt_assembler.PULSE_FILE) or "")
+
+        await system("Starting dream cycle...")
+        try:
+            await dreaming.run_dream_cycle(client=dl._client, model=dl._model)
+        except Exception as exc:
+            await system(f"Dream cycle failed: {exc}")
+            return
+
+        mem_after = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
+        pulse_after = len(prompt_assembler._read(prompt_assembler.PULSE_FILE) or "")
+
+        await system(
+            f"Dream cycle complete.\n"
+            f"MEMORIES.txt: {mem_before} -> {mem_after} chars\n"
+            f"PULSE.txt: {pulse_before} -> {pulse_after} chars"
+        )
 
     # ------------------------------------------------------------------
     # Debug panel handler

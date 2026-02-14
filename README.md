@@ -163,7 +163,7 @@ Copy `access_token` and `device_id` from the response into `config.yaml`. You wi
 3. Invite `@your-bot-name:matrix.org`
 4. The bot joins and responds to messages from `allowed_users`
 
-**End-to-end encryption** is handled automatically — the bot's crypto keys are persisted to `data/matrix_crypto.db` and the device is cross-signed at startup. The device fingerprint is logged on every start and retrievable via `/fingerprint` in the chat.
+**End-to-end encryption** is handled automatically — the bot's crypto keys are persisted to `data/matrix_crypto.db` and the device is cross-signed at startup. The device fingerprint is logged on every start.
 
 #### Cross-signing and device verification
 
@@ -174,8 +174,6 @@ Wintermute implements the **m.sas.v1** (emoji) interactive verification protocol
 1. In Element go to **Settings → Security → Sessions**, select Wintermute's session, and tap **Verify Session**.
 2. Element will start an emoji handshake. Wintermute auto-accepts from allowed users, skipping the emoji-comparison step.
 3. After a moment the device shows a green shield (**Verified**) in Element.
-
-Alternatively, send `/fingerprint` in a Matrix room to retrieve the Ed25519 key for manual out-of-band comparison.
 
 ### Troubleshooting
 
@@ -241,10 +239,11 @@ Available in both Matrix and the web UI:
 | Command | Effect |
 |---------|--------|
 | `/new` | Reset conversation history for the current thread |
-| `/compact` | Force context compaction now |
+| `/compact` | Force context compaction — shows before/after token counts |
 | `/reminders` | List all scheduled reminders |
 | `/pulse` | Manually trigger a pulse review |
-| `/fingerprint` | Show the bot's Ed25519 fingerprint for manual device verification |
+| `/status` | Show detailed system status: active tasks, sub-sessions, workflows, pulse/dreaming loops, reminders |
+| `/dream` | Manually trigger the nightly dreaming consolidation of MEMORIES.txt and PULSE.txt |
 
 ---
 

@@ -808,8 +808,15 @@ class MatrixThread:
             return
 
         if text == "/compact":
+            before = self._llm.get_token_budget(thread_id)
             await self._llm.force_compact(thread_id)
-            await self.send_message("Context compaction complete.", thread_id)
+            after = self._llm.get_token_budget(thread_id)
+            await self.send_message(
+                f"Context compacted.\n"
+                f"Before: {before['total_used']} tokens ({before['msg_count']} msgs, {before['pct']}%)\n"
+                f"After: {after['total_used']} tokens ({after['msg_count']} msgs, {after['pct']}%)",
+                thread_id,
+            )
             return
 
         if text == "/reminders":
@@ -827,18 +834,12 @@ class MatrixThread:
             await self.send_message("Pulse review triggered.", thread_id)
             return
 
-        if text == "/fingerprint":
-            if self._client is not None and self._client.crypto is not None:
-                fp = self._client.crypto.account.fingerprint
-                await self.send_message(
-                    f"Device fingerprint (Ed25519):\n```\n{fp}\n```\n"
-                    "To verify: in Element go to Settings → Security → Sessions, "
-                    "select this session and tap **Verify Session**. "
-                    "The bot will complete the SAS handshake automatically.",
-                    thread_id,
-                )
-            else:
-                await self.send_message("Crypto not initialised yet.", thread_id)
+        if text == "/status":
+            await self._handle_status_command(thread_id)
+            return
+
+        if text == "/dream":
+            await self._handle_dream_command(thread_id)
             return
 
         await self._set_typing(thread_id, True)
@@ -847,6 +848,85 @@ class MatrixThread:
         finally:
             await self._set_typing(thread_id, False)
         await self.send_message(reply, thread_id)
+
+    # ------------------------------------------------------------------
+    # /status and /dream command helpers
+    # ------------------------------------------------------------------
+
+    async def _handle_status_command(self, thread_id: str) -> None:
+        import asyncio as _asyncio
+        lines = ["**Wintermute Status**\n"]
+
+        # Asyncio tasks
+        tasks = sorted(_asyncio.all_tasks(), key=lambda t: t.get_name())
+        running_names = [t.get_name() for t in tasks if not t.done()]
+        lines.append(f"**Core tasks:** {', '.join(running_names)}\n")
+
+        # Sub-sessions
+        if hasattr(self, "_sub_sessions") and self._sub_sessions:
+            active = self._sub_sessions.list_active()
+            if active:
+                lines.append(f"**Active sub-sessions ({len(active)}):**")
+                for s in active:
+                    lines.append(f"- `{s['session_id']}` [{s['status']}] {s['objective'][:80]}")
+            else:
+                lines.append("**Sub-sessions:** none active")
+            workflows = self._sub_sessions.list_workflows()
+            running_wfs = [w for w in workflows if w["status"] == "running"]
+            if running_wfs:
+                lines.append(f"\n**Active workflows ({len(running_wfs)}):**")
+                for w in running_wfs:
+                    nodes_summary = ", ".join(
+                        f"{n['node_id']}[{n['status']}]" for n in w["nodes"]
+                    )
+                    lines.append(f"- `{w['workflow_id']}`: {nodes_summary}")
+        else:
+            lines.append("**Sub-sessions:** not available")
+
+        # Pulse loop
+        if hasattr(self, "_pulse_loop") and self._pulse_loop:
+            state = "running" if self._pulse_loop._running else "stopped"
+            lines.append(f"\n**Pulse loop:** {state} (interval: {self._pulse_loop._interval // 60}m)")
+
+        # Dreaming loop
+        if hasattr(self, "_dreaming_loop") and self._dreaming_loop:
+            state = "running" if self._dreaming_loop._running else "stopped"
+            lines.append(f"**Dreaming loop:** {state} (target: {self._dreaming_loop._cfg.hour:02d}:{self._dreaming_loop._cfg.minute:02d} UTC, model: {self._dreaming_loop._model})")
+
+        # Scheduler
+        if hasattr(self, "_scheduler") and self._scheduler:
+            reminders = self._scheduler.list_reminders()
+            lines.append(f"**Reminders:** {len(reminders.get('active', []))} active")
+
+        await self.send_message("\n".join(lines), thread_id)
+
+    async def _handle_dream_command(self, thread_id: str) -> None:
+        from wintermute import dreaming, prompt_assembler
+
+        if not hasattr(self, "_dreaming_loop") or not self._dreaming_loop:
+            await self.send_message("Dreaming loop not available.", thread_id)
+            return
+
+        dl = self._dreaming_loop
+        mem_before = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
+        pulse_before = len(prompt_assembler._read(prompt_assembler.PULSE_FILE) or "")
+
+        await self.send_message("Starting dream cycle...", thread_id)
+        try:
+            await dreaming.run_dream_cycle(client=dl._client, model=dl._model)
+        except Exception as exc:
+            await self.send_message(f"Dream cycle failed: {exc}", thread_id)
+            return
+
+        mem_after = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
+        pulse_after = len(prompt_assembler._read(prompt_assembler.PULSE_FILE) or "")
+
+        await self.send_message(
+            f"Dream cycle complete.\n"
+            f"MEMORIES.txt: {mem_before} -> {mem_after} chars\n"
+            f"PULSE.txt: {pulse_before} -> {pulse_after} chars",
+            thread_id,
+        )
 
     # ------------------------------------------------------------------
     # Helpers

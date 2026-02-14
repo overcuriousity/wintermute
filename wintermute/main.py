@@ -256,6 +256,7 @@ async def main() -> None:
     # Inject LLM into interfaces.
     if matrix:
         matrix._llm = llm
+        matrix._sub_sessions = sub_sessions
     if web_iface:
         web_iface._llm = llm
 
@@ -284,6 +285,15 @@ async def main() -> None:
         llm_model=llm_cfg.model,
         compaction_model=llm_cfg.compaction_model,
     )
+
+    # Inject remaining references for /status and /dream commands.
+    if matrix:
+        matrix._scheduler = scheduler
+        matrix._pulse_loop = pulse_loop
+        matrix._dreaming_loop = dreaming_loop
+    if web_iface:
+        web_iface._pulse_loop = pulse_loop
+        web_iface._dreaming_loop = dreaming_loop
 
     scheduler.start()
 
