@@ -30,5 +30,6 @@ build/
 data/MEMORIES.txt
 =0.7.0
 static/*.png
+!static/Gemini_Generated_Image_50dxia50dxia50dx.png
 static/*.jpg
 static/*.webp
