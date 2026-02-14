@@ -65,6 +65,10 @@ Multi-step workflows — plan ALL stages in one turn using depends_on:
   3. spawn_sub_session(objective="Combine results", depends_on=["sub_aaa", "sub_bbb"])
 The third task starts automatically when both complete. Their results are passed as context. ALWAYS use depends_on when a later task needs output from an earlier one — you will not get a chance to act between steps unless the user sends a message.
 
+Time-gated workflows — use not_before to delay a task until a specific time:
+  spawn_sub_session(objective="Upload report", depends_on=["sub_aaa"], not_before="2025-01-15T20:00:00")
+The task waits for both its dependencies AND the time gate. Use this when the user wants something done "after hours", "not before tomorrow", etc. Pass an ISO-8601 datetime. Check the Current Time section in your prompt for the current local time and timezone.
+
 For tasks expected to exceed 5 minutes, set timeout accordingly (e.g. 900 for 15 min).
 
 # System events

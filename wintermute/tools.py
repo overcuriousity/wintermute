@@ -99,6 +99,14 @@ TOOL_SCHEMAS = [
                         "auto-passed as context to this worker."
                     ),
                 },
+                "not_before": {
+                    "type": "string",
+                    "description": (
+                        "Earliest datetime to start this task (ISO-8601). "
+                        "Task waits even if dependencies are satisfied. "
+                        "Use for time-gated workflows, e.g. 'upload after 20:00'."
+                    ),
+                },
             },
             "required": ["objective"],
         },
@@ -434,9 +442,20 @@ def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
             kwargs["timeout"] = int(inputs["timeout"])
         if "depends_on" in inputs:
             kwargs["depends_on"] = inputs["depends_on"]
+        if "not_before" in inputs:
+            kwargs["not_before"] = inputs["not_before"]
         session_id = _sub_session_spawn(**kwargs)
         has_deps = bool(inputs.get("depends_on"))
-        status = "pending (waiting for dependencies)" if has_deps else "started"
+        has_gate = bool(inputs.get("not_before"))
+        if has_deps or has_gate:
+            reasons = []
+            if has_deps:
+                reasons.append("dependencies")
+            if has_gate:
+                reasons.append(f"time gate ({inputs['not_before']})")
+            status = f"pending (waiting for {' and '.join(reasons)})"
+        else:
+            status = "started"
         return json.dumps({
             "status": status,
             "session_id": session_id,

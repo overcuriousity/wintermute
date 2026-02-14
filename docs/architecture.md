@@ -87,7 +87,8 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 
 - Every sub-session is a node in a `Workflow` (auto-created if needed)
 - `depends_on`: list of session_ids that must complete first
-- Fan-in: task C with `depends_on=[A, B]` auto-starts when both finish
+- `not_before`: optional time gate — task waits for this datetime even if deps are done
+- Fan-in: task C with `depends_on=[A, B]` auto-starts when both finish (and time gate is met)
 - Failure propagation: if a dependency fails, all transitive dependents are marked failed
 - Resolution is event-driven (no polling): each completion triggers a check
 - Workflows spanning multiple prior workflows are automatically merged

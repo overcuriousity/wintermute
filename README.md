@@ -24,7 +24,7 @@ The philosophy differs from similar projects by treating small LLMs and digital 
 - **Persistent memory** — `MEMORIES.txt` (long-term facts, append-based), `PULSE.txt` (active goals / working memory), and `skills/*.md` (reusable procedures) survive restarts and are injected into every prompt
 - **Multi-interface** — Matrix chat (with E2E encryption) and a browser-based web UI run simultaneously; each room / tab has independent conversation history
 - **Sub-session workers** — long-running tasks are delegated to autonomous background agents that report back when done; the main agent stays responsive during execution; workers auto-resume after timeouts (up to 3 hops)
-- **Workflow DAG** — multi-step tasks are expressed as dependency graphs via `depends_on`; downstream tasks auto-start when their dependencies complete, with results passed as context — no LLM decision-making needed after the initial plan
+- **Workflow DAG** — multi-step tasks are expressed as dependency graphs via `depends_on`; downstream tasks auto-start when their dependencies complete, with results passed as context — no LLM decision-making needed after the initial plan; tasks can include `not_before` time gates for scheduled execution ("research now, upload after 20:00")
 - **Tool-filtered workers** — minimal workers receive only execution + research tools; `full`-mode workers get orchestration tools too, keeping context lean
 - **Web search** — `search_web` queries a local SearXNG instance and falls back to DuckDuckGo via `curl` when SearXNG is unavailable; `fetch_url` fetches and strips any web page
 - **Reminders & scheduler** — one-time and recurring reminders with optional AI inference on trigger; per-timezone scheduling

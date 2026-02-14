@@ -92,6 +92,7 @@ Spawn an isolated background worker for a complex, multi-step task.
 | `system_prompt_mode` | enum | no | `"minimal"` (default), `"full"`, `"base_only"`, `"none"` |
 | `timeout` | integer | no | Max seconds before timeout (default: 300) |
 | `depends_on` | string[] | no | Session IDs that must complete first |
+| `not_before` | string | no | Earliest start time (ISO-8601). Task waits even if deps are done. |
 
 Returns: `status`, `session_id`
 

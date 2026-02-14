@@ -3,14 +3,17 @@ Assembles the complete system prompt from individual file components.
 
 Order:
   1. BASE_PROMPT.txt   – immutable core
-  2. MEMORIES.txt      – long-term user facts
-  3. PULSE.txt         – active goals / working memory
-  4. skills/*.md       – capability documentation
+  2. Current datetime   – local time + timezone
+  3. MEMORIES.txt      – long-term user facts
+  4. PULSE.txt         – active goals / working memory
+  5. skills/*.md       – capability documentation
 """
 
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +27,16 @@ SKILLS_DIR        = DATA_DIR / "skills"
 MEMORIES_LIMIT = 10_000
 PULSE_LIMIT    = 5_000
 SKILLS_LIMIT   = 20_000
+
+# Configured timezone — set by main.py at startup via set_timezone().
+_timezone: str = "UTC"
+
+
+def set_timezone(tz: str) -> None:
+    """Set the timezone used for datetime injection into the system prompt."""
+    global _timezone
+    _timezone = tz
+    logger.info("Prompt assembler timezone set to %s", tz)
 
 
 def _read(path: Path, default: str = "") -> str:
@@ -61,6 +74,15 @@ def assemble(extra_summary: Optional[str] = None) -> str:
         logger.warning("BASE_PROMPT.txt is empty or missing – using fallback")
         base = "You are a helpful personal AI assistant."
     sections.append(f"# Core Instructions\n\n{base}")
+
+    # Inject current local datetime so the LLM has accurate time awareness.
+    try:
+        tz = ZoneInfo(_timezone)
+        now = datetime.now(tz)
+        time_str = now.strftime("%A, %Y-%m-%d %H:%M %Z")
+        sections.append(f"# Current Time\n\n{time_str}")
+    except Exception as exc:
+        logger.warning("Could not determine local time: %s", exc)
 
     memories = _read(MEMORIES_FILE)
     if memories:

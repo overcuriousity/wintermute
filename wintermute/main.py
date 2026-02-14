@@ -29,6 +29,7 @@ from typing import Optional
 import yaml
 
 from wintermute import database
+from wintermute import prompt_assembler
 from wintermute import tools as tool_module
 from wintermute.pulse import PulseLoop
 from wintermute.llm_thread import LLMConfig, LLMThread
@@ -133,6 +134,10 @@ async def main() -> None:
 
     bootstrap_data_files()
     database.init_db()
+
+    # Set timezone for prompt assembler (used to inject current datetime).
+    configured_tz = cfg.get("scheduler", {}).get("timezone", "UTC")
+    prompt_assembler.set_timezone(configured_tz)
 
     llm_cfg = LLMConfig(
         api_key=cfg["llm"]["api_key"],

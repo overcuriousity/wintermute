@@ -58,6 +58,19 @@ Multi-step tasks are expressed as dependency graphs:
 
 Example: research A + research B -> upload C (depends_on=[A, B])
 
+### Time-gated Workflows
+
+Tasks can include a `not_before` parameter (ISO-8601 datetime) to delay execution until a specific time, even if all dependencies are already satisfied. This enables workflows like "research now, upload after 20:00":
+
+```
+spawn_sub_session(objective="Research topic")           → sub_aaa
+spawn_sub_session(objective="Upload report",
+                  depends_on=["sub_aaa"],
+                  not_before="2025-01-15T20:00:00")    → sub_bbb
+```
+
+The time gate is checked after dependency resolution. When the gate isn't met yet, an asyncio callback is scheduled to re-check at the specified time — no polling required. Naive datetimes (without timezone) are interpreted in the configured `scheduler.timezone`.
+
 ### Continuation on Timeout
 
 When a worker times out (default: 300 seconds):

@@ -62,6 +62,7 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Callable, Coroutine, Optional
 
 from openai import AsyncOpenAI
@@ -121,6 +122,7 @@ class TaskNode:
     status: str = "pending"               # pending | running | completed | failed
     result: Optional[str] = None
     error: Optional[str] = None
+    not_before: Optional[datetime] = None # time gate: don't start before this
 
 
 @dataclass
@@ -184,6 +186,7 @@ class SubSessionManager:
         continuation_depth: int = 0,
         continued_from: Optional[str] = None,
         depends_on: Optional[list[str]] = None,
+        not_before: Optional[str] = None,
     ) -> str:
         """
         Register a sub-session and start it immediately (or defer if deps pending).
@@ -200,6 +203,13 @@ class SubSessionManager:
         now = datetime.now(timezone.utc).isoformat()
         deps = depends_on or []
 
+        # -- Parse not_before time gate --
+        not_before_dt: Optional[datetime] = None
+        if not_before:
+            not_before_dt = self._parse_not_before(not_before)
+            if not_before_dt:
+                logger.info("Sub-session %s has time gate: not_before=%s", session_id, not_before_dt.isoformat())
+
         # -- Register the node in a workflow --
         node = TaskNode(
             node_id=session_id,
@@ -210,6 +220,7 @@ class SubSessionManager:
             depends_on=list(deps),
             nesting_depth=nesting_depth,
             parent_thread_id=parent_thread_id,
+            not_before=not_before_dt,
         )
 
         if deps:
@@ -355,6 +366,24 @@ class SubSessionManager:
             self._workflows[workflow_id] = wf
             self._session_to_workflow[session_id] = workflow_id
 
+        # -- Check time gate before starting --
+        if node.not_before and not self._time_gate_met(node.not_before):
+            node.status = "pending"
+            state = SubSessionState(
+                session_id=session_id, objective=objective,
+                parent_thread_id=parent_thread_id,
+                system_prompt_mode=system_prompt_mode,
+                status="pending", created_at=now,
+                nesting_depth=nesting_depth,
+            )
+            self._states[session_id] = state
+            self._schedule_time_gate(session_id, node.not_before)
+            logger.info(
+                "Sub-session %s pending on time gate (not_before=%s)",
+                session_id, node.not_before.isoformat(),
+            )
+            return session_id
+
         # -- Spawn immediately --
         return self._start_node(node, prior_messages, continuation_depth, continued_from)
 
@@ -369,6 +398,73 @@ class SubSessionManager:
                     f"{dep_state.result}"
                 )
         return blobs
+
+    @staticmethod
+    def _time_gate_met(not_before: datetime) -> bool:
+        """Return True if the current time is at or past *not_before*."""
+        now = datetime.now(timezone.utc)
+        # Ensure comparison is tz-aware.
+        if not_before.tzinfo is None:
+            not_before = not_before.replace(tzinfo=timezone.utc)
+        return now >= not_before
+
+    def _schedule_time_gate(self, session_id: str, not_before: datetime) -> None:
+        """Schedule an asyncio callback to re-check a pending node at *not_before*."""
+        now = datetime.now(timezone.utc)
+        if not_before.tzinfo is None:
+            not_before = not_before.replace(tzinfo=timezone.utc)
+        delay = max((not_before - now).total_seconds(), 0.1)
+        logger.info(
+            "Scheduling time-gate wakeup for %s in %.0fs",
+            session_id, delay,
+        )
+        asyncio.get_event_loop().call_later(
+            delay,
+            lambda: asyncio.ensure_future(self._time_gate_wakeup(session_id)),
+        )
+
+    async def _time_gate_wakeup(self, session_id: str) -> None:
+        """Called when a time gate expires — trigger dependency resolution."""
+        logger.info("Time gate expired for %s — resolving", session_id)
+        # Re-run resolution which will now pass the time check.
+        await self._resolve_dependents(session_id)
+        # Also check the node itself if it has no deps (standalone time gate).
+        wf_id = self._session_to_workflow.get(session_id)
+        if not wf_id:
+            return
+        wf = self._workflows.get(wf_id)
+        if not wf:
+            return
+        node = wf.nodes.get(session_id)
+        if node and node.status == "pending":
+            # Standalone time-gated node (no deps, or all deps already done).
+            deps_ok = all(
+                self._states.get(d) and self._states[d].status in ("completed", "timeout")
+                for d in node.depends_on
+            ) if node.depends_on else True
+            if deps_ok and self._time_gate_met(node.not_before):
+                if node.depends_on:
+                    node.context_blobs = self._collect_dep_results(node.depends_on) + node.context_blobs
+                self._start_node(node)
+
+    @staticmethod
+    def _parse_not_before(value: str) -> Optional[datetime]:
+        """Parse a not_before string (ISO-8601) into a tz-aware datetime."""
+        from dateutil import parser as dateutil_parser
+        try:
+            dt = dateutil_parser.parse(value)
+            if dt.tzinfo is None:
+                # Assume the configured timezone from prompt_assembler.
+                from wintermute.prompt_assembler import _timezone
+                try:
+                    tz = ZoneInfo(_timezone)
+                except Exception:
+                    tz = timezone.utc
+                dt = dt.replace(tzinfo=tz)
+            return dt
+        except (ValueError, OverflowError) as exc:
+            logger.warning("Could not parse not_before '%s': %s", value, exc)
+            return None
 
     def _start_node(
         self,
@@ -464,6 +560,14 @@ class SubSessionManager:
                 await self._resolve_dependents(nid)
 
             elif all_done:
+                # Check time gate before starting.
+                if n.not_before and not self._time_gate_met(n.not_before):
+                    self._schedule_time_gate(nid, n.not_before)
+                    logger.info(
+                        "Deps ready for %s but time gate not met (not_before=%s)",
+                        nid, n.not_before.isoformat(),
+                    )
+                    continue
                 n.context_blobs = self._collect_dep_results(n.depends_on) + n.context_blobs
                 logger.info(
                     "All deps ready for %s — auto-starting (workflow=%s, %d/%d done)",
@@ -529,6 +633,7 @@ class SubSessionManager:
             wf = self._workflows.get(wf_id)
             node = wf.nodes.get(state.session_id) if wf else None
             d["depends_on"] = node.depends_on if node else []
+            d["not_before"] = node.not_before.isoformat() if (node and node.not_before) else None
         else:
             d["depends_on"] = []
         return d
@@ -544,6 +649,7 @@ class SubSessionManager:
                     "objective": n.objective,
                     "status": n.status,
                     "depends_on": n.depends_on,
+                    "not_before": n.not_before.isoformat() if n.not_before else None,
                     "result_preview": (n.result or "")[:120] if n.result else None,
                     "error": n.error,
                 })

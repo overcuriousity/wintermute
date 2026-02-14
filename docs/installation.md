@@ -73,6 +73,17 @@ uv run wintermute
 
 The web interface starts at `http://127.0.0.1:8080` by default.
 
+## Timezone Configuration
+
+Wintermute injects the current local time into every system prompt so the LLM has accurate time awareness. This relies on the `scheduler.timezone` setting in `config.yaml`:
+
+```yaml
+scheduler:
+  timezone: "Europe/Berlin"   # Your local timezone
+```
+
+If running in a container, ensure the container's system clock is accurate (e.g. via NTP). The timezone does **not** need to match the host's `/etc/localtime` — Wintermute uses the configured timezone from `config.yaml` regardless of the system timezone.
+
 ## Systemd User Service
 
 The `setup.sh` script can install a systemd user service automatically. If you prefer to set it up manually, create `~/.config/systemd/user/wintermute.service`:

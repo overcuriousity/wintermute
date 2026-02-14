@@ -46,6 +46,11 @@ The `prompt_assembler.assemble()` function builds the final system prompt:
 
 ---
 
+# Current Time
+{e.g. "Wednesday, 2025-01-15 14:32 CET"}
+
+---
+
 # User Memories
 {MEMORIES.txt content}
 
