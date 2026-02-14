@@ -169,6 +169,10 @@ class LLMThread:
                 # the reply.  Broadcast the LLM's response directly so
                 # it reaches the user.
                 text_to_send = reply or item.text  # fallback to raw event
+                logger.info(
+                    "Broadcasting system-event reply for thread %s (%d chars, reply_empty=%s)",
+                    item.thread_id, len(text_to_send), not reply,
+                )
                 try:
                     await self._broadcast(text_to_send, item.thread_id)
                 except Exception:  # noqa: BLE001

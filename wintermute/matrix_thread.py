@@ -201,23 +201,39 @@ class MatrixThread:
     # Public interface
     # ------------------------------------------------------------------
 
-    async def send_message(self, text: str, room_id: str = None) -> None:
-        """Send a message to a room.  Auto-encrypts if room has E2EE."""
+    async def send_message(self, text: str, room_id: str = None,
+                           _retries: int = 3, _delay: float = 2.0) -> None:
+        """Send a message to a room.  Auto-encrypts if room has E2EE.
+
+        Retries up to *_retries* times on transient failures so that
+        system-event broadcasts (sub-session results) are not silently lost.
+        """
         if self._client is None:
             logger.warning("send_message called before Matrix client is ready")
             return
         if room_id is None:
             logger.warning("send_message called without room_id, dropping message")
             return
-        async with self._send_lock:
-            try:
-                await self._client.send_text(
-                    room_id=RoomID(room_id),
-                    text=text,
-                    html=_markdown_to_html(text),
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.error("Failed to send Matrix message to %s: %s", room_id, exc)
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, _retries + 1):
+            async with self._send_lock:
+                try:
+                    await self._client.send_text(
+                        room_id=RoomID(room_id),
+                        text=text,
+                        html=_markdown_to_html(text),
+                    )
+                    return  # success
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+                    logger.warning(
+                        "Matrix send to %s failed (attempt %d/%d): %s",
+                        room_id, attempt, _retries, exc,
+                    )
+            if attempt < _retries:
+                await asyncio.sleep(_delay * attempt)
+        logger.error("Matrix send to %s failed after %d attempts: %s",
+                     room_id, _retries, last_exc)
 
     @property
     def joined_room_ids(self) -> set[str]:
