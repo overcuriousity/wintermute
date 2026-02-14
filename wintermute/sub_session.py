@@ -213,16 +213,16 @@ class SubSessionManager:
         )
 
         if deps:
-            # Find or create a workflow that contains any of the dependencies.
-            workflow_id = None
+            # Collect all distinct workflows that the dependencies belong to.
+            dep_wf_ids: set[str] = set()
             for dep_id in deps:
                 wf_id = self._session_to_workflow.get(dep_id)
                 if wf_id:
-                    workflow_id = wf_id
-                    break
-            if workflow_id is None:
-                # deps reference sessions that weren't in a workflow yet —
-                # create one and retroactively register them.
+                    dep_wf_ids.add(wf_id)
+
+            if not dep_wf_ids:
+                # No deps are in a workflow yet — create a fresh one and
+                # retroactively register the dependency sessions.
                 workflow_id = f"wf_{uuid.uuid4().hex[:8]}"
                 wf = Workflow(
                     workflow_id=workflow_id,
@@ -232,7 +232,51 @@ class SubSessionManager:
                 self._workflows[workflow_id] = wf
                 for dep_id in deps:
                     dep_state = self._states.get(dep_id)
-                    if dep_id not in self._session_to_workflow and dep_state:
+                    if dep_state:
+                        dep_node = TaskNode(
+                            node_id=dep_id,
+                            objective=dep_state.objective,
+                            context_blobs=[],
+                            system_prompt_mode=dep_state.system_prompt_mode,
+                            timeout=DEFAULT_TIMEOUT,
+                            depends_on=[],
+                            nesting_depth=dep_state.nesting_depth,
+                            parent_thread_id=dep_state.parent_thread_id,
+                            status=dep_state.status,
+                            result=dep_state.result,
+                            error=dep_state.error,
+                        )
+                        wf.nodes[dep_id] = dep_node
+                        self._session_to_workflow[dep_id] = workflow_id
+            elif len(dep_wf_ids) == 1:
+                # All deps share one workflow — just use it.
+                workflow_id = next(iter(dep_wf_ids))
+            else:
+                # Dependencies span multiple workflows — merge them all
+                # into the first one.
+                wf_list = sorted(dep_wf_ids)
+                workflow_id = wf_list[0]
+                target_wf = self._workflows[workflow_id]
+                for other_id in wf_list[1:]:
+                    other_wf = self._workflows.pop(other_id, None)
+                    if other_wf is None:
+                        continue
+                    # Move all nodes from the other workflow into target.
+                    for nid, n in other_wf.nodes.items():
+                        target_wf.nodes[nid] = n
+                        self._session_to_workflow[nid] = workflow_id
+                    logger.info(
+                        "Merged workflow %s into %s (%d nodes)",
+                        other_id, workflow_id, len(other_wf.nodes),
+                    )
+
+            # Also adopt any deps that weren't in any workflow yet
+            # (possible when some deps had workflows and others didn't).
+            wf = self._workflows[workflow_id]
+            for dep_id in deps:
+                if dep_id not in self._session_to_workflow:
+                    dep_state = self._states.get(dep_id)
+                    if dep_state:
                         dep_node = TaskNode(
                             node_id=dep_id,
                             objective=dep_state.objective,
@@ -249,7 +293,6 @@ class SubSessionManager:
                         wf.nodes[dep_id] = dep_node
                         self._session_to_workflow[dep_id] = workflow_id
 
-            wf = self._workflows[workflow_id]
             wf.nodes[session_id] = node
             self._session_to_workflow[session_id] = workflow_id
 
