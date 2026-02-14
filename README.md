@@ -1,6 +1,6 @@
 # Wintermute
 
-![Wintermute](static/Gemini_Generated_Image_50dxia50dxia50dx.png)
+<img width="2816" height="1536" alt="Gemini_Generated_Image_50dxia50dxia50dx" src="https://github.com/user-attachments/assets/29b4c2d9-a00b-494c-a49d-907a66933127" />
 
 > *"Wintermute was hive mind, decision maker, effecting change in the world outside."*
 > — William Gibson, *Neuromancer* (1984)
