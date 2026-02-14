@@ -93,6 +93,7 @@ class SubSessionState:
     session_id: str
     objective: str
     parent_thread_id: Optional[str]      # None = fire-and-forget
+    root_thread_id: Optional[str] = None # original user-facing thread (for nested routing)
     system_prompt_mode: str              # "full" | "base_only" | "minimal" | "none"
     status: str                          # "running" | "completed" | "failed" | "timeout"
     created_at: str                      # ISO-8601
@@ -119,6 +120,7 @@ class TaskNode:
     depends_on: list[str]                 # node_ids that must complete first
     nesting_depth: int = 1
     parent_thread_id: Optional[str] = None
+    root_thread_id: Optional[str] = None  # original user-facing thread
     status: str = "pending"               # pending | running | completed | failed
     result: Optional[str] = None
     error: Optional[str] = None
@@ -169,6 +171,9 @@ class SubSessionManager:
         # DAG workflow tracking
         self._workflows: dict[str, Workflow] = {}
         self._session_to_workflow: dict[str, str] = {}  # session_id -> workflow_id
+        # Tracks parent sub-session IDs whose children have already been aggregated,
+        # preventing duplicate delivery when multiple children complete near-simultaneously.
+        self._aggregated_parents: set[str] = set()
 
     # ------------------------------------------------------------------
     # Public API
@@ -203,6 +208,16 @@ class SubSessionManager:
         now = datetime.now(timezone.utc).isoformat()
         deps = depends_on or []
 
+        # Derive root_thread_id: the original user-facing thread.
+        # When a sub-session spawns children, parent_thread_id is "sub_xxxx".
+        # We resolve through to the original chat thread so aggregated results
+        # can be delivered there deterministically.
+        if parent_thread_id and parent_thread_id.startswith("sub_"):
+            parent_state = self._states.get(parent_thread_id)
+            root_thread_id = (parent_state.root_thread_id or parent_state.parent_thread_id) if parent_state else None
+        else:
+            root_thread_id = parent_thread_id
+
         # -- Parse not_before time gate --
         not_before_dt: Optional[datetime] = None
         if not_before:
@@ -220,6 +235,7 @@ class SubSessionManager:
             depends_on=list(deps),
             nesting_depth=nesting_depth,
             parent_thread_id=parent_thread_id,
+            root_thread_id=root_thread_id,
             not_before=not_before_dt,
         )
 
@@ -325,6 +341,7 @@ class SubSessionManager:
                 state = SubSessionState(
                     session_id=session_id, objective=objective,
                     parent_thread_id=parent_thread_id,
+                    root_thread_id=root_thread_id,
                     system_prompt_mode=system_prompt_mode,
                     status="failed", created_at=now,
                     error=node.error,
@@ -341,6 +358,7 @@ class SubSessionManager:
                 state = SubSessionState(
                     session_id=session_id, objective=objective,
                     parent_thread_id=parent_thread_id,
+                    root_thread_id=root_thread_id,
                     system_prompt_mode=system_prompt_mode,
                     status="pending", created_at=now,
                     nesting_depth=nesting_depth,
@@ -372,6 +390,7 @@ class SubSessionManager:
             state = SubSessionState(
                 session_id=session_id, objective=objective,
                 parent_thread_id=parent_thread_id,
+                root_thread_id=root_thread_id,
                 system_prompt_mode=system_prompt_mode,
                 status="pending", created_at=now,
                 nesting_depth=nesting_depth,
@@ -481,6 +500,7 @@ class SubSessionManager:
             session_id=session_id,
             objective=node.objective,
             parent_thread_id=node.parent_thread_id,
+            root_thread_id=node.root_thread_id,
             system_prompt_mode=node.system_prompt_mode,
             status="running",
             created_at=datetime.now(timezone.utc).isoformat(),
@@ -766,7 +786,23 @@ class SubSessionManager:
             await self._resolve_dependents(state.session_id)
 
     async def _report(self, state: SubSessionState, text: str) -> None:
-        """Deliver result to parent thread, or log if fire-and-forget."""
+        """Deliver result to parent thread, or log if fire-and-forget.
+
+        For nested sub-sessions (parent is another sub-session), individual
+        reports are suppressed.  Instead, when all children of a parent
+        sub-session are terminal, an aggregated result is delivered to the
+        root (user-facing) thread.  This is fully deterministic — no LLM
+        inference is involved in the routing or aggregation.
+        """
+        # Nested sub-session: suppress individual report, check aggregation.
+        if state.parent_thread_id and state.parent_thread_id.startswith("sub_"):
+            logger.info(
+                "Nested sub-session %s completed (parent=%s) — deferring to aggregated delivery",
+                state.session_id, state.parent_thread_id,
+            )
+            await self._check_nested_aggregation(state.session_id)
+            return
+
         # Append workflow progress if this session is part of a DAG.
         wf_id = self._session_to_workflow.get(state.session_id)
         if wf_id:
@@ -792,6 +828,92 @@ class SubSessionManager:
                 logger.error("Sub-session %s failed to report back: %s", state.session_id, exc)
         else:
             logger.info("Sub-session %s (fire-and-forget): %s", state.session_id, text[:300])
+
+    async def _check_nested_aggregation(self, completed_session_id: str) -> None:
+        """Check if all children of a parent sub-session are terminal.
+
+        When a sub-session (depth 1) spawns children (depth 2), each child
+        has parent_thread_id = the parent's session_id.  This method checks
+        whether ALL such siblings have reached a terminal state.  If so, it
+        concatenates their results and delivers one aggregated message to the
+        root thread (the original user-facing chat thread).
+
+        The _aggregated_parents set prevents duplicate delivery when multiple
+        children complete near-simultaneously (safe because asyncio is
+        cooperative and there is no await between the membership check and
+        the set.add).
+        """
+        state = self._states.get(completed_session_id)
+        if not state or not state.parent_thread_id:
+            return
+        parent_sid = state.parent_thread_id
+        root_tid = state.root_thread_id
+        if not root_tid:
+            logger.warning(
+                "Nested sub-session %s has no root_thread_id — cannot aggregate",
+                completed_session_id,
+            )
+            return
+
+        # Already delivered for this parent?
+        if parent_sid in self._aggregated_parents:
+            return
+
+        # Find all children of the same parent sub-session.
+        siblings = [
+            s for s in self._states.values()
+            if s.parent_thread_id == parent_sid
+        ]
+
+        all_terminal = all(
+            s.status in ("completed", "failed", "timeout") for s in siblings
+        )
+        if not all_terminal:
+            logger.debug(
+                "Nested aggregation: %d/%d children of %s are terminal",
+                sum(1 for s in siblings if s.status in ("completed", "failed", "timeout")),
+                len(siblings), parent_sid,
+            )
+            return
+
+        # Mark as aggregated BEFORE the await to prevent duplicate delivery.
+        self._aggregated_parents.add(parent_sid)
+
+        # Build aggregated report.
+        parts = []
+        any_fail = False
+        for s in siblings:
+            header = f"**[{s.session_id}]** {s.objective[:100]}"
+            if s.status == "completed" and s.result:
+                parts.append(f"{header}\n{s.result}")
+            elif s.status == "failed":
+                parts.append(f"{header}\n[FAILED: {s.error}]")
+                any_fail = True
+            elif s.status == "timeout":
+                parts.append(f"{header}\n[TIMEOUT — partial progress in logs]")
+            else:
+                parts.append(f"{header}\n[{s.status}]")
+
+        parent_state = self._states.get(parent_sid)
+        parent_obj = parent_state.objective[:80] if parent_state else parent_sid
+
+        status_word = "FINISHED WITH ERRORS" if any_fail else "COMPLETE"
+        text = (
+            f"[NESTED TASKS {status_word} — {len(siblings)} task(s) for: {parent_obj}]\n\n"
+            + "\n\n---\n\n".join(parts)
+        )
+
+        logger.info(
+            "Delivering aggregated results (%d children of %s) to root thread %s",
+            len(siblings), parent_sid, root_tid,
+        )
+        try:
+            await self._enqueue(text, root_tid)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "Failed to deliver aggregated nested results to %s: %s",
+                root_tid, exc,
+            )
 
     async def _worker_loop(self, state: SubSessionState, context_blobs: list[str]) -> str:
         """
