@@ -87,10 +87,11 @@ def find_gemini_cli() -> Path | None:
     current = resolved
     for _ in range(10):
         current = current.parent
-        if (current / "package.json").exists():
-            return current
         # Check if we're inside node_modules/@google/gemini-cli
         if current.name == "gemini-cli" and current.parent.name == "@google":
+            return current
+        # Stop at the nearest package.json, but skip intermediate dirs like "dist"
+        if current.name != "dist" and (current / "package.json").exists():
             return current
     # Fallback: try to find the package via npm root
     try:
