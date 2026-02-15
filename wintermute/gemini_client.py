@@ -137,6 +137,23 @@ class GeminiCloudClient:
         tool_choice = kwargs.get("tool_choice")
         max_tokens = kwargs.get("max_tokens") or kwargs.get("max_completion_tokens", 8192)
 
+        # Build a mapping from tool_call_id -> function name for tool results
+        tc_id_to_name: dict[str, str] = {}
+        for msg in messages:
+            role = msg["role"] if isinstance(msg, dict) else msg.role
+            if role == "assistant":
+                tool_calls = msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
+                if tool_calls:
+                    for tc in tool_calls:
+                        if isinstance(tc, dict):
+                            tc_id = tc.get("id", "")
+                            fn_name = tc.get("function", {}).get("name", "")
+                        else:
+                            tc_id = tc.id
+                            fn_name = tc.function.name
+                        if tc_id and fn_name:
+                            tc_id_to_name[tc_id] = fn_name
+
         # Build contents and extract system instruction
         system_parts = []
         contents = []
@@ -163,9 +180,11 @@ class GeminiCloudClient:
             if role == "tool":
                 tool_call_id = msg.get("tool_call_id", "") if isinstance(msg, dict) else getattr(msg, "tool_call_id", "")
                 name = msg.get("name", "") if isinstance(msg, dict) else getattr(msg, "name", "")
+                # Resolve function name from tool_call_id if name is missing
+                fn_name = name or tc_id_to_name.get(tool_call_id, "") or tool_call_id
                 parts.append({
                     "functionResponse": {
-                        "name": name or tool_call_id,
+                        "name": fn_name,
                         "response": {"result": content or ""},
                     }
                 })
