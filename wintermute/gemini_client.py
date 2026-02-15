@@ -214,9 +214,9 @@ class GeminiCloudClient:
                 "parts": [{"text": "\n\n".join(system_parts)}],
             }
 
-        # Translate tools
+        # Translate tools — all declarations go in a single tools entry
         if tools:
-            google_tools = []
+            fn_decls = []
             for tool in tools:
                 if isinstance(tool, dict) and tool.get("type") == "function":
                     fn = tool["function"]
@@ -226,9 +226,9 @@ class GeminiCloudClient:
                     }
                     if "parameters" in fn:
                         google_fn["parameters"] = fn["parameters"]
-                    google_tools.append({"functionDeclarations": [google_fn]})
-            if google_tools:
-                body["tools"] = google_tools
+                    fn_decls.append(google_fn)
+            if fn_decls:
+                body["tools"] = [{"functionDeclarations": fn_decls}]
 
         # Translate tool_choice
         if tool_choice and tools:
