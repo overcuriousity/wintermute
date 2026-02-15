@@ -195,11 +195,7 @@ class GeminiCloudClient:
                             "response": {"result": content or ""},
                         }
                     })
-                else:
-                    # No signature (old history) — convert to text
-                    result_preview = (content or "")[:500]
-                    parts.append({"text": f"[Tool result from {fn_name}: {result_preview}]"})
-                    google_role = "model"  # tool results as text go in model turn
+                # else: skip unsigned tool results from old history
             # Handle assistant messages with tool calls
             elif role == "assistant":
                 tool_calls = msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
@@ -225,9 +221,7 @@ class GeminiCloudClient:
                                 "args": args_dict,
                                 "thoughtSignature": thought_sig,
                             }})
-                        else:
-                            # No signature (old history) — convert to text
-                            parts.append({"text": f"[Called tool {fn_name}({json.dumps(args_dict)})]"})
+                        # else: skip unsigned tool calls from old history
                 if content:
                     parts.append({"text": content})
             else:
