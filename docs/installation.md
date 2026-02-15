@@ -120,7 +120,12 @@ uv run wintermute
 
 The web interface starts at `http://127.0.0.1:8080` by default.
 
-## Gemini CLI Provider (Free Google Models)
+## Gemini CLI Provider (Free Google Models) — Alpha
+
+> **Alpha:** The Gemini Cloud Code Assist integration is experimental. Known
+> limitations include aggressive rate limiting from Google's API and occasional
+> tool-call parsing issues. For production use, an OpenAI-compatible endpoint
+> (Ollama, vLLM, OpenAI, etc.) is recommended.
 
 Wintermute can use Google's Gemini models for free via the Cloud Code Assist API,
 using credentials from a locally-installed `gemini-cli`.

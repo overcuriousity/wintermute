@@ -475,7 +475,7 @@ if ! ${SKIP_CONFIG:-false}; then
   echo -e "  ${C_DIM}  3)  vLLM              http://localhost:8000/v1${C_RESET}"
   echo -e "  ${C_DIM}  4)  OpenAI            https://api.openai.com/v1${C_RESET}"
   echo -e "  ${C_DIM}  5)  Custom URL${C_RESET}"
-  echo -e "  ${C_DIM}  6)  Gemini (via gemini-cli — free, Google Cloud Code Assist)${C_RESET}"
+  echo -e "  ${C_DIM}  6)  Gemini (via gemini-cli — free, ALPHA)${C_RESET}"
   echo ""
   echo -ne "  ${C_CYAN}?${C_RESET}  Choose inference substrate ${C_DIM}[1]${C_RESET}: "
   read -r _preset
@@ -493,6 +493,9 @@ if ! ${SKIP_CONFIG:-false}; then
        LLM_BASE_URL=""
        LLM_API_KEY=""
        echo -e "  ${C_DIM}Mountain View's gift. Free inference, courtesy of Cloud Code Assist.${C_RESET}"
+       warn "ALPHA: Gemini integration is experimental. Known issues include"
+       warn "  aggressive rate limiting and occasional tool-call parsing errors."
+       warn "  For production use, an OpenAI-compatible endpoint is recommended."
        echo ""
        # Check for gemini-cli
        if ! command -v gemini &>/dev/null; then

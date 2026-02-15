@@ -107,7 +107,7 @@ logging:
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `provider` | no | `"openai"` | `"openai"` (any OpenAI-compatible endpoint) or `"gemini-cli"` (Google Cloud Code Assist via gemini-cli) |
+| `provider` | no | `"openai"` | `"openai"` (any OpenAI-compatible endpoint) or `"gemini-cli"` (Google Cloud Code Assist via gemini-cli — **alpha**) |
 | `base_url` | openai only | — | OpenAI-compatible API base URL (not needed for `gemini-cli`) |
 | `api_key` | openai only | — | API key, use `"ollama"` for Ollama (not needed for `gemini-cli`) |
 | `model` | yes | — | Model name the endpoint accepts |
@@ -119,7 +119,9 @@ logging:
 | `dreaming` | no | — | Override block for dreaming (partial; inherits from parent) |
 | `supervisor` | no | — | Override block for supervisor (partial; inherits from parent) |
 
-#### Provider: `gemini-cli`
+#### Provider: `gemini-cli` (Alpha)
+
+> **Alpha:** This provider is experimental. See [installation.md — Gemini CLI Provider](installation.md#gemini-cli-provider-free-google-models--alpha) for known limitations.
 
 Uses Google's Cloud Code Assist API via credentials extracted from a locally-installed
 [gemini-cli](https://github.com/google/gemini-cli) (`npm i -g @google/gemini-cli`).
