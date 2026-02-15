@@ -382,7 +382,7 @@ class GeminiCloudClient:
             "user_prompt_id": str(uuid.uuid4()),
             "request": inner,
         }
-        logger.debug("Gemini request body: %s", json.dumps(body, default=str)[:3000])
+        logger.debug("Gemini request: model=%s, contents=%d blocks", model, len(inner.get("contents", [])))
         backoff = INITIAL_BACKOFF
 
         for attempt in range(MAX_RETRIES + 1):

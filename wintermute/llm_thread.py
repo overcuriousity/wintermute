@@ -280,7 +280,15 @@ class LLMThread:
                 reply = await self._process(item)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("LLM processing error")
-                reply = LLMReply(text=f"[Error during inference: {exc}]")
+                err_msg = str(exc)
+                # Provide actionable hint for Gemini auth failures
+                if "401" in err_msg and "Gemini" in err_msg:
+                    err_msg += (
+                        "\n\nGemini credentials have expired or are invalid. "
+                        "Re-run authentication on the server:\n"
+                        "  uv run python -m wintermute.gemini_auth"
+                    )
+                reply = LLMReply(text=f"[Error during inference: {err_msg}]")
 
             if item.future and not item.future.done():
                 item.future.set_result(reply)

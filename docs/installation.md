@@ -163,6 +163,19 @@ Available models: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-3-pro-preview`, 
 
 Credentials are saved to `data/gemini_credentials.json` and refreshed automatically.
 
+### Headless / SSH OAuth flow
+
+On headless systems (no display server), the OAuth setup detects the missing `DISPLAY`/`WAYLAND_DISPLAY` and switches to a manual flow:
+
+1. Run `uv run python -m wintermute.gemini_auth`
+2. The script prints a Google OAuth URL — copy it and open it in a browser on any machine
+3. Sign in with your Google account and authorize access
+4. Your browser will redirect to `http://localhost:8085/...` which won't load on a headless system — that's expected
+5. Copy the **full redirect URL** from your browser's address bar (including the `?code=` parameter)
+6. Paste it back into the terminal prompt
+
+If credentials expire or become invalid while running, Wintermute shows a message in the chat suggesting to re-run the auth setup. Re-run `uv run python -m wintermute.gemini_auth` and restart the service.
+
 ### Systemd / headless service
 
 When running as a systemd service, NVM paths are **not** in `PATH` by default (systemd uses a minimal environment). Wintermute automatically probes common installation paths at startup:

@@ -531,6 +531,9 @@ if ! ${SKIP_CONFIG:-false}; then
        info "Context: ${LLM_CONTEXT} tokens, max response: ${LLM_MAX_TOKENS} tokens"
        echo ""
        info "Running OAuth setup — this will open your browser for Google sign-in..."
+       info "${C_DIM}On headless systems: a URL will be printed. Open it in any browser,${C_RESET}"
+       info "${C_DIM}sign in, then paste the full redirect URL back here.${C_RESET}"
+       echo ""
        if uv run python -m wintermute.gemini_auth; then
          ok "Gemini OAuth setup complete."
        else
