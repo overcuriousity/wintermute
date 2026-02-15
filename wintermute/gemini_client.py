@@ -391,18 +391,6 @@ class GeminiCloudClient:
             chunks = self._parse_sse(resp.text)
             if not chunks:
                 logger.warning("Gemini: no SSE chunks parsed from response (%d bytes)", len(resp.text))
-                logger.debug("Gemini raw response: %.2000s", resp.text)
-            else:
-                logger.debug("Gemini: parsed %d SSE chunks", len(chunks))
-                inner = chunks[0].get("response", chunks[0])
-                logger.debug("Gemini inner response keys: %s", list(inner.keys()))
-                candidates = inner.get("candidates", [])
-                if candidates:
-                    logger.debug("Gemini candidate[0] keys: %s", list(candidates[0].keys()))
-                    content = candidates[0].get("content", {})
-                    logger.debug("Gemini content: %s", json.dumps(content)[:500])
-                else:
-                    logger.warning("Gemini: no candidates in response. Inner: %s", json.dumps(inner)[:1000])
             return self._translate_response(chunks)
 
         raise RuntimeError("Gemini request failed after all retries")
