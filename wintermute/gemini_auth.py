@@ -234,16 +234,43 @@ def run_oauth_flow(client_id: str, client_secret: str) -> dict:
         def log_message(self, format, *args):
             pass  # suppress request logging
 
-    server = http.server.HTTPServer(("localhost", REDIRECT_PORT), CallbackHandler)
-    server.timeout = 300  # 5 minute timeout
+    # Detect headless environment (no DISPLAY/WAYLAND and not macOS)
+    _headless = (
+        not os.environ.get("DISPLAY")
+        and not os.environ.get("WAYLAND_DISPLAY")
+        and os.name != "nt"
+    )
 
-    print(f"\nOpening browser for Google sign-in...")
-    print(f"If the browser doesn't open, visit:\n  {auth_url}\n")
-    webbrowser.open(auth_url)
+    print(f"\nOpen this URL in a browser to sign in with Google:\n  {auth_url}\n")
 
-    # Wait for the callback
-    server.handle_request()
-    server.server_close()
+    if _headless:
+        print(
+            "Headless environment detected — after signing in, your browser will\n"
+            "redirect to a localhost URL that won't load. Copy the FULL redirect\n"
+            "URL from your browser's address bar and paste it below.\n"
+        )
+        pasted = input("Paste redirect URL (or press Enter to wait for callback): ").strip()
+        if pasted:
+            params = parse_qs(urlparse(pasted).query)
+            if "code" in params:
+                auth_code = params["code"][0]
+            elif "error" in params:
+                error_msg = params.get("error", ["unknown"])[0]
+            else:
+                raise RuntimeError(
+                    "Could not extract authorization code from pasted URL. "
+                    "Ensure you copied the full redirect URL including the ?code= parameter."
+                )
+    if not auth_code and not error_msg:
+        # Start HTTP listener for the callback (browser or port-forwarded)
+        server = http.server.HTTPServer(("localhost", REDIRECT_PORT), CallbackHandler)
+        server.timeout = 300  # 5 minute timeout
+
+        if not _headless:
+            webbrowser.open(auth_url)
+
+        server.handle_request()
+        server.server_close()
 
     if error_msg:
         raise RuntimeError(f"OAuth authorization failed: {error_msg}")
