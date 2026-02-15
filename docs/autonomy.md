@@ -58,6 +58,14 @@ Multi-step tasks are expressed as dependency graphs:
 
 Example: research A + research B -> upload C (depends_on=[A, B])
 
+#### `depends_on_previous`
+
+Instead of manually tracking and listing session IDs (which is error-prone and can lead to hallucinated IDs), workers can set `depends_on_previous: true` to automatically depend on all sessions they have previously spawned. The system resolves the IDs programmatically.
+
+#### Dependency ID Validation
+
+Unknown session IDs in `depends_on` are automatically stripped with a warning log. This prevents permanent deadlocks caused by hallucinated or mistyped session IDs — the task proceeds with only the valid dependencies.
+
 ### Time-gated Workflows
 
 Tasks can include a `not_before` parameter (ISO-8601 datetime) to delay execution until a specific time, even if all dependencies are already satisfied. This enables workflows like "research now, upload after 20:00":
@@ -85,6 +93,17 @@ When a worker times out (default: 300 seconds):
 - Maximum nesting depth: 2 (main agent -> sub-session -> sub-sub-session)
 - Only `full`-mode workers have the `spawn_sub_session` tool available
 - Other modes have no orchestration tools at all
+
+### Nested Result Aggregation
+
+When a `full`-mode sub-session (depth 1) spawns children (depth 2), individual child results are not delivered separately. Instead, the system:
+
+1. Tracks the **root thread ID** (the original user-facing chat thread) through all nesting levels
+2. Suppresses per-child reports (which would be delivered to the parent sub-session's ID — not a real chat thread)
+3. Waits until **all children** of a parent sub-session reach a terminal state (completed, failed, or timeout)
+4. Delivers one **aggregated message** containing all child results to the root thread
+
+This is fully deterministic — no LLM inference is involved in the routing or aggregation logic. A deduplication set prevents duplicate delivery when multiple children complete near-simultaneously.
 
 ## Reminder-triggered Inference
 

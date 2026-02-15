@@ -38,6 +38,13 @@ User (Matrix / Browser)
                                         |   +-- worker C (depends_on=[A,B]) --> auto-starts
                                         |       when A and B complete; receives their results
                                         |
+                                        |-- Nested spawning (full-mode workers)
+                                        |   |-- worker X (full mode, depth 1) --> spawns Y, Z
+                                        |   |   |-- worker Y (depth 2) --\
+                                        |   |   +-- worker Z (depth 2) --+--> aggregated result
+                                        |   |                                 delivered to root
+                                        |   |                                 thread when all done
+                                        |
                                         +-- result --> enqueue_system_event
                                                         (back to LLMThread)
 
@@ -76,12 +83,15 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 
 1. Orchestrator (main LLM or a `full`-mode worker) calls `spawn_sub_session`
 2. `SubSessionManager.spawn()` registers a `TaskNode` in a workflow DAG
-3. If `depends_on` is specified and dependencies aren't done yet, the node stays `pending`
-4. Otherwise the worker starts immediately with its own in-memory message list
-5. Worker runs `_worker_loop()`: inference + tool-call loop with filtered tools
-6. On completion, `_resolve_dependents()` checks if pending nodes can now start
-7. Result enters the parent thread via `enqueue_system_event`
-8. If the worker times out, a continuation is auto-spawned (up to 3 hops)
+3. Dependency IDs are validated — unknown IDs are stripped with a warning to prevent deadlocks
+4. If `depends_on` is specified and dependencies aren't done yet, the node stays `pending`
+5. Otherwise the worker starts immediately with its own in-memory message list
+6. Worker runs `_worker_loop()`: inference + tool-call loop with filtered tools
+7. On completion, `_resolve_dependents()` checks if pending nodes can now start
+8. Result delivery depends on nesting:
+   - **Direct children** (depth 1): result enters the parent thread via `enqueue_system_event`
+   - **Nested children** (depth 2): individual reports are suppressed; when all siblings finish, an aggregated result is delivered to the root (user-facing) thread
+9. If the worker times out, a continuation is auto-spawned (up to 3 hops)
 
 ## Workflow DAG
 
@@ -92,6 +102,8 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 - Failure propagation: if a dependency fails, all transitive dependents are marked failed
 - Resolution is event-driven (no polling): each completion triggers a check
 - Workflows spanning multiple prior workflows are automatically merged
+- `depends_on_previous`: workers can automatically depend on all sessions they've previously spawned, eliminating the need to track session IDs manually
+- Unknown dependency IDs are stripped at spawn time to prevent deadlocks from hallucinated IDs
 
 ## Memory Structure
 

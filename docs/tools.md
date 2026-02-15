@@ -91,12 +91,15 @@ Spawn an isolated background worker for a complex, multi-step task.
 | `context_blobs` | string[] | no | Context snippets to pass to the worker |
 | `system_prompt_mode` | enum | no | `"minimal"` (default), `"full"`, `"base_only"`, `"none"` |
 | `timeout` | integer | no | Max seconds before timeout (default: 300) |
-| `depends_on` | string[] | no | Session IDs that must complete first |
+| `depends_on` | string[] | no | Session IDs that must complete first. Prefer `depends_on_previous` over manually listing IDs. |
+| `depends_on_previous` | boolean | no | If true, automatically depend on all sessions spawned so far by the calling worker. Eliminates the need to track session IDs manually — prevents hallucinated-ID deadlocks. |
 | `not_before` | string | no | Earliest start time (ISO-8601). Task waits even if deps are done. |
 
 Returns: `status`, `session_id`
 
 Maximum nesting depth: 2 (main -> sub -> sub-sub).
+
+**Dependency safety:** Unknown session IDs in `depends_on` are automatically stripped with a warning log, preventing permanent deadlocks from hallucinated or mistyped IDs.
 
 #### `set_reminder`
 
