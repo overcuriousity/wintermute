@@ -44,14 +44,25 @@ llm:
   # Per-purpose overrides. Unspecified fields inherit from the parent llm: block.
   compaction:
     model: "qwen2.5:7b"
+    # base_url: "https://api.openai.com/v1"
+    # api_key: "sk-..."
+    # context_size: 128000
+    # max_tokens: 2048
+    # reasoning: false
   # sub_sessions:
   #   base_url: "https://api.openai.com/v1"
   #   api_key: "sk-..."
   #   model: "gpt-4o"
   #   context_size: 128000
   #   max_tokens: 8192
+  #   reasoning: false
   # dreaming:
+  #   base_url: "https://api.openai.com/v1"
+  #   api_key: "sk-..."
   #   model: "qwen2.5:7b"
+  #   context_size: 32768
+  #   max_tokens: 2048
+  #   reasoning: false
 
 # ── Context Compaction ────────────────────────────────────────────
 # Compaction fires when history tokens exceed:
