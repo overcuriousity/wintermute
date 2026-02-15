@@ -138,8 +138,9 @@ class GeminiCloudClient:
         tool_choice = kwargs.get("tool_choice")
         max_tokens = kwargs.get("max_tokens") or kwargs.get("max_completion_tokens", 8192)
 
-        # Build a mapping from tool_call_id -> function name for tool results
+        # Build mappings from tool_call_id -> function name and signature status
         tc_id_to_name: dict[str, str] = {}
+        tc_id_has_sig: set[str] = set()
         for msg in messages:
             role = msg["role"] if isinstance(msg, dict) else msg.role
             if role == "assistant":
@@ -149,11 +150,15 @@ class GeminiCloudClient:
                         if isinstance(tc, dict):
                             tc_id = tc.get("id", "")
                             fn_name = tc.get("function", {}).get("name", "")
+                            has_sig = bool(tc.get("thought_signature"))
                         else:
                             tc_id = tc.id
                             fn_name = tc.function.name
+                            has_sig = bool(getattr(tc, "thought_signature", None))
                         if tc_id and fn_name:
                             tc_id_to_name[tc_id] = fn_name
+                        if tc_id and has_sig:
+                            tc_id_has_sig.add(tc_id)
 
         # Build contents and extract system instruction
         system_parts = []
@@ -179,14 +184,20 @@ class GeminiCloudClient:
             if role == "tool":
                 tool_call_id = msg.get("tool_call_id", "") if isinstance(msg, dict) else getattr(msg, "tool_call_id", "")
                 name = msg.get("name", "") if isinstance(msg, dict) else getattr(msg, "name", "")
-                # Resolve function name from tool_call_id if name is missing
                 fn_name = name or tc_id_to_name.get(tool_call_id, "") or tool_call_id
-                parts.append({
-                    "functionResponse": {
-                        "name": fn_name,
-                        "response": {"result": content or ""},
-                    }
-                })
+                if tool_call_id in tc_id_has_sig:
+                    # Has matching signed call — send as proper functionResponse
+                    parts.append({
+                        "functionResponse": {
+                            "name": fn_name,
+                            "response": {"result": content or ""},
+                        }
+                    })
+                else:
+                    # No signature (old history) — convert to text
+                    result_preview = (content or "")[:500]
+                    parts.append({"text": f"[Tool result from {fn_name}: {result_preview}]"})
+                    google_role = "model"  # tool results as text go in model turn
             # Handle assistant messages with tool calls
             elif role == "assistant":
                 tool_calls = msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
@@ -205,13 +216,16 @@ class GeminiCloudClient:
                             args_dict = json.loads(fn_args) if isinstance(fn_args, str) else fn_args
                         except json.JSONDecodeError:
                             args_dict = {}
-                        fc_part: dict[str, Any] = {
-                            "name": fn_name,
-                            "args": args_dict,
-                        }
                         if thought_sig:
-                            fc_part["thoughtSignature"] = thought_sig
-                        parts.append({"functionCall": fc_part})
+                            # Has signature — send as proper functionCall
+                            parts.append({"functionCall": {
+                                "name": fn_name,
+                                "args": args_dict,
+                                "thoughtSignature": thought_sig,
+                            }})
+                        else:
+                            # No signature (old history) — convert to text
+                            parts.append({"text": f"[Called tool {fn_name}({json.dumps(args_dict)})]"})
                 if content:
                     parts.append({"text": content})
             else:
