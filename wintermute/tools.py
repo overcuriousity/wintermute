@@ -17,6 +17,8 @@ import json
 import logging
 import os
 import subprocess
+import time
+from collections import deque
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Optional
@@ -30,6 +32,17 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path("data")
 
 SEARXNG_URL = os.environ.get("WINTERMUTE_SEARXNG_URL", "http://127.0.0.1:8888")
+
+# ---------------------------------------------------------------------------
+# In-memory tool call log (bounded ring buffer for the debug UI)
+# ---------------------------------------------------------------------------
+
+_TOOL_CALL_LOG: deque[dict] = deque(maxlen=500)
+
+
+def get_tool_call_log() -> list[dict]:
+    """Return a copy of the tool call log, newest first."""
+    return list(reversed(_TOOL_CALL_LOG))
 
 # Maximum nesting depth for sub-session spawning.
 # 0 = main agent, 1 = sub-session, 2 = sub-sub-session (max).
@@ -765,4 +778,16 @@ def execute_tool(name: str, inputs: dict, thread_id: Optional[str] = None,
     if fn is None:
         return json.dumps({"error": f"Unknown tool: {name}"})
     logger.debug("Executing tool '%s' with inputs: %s", name, inputs)
-    return fn(inputs, thread_id=thread_id, nesting_depth=nesting_depth)
+    t0 = time.monotonic()
+    result = fn(inputs, thread_id=thread_id, nesting_depth=nesting_depth)
+    duration_ms = round((time.monotonic() - t0) * 1000, 1)
+    _TOOL_CALL_LOG.append({
+        "ts": time.time(),
+        "tool": name,
+        "inputs": inputs,
+        "thread_id": thread_id or "unknown",
+        "result_preview": result[:300] if result else "",
+        "duration_ms": duration_ms,
+        "error": None,
+    })
+    return result
