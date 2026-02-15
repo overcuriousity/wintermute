@@ -481,6 +481,7 @@ _DEBUG_HTML = """\
 <body>
 <header>
   <h1>Wintermute Debug</h1>
+  <span id="cfg-info" style="font-size:.72rem;color:#888"></span>
   <a href="/">&#8592; Chat</a>
   <div class="header-right">
     <span id="refresh-status"></span>
@@ -1213,7 +1214,26 @@ async function createReminder(e) {
   await loadReminders();
 }
 
+// ── Config info ──
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/debug/config');
+    const d = await r.json();
+    const el = document.getElementById('cfg-info');
+    const parts = [];
+    if (d.main) parts.push('<span style="color:#a8d8ea">' + esc(d.main.model) + '</span> <span style="color:#555">' + fmtTokens(d.main.context_size) + ' ctx</span>');
+    if (d.compaction && d.compaction.model !== d.main.model)
+      parts.push('<span style="color:#666">compact: ' + esc(d.compaction.model) + '</span>');
+    if (d.sub_sessions && (d.sub_sessions.model !== d.main.model || d.sub_sessions.base_url !== d.main.base_url))
+      parts.push('<span style="color:#666">sub: ' + esc(d.sub_sessions.model) + '</span>');
+    if (d.dreaming && d.dreaming.model !== d.main.model)
+      parts.push('<span style="color:#666">dream: ' + esc(d.dreaming.model) + '</span>');
+    el.innerHTML = parts.join(' <span style="color:#333">\u2502</span> ');
+  } catch(e) { console.error('loadConfig:', e); }
+}
+
 // ── Init ──
+loadConfig();
 loadTab('sessions');
 scheduleRefresh();
 </script>
@@ -1252,6 +1272,7 @@ class WebInterface:
         self._scheduler = None
         self._matrix = None
         self._llm_cfg = None
+        self._multi_cfg = None
 
     # ------------------------------------------------------------------
     # Public
@@ -1293,6 +1314,7 @@ class WebInterface:
         app.router.add_get("/api/debug/subsessions",                    self._api_subsessions)
         app.router.add_get("/api/debug/workflows",                     self._api_workflows)
         app.router.add_get("/api/debug/jobs",                           self._api_jobs)
+        app.router.add_get("/api/debug/config",                          self._api_config)
         app.router.add_get("/api/debug/system-prompt",                  self._api_system_prompt)
         app.router.add_get("/api/debug/reminders",                      self._api_reminders)
         app.router.add_post("/api/debug/reminders",                     self._api_reminder_create)
@@ -1675,6 +1697,29 @@ class WebInterface:
             return self._json({"ok": True, "thread_id": thread_id})
         except Exception as exc:  # noqa: BLE001
             return self._json({"error": str(exc)})
+
+    async def _api_config(self, _request: web.Request) -> web.Response:
+        def _provider_dict(cfg):
+            if cfg is None:
+                return None
+            return {
+                "base_url": cfg.base_url,
+                "model": cfg.model,
+                "context_size": cfg.context_size,
+                "max_tokens": cfg.max_tokens,
+                "reasoning": cfg.reasoning,
+            }
+        mc = self._multi_cfg
+        if mc:
+            return self._json({
+                "main": _provider_dict(mc.main),
+                "compaction": _provider_dict(mc.compaction),
+                "sub_sessions": _provider_dict(mc.sub_sessions),
+                "dreaming": _provider_dict(mc.dreaming),
+            })
+        elif self._llm_cfg:
+            return self._json({"main": _provider_dict(self._llm_cfg)})
+        return self._json({})
 
     async def _api_system_prompt(self, _request: web.Request) -> web.Response:
         from wintermute import prompt_assembler

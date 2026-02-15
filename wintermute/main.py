@@ -306,6 +306,7 @@ async def main() -> None:
         web_iface._scheduler = scheduler
         web_iface._matrix = matrix
         web_iface._llm_cfg = llm_cfg
+        web_iface._multi_cfg = multi_cfg
 
     pulse_loop = PulseLoop(
         interval_minutes=pulse_interval,
