@@ -27,6 +27,7 @@ from pathlib import Path
 
 from wintermute import database
 from wintermute import prompt_assembler
+from wintermute import supervisor as supervisor_module
 from wintermute import tools as tool_module
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -107,14 +108,15 @@ class MultiProviderConfig:
     """Per-purpose LLM provider configurations.
 
     Each field holds a fully-resolved ProviderConfig.  Auxiliary purposes
-    (compaction, sub_sessions, dreaming) inherit unset fields from *main*
-    at config-build time, so by the time this object exists every field in
-    every ProviderConfig is populated.
+    (compaction, sub_sessions, dreaming, supervisor) inherit unset fields
+    from *main* at config-build time, so by the time this object exists
+    every field in every ProviderConfig is populated.
     """
     main: ProviderConfig
     compaction: ProviderConfig
     sub_sessions: ProviderConfig
     dreaming: ProviderConfig
+    supervisor: ProviderConfig
 
 
 @dataclass
@@ -122,6 +124,7 @@ class LLMReply:
     """Response from the LLM, separating visible content from reasoning tokens."""
     text: str
     reasoning: Optional[str] = None  # reasoning/thinking tokens (if model supports it)
+    tool_calls_made: list[str] = field(default_factory=list)  # tool names called during inference
 
     def __str__(self) -> str:
         return self.text
@@ -133,6 +136,7 @@ class _QueueItem:
     thread_id: str = "default"
     is_system_event: bool = False
     future: Optional[asyncio.Future] = field(default=None, compare=False)
+    is_supervisor_correction: bool = False  # loop guard: skip supervisor re-check
 
 
 class LLMThread:
@@ -141,7 +145,8 @@ class LLMThread:
     def __init__(self, config: ProviderConfig, broadcast_fn,
                  sub_session_manager: "Optional[SubSessionManager]" = None,
                  multi_cfg: Optional[MultiProviderConfig] = None,
-                 clients: Optional[dict[str, AsyncOpenAI]] = None) -> None:
+                 clients: Optional[dict[str, AsyncOpenAI]] = None,
+                 supervisor_enabled: bool = True) -> None:
         self._cfg = config
         self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)
         self._sub_sessions = sub_session_manager  # set post-init via inject_sub_session_manager
@@ -157,6 +162,14 @@ class LLMThread:
         else:
             self._compaction_cfg = config
             self._compaction_client = self._client
+        # Supervisor uses its own dedicated provider/client.
+        self._supervisor_enabled = supervisor_enabled
+        if multi_cfg and clients:
+            self._supervisor_cfg = multi_cfg.supervisor
+            self._supervisor_client = clients.get("supervisor", self._compaction_client)
+        else:
+            self._supervisor_cfg = config
+            self._supervisor_client = self._client
         self._running = False
         # Per-thread compaction summaries: thread_id -> summary text
         self._compaction_summaries: dict[str, Optional[str]] = {}
@@ -251,6 +264,10 @@ class LLMThread:
             if summary:
                 self._compaction_summaries[tid] = summary
         logger.info("LLM thread started (endpoint=%s model=%s)", self._cfg.base_url, self._cfg.model)
+        if self._supervisor_enabled:
+            logger.info("Supervisor enabled (model=%s)", self._supervisor_cfg.model)
+        else:
+            logger.info("Supervisor disabled")
 
         while self._running:
             try:
@@ -283,10 +300,79 @@ class LLMThread:
                     logger.exception("Failed to broadcast system-event reply for thread %s",
                                      item.thread_id)
 
+            # -- Supervisor workflow validation --
+            # Fire async after the reply is delivered.  Only check
+            # user-facing messages (not system events, not sub-session
+            # threads, and not the supervisor's own corrections).
+            if (
+                not item.is_system_event
+                and not item.is_supervisor_correction
+                and not item.thread_id.startswith("sub_")
+                and reply.text
+            ):
+                asyncio.create_task(
+                    self._run_supervisor_check(
+                        user_message=item.text,
+                        assistant_response=reply.text,
+                        tool_calls_made=reply.tool_calls_made,
+                        thread_id=item.thread_id,
+                    ),
+                    name=f"supervisor_{item.thread_id}",
+                )
+
             self._queue.task_done()
 
     def stop(self) -> None:
         self._running = False
+
+    # ------------------------------------------------------------------
+    # Supervisor workflow validation
+    # ------------------------------------------------------------------
+
+    async def _run_supervisor_check(
+        self,
+        user_message: str,
+        assistant_response: str,
+        tool_calls_made: list[str],
+        thread_id: str,
+    ) -> None:
+        """Fire a one-shot supervisor agent to detect hallucinated workflow spawns.
+
+        Runs asynchronously after the main reply has already been delivered.
+        If the supervisor detects a mismatch it enqueues a corrective system
+        event with the ``is_supervisor_correction`` flag set so the loop
+        guard prevents infinite re-checking.
+        """
+        if not self._supervisor_enabled or not self._sub_sessions:
+            return
+
+        active_sessions = self._sub_sessions.list_active()
+
+        try:
+            correction = await supervisor_module.check_workflow_consistency(
+                client=self._supervisor_client,
+                model=self._supervisor_cfg.model,
+                user_message=user_message,
+                assistant_response=assistant_response,
+                tool_calls_made=tool_calls_made,
+                active_sessions=active_sessions,
+                max_tokens=self._supervisor_cfg.max_tokens,
+                reasoning=self._supervisor_cfg.reasoning,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Supervisor check raised (non-fatal)")
+            return
+
+        if correction:
+            logger.info(
+                "Supervisor injecting correction into thread %s", thread_id,
+            )
+            await self._queue.put(_QueueItem(
+                text=correction,
+                thread_id=thread_id,
+                is_system_event=True,
+                is_supervisor_correction=True,
+            ))
 
     # ------------------------------------------------------------------
     # Core inference
@@ -376,6 +462,7 @@ class LLMThread:
         full_messages = [{"role": "system", "content": system_prompt}] + messages
         api_kwargs = self._build_api_kwargs(disable_tools=disable_tools)
         reasoning_parts: list[str] = []
+        tool_calls_made: list[str] = []
 
         while True:
             response = await self._client.chat.completions.create(
@@ -397,6 +484,7 @@ class LLMThread:
 
                 # Execute each tool and collect results.
                 for tc in choice.message.tool_calls:
+                    tool_calls_made.append(tc.function.name)
                     try:
                         inputs = json.loads(tc.function.arguments)
                     except json.JSONDecodeError:
@@ -415,7 +503,8 @@ class LLMThread:
             # Terminal response.
             content = (choice.message.content or "").strip()
             reasoning = "\n\n".join(reasoning_parts) if reasoning_parts else None
-            return LLMReply(text=content, reasoning=reasoning)
+            return LLMReply(text=content, reasoning=reasoning,
+                            tool_calls_made=tool_calls_made)
 
     # ------------------------------------------------------------------
     # Context compaction

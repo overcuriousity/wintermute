@@ -61,6 +61,14 @@ llm:
   #   context_size: 32768
   #   max_tokens: 2048
   #   reasoning: false
+  # supervisor:                              # Override for post-inference workflow validation
+  #   enabled: true                          # Set to false to disable supervisor checks entirely
+  #   base_url: "https://api.openai.com/v1"
+  #   api_key: "sk-..."
+  #   model: "qwen2.5:7b"
+  #   context_size: 32768
+  #   max_tokens: 150
+  #   reasoning: false
 
 # Compaction fires when history tokens exceed: context_size - max_tokens - system_prompt_tokens.
 # No separate threshold setting is needed; adjust context_size and max_tokens above.

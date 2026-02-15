@@ -144,7 +144,7 @@ def _build_provider(base: dict, overrides: dict) -> ProviderConfig:
 def _build_multi_provider_config(llm_raw: dict) -> MultiProviderConfig:
     """Parse the llm: block (with backward compat) into a MultiProviderConfig."""
     # Base fields (everything except the sub-keys).
-    sub_keys = {"compaction", "sub_sessions", "dreaming"}
+    sub_keys = {"compaction", "sub_sessions", "dreaming", "supervisor"}
     base = {k: v for k, v in llm_raw.items()
             if k not in sub_keys and k != "compaction_model"}
 
@@ -161,11 +161,21 @@ def _build_multi_provider_config(llm_raw: dict) -> MultiProviderConfig:
     sub_sessions_cfg = _build_provider(base, dict(llm_raw.get("sub_sessions") or {}))
     dreaming_cfg = _build_provider(base, dict(llm_raw.get("dreaming") or {}))
 
+    # Supervisor: strip the 'enabled' key before passing to _build_provider
+    # (it's not a ProviderConfig field).  Default max_tokens to 150 since the
+    # supervisor only produces a small JSON response — avoids inheriting the
+    # main provider's (much larger) max_tokens.
+    supervisor_overrides = dict(llm_raw.get("supervisor") or {})
+    supervisor_overrides.pop("enabled", None)
+    supervisor_overrides.setdefault("max_tokens", 150)
+    supervisor_cfg = _build_provider(base, supervisor_overrides)
+
     return MultiProviderConfig(
         main=main_cfg,
         compaction=compaction_cfg,
         sub_sessions=sub_sessions_cfg,
         dreaming=dreaming_cfg,
+        supervisor=supervisor_cfg,
     )
 
 
@@ -174,7 +184,8 @@ def _make_clients(cfg: MultiProviderConfig) -> dict[str, AsyncOpenAI]:
     cache: dict[tuple[str, str], AsyncOpenAI] = {}
     result: dict[str, AsyncOpenAI] = {}
     for purpose, pcfg in [("main", cfg.main), ("compaction", cfg.compaction),
-                          ("sub_sessions", cfg.sub_sessions), ("dreaming", cfg.dreaming)]:
+                          ("sub_sessions", cfg.sub_sessions), ("dreaming", cfg.dreaming),
+                          ("supervisor", cfg.supervisor)]:
         key = (pcfg.base_url, pcfg.api_key)
         if key not in cache:
             cache[key] = AsyncOpenAI(api_key=pcfg.api_key, base_url=pcfg.base_url)
@@ -273,8 +284,10 @@ async def main() -> None:
             await web_iface.broadcast(text, thread_id, reasoning=reasoning)
 
     # Build LLM thread with the shared broadcast function.
+    supervisor_enabled = cfg["llm"].get("supervisor", {}).get("enabled", True)
     llm = LLMThread(config=llm_cfg, broadcast_fn=broadcast,
-                    multi_cfg=multi_cfg, clients=clients)
+                    multi_cfg=multi_cfg, clients=clients,
+                    supervisor_enabled=supervisor_enabled)
 
     # Build SubSessionManager — shares the LLM client, reports back via
     # enqueue_system_event so results enter the parent thread's queue.

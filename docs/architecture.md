@@ -10,6 +10,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **WebInterface** | `web_interface.py` | aiohttp HTTP + WebSocket server for chat and debug panel |
 | **MatrixThread** | `matrix_thread.py` | Matrix client with E2E encryption (optional) |
 | **SubSessionManager** | `sub_session.py` | Manages background worker sub-sessions and workflow DAGs |
+| **Supervisor** | `supervisor.py` | Post-inference validation: detects hallucinated workflow spawns |
 | **ReminderScheduler** | `scheduler_thread.py` | APScheduler-based reminder system |
 | **PulseLoop** | `pulse.py` | Periodic autonomous PULSE.txt reviews |
 | **DreamingLoop** | `dreaming.py` | Nightly memory consolidation |
@@ -78,6 +79,10 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 6. Message is saved to the DB, then inference runs
 7. If the model returns tool calls, they are executed and inference continues
 8. Final response is saved to the DB and broadcast back to the user
+9. Supervisor check fires asynchronously (if enabled): compares the response
+   text against the actual tool calls made. If the model claimed to spawn a
+   session but `spawn_sub_session` is not in `tool_calls_made`, a corrective
+   system event is injected so the model can self-correct
 
 ## Sub-session Lifecycle
 
