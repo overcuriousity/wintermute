@@ -63,6 +63,11 @@ llm:
   #   context_size: 32768
   #   max_tokens: 2048
   #   reasoning: false
+  # supervisor:                              # Post-inference workflow validation
+  #   enabled: true                          # Set to false to disable supervisor checks entirely
+  #   model: "qwen2.5:7b"                   # Cheap/fast model recommended (one-shot JSON check)
+  #   max_tokens: 150                        # Only needs ~150 tokens for a JSON yes/no response
+  #   reasoning: false
 
 # ── Context Compaction ────────────────────────────────────────────
 # Compaction fires when history tokens exceed:
@@ -111,6 +116,25 @@ logging:
 | `compaction` | no | — | Override block for compaction (partial; inherits from parent) |
 | `sub_sessions` | no | — | Override block for sub-sessions (partial; inherits from parent) |
 | `dreaming` | no | — | Override block for dreaming (partial; inherits from parent) |
+| `supervisor` | no | — | Override block for supervisor (partial; inherits from parent) |
+
+### `llm.supervisor`
+
+Post-inference workflow validation. A lightweight one-shot LLM check that detects
+when the main model claims to have started a background session without actually
+calling `spawn_sub_session`. Runs asynchronously after the reply is delivered
+(zero added latency on the happy path). Inherits from the parent `llm` block when
+no explicit overrides are given; a cheap/fast model override is recommended.
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `enabled` | no | `true` | Set to `false` to disable supervisor checks entirely |
+| `base_url` | no | inherits | API endpoint (inherits from parent `llm` block) |
+| `api_key` | no | inherits | API key (inherits from parent `llm` block) |
+| `model` | no | inherits | Model name; a cheap/fast model is recommended |
+| `context_size` | no | inherits | Token window (inherits from parent `llm` block) |
+| `max_tokens` | no | inherits | Max response tokens; `150` is sufficient for the JSON check |
+| `reasoning` | no | `false` | Enable reasoning token support |
 
 ### `matrix`
 

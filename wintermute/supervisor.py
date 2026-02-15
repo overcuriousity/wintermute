@@ -10,7 +10,7 @@ Design
 ------
   - Runs asynchronously *after* the main reply is broadcast (zero added
     latency on the happy path).
-  - Uses the compaction LLM provider (cheap/fast model) by default.
+  - Uses a dedicated LLM provider (cheap/fast model recommended).
   - Receives hard evidence: the list of tool calls actually made during
     the inference round, plus the programmatic list of active sessions.
   - A ``_supervisor_correction`` flag on the queue item prevents the
@@ -84,7 +84,7 @@ async def check_workflow_consistency(
     Parameters
     ----------
     client : AsyncOpenAI
-        The LLM client to use (typically the compaction provider).
+        The LLM client to use for the supervisor check.
     model : str
         Model name for the supervisor call.
     user_message : str

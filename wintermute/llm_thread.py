@@ -356,6 +356,7 @@ class LLMThread:
                 assistant_response=assistant_response,
                 tool_calls_made=tool_calls_made,
                 active_sessions=active_sessions,
+                max_tokens=self._supervisor_cfg.max_tokens,
                 reasoning=self._supervisor_cfg.reasoning,
             )
         except Exception:  # noqa: BLE001

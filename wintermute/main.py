@@ -162,9 +162,12 @@ def _build_multi_provider_config(llm_raw: dict) -> MultiProviderConfig:
     dreaming_cfg = _build_provider(base, dict(llm_raw.get("dreaming") or {}))
 
     # Supervisor: strip the 'enabled' key before passing to _build_provider
-    # (it's not a ProviderConfig field).
+    # (it's not a ProviderConfig field).  Default max_tokens to 150 since the
+    # supervisor only produces a small JSON response — avoids inheriting the
+    # main provider's (much larger) max_tokens.
     supervisor_overrides = dict(llm_raw.get("supervisor") or {})
     supervisor_overrides.pop("enabled", None)
+    supervisor_overrides.setdefault("max_tokens", 150)
     supervisor_cfg = _build_provider(base, supervisor_overrides)
 
     return MultiProviderConfig(
