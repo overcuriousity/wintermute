@@ -44,7 +44,8 @@ You receive a JSON object with:
   - tool_calls_made:     list of tool function names actually invoked
   - active_sessions:     currently running/pending background sessions
 
-Respond with EXACTLY one JSON object (no markdown, no explanation):
+Respond with EXACTLY one JSON object (no markdown, no explanation).
+Do NOT use any internal thinking or reasoning — reply directly.
   { "hallucination_detected": true/false, "reason": "..." }
 
 Rules:
@@ -134,6 +135,11 @@ async def check_workflow_consistency(
         )
 
         raw = (response.choices[0].message.content or "").strip()
+        if not raw:
+            logger.warning(
+                "Supervisor returned empty content (model may have spent all tokens on reasoning/thinking)"
+            )
+            return None
         # Strip markdown code fences if the model wraps its JSON.
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
