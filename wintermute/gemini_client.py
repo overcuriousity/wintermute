@@ -456,6 +456,18 @@ class GeminiCloudClient:
             chunks = self._parse_sse(resp.text)
             if not chunks:
                 logger.warning("Gemini: no SSE chunks parsed from response (%d bytes)", len(resp.text))
+            # Temporary: log response parts for debugging tool call parsing
+            for ci, chunk in enumerate(chunks):
+                inner = chunk.get("response", chunk)
+                for cand in inner.get("candidates", []):
+                    for part in cand.get("content", {}).get("parts", []):
+                        keys = list(part.keys())
+                        preview = ""
+                        if "text" in part:
+                            preview = part["text"][:150]
+                        elif "functionCall" in part:
+                            preview = f"name={part['functionCall'].get('name', '?')}"
+                        logger.debug("Gemini response part [%d]: keys=%s preview=%s", ci, keys, preview)
             return self._translate_response(chunks)
 
         raise RuntimeError("Gemini request failed after all retries")
