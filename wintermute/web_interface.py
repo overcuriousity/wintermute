@@ -1651,7 +1651,7 @@ class WebInterface:
         msgs = database.load_active_messages(thread_id)
         budget = self._token_budget(thread_id)
 
-        return self._json({
+        result = {
             "thread_id": thread_id,
             "messages": [
                 {
@@ -1664,7 +1664,10 @@ class WebInterface:
                 for m in msgs
             ],
             **budget,
-        })
+        }
+        # JS expects context_pct, budget has pct
+        result["context_pct"] = result.pop("pct", 0)
+        return self._json(result)
 
     async def _api_session_send(self, request: web.Request) -> web.Response:
         thread_id = request.match_info["thread_id"]
