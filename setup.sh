@@ -260,6 +260,28 @@ while true; do
       echo ""
       ok "Acknowledged. Proceeding."
       echo -e "  ${C_DIM}A reasonable decision. Probably.${C_RESET}"
+      echo ""
+      echo -e "  ${C_BOLD}── Before we begin ──${C_RESET}"
+      echo ""
+      echo -e "  ${C_DIM}This script will install all system dependencies and walk you through${C_RESET}"
+      echo -e "  ${C_DIM}configuration. Before continuing, make sure you have the following:${C_RESET}"
+      echo ""
+      echo -e "  ${C_WHITE}  1.  A running LLM inference endpoint${C_RESET}"
+      echo -e "  ${C_DIM}      Any OpenAI-compatible API: vLLM, LM Studio, OpenAI, etc.${C_RESET}"
+      echo -e "  ${C_DIM}      You will need: base URL, model name, and API key.${C_RESET}"
+      echo ""
+      echo -e "  ${C_WHITE}  2.  (Optional) A dedicated Matrix bot account${C_RESET}"
+      echo -e "  ${C_DIM}      Register a separate account on your homeserver (e.g. via Element).${C_RESET}"
+      echo -e "  ${C_DIM}      You will need: the bot's user ID and password.${C_RESET}"
+      echo ""
+      echo -e "  ${C_WHITE}  3.  (Recommended) A local SearXNG instance for web search${C_RESET}"
+      echo -e "  ${C_DIM}      Without it, search falls back to DuckDuckGo's limited API.${C_RESET}"
+      echo -e "  ${C_DIM}      Can be added later — not required for setup.${C_RESET}"
+      echo ""
+      if ! ask_yn "Ready to proceed?" "y"; then
+        echo -e "\n  ${C_DIM}Take your time. I am not going anywhere.${C_RESET}\n"
+        exit 0
+      fi
       break
       ;;
     "NEUROMANCER"|"neuromancer")
@@ -349,19 +371,31 @@ ok "uv $(uv --version | awk '{print $2}')"
 
 info "Installing build tools and E2E encryption headers..."
 _pyminver=$("$PYTHON" -c "import sys; print('%d.%d' % sys.version_info[:2])")
+_build_ok=false
 if [[ "$OS_FAMILY" == "fedora" ]]; then
-  run_quiet "Build tools + libolm-devel" \
+  if run_quiet "Build tools + libolm-devel" \
     sudo dnf install -y gcc gcc-c++ cmake make libolm-devel \
-      "python${_pyminver}-devel" 2>/dev/null || \
-    run_quiet "Build tools (fallback)" \
-      sudo dnf install -y gcc gcc-c++ cmake make libolm-devel python3-devel 2>/dev/null || true
+      "python${_pyminver}-devel" 2>/dev/null; then
+    _build_ok=true
+  elif run_quiet "Build tools (fallback)" \
+    sudo dnf install -y gcc gcc-c++ cmake make libolm-devel python3-devel 2>/dev/null; then
+    _build_ok=true
+  fi
 else
   sudo apt-get update -qq 2>/dev/null
-  run_quiet "Build tools + libolm-dev" \
+  if run_quiet "Build tools + libolm-dev" \
     sudo apt-get install -y build-essential cmake libolm-dev \
-      "python${_pyminver}-dev" 2>/dev/null || \
-    run_quiet "Build tools (fallback)" \
-      sudo apt-get install -y build-essential cmake libolm-dev python3-dev 2>/dev/null || true
+      "python${_pyminver}-dev" 2>/dev/null; then
+    _build_ok=true
+  elif run_quiet "Build tools (fallback)" \
+    sudo apt-get install -y build-essential cmake libolm-dev python3-dev 2>/dev/null; then
+    _build_ok=true
+  fi
+fi
+if ! $_build_ok; then
+  warn "Build tools / libolm installation failed."
+  warn "Matrix E2E encryption requires libolm headers to compile."
+  warn "Install them manually and re-run setup, or continue without E2E support."
 fi
 
 # ══════════════════════════════════════════════════════════════
@@ -505,8 +539,10 @@ if ! ${SKIP_CONFIG:-false}; then
     ok "SearXNG detected at ${C_WHITE}http://localhost:8888${C_RESET}"
     _searxng_ok=true
   elif curl -sf --connect-timeout 3 "http://localhost:8080/search?q=test&format=json" > /dev/null 2>&1; then
-    # Don't detect on 8080 if that's what they chose for Wintermute
-    if [[ "${WEB_PORT:-8080}" != "8080" ]]; then
+    if [[ "${WEB_PORT:-8080}" == "8080" ]]; then
+      warn "SearXNG appears to be running on port 8080, which conflicts with the web UI port."
+      warn "Either change the web UI port above, or move SearXNG to a different port (e.g. 8888)."
+    else
       ok "SearXNG detected at ${C_WHITE}http://localhost:8080${C_RESET}"
       _searxng_ok=true
     fi
@@ -531,7 +567,14 @@ if ! ${SKIP_CONFIG:-false}; then
     if ask_yn "Connect via Matrix?" "n"; then
       MATRIX_ENABLED=true
       echo ""
-      echo -e "  ${C_DIM}  You need a dedicated bot account. Do not reuse your personal account.${C_RESET}"
+      echo -e "  ${C_BOLD}  Creating a bot account${C_RESET}"
+      echo ""
+      echo -e "  ${C_DIM}  Wintermute needs its own dedicated Matrix account — do not reuse yours.${C_RESET}"
+      echo -e "  ${C_DIM}  If you have not created one yet:${C_RESET}"
+      echo ""
+      echo -e "  ${C_DIM}    1. Open ${C_CYAN}https://app.element.io/#/register${C_DIM} (or your homeserver's registration page)${C_RESET}"
+      echo -e "  ${C_DIM}    2. Register a new account (e.g. ${C_WHITE}@wintermute:matrix.org${C_DIM})${C_RESET}"
+      echo -e "  ${C_DIM}    3. Note the user ID and password — you will need them below${C_RESET}"
       echo ""
       ask MATRIX_HS "Homeserver URL" "https://matrix.org"
       _hs_clean="${MATRIX_HS%/}"
@@ -600,25 +643,39 @@ print(json.dumps({
       echo -e "  ${C_DIM}    2. Set up E2E encryption and cross-sign the device${C_RESET}"
       echo -e "  ${C_DIM}    3. Save a recovery key to data/matrix_recovery.key${C_RESET}"
       echo ""
-      echo -e "  ${C_DIM}  Some homeservers (e.g. matrix.org) require a one-time browser approval${C_RESET}"
-      echo -e "  ${C_DIM}  for cross-signing — Wintermute logs the exact URL on first start.${C_RESET}"
-      echo -e "  ${C_DIM}  After that, everything is fully automatic.${C_RESET}"
+      echo -e "  ${C_YELLOW}${C_BOLD}  Manual step required on first start:${C_RESET}"
+      echo ""
+      echo -e "  ${C_DIM}  Most homeservers (including matrix.org) require you to approve${C_RESET}"
+      echo -e "  ${C_DIM}  cross-signing via a browser on the very first launch. The process:${C_RESET}"
+      echo ""
+      echo -e "  ${C_DIM}    1. Start Wintermute — it will log the approval URL in the console${C_RESET}"
+      echo -e "  ${C_DIM}    2. Open that URL in your browser and approve the request${C_RESET}"
+      echo -e "  ${C_DIM}    3. Restart Wintermute once — after this, everything is automatic${C_RESET}"
+      echo ""
+      echo -e "  ${C_DIM}  After approval, you can also verify Wintermute's session from your${C_RESET}"
+      echo -e "  ${C_DIM}  Matrix client (Element > Settings > Sessions) to give it a green shield.${C_RESET}"
+      echo -e "  ${C_DIM}  This is optional but enables trusted E2E encryption.${C_RESET}"
     fi
   fi
 
   # ── write config.yaml ────────────────────────────────────────
+  # Escape values that may contain YAML-special characters (: # { } ' " etc.)
+  _yaml_escape() {
+    python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$1" 2>/dev/null || echo "\"$1\""
+  }
+
   {
     if $MATRIX_ENABLED; then
       cat <<YAML
 # Matrix integration
 matrix:
-  homeserver: "${MATRIX_HS}"
-  user_id: "${MATRIX_USER}"
-  password: $(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$MATRIX_PASS" 2>/dev/null || echo "\"${MATRIX_PASS}\"")
+  homeserver: $(_yaml_escape "${MATRIX_HS}")
+  user_id: $(_yaml_escape "${MATRIX_USER}")
+  password: $(_yaml_escape "$MATRIX_PASS")
   access_token: ""
   device_id: ""
   allowed_users:
-    - "${MATRIX_OWNER}"
+    - $(_yaml_escape "${MATRIX_OWNER}")
   allowed_rooms: []
 
 YAML
@@ -643,21 +700,21 @@ YAML
 # Web interface
 web:
   enabled: true
-  host: "${WEB_HOST}"
+  host: $(_yaml_escape "${WEB_HOST}")
   port: ${WEB_PORT}
 
 # LLM backend (any OpenAI-compatible endpoint)
 llm:
-  base_url: "${LLM_BASE_URL}"
-  api_key: "${LLM_API_KEY}"
-  model: "${LLM_MODEL}"
+  base_url: $(_yaml_escape "${LLM_BASE_URL}")
+  api_key: $(_yaml_escape "${LLM_API_KEY}")
+  model: $(_yaml_escape "${LLM_MODEL}")
   context_size: ${LLM_CONTEXT}
   max_tokens: ${LLM_MAX_TOKENS}
 YAML
 
     if [[ -n "${LLM_COMPACTION_MODEL:-}" ]]; then
       echo "  compaction:"
-      echo "    model: \"${LLM_COMPACTION_MODEL}\""
+      echo "    model: $(_yaml_escape "${LLM_COMPACTION_MODEL}")"
     else
       echo "  # compaction:"
       echo "  #   model: \"\"  # optional: smaller/faster model for summarisation"
@@ -679,7 +736,7 @@ dreaming:
   minute: 0
 
 scheduler:
-  timezone: "${SCHEDULER_TZ}"
+  timezone: $(_yaml_escape "${SCHEDULER_TZ}")
 
 logging:
   level: "INFO"
@@ -840,6 +897,39 @@ echo ""
 
 WEB_H="${WEB_HOST:-127.0.0.1}"
 WEB_P="${WEB_PORT:-8080}"
+
+# ── What you need to do next ──────────────────────────────────
+_has_next_steps=false
+_next_steps=()
+
+# Check if LLM endpoint was unreachable during diagnostics
+if [[ -f "$CONFIG" ]]; then
+  _cfg_base_url=$(grep 'base_url:' "$CONFIG" | head -1 | sed "s/.*base_url: *['\"]//;s/['\"].*//")
+  if [[ -n "$_cfg_base_url" ]]; then
+    if ! curl -sf --connect-timeout 3 "${_cfg_base_url}/models" \
+         -H "Authorization: Bearer ${_api_key:-}" > /dev/null 2>&1; then
+      _has_next_steps=true
+      _next_steps+=("Start your LLM inference backend before launching Wintermute")
+      _next_steps+=("  Configured endpoint: ${C_WHITE}${_cfg_base_url}${C_RESET}")
+    fi
+  fi
+fi
+
+if $MATRIX_ENABLED; then
+  _has_next_steps=true
+  _next_steps+=("On first start, check the logs for a cross-signing approval URL")
+  _next_steps+=("  Open it in your browser, approve, then restart Wintermute once")
+  _next_steps+=("Invite the bot (${C_WHITE}${MATRIX_USER:-}${C_RESET}) to a Matrix room after it starts")
+fi
+
+if $_has_next_steps; then
+  echo -e "  ${C_BOLD}── Before you start ──${C_RESET}"
+  echo ""
+  for _step in "${_next_steps[@]}"; do
+    echo -e "  ${C_YELLOW}▸${C_RESET}  ${_step}"
+  done
+  echo ""
+fi
 
 if $SYSTEMD_INSTALLED; then
   echo ""
