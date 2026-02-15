@@ -1719,6 +1719,7 @@ class WebInterface:
                 "compaction": _provider_dict(mc.compaction),
                 "sub_sessions": _provider_dict(mc.sub_sessions),
                 "dreaming": _provider_dict(mc.dreaming),
+                "supervisor": _provider_dict(mc.supervisor),
             })
         elif self._llm_cfg:
             return self._json({"main": _provider_dict(self._llm_cfg)})

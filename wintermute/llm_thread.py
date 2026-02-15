@@ -108,14 +108,15 @@ class MultiProviderConfig:
     """Per-purpose LLM provider configurations.
 
     Each field holds a fully-resolved ProviderConfig.  Auxiliary purposes
-    (compaction, sub_sessions, dreaming) inherit unset fields from *main*
-    at config-build time, so by the time this object exists every field in
-    every ProviderConfig is populated.
+    (compaction, sub_sessions, dreaming, supervisor) inherit unset fields
+    from *main* at config-build time, so by the time this object exists
+    every field in every ProviderConfig is populated.
     """
     main: ProviderConfig
     compaction: ProviderConfig
     sub_sessions: ProviderConfig
     dreaming: ProviderConfig
+    supervisor: ProviderConfig
 
 
 @dataclass
@@ -144,7 +145,8 @@ class LLMThread:
     def __init__(self, config: ProviderConfig, broadcast_fn,
                  sub_session_manager: "Optional[SubSessionManager]" = None,
                  multi_cfg: Optional[MultiProviderConfig] = None,
-                 clients: Optional[dict[str, AsyncOpenAI]] = None) -> None:
+                 clients: Optional[dict[str, AsyncOpenAI]] = None,
+                 supervisor_enabled: bool = True) -> None:
         self._cfg = config
         self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)
         self._sub_sessions = sub_session_manager  # set post-init via inject_sub_session_manager
@@ -160,6 +162,14 @@ class LLMThread:
         else:
             self._compaction_cfg = config
             self._compaction_client = self._client
+        # Supervisor uses its own dedicated provider/client.
+        self._supervisor_enabled = supervisor_enabled
+        if multi_cfg and clients:
+            self._supervisor_cfg = multi_cfg.supervisor
+            self._supervisor_client = clients.get("supervisor", self._compaction_client)
+        else:
+            self._supervisor_cfg = config
+            self._supervisor_client = self._client
         self._running = False
         # Per-thread compaction summaries: thread_id -> summary text
         self._compaction_summaries: dict[str, Optional[str]] = {}
@@ -254,6 +264,10 @@ class LLMThread:
             if summary:
                 self._compaction_summaries[tid] = summary
         logger.info("LLM thread started (endpoint=%s model=%s)", self._cfg.base_url, self._cfg.model)
+        if self._supervisor_enabled:
+            logger.info("Supervisor enabled (model=%s)", self._supervisor_cfg.model)
+        else:
+            logger.info("Supervisor disabled")
 
         while self._running:
             try:
@@ -329,20 +343,20 @@ class LLMThread:
         event with the ``is_supervisor_correction`` flag set so the loop
         guard prevents infinite re-checking.
         """
-        if not self._sub_sessions:
+        if not self._supervisor_enabled or not self._sub_sessions:
             return
 
         active_sessions = self._sub_sessions.list_active()
 
         try:
             correction = await supervisor_module.check_workflow_consistency(
-                client=self._compaction_client,
-                model=self._compaction_cfg.model,
+                client=self._supervisor_client,
+                model=self._supervisor_cfg.model,
                 user_message=user_message,
                 assistant_response=assistant_response,
                 tool_calls_made=tool_calls_made,
                 active_sessions=active_sessions,
-                reasoning=self._compaction_cfg.reasoning,
+                reasoning=self._supervisor_cfg.reasoning,
             )
         except Exception:  # noqa: BLE001
             logger.exception("Supervisor check raised (non-fatal)")
