@@ -387,6 +387,12 @@ class GeminiCloudClient:
 
             # Parse SSE response
             chunks = self._parse_sse(resp.text)
+            if not chunks:
+                logger.warning("Gemini: no SSE chunks parsed from response (%d bytes)", len(resp.text))
+                logger.debug("Gemini raw response: %.2000s", resp.text)
+            else:
+                logger.debug("Gemini: parsed %d SSE chunks", len(chunks))
+                logger.debug("Gemini first chunk keys: %s", list(chunks[0].keys()) if chunks else "none")
             return self._translate_response(chunks)
 
         raise RuntimeError("Gemini request failed after all retries")
