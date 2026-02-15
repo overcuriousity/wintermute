@@ -169,7 +169,7 @@ function addMsg(role, text, reasoning) {
     const details = document.createElement('details');
     details.className = 'reasoning-toggle';
     const summary = document.createElement('summary');
-    summary.textContent = '\ud83e\udde0 Reasoning (' + reasoning.length + ' chars)';
+    summary.textContent = '\u2699 Reasoning (' + reasoning.length + ' chars)';
     const pre = document.createElement('pre');
     pre.textContent = reasoning;
     details.appendChild(summary);
