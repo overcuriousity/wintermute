@@ -171,6 +171,9 @@ class SubSessionManager:
         # DAG workflow tracking
         self._workflows: dict[str, Workflow] = {}
         self._session_to_workflow: dict[str, str] = {}  # session_id -> workflow_id
+        # Tracks which sessions each worker has spawned (worker_session_id -> [child_ids]).
+        # Used to resolve depends_on_previous without the LLM needing to track IDs.
+        self._worker_spawned: dict[str, list[str]] = {}
         # Tracks parent sub-session IDs whose children have already been aggregated,
         # preventing duplicate delivery when multiple children complete near-simultaneously.
         self._aggregated_parents: set[str] = set()
@@ -191,6 +194,7 @@ class SubSessionManager:
         continuation_depth: int = 0,
         continued_from: Optional[str] = None,
         depends_on: Optional[list[str]] = None,
+        depends_on_previous: bool = False,
         not_before: Optional[str] = None,
     ) -> str:
         """
@@ -201,12 +205,33 @@ class SubSessionManager:
         stays pending and is auto-started once all dependencies finish.
         Results from completed dependencies are prepended to *context_blobs*.
 
+        If *depends_on_previous* is True, the dependency list is automatically
+        populated with all session IDs previously spawned by the same parent
+        worker.  This eliminates the need for the LLM to track and reference
+        session IDs, preventing hallucinated-ID deadlocks.
+
         Pass prior_messages to resume from a previous session's message history
         (used internally by the auto-continuation logic on timeout).
         """
         session_id = f"sub_{uuid.uuid4().hex[:8]}"
         now = datetime.now(timezone.utc).isoformat()
-        raw_deps = depends_on or []
+
+        # Resolve depends_on_previous: automatically depend on all sessions
+        # the calling worker has spawned so far.
+        if depends_on_previous and parent_thread_id:
+            previous = list(self._worker_spawned.get(parent_thread_id, []))
+            raw_deps = previous + (depends_on or [])
+            if previous:
+                logger.info(
+                    "Sub-session %s: depends_on_previous resolved to %s",
+                    session_id, previous,
+                )
+        else:
+            raw_deps = depends_on or []
+
+        # Track this session as a child of its parent worker.
+        if parent_thread_id:
+            self._worker_spawned.setdefault(parent_thread_id, []).append(session_id)
 
         # Validate dependency IDs — strip any that don't correspond to a known
         # session.  This prevents permanent deadlocks caused by hallucinated or

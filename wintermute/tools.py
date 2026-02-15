@@ -96,7 +96,17 @@ TOOL_SCHEMAS = [
                     "items": {"type": "string"},
                     "description": (
                         "Session IDs that must complete first. Their results are "
-                        "auto-passed as context to this worker."
+                        "auto-passed as context to this worker. "
+                        "Prefer depends_on_previous over manually listing IDs."
+                    ),
+                },
+                "depends_on_previous": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, automatically depend on ALL sessions you have "
+                        "spawned so far in this worker context. Their results are "
+                        "auto-passed as context. Use this instead of manually "
+                        "listing session IDs in depends_on to avoid errors."
                     ),
                 },
                 "not_before": {
@@ -442,10 +452,12 @@ def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
             kwargs["timeout"] = int(inputs["timeout"])
         if "depends_on" in inputs:
             kwargs["depends_on"] = inputs["depends_on"]
+        if inputs.get("depends_on_previous"):
+            kwargs["depends_on_previous"] = True
         if "not_before" in inputs:
             kwargs["not_before"] = inputs["not_before"]
         session_id = _sub_session_spawn(**kwargs)
-        has_deps = bool(inputs.get("depends_on"))
+        has_deps = bool(inputs.get("depends_on")) or bool(inputs.get("depends_on_previous"))
         has_gate = bool(inputs.get("not_before"))
         if has_deps or has_gate:
             reasons = []
