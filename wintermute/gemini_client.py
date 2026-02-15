@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -209,7 +210,8 @@ class GeminiCloudClient:
 
         if system_parts:
             body["systemInstruction"] = {
-                "parts": [{"text": "\n\n".join(system_parts)}]
+                "role": "user",
+                "parts": [{"text": "\n\n".join(system_parts)}],
             }
 
         # Translate tools
@@ -329,8 +331,7 @@ class GeminiCloudClient:
         body = {
             "model": model,
             "project": project_id,
-            "userAgent": "wintermute",
-            "requestType": "agent",
+            "user_prompt_id": str(uuid.uuid4()),
             "request": inner,
         }
         backoff = INITIAL_BACKOFF

@@ -322,41 +322,83 @@ def run_oauth_flow(client_id: str, client_secret: str) -> dict:
 
 
 def _discover_project(access_token: str) -> str:
-    """Discover or provision a Cloud Code Assist project."""
+    """Discover or provision a Cloud Code Assist project via loadCodeAssist."""
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
     }
+    metadata = {
+        "ideType": "IDE_UNSPECIFIED",
+        "platform": "PLATFORM_UNSPECIFIED",
+        "pluginType": "GEMINI",
+    }
 
     with httpx.Client(timeout=30) as http_client:
-        # Try to list existing projects
-        resp = http_client.get(
-            f"{CLOUDCODE_ENDPOINT}/v1internal/projects",
-            headers=headers,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            projects = data.get("projects", [])
-            if projects:
-                project_id = projects[0].get("projectId", "")
-                if project_id:
-                    logger.info("Using existing Cloud Code Assist project: %s", project_id)
-                    return project_id
-
-        # Provision a new project
+        # Step 1: loadCodeAssist — discover existing project
         resp = http_client.post(
-            f"{CLOUDCODE_ENDPOINT}/v1internal/projects:provision",
+            f"{CLOUDCODE_ENDPOINT}/v1internal:loadCodeAssist",
             headers=headers,
-            json={},
+            json={"metadata": metadata},
         )
         if resp.status_code == 200:
             data = resp.json()
-            project_id = data.get("projectId", "")
+            project_id = data.get("cloudaicompanionProject", "")
             if project_id:
-                logger.info("Provisioned new Cloud Code Assist project: %s", project_id)
+                logger.info("Using existing Cloud Code Assist project: %s", project_id)
                 return project_id
 
-    # Fallback: return empty and let the API figure it out
+        # Step 2: onboardUser — provision free tier
+        logger.info("No existing project found — onboarding free tier")
+        resp = http_client.post(
+            f"{CLOUDCODE_ENDPOINT}/v1internal:onboardUser",
+            headers=headers,
+            json={
+                "tierId": "free-tier",
+                "metadata": metadata,
+            },
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            # May be a long-running operation
+            op_name = data.get("name", "")
+            if data.get("done"):
+                result = data.get("response", {})
+                project_id = result.get("cloudaicompanionProject", "")
+                if project_id:
+                    logger.info("Provisioned Cloud Code Assist project: %s", project_id)
+                    return project_id
+            elif op_name:
+                # Poll for completion
+                for _ in range(30):
+                    time.sleep(2)
+                    poll = http_client.get(
+                        f"{CLOUDCODE_ENDPOINT}/v1internal/operations/{op_name}",
+                        headers=headers,
+                    )
+                    if poll.status_code != 200:
+                        break
+                    poll_data = poll.json()
+                    if poll_data.get("done"):
+                        result = poll_data.get("response", {})
+                        project_id = result.get("cloudaicompanionProject", "")
+                        if project_id:
+                            logger.info("Provisioned Cloud Code Assist project: %s", project_id)
+                            return project_id
+                        break
+
+        # Retry loadCodeAssist after onboarding
+        resp = http_client.post(
+            f"{CLOUDCODE_ENDPOINT}/v1internal:loadCodeAssist",
+            headers=headers,
+            json={"metadata": metadata},
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            project_id = data.get("cloudaicompanionProject", "")
+            if project_id:
+                logger.info("Using Cloud Code Assist project: %s", project_id)
+                return project_id
+
     logger.warning("Could not discover or provision Cloud Code Assist project")
     return ""
 
