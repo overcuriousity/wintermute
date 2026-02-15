@@ -82,24 +82,28 @@ def _load_prompt(path: Path, default: str) -> str:
 
 
 async def _consolidate(client: AsyncOpenAI, model: str,
-                        label: str, prompt_template: str, content: str) -> str:
+                        label: str, prompt_template: str, content: str,
+                        *, reasoning: bool = False) -> str:
     """Call the LLM to consolidate a single memory component."""
     prompt = prompt_template
     if "{content}" in prompt:
         prompt = prompt.format(content=content)
     else:
         prompt = prompt + "\n\n" + content
+    token_kwarg = ({"max_completion_tokens": 2048} if reasoning
+                   else {"max_tokens": 2048})
     response = await client.chat.completions.create(
         model=model,
-        max_tokens=2048,
         messages=[{"role": "user", "content": prompt}],
+        **token_kwarg,
     )
     result = (response.choices[0].message.content or "").strip()
     logger.debug("Dreaming: %s consolidated (%d -> %d chars)", label, len(content), len(result))
     return result
 
 
-async def run_dream_cycle(client: AsyncOpenAI, model: str) -> None:
+async def run_dream_cycle(client: AsyncOpenAI, model: str,
+                          *, reasoning: bool = False) -> None:
     """
     Run a full nightly consolidation pass over MEMORIES.txt and PULSE.txt.
 
@@ -111,7 +115,8 @@ async def run_dream_cycle(client: AsyncOpenAI, model: str) -> None:
         try:
             mem_prompt = _load_prompt(DREAM_MEMORIES_PROMPT_FILE, _DEFAULT_MEMORIES_PROMPT)
             consolidated = await _consolidate(
-                client, model, "MEMORIES.txt", mem_prompt, memories
+                client, model, "MEMORIES.txt", mem_prompt, memories,
+                reasoning=reasoning,
             )
             if consolidated:
                 prompt_assembler.update_memories(consolidated)
@@ -126,7 +131,8 @@ async def run_dream_cycle(client: AsyncOpenAI, model: str) -> None:
         try:
             pulse_prompt = _load_prompt(DREAM_PULSE_PROMPT_FILE, _DEFAULT_PULSE_PROMPT)
             consolidated = await _consolidate(
-                client, model, "PULSE.txt", pulse_prompt, pulse
+                client, model, "PULSE.txt", pulse_prompt, pulse,
+                reasoning=reasoning,
             )
             if consolidated:
                 prompt_assembler.update_pulse(consolidated)
@@ -147,11 +153,13 @@ class DreamingLoop:
     def __init__(self, config: DreamingConfig,
                  llm_client: AsyncOpenAI,
                  llm_model: str,
-                 compaction_model: Optional[str] = None) -> None:
+                 compaction_model: Optional[str] = None,
+                 reasoning: bool = False) -> None:
         self._cfg = config
         self._client = llm_client
         # Resolve model: dreaming config override > compaction_model > main model
         self._model = config.model or compaction_model or llm_model
+        self._reasoning = reasoning
         self._running = False
 
     async def run(self) -> None:
@@ -176,7 +184,8 @@ class DreamingLoop:
             return
         logger.info("Dreaming: starting nightly consolidation (model=%s)", self._model)
         try:
-            await run_dream_cycle(client=self._client, model=self._model)
+            await run_dream_cycle(client=self._client, model=self._model,
+                                  reasoning=self._reasoning)
             logger.info("Dreaming: nightly consolidation complete")
         except Exception as exc:  # noqa: BLE001
             logger.exception("Dreaming: nightly consolidation failed: %s", exc)

@@ -419,10 +419,12 @@ class LLMThread:
             summary_prompt = compaction_prompt + history_text
 
         compact_model = self._cfg.compaction_model or self._cfg.model
+        token_kwarg = ({"max_completion_tokens": 2048} if self._cfg.reasoning
+                       else {"max_tokens": 2048})
         summary_response = await self._client.chat.completions.create(
             model=compact_model,
-            max_tokens=2048,
             messages=[{"role": "user", "content": summary_prompt}],
+            **token_kwarg,
         )
         summary = (summary_response.choices[0].message.content or "").strip()
 

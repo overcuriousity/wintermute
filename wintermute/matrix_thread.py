@@ -940,7 +940,8 @@ class MatrixThread:
 
         await self.send_message("Starting dream cycle...", thread_id)
         try:
-            await dreaming.run_dream_cycle(client=dl._client, model=dl._model)
+            await dreaming.run_dream_cycle(client=dl._client, model=dl._model,
+                                              reasoning=dl._reasoning)
         except Exception as exc:
             await self.send_message(f"Dream cycle failed: {exc}", thread_id)
             return

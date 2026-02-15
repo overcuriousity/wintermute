@@ -256,6 +256,7 @@ async def main() -> None:
         llm_client=llm._client,
         llm_model=llm_cfg.model,
         compaction_model=llm_cfg.compaction_model,
+        reasoning=llm_cfg.reasoning,
     )
 
     # Inject remaining references for /status and /dream commands.

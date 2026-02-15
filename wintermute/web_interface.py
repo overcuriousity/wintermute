@@ -1481,7 +1481,8 @@ class WebInterface:
 
         await system("Starting dream cycle...")
         try:
-            await dreaming.run_dream_cycle(client=dl._client, model=dl._model)
+            await dreaming.run_dream_cycle(client=dl._client, model=dl._model,
+                                              reasoning=dl._reasoning)
         except Exception as exc:
             await system(f"Dream cycle failed: {exc}")
             return
