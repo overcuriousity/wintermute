@@ -535,6 +535,7 @@ class SubSessionManager:
         session_id = node.node_id
         node.status = "running"
 
+        existing = self._states.get(session_id)
         state = SubSessionState(
             session_id=session_id,
             objective=node.objective,
@@ -542,7 +543,7 @@ class SubSessionManager:
             root_thread_id=node.root_thread_id,
             system_prompt_mode=node.system_prompt_mode,
             status="running",
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=existing.created_at if existing else datetime.now(timezone.utc).isoformat(),
             nesting_depth=node.nesting_depth,
             messages=list(prior_messages) if prior_messages else [],
             continuation_depth=continuation_depth,
@@ -649,6 +650,7 @@ class SubSessionManager:
         Returns the number of sessions cancelled.
         """
         cancelled = 0
+        needs_resolve: list[str] = []
         for sid, state in list(self._states.items()):
             if state.parent_thread_id != thread_id:
                 continue
@@ -658,12 +660,17 @@ class SubSessionManager:
                     task.cancel()
                     logger.info("Cancelled sub-session %s (thread reset)", sid)
                     cancelled += 1
+                    needs_resolve.append(sid)
             elif state.status == "pending":
                 state.status = "failed"
                 state.error = "Cancelled"
                 state.completed_at = datetime.now(timezone.utc).isoformat()
                 logger.info("Cancelled pending sub-session %s (thread reset)", sid)
                 cancelled += 1
+                needs_resolve.append(sid)
+        # Resolve dependents so nothing stays deadlocked.
+        for sid in needs_resolve:
+            asyncio.ensure_future(self._resolve_dependents(sid))
         return cancelled
 
     def list_active(self) -> list[dict]:
@@ -768,6 +775,16 @@ class SubSessionManager:
                     continuation_depth=state.continuation_depth + 1,
                     continued_from=state.session_id,
                 )
+                # Move the continuation into the original workflow so it
+                # doesn't create an orphaned single-node workflow.
+                orig_wf_id = self._session_to_workflow.get(state.session_id)
+                cont_wf_id = self._session_to_workflow.get(cont_id)
+                if orig_wf_id and cont_wf_id and orig_wf_id != cont_wf_id:
+                    orig_wf = self._workflows.get(orig_wf_id)
+                    cont_wf = self._workflows.pop(cont_wf_id, None)
+                    if orig_wf and cont_wf and cont_id in cont_wf.nodes:
+                        orig_wf.nodes[cont_id] = cont_wf.nodes[cont_id]
+                        self._session_to_workflow[cont_id] = orig_wf_id
                 msg = (
                     f"[SUB-SESSION {state.session_id} TIMEOUT → CONTINUING as {cont_id}]\n"
                     f"Exceeded {timeout}s after {len(state.tool_calls_log)} tool call(s). "

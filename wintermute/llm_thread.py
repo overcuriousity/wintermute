@@ -295,7 +295,9 @@ class LLMThread:
         )
 
         database.save_message("assistant", response_text, thread_id)
-        await self._maybe_summarise_components(thread_id)
+        await self._maybe_summarise_components(
+            thread_id, _from_system_event=item.is_system_event,
+        )
         return response_text
 
     # ------------------------------------------------------------------
@@ -409,7 +411,10 @@ class LLMThread:
     # Component size monitoring
     # ------------------------------------------------------------------
 
-    async def _maybe_summarise_components(self, thread_id: str = "default") -> None:
+    async def _maybe_summarise_components(self, thread_id: str = "default",
+                                            *, _from_system_event: bool = False) -> None:
+        if _from_system_event:
+            return  # Avoid self-reinforcing summarisation loops.
         sizes = prompt_assembler.check_component_sizes()
         for component, oversized in sizes.items():
             if not oversized:

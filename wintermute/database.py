@@ -96,8 +96,8 @@ def archive_messages(before_id: int, thread_id: str = "default") -> None:
             (before_id, thread_id),
         )
         deleted = conn.execute(
-            "DELETE FROM messages WHERE archived=1 AND timestamp < ?",
-            (cutoff,),
+            "DELETE FROM messages WHERE archived=1 AND timestamp < ? AND thread_id=?",
+            (cutoff, thread_id),
         ).rowcount
         conn.commit()
     if deleted:
