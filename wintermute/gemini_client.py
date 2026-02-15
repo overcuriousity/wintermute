@@ -45,6 +45,7 @@ class ToolCall:
     id: str
     type: str = "function"
     function: FunctionCall = None
+    thought_signature: str | None = None  # Gemini thinking models require this
 
 
 @dataclass
@@ -195,19 +196,22 @@ class GeminiCloudClient:
                             fn = tc.get("function", {})
                             fn_name = fn.get("name", "")
                             fn_args = fn.get("arguments", "{}")
+                            thought_sig = tc.get("thought_signature")
                         else:
                             fn_name = tc.function.name
                             fn_args = tc.function.arguments
+                            thought_sig = getattr(tc, "thought_signature", None)
                         try:
                             args_dict = json.loads(fn_args) if isinstance(fn_args, str) else fn_args
                         except json.JSONDecodeError:
                             args_dict = {}
-                        parts.append({
-                            "functionCall": {
-                                "name": fn_name,
-                                "args": args_dict,
-                            }
-                        })
+                        fc_part: dict[str, Any] = {
+                            "name": fn_name,
+                            "args": args_dict,
+                        }
+                        if thought_sig:
+                            fc_part["thoughtSignature"] = thought_sig
+                        parts.append({"functionCall": fc_part})
                 if content:
                     parts.append({"text": content})
             else:
@@ -309,6 +313,7 @@ class GeminiCloudClient:
                                 name=fc.get("name", ""),
                                 arguments=json.dumps(fc.get("args", {})),
                             ),
+                            thought_signature=fc.get("thoughtSignature"),
                         ))
 
                 # Map finish reason
