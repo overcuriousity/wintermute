@@ -17,11 +17,14 @@ Design
     supervisor from re-checking its own correction events (loop guard).
 """
 
+from __future__ import annotations
+
 import json
 import logging
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
-from openai import AsyncOpenAI
+if TYPE_CHECKING:
+    from wintermute.llm_thread import BackendPool
 
 logger = logging.getLogger(__name__)
 
@@ -67,27 +70,21 @@ Rules:
 # ------------------------------------------------------------------
 
 async def check_workflow_consistency(
-    client: AsyncOpenAI,
-    model: str,
+    pool: "BackendPool",
     user_message: str,
     assistant_response: str,
     tool_calls_made: list[str],
     active_sessions: list[dict],
-    *,
-    max_tokens: int = 150,
-    reasoning: bool = False,
 ) -> Optional[str]:
-    """Run a one-shot supervisor check.
+    """Run a one-shot supervisor check with automatic backend failover.
 
     Returns a corrective prompt string if a hallucination is detected,
     or *None* if the response is consistent with reality.
 
     Parameters
     ----------
-    client : AsyncOpenAI
-        The LLM client to use for the supervisor check.
-    model : str
-        Model name for the supervisor call.
+    pool : BackendPool
+        Backend pool for the supervisor role (handles failover).
     user_message : str
         The user's most recent message (truncated for cost).
     assistant_response : str
@@ -96,10 +93,6 @@ async def check_workflow_consistency(
         Tool function names actually invoked during this inference round.
     active_sessions : list[dict]
         Output of SubSessionManager.list_active().
-    max_tokens : int
-        Max tokens for the supervisor response.
-    reasoning : bool
-        Whether the supervisor model uses reasoning tokens.
     """
     # Quick exit: if spawn_sub_session WAS called, nothing to check.
     if "spawn_sub_session" in tool_calls_made:
@@ -120,18 +113,11 @@ async def check_workflow_consistency(
     }
 
     try:
-        token_kwarg = (
-            {"max_completion_tokens": max_tokens}
-            if reasoning
-            else {"max_tokens": max_tokens}
-        )
-        response = await client.chat.completions.create(
-            model=model,
+        response = await pool.call(
             messages=[
                 {"role": "system", "content": SUPERVISOR_SYSTEM_PROMPT},
                 {"role": "user", "content": json.dumps(context, indent=2)},
             ],
-            **token_kwarg,
         )
 
         raw = (response.choices[0].message.content or "").strip()

@@ -65,10 +65,9 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Callable, Coroutine, Optional
 
-from openai import AsyncOpenAI
-
 from wintermute import prompt_assembler
 from wintermute import tools as tool_module
+from wintermute.llm_thread import BackendPool
 
 logger = logging.getLogger(__name__)
 
@@ -152,19 +151,18 @@ class SubSessionManager:
     Injected dependencies
     ---------------------
     client             – shared AsyncOpenAI instance (no extra connections)
-    llm_config         – LLMConfig from the main LLMThread (model, max_tokens, …)
+    pool               – BackendPool for the sub_sessions role (handles failover)
     enqueue_system_event – async callable(text: str, thread_id: str) that injects
                            a result back into a parent thread's queue
     """
 
     def __init__(
         self,
-        client: AsyncOpenAI,
-        llm_config,                          # wintermute.llm_thread.LLMConfig
+        pool: BackendPool,
         enqueue_system_event: Callable[..., Coroutine],
     ) -> None:
-        self._client = client
-        self._cfg = llm_config
+        self._pool = pool
+        self._cfg = pool.primary
         self._enqueue = enqueue_system_event
         self._states: dict[str, SubSessionState] = {}
         self._tasks: dict[str, asyncio.Task] = {}
@@ -1010,20 +1008,10 @@ class SubSessionManager:
                 {"role": "user",   "content": state.objective},
             ]
 
-        # Build token-limit kwargs based on whether reasoning mode is active.
-        token_kwargs = {}
-        if getattr(self._cfg, "reasoning", False):
-            token_kwargs["max_completion_tokens"] = self._cfg.max_tokens
-        else:
-            token_kwargs["max_tokens"] = self._cfg.max_tokens
-
         while True:
-            response = await self._client.chat.completions.create(
-                model=self._cfg.model,
-                tools=tool_schemas,
-                tool_choice="auto",
+            response = await self._pool.call(
                 messages=state.messages,
-                **token_kwargs,
+                tools=tool_schemas,
             )
 
             choice = response.choices[0]

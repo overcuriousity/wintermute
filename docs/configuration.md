@@ -33,49 +33,65 @@ web:
   host: "127.0.0.1"                       # Use 0.0.0.0 to listen on all interfaces
   port: 8080
 
-# ── LLM ───────────────────────────────────────────────────────────
-# Any OpenAI-compatible endpoint: Ollama, vLLM, LM Studio, OpenAI, etc.
-llm:
-  base_url: "http://localhost:11434/v1"   # Ollama default
-  api_key: "ollama"                        # Use "ollama" for Ollama, actual key for OpenAI etc.
-  model: "qwen2.5:72b"                    # Any model name the endpoint accepts
-  context_size: 32768                      # Total token window the model supports
-  max_tokens: 4096                         # Maximum tokens in a single response
-  # Per-purpose overrides. Unspecified fields inherit from the parent llm: block.
-  compaction:
+# ── Inference Backends ─────────────────────────────────────────────
+# Named backend definitions. Each describes one endpoint+model combination.
+# Referenced by name in the llm: role mapping.
+inference_backends:
+  - name: "local_large"
+    provider: "openai"                    # "openai" or "gemini-cli"
+    base_url: "http://localhost:11434/v1"
+    api_key: "ollama"
+    model: "qwen2.5:72b"
+    context_size: 32768
+    max_tokens: 4096
+    reasoning: false
+
+  - name: "local_small"
+    provider: "openai"
+    base_url: "http://localhost:11434/v1"
+    api_key: "ollama"
     model: "qwen2.5:7b"
-    # base_url: "https://api.openai.com/v1"
-    # api_key: "sk-..."
-    # context_size: 128000
-    # max_tokens: 2048
-    # reasoning: false
-  # sub_sessions:
-  #   base_url: "https://api.openai.com/v1"
-  #   api_key: "sk-..."
-  #   model: "gpt-4o"
-  #   context_size: 128000
+    context_size: 32768
+    max_tokens: 2048
+    reasoning: false
+
+  # UNSTABLE/ALPHA — gemini-cli piggybacks on Google's Cloud Code Assist
+  # OAuth flow.  Credentials may expire unpredictably.  Not recommended
+  # as your only backend.
+  # - name: "gemini_pro"
+  #   provider: "gemini-cli"
+  #   model: "gemini-2.5-pro"
+  #   context_size: 1048576
   #   max_tokens: 8192
-  #   reasoning: false
-  # dreaming:
-  #   base_url: "https://api.openai.com/v1"
-  #   api_key: "sk-..."
+
+  # - name: "supervisor_backend"
+  #   provider: "openai"
+  #   base_url: "http://localhost:11434/v1"
+  #   api_key: "ollama"
   #   model: "qwen2.5:7b"
   #   context_size: 32768
-  #   max_tokens: 2048
-  #   reasoning: false
-  # supervisor:                              # Post-inference workflow validation
-  #   enabled: true                          # Set to false to disable supervisor checks entirely
-  #   model: "qwen2.5:7b"                   # Cheap/fast model recommended (one-shot JSON check)
-  #   max_tokens: 150                        # Only needs ~150 tokens for a JSON yes/no response
-  #   reasoning: false
+  #   max_tokens: 150
+
+# ── LLM Role Mapping ──────────────────────────────────────────────
+# Maps roles to ordered lists of backend names.
+# Multiple backends = automatic failover on API errors.
+# Empty list [] = disabled (only meaningful for supervisor).
+# Omitted roles default to the first defined backend.
+llm:
+  base: ["local_large"]
+  compaction: ["local_small", "local_large"]
+  sub_sessions: ["local_large"]
+  dreaming: ["local_small"]
+  supervisor: ["local_small"]             # Use [] to disable
 
 # ── Context Compaction ────────────────────────────────────────────
 # Compaction fires when history tokens exceed:
 #   context_size - max_tokens - system_prompt_tokens
-# No separate threshold setting is needed; adjust context_size and max_tokens above.
+# No separate threshold setting is needed; adjust in the backend definition.
 
 # ── Pulse Reviews ─────────────────────────────────────────────────
 pulse:
+  enabled: true                           # Set to false to disable pulse reviews
   review_interval_minutes: 60             # How often to auto-review PULSE.txt
 
 # ── Component Size Limits ─────────────────────────────────────────
@@ -103,23 +119,75 @@ logging:
 
 ## Section Details
 
-### `llm`
+### `inference_backends`
+
+A list of named backend definitions. Each entry describes one LLM endpoint+model
+combination that can be referenced by name in the `llm` role mapping.
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `provider` | no | `"openai"` | `"openai"` (any OpenAI-compatible endpoint) or `"gemini-cli"` (Google Cloud Code Assist via gemini-cli) |
+| `name` | yes | — | Unique name for this backend (referenced in `llm` role mapping) |
+| `provider` | no | `"openai"` | `"openai"` (any OpenAI-compatible endpoint) or `"gemini-cli"` |
 | `base_url` | openai only | — | OpenAI-compatible API base URL (not needed for `gemini-cli`) |
-| `api_key` | openai only | — | API key, use `"ollama"` for Ollama (not needed for `gemini-cli`) |
+| `api_key` | openai only | — | API key (not needed for `gemini-cli`) |
 | `model` | yes | — | Model name the endpoint accepts |
-| `context_size` | yes | — | Total token window the model supports |
+| `context_size` | no | `32768` | Total token window the model supports |
 | `max_tokens` | no | `4096` | Maximum tokens per response |
 | `reasoning` | no | `false` | Enable reasoning/thinking token support |
-| `compaction` | no | — | Override block for compaction (partial; inherits from parent) |
-| `sub_sessions` | no | — | Override block for sub-sessions (partial; inherits from parent) |
-| `dreaming` | no | — | Override block for dreaming (partial; inherits from parent) |
-| `supervisor` | no | — | Override block for supervisor (partial; inherits from parent) |
+
+### `llm`
+
+Maps roles to ordered lists of backend names. Each role specifies which
+`inference_backends` entries to use, in priority order. If the first backend
+fails (API error, timeout), the next one is tried automatically.
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `base` | no | first backend | Primary conversation inference |
+| `compaction` | no | first backend | Context history summarisation |
+| `sub_sessions` | no | first backend | Background sub-session workers |
+| `dreaming` | no | first backend | Nightly memory consolidation |
+| `supervisor` | no | first backend | Post-inference workflow validation; `[]` to disable |
+
+**Failover:** When multiple backends are listed, they are tried in order on
+API errors. The first backend's `context_size` is used for token budget
+calculations.
+
+**Disabling a role:** Set `supervisor: []` to disable supervisor checks
+entirely. Other roles should not be empty.
+
+#### Example: mixed providers
+
+```yaml
+inference_backends:
+  - name: "gemini"
+    provider: "gemini-cli"
+    model: "gemini-2.5-pro"
+    context_size: 1048576
+    max_tokens: 8192
+
+  - name: "ollama_small"
+    provider: "openai"
+    base_url: "http://localhost:11434/v1"
+    api_key: "ollama"
+    model: "qwen2.5:7b"
+    context_size: 32768
+    max_tokens: 2048
+
+llm:
+  base: ["gemini"]
+  compaction: ["ollama_small"]
+  sub_sessions: ["gemini", "ollama_small"]   # failover
+  dreaming: ["ollama_small"]
+  supervisor: ["ollama_small"]
+```
 
 #### Provider: `gemini-cli`
+
+> **Unstable / Alpha** — The `gemini-cli` provider piggybacks on Google's
+> Cloud Code Assist OAuth flow. Credentials may expire unpredictably and
+> the upstream API surface may change without notice. Suitable for
+> experimentation; not recommended as your only backend.
 
 Uses Google's Cloud Code Assist API via credentials extracted from a locally-installed
 [gemini-cli](https://github.com/google/gemini-cli) (`npm i -g @google/gemini-cli`).
@@ -136,39 +204,16 @@ Wintermute auto-probes common NVM/Volta paths at startup. See
 [installation.md — Systemd / headless service](installation.md#systemd--headless-service)
 if using a non-standard Node installation.
 
-Mixed configurations work — e.g. `main` on gemini-cli with `compaction` on local Ollama:
-
-```yaml
-llm:
-  provider: "gemini-cli"
-  model: "gemini-2.5-pro"
-  context_size: 1048576
-  max_tokens: 8192
-  compaction:
-    provider: "openai"
-    base_url: "http://localhost:11434/v1"
-    api_key: "ollama"
-    model: "qwen2.5:7b"
-    context_size: 32768
-```
-
 ### `llm.supervisor`
 
 Post-inference workflow validation. A lightweight one-shot LLM check that detects
 when the main model claims to have started a background session without actually
 calling `spawn_sub_session`. Runs asynchronously after the reply is delivered
-(zero added latency on the happy path). Inherits from the parent `llm` block when
-no explicit overrides are given; a cheap/fast model override is recommended.
+(zero added latency on the happy path).
 
-| Key | Required | Default | Description |
-|-----|----------|---------|-------------|
-| `enabled` | no | `true` | Set to `false` to disable supervisor checks entirely |
-| `base_url` | no | inherits | API endpoint (inherits from parent `llm` block) |
-| `api_key` | no | inherits | API key (inherits from parent `llm` block) |
-| `model` | no | inherits | Model name; a cheap/fast model is recommended |
-| `context_size` | no | inherits | Token window (inherits from parent `llm` block) |
-| `max_tokens` | no | inherits | Max response tokens; `150` is sufficient for the JSON check |
-| `reasoning` | no | `false` | Enable reasoning token support |
+To disable, set `supervisor: []` in the `llm` section. For optimal cost, create
+a dedicated backend with `max_tokens: 150` (the supervisor only produces a small
+JSON response).
 
 ### `matrix`
 
@@ -196,6 +241,7 @@ See [matrix-setup.md](matrix-setup.md) for full setup instructions.
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
+| `enabled` | no | `true` | Enable/disable periodic pulse reviews |
 | `review_interval_minutes` | no | `60` | Minutes between automatic pulse reviews |
 
 ### `dreaming`

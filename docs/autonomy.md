@@ -11,7 +11,7 @@ A nightly consolidation pass that reviews and prunes MEMORIES.txt and PULSE.txt.
 - Fires at a configurable hour (default: 01:00 UTC)
 - Uses a direct LLM API call — no tool loop, no conversation side effects
 - Each component is consolidated independently (a failure in one doesn't abort the other)
-- Can use a dedicated model (falls back to `compaction_model`, then main `model`)
+- Can use a dedicated backend (configured via `llm.dreaming` in `config.yaml`)
 - Manually triggerable via the `/dream` command
 
 **Consolidation logic:**

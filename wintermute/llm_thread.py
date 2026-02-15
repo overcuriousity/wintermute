@@ -21,8 +21,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Optional
 
-from openai import AsyncOpenAI
-
 from pathlib import Path
 
 from wintermute import database
@@ -91,6 +89,7 @@ def _count_tokens(text: str, model: str) -> int:
 
 @dataclass
 class ProviderConfig:
+    name: str               # unique backend name from inference_backends
     model: str
     context_size: int       # total token window the model supports (e.g. 65536)
     max_tokens: int = 4096  # maximum tokens in a single response
@@ -100,24 +99,89 @@ class ProviderConfig:
     base_url: str = ""       # e.g. http://localhost:11434/v1  or  https://api.openai.com/v1
 
 
-# Backward-compatible alias.
-LLMConfig = ProviderConfig
+
+class BackendPool:
+    """Ordered list of LLM backends for a role, with automatic failover.
+
+    On API errors the next backend in the list is tried automatically.
+    An empty pool (``len(pool) == 0``) signals "disabled" — relevant for
+    optional roles like supervisor.
+    """
+
+    def __init__(self, backends: "list[tuple[ProviderConfig, object]]") -> None:
+        self._backends = backends
+
+    # -- Convenience accessors ------------------------------------------------
+
+    @property
+    def primary(self) -> ProviderConfig:
+        """Primary (first) backend config — used for context_size, model name, etc."""
+        return self._backends[0][0]
+
+    @property
+    def primary_client(self) -> object:
+        """Primary (first) client instance."""
+        return self._backends[0][1]
+
+    @property
+    def enabled(self) -> bool:
+        return len(self._backends) > 0
+
+    def __len__(self) -> int:
+        return len(self._backends)
+
+    # -- API call with failover -----------------------------------------------
+
+    async def call(self, *, messages: list[dict],
+                   tools: "list[dict] | None" = None,
+                   max_tokens_override: "int | None" = None,
+                   **extra_kwargs) -> object:
+        """Call ``chat.completions.create`` with automatic failover.
+
+        Each backend uses its own model, max_tokens, and reasoning setting.
+        *max_tokens_override* replaces the backend's configured max_tokens
+        (useful for compaction's hard-coded 2048).
+        """
+        last_error: Exception | None = None
+        for cfg, client in self._backends:
+            call_kwargs: dict = {"model": cfg.model, "messages": messages}
+            if tools is not None:
+                call_kwargs["tools"] = tools
+                call_kwargs["tool_choice"] = "auto"
+            max_tok = max_tokens_override if max_tokens_override is not None else cfg.max_tokens
+            if cfg.reasoning:
+                call_kwargs["max_completion_tokens"] = max_tok
+            else:
+                call_kwargs["max_tokens"] = max_tok
+            call_kwargs.update(extra_kwargs)
+            try:
+                return await client.chat.completions.create(**call_kwargs)
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                backend_desc = f"'{cfg.name}' ({cfg.model})"
+                if len(self._backends) > 1:
+                    logger.warning("Backend %s failed: %s — trying next", backend_desc, exc)
+                else:
+                    raise
+        raise last_error  # type: ignore[misc]
 
 
 @dataclass
 class MultiProviderConfig:
-    """Per-purpose LLM provider configurations.
+    """Per-purpose LLM backend pools.
 
-    Each field holds a fully-resolved ProviderConfig.  Auxiliary purposes
-    (compaction, sub_sessions, dreaming, supervisor) inherit unset fields
-    from *main* at config-build time, so by the time this object exists
-    every field in every ProviderConfig is populated.
+    Configured via ``inference_backends`` (named backend definitions) and
+    ``llm`` (role-to-backend-name mapping).  Each field holds an ordered
+    list of ProviderConfig objects; the runtime BackendPool is built from
+    these lists plus the corresponding clients.
+
+    An empty list for *supervisor* means "disabled".
     """
-    main: ProviderConfig
-    compaction: ProviderConfig
-    sub_sessions: ProviderConfig
-    dreaming: ProviderConfig
-    supervisor: ProviderConfig
+    main: list[ProviderConfig]
+    compaction: list[ProviderConfig]
+    sub_sessions: list[ProviderConfig]
+    dreaming: list[ProviderConfig]
+    supervisor: list[ProviderConfig]
 
 
 @dataclass
@@ -143,34 +207,17 @@ class _QueueItem:
 class LLMThread:
     """Runs as an asyncio task within the shared event loop."""
 
-    def __init__(self, config: ProviderConfig, broadcast_fn,
-                 sub_session_manager: "Optional[SubSessionManager]" = None,
-                 multi_cfg: Optional[MultiProviderConfig] = None,
-                 clients: Optional[dict[str, AsyncOpenAI]] = None,
-                 supervisor_enabled: bool = True) -> None:
-        self._cfg = config
+    def __init__(self, main_pool: BackendPool, compaction_pool: BackendPool,
+                 supervisor_pool: BackendPool, broadcast_fn,
+                 sub_session_manager: "Optional[SubSessionManager]" = None) -> None:
+        self._main_pool = main_pool
+        self._compaction_pool = compaction_pool
+        self._supervisor_pool = supervisor_pool
+        # Convenience: primary config for context_size / model name lookups.
+        self._cfg = main_pool.primary
         self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)
         self._sub_sessions = sub_session_manager  # set post-init via inject_sub_session_manager
         self._queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
-        self._client = (clients or {}).get("main") or AsyncOpenAI(
-            api_key=config.api_key,
-            base_url=config.base_url,
-        )
-        # Compaction may use a different provider/client.
-        if multi_cfg and clients:
-            self._compaction_cfg = multi_cfg.compaction
-            self._compaction_client = clients.get("compaction", self._client)
-        else:
-            self._compaction_cfg = config
-            self._compaction_client = self._client
-        # Supervisor uses its own dedicated provider/client.
-        self._supervisor_enabled = supervisor_enabled
-        if multi_cfg and clients:
-            self._supervisor_cfg = multi_cfg.supervisor
-            self._supervisor_client = clients.get("supervisor", self._compaction_client)
-        else:
-            self._supervisor_cfg = config
-            self._supervisor_client = self._client
         self._running = False
         # Per-thread compaction summaries: thread_id -> summary text
         self._compaction_summaries: dict[str, Optional[str]] = {}
@@ -265,8 +312,8 @@ class LLMThread:
             if summary:
                 self._compaction_summaries[tid] = summary
         logger.info("LLM thread started (endpoint=%s model=%s)", self._cfg.base_url, self._cfg.model)
-        if self._supervisor_enabled:
-            logger.info("Supervisor enabled (model=%s)", self._supervisor_cfg.model)
+        if self._supervisor_pool.enabled:
+            logger.info("Supervisor enabled (model=%s)", self._supervisor_pool.primary.model)
         else:
             logger.info("Supervisor disabled")
 
@@ -352,21 +399,18 @@ class LLMThread:
         event with the ``is_supervisor_correction`` flag set so the loop
         guard prevents infinite re-checking.
         """
-        if not self._supervisor_enabled or not self._sub_sessions:
+        if not self._supervisor_pool.enabled or not self._sub_sessions:
             return
 
         active_sessions = self._sub_sessions.list_active()
 
         try:
             correction = await supervisor_module.check_workflow_consistency(
-                client=self._supervisor_client,
-                model=self._supervisor_cfg.model,
+                pool=self._supervisor_pool,
                 user_message=user_message,
                 assistant_response=assistant_response,
                 tool_calls_made=tool_calls_made,
                 active_sessions=active_sessions,
-                max_tokens=self._supervisor_cfg.max_tokens,
-                reasoning=self._supervisor_cfg.reasoning,
             )
         except Exception:  # noqa: BLE001
             logger.exception("Supervisor check raised (non-fatal)")
@@ -438,19 +482,6 @@ class LLMThread:
     # OpenAI inference loop (handles tool-use rounds)
     # ------------------------------------------------------------------
 
-    def _build_api_kwargs(self, *, disable_tools: bool = False) -> dict:
-        """Build keyword arguments for chat.completions.create based on config."""
-        kwargs: dict = {"model": self._cfg.model}
-        if self._cfg.reasoning:
-            # Reasoning models (o1/o3/DeepSeek R1) use max_completion_tokens.
-            kwargs["max_completion_tokens"] = self._cfg.max_tokens
-        else:
-            kwargs["max_tokens"] = self._cfg.max_tokens
-        if not disable_tools:
-            kwargs["tools"] = tool_module.TOOL_SCHEMAS
-            kwargs["tool_choice"] = "auto"
-        return kwargs
-
     @staticmethod
     def _extract_reasoning(message) -> Optional[str]:
         """Extract reasoning/thinking content from a response message, if present."""
@@ -469,14 +500,14 @@ class LLMThread:
         (not stored in the DB so it stays fresh on every inference).
         """
         full_messages = [{"role": "system", "content": system_prompt}] + messages
-        api_kwargs = self._build_api_kwargs(disable_tools=disable_tools)
+        tools = None if disable_tools else tool_module.TOOL_SCHEMAS
         reasoning_parts: list[str] = []
         tool_calls_made: list[str] = []
 
         while True:
-            response = await self._client.chat.completions.create(
+            response = await self._main_pool.call(
                 messages=full_messages,
-                **api_kwargs,
+                tools=tools,
             )
 
             choice = response.choices[0]
@@ -543,13 +574,9 @@ class LLMThread:
         else:
             summary_prompt = compaction_prompt + history_text
 
-        compact_model = self._compaction_cfg.model
-        token_kwarg = ({"max_completion_tokens": 2048} if self._compaction_cfg.reasoning
-                       else {"max_tokens": 2048})
-        summary_response = await self._compaction_client.chat.completions.create(
-            model=compact_model,
+        summary_response = await self._compaction_pool.call(
             messages=[{"role": "user", "content": summary_prompt}],
-            **token_kwarg,
+            max_tokens_override=2048,
         )
         summary = (summary_response.choices[0].message.content or "").strip()
 
