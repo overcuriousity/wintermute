@@ -21,7 +21,7 @@ from wintermute import gemini_auth
 
 logger = logging.getLogger(__name__)
 
-CLOUDCODE_URL = "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent"
+CLOUDCODE_BASE = "https://cloudcode-pa.googleapis.com"
 
 # Retry settings
 MAX_RETRIES = 3
@@ -321,6 +321,8 @@ class GeminiCloudClient:
     async def _create(self, **kwargs) -> ChatCompletion:
         """Send an inference request to Cloud Code Assist."""
         body = self._translate_request(**kwargs)
+        model = body.pop("model", "gemini-2.5-pro")
+        url = f"{CLOUDCODE_BASE}/v1internal/models/{model}:streamGenerateContent?alt=sse"
         backoff = INITIAL_BACKOFF
 
         for attempt in range(MAX_RETRIES + 1):
@@ -332,7 +334,7 @@ class GeminiCloudClient:
 
             try:
                 resp = await self._http.post(
-                    f"{CLOUDCODE_URL}?alt=sse",
+                    url,
                     headers=headers,
                     json=body,
                 )
