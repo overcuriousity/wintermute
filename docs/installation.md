@@ -120,6 +120,49 @@ uv run wintermute
 
 The web interface starts at `http://127.0.0.1:8080` by default.
 
+## Gemini CLI Provider (Free Google Models)
+
+Wintermute can use Google's Gemini models for free via the Cloud Code Assist API,
+using credentials from a locally-installed `gemini-cli`.
+
+### Prerequisites
+
+- **Node.js** and **npm** (for installing gemini-cli)
+
+### Setup via setup.sh (recommended)
+
+Run `bash setup.sh` and select option **6) Gemini (via gemini-cli)** when prompted
+for the inference substrate. The script will:
+
+1. Check for (or install) gemini-cli
+2. Prompt for a model (default: `gemini-2.5-pro`)
+3. Run the OAuth flow (opens your browser for Google sign-in)
+4. Write `config.yaml` with `provider: "gemini-cli"`
+
+### Manual setup
+
+```bash
+# 1. Install gemini-cli
+npm install -g @google/gemini-cli
+
+# 2. Run the OAuth setup
+uv run python -m wintermute.gemini_auth
+
+# 3. Configure config.yaml
+```
+
+```yaml
+llm:
+  provider: "gemini-cli"
+  model: "gemini-2.5-pro"
+  context_size: 1048576
+  max_tokens: 8192
+```
+
+Available models: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-3-pro-preview`, `gemini-3-flash-preview`.
+
+Credentials are saved to `data/gemini_credentials.json` and refreshed automatically.
+
 ## Timezone Configuration
 
 Wintermute injects the current local time into every system prompt so the LLM has accurate time awareness. This relies on the `scheduler.timezone` setting in `config.yaml`:

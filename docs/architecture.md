@@ -14,6 +14,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **ReminderScheduler** | `scheduler_thread.py` | APScheduler-based reminder system |
 | **PulseLoop** | `pulse.py` | Periodic autonomous PULSE.txt reviews |
 | **DreamingLoop** | `dreaming.py` | Nightly memory consolidation |
+| **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
 | **PromptAssembler** | `prompt_assembler.py` | Builds system prompts from file components |
 | **Database** | `database.py` | SQLite message persistence and thread management |
 

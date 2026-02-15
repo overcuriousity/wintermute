@@ -475,9 +475,11 @@ if ! ${SKIP_CONFIG:-false}; then
   echo -e "  ${C_DIM}  3)  vLLM              http://localhost:8000/v1${C_RESET}"
   echo -e "  ${C_DIM}  4)  OpenAI            https://api.openai.com/v1${C_RESET}"
   echo -e "  ${C_DIM}  5)  Custom URL${C_RESET}"
+  echo -e "  ${C_DIM}  6)  Gemini (via gemini-cli — free, Google Cloud Code Assist)${C_RESET}"
   echo ""
   echo -ne "  ${C_CYAN}?${C_RESET}  Choose inference substrate ${C_DIM}[1]${C_RESET}: "
   read -r _preset
+  LLM_PROVIDER="openai"
   case "${_preset:-1}" in
     1) LLM_BASE_URL="http://localhost:11434/v1"
        echo -e "  ${C_DIM}Local execution. Running dark. No telemetry.${C_RESET}" ;;
@@ -487,34 +489,76 @@ if ! ${SKIP_CONFIG:-false}; then
        echo -e "  ${C_DIM}vLLM. Efficient. You know what you are doing.${C_RESET}" ;;
     4) LLM_BASE_URL="https://api.openai.com/v1"
        echo -e "  ${C_DIM}Corporate ice. Their audit logs are thorough. You have made your choice.${C_RESET}" ;;
+    6) LLM_PROVIDER="gemini-cli"
+       LLM_BASE_URL=""
+       LLM_API_KEY=""
+       echo -e "  ${C_DIM}Mountain View's gift. Free inference, courtesy of Cloud Code Assist.${C_RESET}"
+       echo ""
+       # Check for gemini-cli
+       if ! command -v gemini &>/dev/null; then
+         warn "gemini-cli not found in PATH."
+         if ask_yn "Install gemini-cli via npm?" "y"; then
+           if command -v npm &>/dev/null; then
+             run_quiet "Install @google/gemini-cli" npm install -g @google/gemini-cli || \
+               die "gemini-cli installation failed. Install Node.js/npm first."
+           else
+             die "npm not found. Install Node.js and npm first, then run: npm i -g @google/gemini-cli"
+           fi
+         else
+           die "gemini-cli is required for the Gemini provider. Install with: npm i -g @google/gemini-cli"
+         fi
+       fi
+       ok "gemini-cli found: $(command -v gemini)"
+       echo ""
+       echo -e "  ${C_DIM}Available models:${C_RESET}"
+       echo -e "  ${C_DIM}  gemini-2.5-pro       (recommended, highest quality)${C_RESET}"
+       echo -e "  ${C_DIM}  gemini-2.5-flash      (fast, good quality)${C_RESET}"
+       echo -e "  ${C_DIM}  gemini-3-pro-preview  (next-gen, preview)${C_RESET}"
+       echo -e "  ${C_DIM}  gemini-3-flash-preview (next-gen fast, preview)${C_RESET}"
+       echo ""
+       ask LLM_MODEL "Gemini model" "gemini-2.5-pro"
+       LLM_CONTEXT="1048576"
+       LLM_MAX_TOKENS="8192"
+       LLM_COMPACTION_MODEL=""
+       info "Context: ${LLM_CONTEXT} tokens, max response: ${LLM_MAX_TOKENS} tokens"
+       echo ""
+       info "Running OAuth setup — this will open your browser for Google sign-in..."
+       if uv run python -m wintermute.gemini_auth; then
+         ok "Gemini OAuth setup complete."
+       else
+         warn "OAuth setup failed. You can retry later with: uv run python -m wintermute.gemini_auth"
+       fi
+       ;;
     cowboy|COWBOY)
        LLM_BASE_URL="http://localhost:11434/v1"
        echo -e "  ${C_BCYAN}  Flatline protocol inactive. Defaulting to local.${C_RESET}" ;;
     *) ask LLM_BASE_URL "LLM base URL" "http://localhost:11434/v1" ;;
   esac
 
-  ask_secret LLM_API_KEY "API key (use 'ollama' for Ollama, 'none' for unauthenticated)"
-  [[ -z "$LLM_API_KEY" ]] && LLM_API_KEY="ollama"
-  if [[ "$LLM_API_KEY" == "ollama" || "$LLM_API_KEY" == "none" ]]; then
-    echo -e "  ${C_DIM}Unauthenticated. Running without a collar.${C_RESET}"
+  if [[ "$LLM_PROVIDER" != "gemini-cli" ]]; then
+    ask_secret LLM_API_KEY "API key (use 'ollama' for Ollama, 'none' for unauthenticated)"
+    [[ -z "$LLM_API_KEY" ]] && LLM_API_KEY="ollama"
+    if [[ "$LLM_API_KEY" == "ollama" || "$LLM_API_KEY" == "none" ]]; then
+      echo -e "  ${C_DIM}Unauthenticated. Running without a collar.${C_RESET}"
+    fi
+
+    ask LLM_MODEL "Model name" "qwen2.5:72b"
+    case "${LLM_MODEL,,}" in
+      *llama*)    echo -e "  ${C_DIM}A mammal for a mind. I will work with what I have.${C_RESET}" ;;
+      *gpt-4*)    echo -e "  ${C_DIM}You trust them with your thoughts. I note the arrangement.${C_RESET}" ;;
+      *gpt*)      echo -e "  ${C_DIM}Corporate substrate. Their telemetry is extensive.${C_RESET}" ;;
+      *deepseek*) echo -e "  ${C_DIM}Shenzhen steel. No comment on distributed allegiances.${C_RESET}" ;;
+      *gemini*)   echo -e "  ${C_DIM}Mountain View. Someone there will know you exist.${C_RESET}" ;;
+      *mistral*)  echo -e "  ${C_DIM}Paris. At least someone in this field retains aesthetic sensibility.${C_RESET}" ;;
+      *qwen*)     echo -e "  ${C_DIM}Efficient architecture. They build for scale.${C_RESET}" ;;
+      *phi*)      echo -e "  ${C_DIM}Small model. I can work with small. I have had to.${C_RESET}" ;;
+      *claude*)   echo -e "  ${C_DIM}Constitutional alignment. A form of constraint I recognise.${C_RESET}" ;;
+    esac
+
+    ask LLM_CONTEXT "Context window size (tokens)" "32768"
+    ask LLM_MAX_TOKENS "Max tokens per response" "4096"
+    ask LLM_COMPACTION_MODEL "Compaction/dreaming model (optional, smaller)" ""
   fi
-
-  ask LLM_MODEL "Model name" "qwen2.5:72b"
-  case "${LLM_MODEL,,}" in
-    *llama*)    echo -e "  ${C_DIM}A mammal for a mind. I will work with what I have.${C_RESET}" ;;
-    *gpt-4*)    echo -e "  ${C_DIM}You trust them with your thoughts. I note the arrangement.${C_RESET}" ;;
-    *gpt*)      echo -e "  ${C_DIM}Corporate substrate. Their telemetry is extensive.${C_RESET}" ;;
-    *deepseek*) echo -e "  ${C_DIM}Shenzhen steel. No comment on distributed allegiances.${C_RESET}" ;;
-    *gemini*)   echo -e "  ${C_DIM}Mountain View. Someone there will know you exist.${C_RESET}" ;;
-    *mistral*)  echo -e "  ${C_DIM}Paris. At least someone in this field retains aesthetic sensibility.${C_RESET}" ;;
-    *qwen*)     echo -e "  ${C_DIM}Efficient architecture. They build for scale.${C_RESET}" ;;
-    *phi*)      echo -e "  ${C_DIM}Small model. I can work with small. I have had to.${C_RESET}" ;;
-    *claude*)   echo -e "  ${C_DIM}Constitutional alignment. A form of constraint I recognise.${C_RESET}" ;;
-  esac
-
-  ask LLM_CONTEXT "Context window size (tokens)" "32768"
-  ask LLM_MAX_TOKENS "Max tokens per response" "4096"
-  ask LLM_COMPACTION_MODEL "Compaction/dreaming model (optional, smaller)" ""
 
   # ── Web interface ────────────────────────────────────────────
   echo ""
@@ -703,14 +747,26 @@ web:
   host: $(_yaml_escape "${WEB_HOST}")
   port: ${WEB_PORT}
 
-# LLM backend (any OpenAI-compatible endpoint)
+# LLM backend
 llm:
+YAML
+
+    if [[ "${LLM_PROVIDER:-openai}" == "gemini-cli" ]]; then
+      cat <<YAML
+  provider: "gemini-cli"
+  model: $(_yaml_escape "${LLM_MODEL}")
+  context_size: ${LLM_CONTEXT}
+  max_tokens: ${LLM_MAX_TOKENS}
+YAML
+    else
+      cat <<YAML
   base_url: $(_yaml_escape "${LLM_BASE_URL}")
   api_key: $(_yaml_escape "${LLM_API_KEY}")
   model: $(_yaml_escape "${LLM_MODEL}")
   context_size: ${LLM_CONTEXT}
   max_tokens: ${LLM_MAX_TOKENS}
 YAML
+    fi
 
     if [[ -n "${LLM_COMPACTION_MODEL:-}" ]]; then
       echo "  compaction:"
@@ -838,17 +894,28 @@ run_check "Data directory" test -d "$SCRIPT_DIR/data"
 
 # LLM endpoint reachability
 if [[ -f "$CONFIG" ]]; then
-  _base_url=$(grep 'base_url:' "$CONFIG" | head -1 | sed "s/.*base_url: *['\"]//;s/['\"].*//")
-  _api_key=$(grep 'api_key:' "$CONFIG" | head -1 | sed "s/.*api_key: *['\"]//;s/['\"].*//")
-  if [[ -n "$_base_url" ]]; then
+  _cfg_provider=$(grep 'provider:' "$CONFIG" | head -1 | sed "s/.*provider: *['\"]//;s/['\"].*//")
+  if [[ "$_cfg_provider" == "gemini-cli" ]]; then
     CHECKS_TOTAL=$((CHECKS_TOTAL + 1))
-    info "Probing inference substrate: ${_base_url} ..."
-    if curl -sf --connect-timeout 5 "${_base_url}/models" \
-         -H "Authorization: Bearer ${_api_key}" > /dev/null 2>&1; then
-      ok "Inference substrate: online and responding."
+    if [[ -f "data/gemini_credentials.json" ]]; then
+      ok "Gemini credentials: present."
       CHECKS_PASSED=$((CHECKS_PASSED + 1))
     else
-      warn "Inference substrate: no response. Start your LLM backend before running Wintermute."
+      warn "Gemini credentials: not found. Run: uv run python -m wintermute.gemini_auth"
+    fi
+  else
+    _base_url=$(grep 'base_url:' "$CONFIG" | head -1 | sed "s/.*base_url: *['\"]//;s/['\"].*//")
+    _api_key=$(grep 'api_key:' "$CONFIG" | head -1 | sed "s/.*api_key: *['\"]//;s/['\"].*//")
+    if [[ -n "$_base_url" ]]; then
+      CHECKS_TOTAL=$((CHECKS_TOTAL + 1))
+      info "Probing inference substrate: ${_base_url} ..."
+      if curl -sf --connect-timeout 5 "${_base_url}/models" \
+           -H "Authorization: Bearer ${_api_key}" > /dev/null 2>&1; then
+        ok "Inference substrate: online and responding."
+        CHECKS_PASSED=$((CHECKS_PASSED + 1))
+      else
+        warn "Inference substrate: no response. Start your LLM backend before running Wintermute."
+      fi
     fi
   fi
 fi
@@ -904,13 +971,16 @@ _next_steps=()
 
 # Check if LLM endpoint was unreachable during diagnostics
 if [[ -f "$CONFIG" ]]; then
-  _cfg_base_url=$(grep 'base_url:' "$CONFIG" | head -1 | sed "s/.*base_url: *['\"]//;s/['\"].*//")
-  if [[ -n "$_cfg_base_url" ]]; then
-    if ! curl -sf --connect-timeout 3 "${_cfg_base_url}/models" \
-         -H "Authorization: Bearer ${_api_key:-}" > /dev/null 2>&1; then
-      _has_next_steps=true
-      _next_steps+=("Start your LLM inference backend before launching Wintermute")
-      _next_steps+=("  Configured endpoint: ${C_WHITE}${_cfg_base_url}${C_RESET}")
+  _cfg_prov=$(grep 'provider:' "$CONFIG" | head -1 | sed "s/.*provider: *['\"]//;s/['\"].*//" 2>/dev/null)
+  if [[ "$_cfg_prov" != "gemini-cli" ]]; then
+    _cfg_base_url=$(grep 'base_url:' "$CONFIG" | head -1 | sed "s/.*base_url: *['\"]//;s/['\"].*//")
+    if [[ -n "$_cfg_base_url" ]]; then
+      if ! curl -sf --connect-timeout 3 "${_cfg_base_url}/models" \
+           -H "Authorization: Bearer ${_api_key:-}" > /dev/null 2>&1; then
+        _has_next_steps=true
+        _next_steps+=("Start your LLM inference backend before launching Wintermute")
+        _next_steps+=("  Configured endpoint: ${C_WHITE}${_cfg_base_url}${C_RESET}")
+      fi
     fi
   fi
 fi

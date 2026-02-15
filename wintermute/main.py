@@ -24,7 +24,7 @@ import logging.handlers
 import signal
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 
@@ -40,6 +40,8 @@ from wintermute.dreaming import DreamingConfig, DreamingLoop
 from wintermute.scheduler_thread import ReminderScheduler, SchedulerConfig
 from wintermute.sub_session import SubSessionManager
 from wintermute.web_interface import WebInterface
+
+logger = logging.getLogger(__name__)
 
 CONFIG_FILE = Path("config.yaml")
 LOG_DIR = Path("logs")
@@ -132,12 +134,13 @@ def _build_provider(base: dict, overrides: dict) -> ProviderConfig:
     """Merge partial *overrides* onto *base* and return a ProviderConfig."""
     merged = {**base, **{k: v for k, v in overrides.items() if v is not None}}
     return ProviderConfig(
-        api_key=merged["api_key"],
-        base_url=merged["base_url"],
         model=merged["model"],
         context_size=merged.get("context_size", 32768),
         max_tokens=merged.get("max_tokens", 4096),
         reasoning=merged.get("reasoning", False),
+        provider=merged.get("provider", "openai"),
+        api_key=merged.get("api_key", ""),
+        base_url=merged.get("base_url", ""),
     )
 
 
@@ -179,17 +182,33 @@ def _build_multi_provider_config(llm_raw: dict) -> MultiProviderConfig:
     )
 
 
-def _make_clients(cfg: MultiProviderConfig) -> dict[str, AsyncOpenAI]:
-    """Create AsyncOpenAI clients, sharing instances when (base_url, api_key) match."""
-    cache: dict[tuple[str, str], AsyncOpenAI] = {}
-    result: dict[str, AsyncOpenAI] = {}
+def _make_clients(cfg: MultiProviderConfig) -> dict[str, Any]:
+    """Create LLM clients, sharing instances when config matches.
+
+    Returns AsyncOpenAI instances for ``provider="openai"`` and
+    GeminiCloudClient instances for ``provider="gemini-cli"``.  Both
+    expose the same ``client.chat.completions.create()`` interface.
+    """
+    cache: dict = {}
+    result: dict[str, Any] = {}
     for purpose, pcfg in [("main", cfg.main), ("compaction", cfg.compaction),
                           ("sub_sessions", cfg.sub_sessions), ("dreaming", cfg.dreaming),
                           ("supervisor", cfg.supervisor)]:
-        key = (pcfg.base_url, pcfg.api_key)
-        if key not in cache:
-            cache[key] = AsyncOpenAI(api_key=pcfg.api_key, base_url=pcfg.base_url)
-        result[purpose] = cache[key]
+        if pcfg.provider == "gemini-cli":
+            key = ("gemini-cli",)
+            if key not in cache:
+                from wintermute import gemini_auth, gemini_client
+                creds = gemini_auth.load_credentials()
+                if not creds:
+                    logger.info("No Gemini credentials found — running interactive setup")
+                    creds = gemini_auth.setup()
+                cache[key] = gemini_client.GeminiCloudClient(creds)
+            result[purpose] = cache[key]
+        else:
+            key = (pcfg.base_url, pcfg.api_key)
+            if key not in cache:
+                cache[key] = AsyncOpenAI(api_key=pcfg.api_key, base_url=pcfg.base_url)
+            result[purpose] = cache[key]
     return result
 
 

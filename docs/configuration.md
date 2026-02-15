@@ -107,8 +107,9 @@ logging:
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `base_url` | yes | — | OpenAI-compatible API base URL |
-| `api_key` | yes | — | API key (use `"ollama"` for Ollama) |
+| `provider` | no | `"openai"` | `"openai"` (any OpenAI-compatible endpoint) or `"gemini-cli"` (Google Cloud Code Assist via gemini-cli) |
+| `base_url` | openai only | — | OpenAI-compatible API base URL (not needed for `gemini-cli`) |
+| `api_key` | openai only | — | API key, use `"ollama"` for Ollama (not needed for `gemini-cli`) |
 | `model` | yes | — | Model name the endpoint accepts |
 | `context_size` | yes | — | Total token window the model supports |
 | `max_tokens` | no | `4096` | Maximum tokens per response |
@@ -117,6 +118,34 @@ logging:
 | `sub_sessions` | no | — | Override block for sub-sessions (partial; inherits from parent) |
 | `dreaming` | no | — | Override block for dreaming (partial; inherits from parent) |
 | `supervisor` | no | — | Override block for supervisor (partial; inherits from parent) |
+
+#### Provider: `gemini-cli`
+
+Uses Google's Cloud Code Assist API via credentials extracted from a locally-installed
+[gemini-cli](https://github.com/google/gemini-cli) (`npm i -g @google/gemini-cli`).
+This provides free access to Gemini models (2.5 Flash/Pro, 3 Flash/Pro).
+
+When `provider: "gemini-cli"` is set, `base_url` and `api_key` are not needed.
+Authentication is handled via OAuth — run `uv run python -m wintermute.gemini_auth`
+to set up credentials, or select the Gemini option during `setup.sh`.
+
+Available models: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-3-pro-preview`, `gemini-3-flash-preview`.
+
+Mixed configurations work — e.g. `main` on gemini-cli with `compaction` on local Ollama:
+
+```yaml
+llm:
+  provider: "gemini-cli"
+  model: "gemini-2.5-pro"
+  context_size: 1048576
+  max_tokens: 8192
+  compaction:
+    provider: "openai"
+    base_url: "http://localhost:11434/v1"
+    api_key: "ollama"
+    model: "qwen2.5:7b"
+    context_size: 32768
+```
 
 ### `llm.supervisor`
 

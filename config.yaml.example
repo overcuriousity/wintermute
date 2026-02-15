@@ -23,7 +23,7 @@ web:
   port: 8080
 
 llm:
-  # Any OpenAI-compatible endpoint. Examples:
+  # --- Option A: OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI, etc.) ---
   #   Ollama local:   http://localhost:11434/v1
   #   vLLM:          http://localhost:8000/v1
   #   LM Studio:     http://localhost:1234/v1
@@ -33,6 +33,14 @@ llm:
   model: "qwen2.5:72b"                     # Any model name the endpoint accepts
   context_size: 32768                      # Total token window the model supports
   max_tokens: 4096                         # Maximum tokens in a single response
+
+  # --- Option B: Google Gemini via gemini-cli (free, requires `npm i -g @google/gemini-cli`) ---
+  # Uncomment below and comment out Option A to use Gemini via Cloud Code Assist.
+  # Run `uv run python -m wintermute.gemini_auth` to authenticate, or let setup.sh handle it.
+  # provider: "gemini-cli"
+  # model: "gemini-2.5-pro"
+  # context_size: 1048576
+  # max_tokens: 8192
   # Enable for reasoning/thinking models (OpenAI o1/o3, DeepSeek R1, QwQ, etc.).
   # Uses max_completion_tokens instead of max_tokens and extracts reasoning tokens.
   # Reasoning is shown in the web UI but hidden from Matrix to reduce noise.

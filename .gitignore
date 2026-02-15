@@ -11,6 +11,7 @@ data/matrix_crypto.db-wal
 data/matrix_crypto.db-shm
 data/matrix_signed.marker
 data/matrix_recovery.key
+data/gemini_credentials.json
 logs/
 
 # Python
