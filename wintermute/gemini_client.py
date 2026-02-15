@@ -169,8 +169,6 @@ class GeminiCloudClient:
 
             if role == "assistant":
                 google_role = "model"
-            elif role == "tool":
-                google_role = "function"
             else:
                 google_role = "user"
 
@@ -222,6 +220,10 @@ class GeminiCloudClient:
                     contents[-1]["parts"].extend(parts)
                 else:
                     contents.append({"role": google_role, "parts": parts})
+
+        # Gemini requires the first message to have role "user"
+        if contents and contents[0]["role"] != "user":
+            contents.insert(0, {"role": "user", "parts": [{"text": "(conversation continues)"}]})
 
         body: dict[str, Any] = {
             "model": model,
