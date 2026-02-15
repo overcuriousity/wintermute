@@ -55,6 +55,9 @@ inference_backends:
     max_tokens: 2048
     reasoning: false
 
+  # UNSTABLE/ALPHA — gemini-cli piggybacks on Google's Cloud Code Assist
+  # OAuth flow.  Credentials may expire unpredictably.  Not recommended
+  # as your only backend.
   # - name: "gemini_pro"
   #   provider: "gemini-cli"
   #   model: "gemini-2.5-pro"
@@ -180,6 +183,11 @@ llm:
 ```
 
 #### Provider: `gemini-cli`
+
+> **Unstable / Alpha** — The `gemini-cli` provider piggybacks on Google's
+> Cloud Code Assist OAuth flow. Credentials may expire unpredictably and
+> the upstream API surface may change without notice. Suitable for
+> experimentation; not recommended as your only backend.
 
 Uses Google's Cloud Code Assist API via credentials extracted from a locally-installed
 [gemini-cli](https://github.com/google/gemini-cli) (`npm i -g @google/gemini-cli`).

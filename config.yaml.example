@@ -1,4 +1,17 @@
-# Matrix is optional. Remove or leave empty to disable.
+# ══════════════════════════════════════════════════════════════════
+#  Wintermute Configuration
+# ══════════════════════════════════════════════════════════════════
+# Copy this file to config.yaml and fill in your settings.
+#
+# At minimum you need:
+#   1. At least one entry in inference_backends:
+#   2. The llm: section mapping roles to backend names
+#
+# Both Matrix and the web interface are optional; at least one must
+# be enabled for Wintermute to start.
+
+# ── Matrix (optional) ─────────────────────────────────────────────
+# Remove or leave empty to disable Matrix.  The web UI works standalone.
 matrix:
   homeserver: https://matrix.org          # Your Matrix homeserver URL
   user_id: "@bot:matrix.org"              # Full Matrix user ID of the bot account
@@ -15,86 +28,170 @@ matrix:
     - "@admin:matrix.org"
   allowed_rooms: []                       # Room ID whitelist (empty = any room if invited by allowed user)
 
-# Web interface is enabled by default.
-# Open http://127.0.0.1:8080 in your browser.
+# ── Web Interface ─────────────────────────────────────────────────
+# Enabled by default.  Open http://127.0.0.1:8080 in your browser.
 web:
   enabled: true
-  host: "127.0.0.1"   # Use 0.0.0.0 to listen on all interfaces
+  host: "127.0.0.1"                       # Use 0.0.0.0 to listen on all interfaces
   port: 8080
 
-# ── Inference Backends ─────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════
+#  Inference Backends
+# ══════════════════════════════════════════════════════════════════
 # Named LLM backend definitions.  Each entry describes one endpoint+model
-# combination.  Backends are referenced by name in the llm: role mapping below.
+# combination.  Backends are referenced by name in the llm: role mapping.
+#
+# Fields per backend:
+#   name          – unique identifier (referenced in llm: section below)
+#   provider      – "openai" (any OpenAI-compatible endpoint) or "gemini-cli"
+#   base_url      – API base URL (required for provider "openai")
+#   api_key       – API key (required for provider "openai"; use "ollama" for Ollama)
+#   model         – model name the endpoint accepts
+#   context_size  – total token window the model supports (default: 32768)
+#   max_tokens    – maximum tokens per response (default: 4096)
+#   reasoning     – set true for thinking/reasoning models: o1/o3, DeepSeek R1,
+#                   QwQ, etc.  Uses max_completion_tokens instead of max_tokens
+#                   and extracts reasoning tokens for the web UI. (default: false)
+#
+# You can define as many backends as you need — different models, endpoints,
+# or the same model with different max_tokens for different roles.
+
 inference_backends:
+  # ── Primary backend (large model for conversation) ──────────────
   - name: "local_large"
-    provider: "openai"                    # "openai" (any OpenAI-compatible) or "gemini-cli"
-    base_url: "http://localhost:11434/v1" # Ollama / vLLM / LM Studio / OpenAI / etc.
-    api_key: "ollama"                     # Use "ollama" for Ollama, actual key for OpenAI etc.
-    model: "qwen2.5:72b"
+    provider: "openai"                    # "openai" = any OpenAI-compatible endpoint
+    base_url: "http://localhost:11434/v1" # Ollama default; also works for vLLM, LM Studio, OpenAI, etc.
+    api_key: "ollama"                     # Use "ollama" for Ollama, real key for OpenAI/DeepSeek/etc.
+    model: "qwen2.5:72b"                 # Any model name the endpoint accepts
     context_size: 32768                   # Total token window the model supports
     max_tokens: 4096                      # Maximum tokens in a single response
-    reasoning: false                      # Enable for o1/o3, DeepSeek R1, QwQ, etc.
+    reasoning: false                      # Set true for o1/o3, DeepSeek R1, QwQ, etc.
 
+  # ── Secondary backend (smaller/cheaper model) ───────────────────
   - name: "local_small"
     provider: "openai"
     base_url: "http://localhost:11434/v1"
     api_key: "ollama"
     model: "qwen2.5:7b"
     context_size: 32768
-    max_tokens: 2048
+    max_tokens: 2048                      # Smaller response budget for auxiliary tasks
     reasoning: false
 
-  # Example: Google Gemini via gemini-cli (free, requires `npm i -g @google/gemini-cli`).
-  # Run `uv run python -m wintermute.gemini_auth` to authenticate.
+  # ── Example: Google Gemini via gemini-cli ────────────────────────
+  # UNSTABLE / ALPHA — the gemini-cli provider piggybacks on Google's
+  # Cloud Code Assist OAuth flow.  Credentials may expire unpredictably
+  # and the upstream API surface may change without notice.  Suitable
+  # for experimentation; not recommended as your only backend.
+  #
+  # Requires: npm i -g @google/gemini-cli
+  # Auth:     uv run python -m wintermute.gemini_auth
+  #
   # - name: "gemini_pro"
-  #   provider: "gemini-cli"
-  #   model: "gemini-2.5-pro"
+  #   provider: "gemini-cli"              # base_url and api_key are ignored
+  #   base_url: ""                        # (not used for gemini-cli)
+  #   api_key: ""                         # (not used for gemini-cli)
+  #   model: "gemini-2.5-pro"             # gemini-2.5-pro, gemini-2.5-flash,
+  #                                       # gemini-3-pro-preview, gemini-3-flash-preview
   #   context_size: 1048576
   #   max_tokens: 8192
   #   reasoning: false
 
-  # Example: supervisor-specific backend with small max_tokens.
+  # ── Example: dedicated supervisor backend ────────────────────────
+  # The supervisor only produces a small JSON response (~50 tokens),
+  # so a very low max_tokens keeps costs down.
+  #
   # - name: "supervisor_backend"
   #   provider: "openai"
   #   base_url: "http://localhost:11434/v1"
   #   api_key: "ollama"
   #   model: "qwen2.5:7b"
   #   context_size: 32768
-  #   max_tokens: 150                     # Supervisor only needs ~150 tokens for JSON response
+  #   max_tokens: 150                     # Supervisor only needs ~150 tokens
   #   reasoning: false
 
-# ── LLM Role Mapping ──────────────────────────────────────────────
-# Maps each role to an ordered list of backend names (defined above).
-# Multiple backends = automatic failover: if the first errors, the next is tried.
-# An empty list [] disables the role (only meaningful for supervisor).
-# Omitted roles default to the first backend defined above.
+  # ── Example: reasoning model ─────────────────────────────────────
+  # - name: "deepseek_r1"
+  #   provider: "openai"
+  #   base_url: "https://api.deepseek.com/v1"
+  #   api_key: "sk-..."
+  #   model: "deepseek-reasoner"
+  #   context_size: 65536
+  #   max_tokens: 8192
+  #   reasoning: true                     # Enables max_completion_tokens + reasoning extraction
+
+# ══════════════════════════════════════════════════════════════════
+#  LLM Role Mapping
+# ══════════════════════════════════════════════════════════════════
+# Maps each system role to an ordered list of backend names.
+#
+# Failover:  When multiple backends are listed, they are tried in order.
+#            If the first backend returns an API error, the next is tried
+#            automatically.  The first backend's context_size is used for
+#            token budget calculations.
+#
+# Disabling: An empty list [] disables the role entirely.
+#            Only meaningful for supervisor (other roles should not be empty).
+#
+# Defaults:  Any role omitted here defaults to the first backend defined
+#            in inference_backends.
+
 llm:
+  # Primary conversation model — used for all user-facing inference.
   base: ["local_large"]
+
+  # Context compaction — summarises old messages when the context window fills.
+  # A smaller/cheaper model works well here.  Failover: if local_small fails,
+  # falls back to local_large.
   compaction: ["local_small", "local_large"]
+
+  # Sub-sessions — background workers for multi-step tool-use tasks.
+  # Also used by pulse reviews (pulse spawns sub-sessions internally).
   sub_sessions: ["local_large"]
+
+  # Dreaming — nightly autonomous memory consolidation (MEMORIES.txt, PULSE.txt).
+  # Runs once per night; a smaller model keeps costs low.
   dreaming: ["local_small"]
-  supervisor: ["local_small"]             # Use [] to disable supervisor checks
 
-# Compaction fires when history tokens exceed: context_size - max_tokens - system_prompt_tokens.
-# No separate threshold setting is needed; adjust context_size and max_tokens in the backend.
+  # Supervisor — post-inference one-shot check for hallucinated workflow spawns.
+  # Set to [] to disable supervisor checks entirely.
+  # For best results, use a dedicated backend with max_tokens: 150.
+  supervisor: ["local_small"]
 
+# ── Context Compaction ────────────────────────────────────────────
+# Compaction fires automatically when history tokens exceed:
+#   context_size - max_tokens - system_prompt_tokens
+# No separate threshold setting is needed — adjust context_size and
+# max_tokens in the backend definition.
+
+# ── Pulse Reviews ─────────────────────────────────────────────────
+# Periodic autonomous review of PULSE.txt.  Spawns a sub-session to
+# read the pulse file and take actions (set reminders, update memories, etc.).
 pulse:
-  enabled: true                           # Set to false to disable periodic pulse reviews
-  review_interval_minutes: 60             # How often to auto-review PULSE.txt
+  enabled: true                           # Set to false to disable pulse reviews entirely
+  review_interval_minutes: 60             # Minutes between automatic reviews
 
+# ── Component Size Limits ─────────────────────────────────────────
+# Character limits before a component triggers AI auto-summarisation.
+# When a component exceeds its limit, the LLM is asked to condense it.
 context:
   component_size_limits:
-    memories: 10000                       # Chars before MEMORIES.txt gets summarised
-    pulse: 5000                      # Chars before pulse.txt gets summarised
-    skills_total: 20000                   # Total chars across all skills before reorganise
+    memories: 10000                       # MEMORIES.txt char limit
+    pulse: 5000                           # PULSE.txt char limit
+    skills_total: 20000                   # Total chars across all skills/*.md
 
+# ── Dreaming (Nightly Consolidation) ─────────────────────────────
+# Autonomous nightly pass that prunes and consolidates MEMORIES.txt
+# and PULSE.txt.  Uses a direct LLM call (no tool loop).
 dreaming:
-  hour: 1                                 # Hour (0-23) to run nightly memory consolidation
+  hour: 1                                 # Hour (0-23, UTC) to run consolidation
   minute: 0                               # Minute (0-59)
 
+# ── Scheduler ─────────────────────────────────────────────────────
+# Timezone for the reminder system (set_reminder tool).
 scheduler:
-  timezone: "UTC"                         # Timezone for reminder scheduling (e.g. Europe/Berlin)
+  timezone: "UTC"                         # e.g. "Europe/Berlin", "America/New_York"
 
+# ── Logging ───────────────────────────────────────────────────────
 logging:
   level: "INFO"                           # DEBUG | INFO | WARN | ERROR
-  directory: "logs"
+  directory: "logs"                       # Log files are rotated nightly, kept 14 days

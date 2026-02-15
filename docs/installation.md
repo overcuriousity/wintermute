@@ -127,6 +127,11 @@ The web interface starts at `http://127.0.0.1:8080` by default.
 
 ## Gemini CLI Provider (Free Google Models)
 
+> **Unstable / Alpha** — The `gemini-cli` provider piggybacks on Google's
+> Cloud Code Assist OAuth flow. Credentials may expire unpredictably and
+> the upstream API surface may change without notice. Suitable for
+> experimentation; not recommended as your only backend.
+
 Wintermute can use Google's Gemini models for free via the Cloud Code Assist API,
 using credentials from a locally-installed `gemini-cli`.
 
