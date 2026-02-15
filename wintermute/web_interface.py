@@ -51,6 +51,12 @@ _CHAT_HTML = """\
     display: flex; align-items: center; gap: .8rem;
   }
   header h1 { font-size: 1.1rem; font-weight: 600; color: #a8d8ea; }
+  #model-info {
+    font-size: .7rem; color: #888;
+    display: flex; gap: .5rem; align-items: center;
+  }
+  #model-info .model-name { color: #a8d8ea; font-weight: 500; }
+  #model-info .ctx-size { color: #666; }
   header a { font-size: .75rem; color: #a8d8ea; text-decoration: none; margin-left: auto; }
   header a:hover { text-decoration: underline; }
   #status {
@@ -88,6 +94,21 @@ _CHAT_HTML = """\
     background: transparent; color: #888;
     font-size: .78rem; font-style: italic;
   }
+  .reasoning-toggle {
+    margin-top: .4rem; font-size: .8rem; color: #888;
+  }
+  .reasoning-toggle summary {
+    cursor: pointer; color: #a8d8ea; font-size: .78rem;
+    user-select: none;
+  }
+  .reasoning-toggle summary:hover { color: #cde; }
+  .reasoning-toggle pre {
+    white-space: pre-wrap; margin-top: .3rem;
+    padding: .4rem .6rem;
+    background: rgba(0,0,0,.2); border-radius: .3rem;
+    font-size: .78rem; line-height: 1.4;
+    color: #999; border-left: 2px solid #334;
+  }
   .ts { font-size: .65rem; color: #666; margin-top: .25rem; }
   form {
     display: flex; gap: .5rem;
@@ -115,6 +136,7 @@ _CHAT_HTML = """\
 <body>
 <header>
   <h1>Wintermute</h1>
+  <span id="model-info"></span>
   <span id="status">connecting\u2026</span>
   <span id="thread-id"></span>
   <a href="/debug">Debug \u2197</a>
@@ -145,17 +167,11 @@ function addMsg(role, text, reasoning) {
   msg.textContent = text;
   if (reasoning) {
     const details = document.createElement('details');
-    details.style.marginTop = '.4rem';
-    details.style.fontSize = '.8rem';
-    details.style.color = '#888';
+    details.className = 'reasoning-toggle';
     const summary = document.createElement('summary');
-    summary.textContent = 'Reasoning';
-    summary.style.cursor = 'pointer';
-    summary.style.color = '#a8d8ea';
+    summary.textContent = '\ud83e\udde0 Reasoning (' + reasoning.length + ' chars)';
     const pre = document.createElement('pre');
     pre.textContent = reasoning;
-    pre.style.whiteSpace = 'pre-wrap';
-    pre.style.marginTop = '.2rem';
     details.appendChild(summary);
     details.appendChild(pre);
     msg.appendChild(details);
@@ -188,6 +204,12 @@ function connect() {
   ws.onmessage = (e) => {
     const d = JSON.parse(e.data);
     if (d.thread_id) threadEl.textContent = d.thread_id;
+    if (d.model) {
+      const mi = document.getElementById('model-info');
+      const ctx = d.context_size ? (d.context_size >= 1000 ? (d.context_size/1000).toFixed(0) + 'k' : d.context_size) : '';
+      mi.innerHTML = '<span class="model-name">' + d.model + '</span>'
+        + (ctx ? '<span class="ctx-size">' + ctx + ' ctx</span>' : '');
+    }
     addMsg(d.role, d.text, d.reasoning);
   };
 
@@ -343,8 +365,6 @@ _DEBUG_HTML = """\
   .msg-bubble.assistant { background: #16213e; }
   .msg-bubble.system { background: transparent; color: #777; font-style: italic; font-size: .78rem; }
   .msg-meta { font-size: .62rem; color: #555; margin-top: .1rem; }
-  .msg-expand { font-size: .7rem; color: #4a7ab0; cursor: pointer; }
-  .msg-expand:hover { color: #a8d8ea; }
   .msg-inject {
     display: flex; gap: .5rem; padding: .5rem .8rem;
     background: #0d1526; border-top: 1px solid #0f3460;
@@ -805,27 +825,13 @@ async function loadSessionMessages(threadId) {
   view.innerHTML = msgs.length ? msgs.map(m => {
     const ts = new Date(m.ts * 1000).toLocaleString();
     const tokInfo = m.tokens ? ` &middot; ${m.tokens} tok` : '';
-    const MAX = 800;
-    let content = m.content || '';
-    const truncated = content.length > MAX;
-    const displayContent = truncated ? content.slice(0, MAX) : content;
-    const expandLink = truncated
-      ? `<span class="msg-expand" data-full="${esc(content)}" onclick="expandMsg(this)">[show more +${content.length-MAX} chars]</span>`
-      : '';
     return `<div class="msg-wrap ${esc(m.role)}">
-      <div class="msg-bubble ${esc(m.role)}">${esc(displayContent)}${truncated ? '\u2026' : ''}</div>
-      ${expandLink}
+      <div class="msg-bubble ${esc(m.role)}">${esc(m.content || '')}</div>
       <div class="msg-meta">${ts}${tokInfo}</div>
     </div>`;
   }).join('') : '<div class="empty">No messages in this thread</div>';
 
   if (scrolledToBottom) view.scrollTop = view.scrollHeight;
-}
-
-function expandMsg(el) {
-  const bubble = el.previousElementSibling;
-  bubble.textContent = el.dataset.full;
-  el.remove();
 }
 
 async function sendToSession() {
@@ -1325,10 +1331,14 @@ class WebInterface:
         logger.info("Web client connected as thread %s (%d threads total)",
                      thread_id, len(self._threads))
 
-        await ws.send_str(json.dumps({
+        init_msg = {
             "role": "system", "text": f"Connected as thread {thread_id}",
             "thread_id": thread_id,
-        }))
+        }
+        if self._llm_cfg:
+            init_msg["model"] = self._llm_cfg.model
+            init_msg["context_size"] = self._llm_cfg.context_size
+        await ws.send_str(json.dumps(init_msg))
 
         try:
             async for msg in ws:
