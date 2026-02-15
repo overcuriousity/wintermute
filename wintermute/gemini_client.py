@@ -217,7 +217,11 @@ class GeminiCloudClient:
                     parts.append({"text": content})
 
             if parts:
-                contents.append({"role": google_role, "parts": parts})
+                # Merge with previous entry if same role (Gemini requires strict alternation)
+                if contents and contents[-1]["role"] == google_role:
+                    contents[-1]["parts"].extend(parts)
+                else:
+                    contents.append({"role": google_role, "parts": parts})
 
         body: dict[str, Any] = {
             "model": model,
