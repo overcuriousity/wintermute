@@ -501,6 +501,14 @@ if ! ${SKIP_CONFIG:-false}; then
            if command -v npm &>/dev/null; then
              run_quiet "Install @google/gemini-cli" npm install -g @google/gemini-cli || \
                die "gemini-cli installation failed. Install Node.js/npm first."
+             # Re-source NVM so `gemini` is on PATH for the OAuth step below
+             if [[ -s "$HOME/.nvm/nvm.sh" ]]; then
+               # shellcheck disable=SC1091
+               source "$HOME/.nvm/nvm.sh" 2>/dev/null || true
+             elif [[ -s "$HOME/.local/share/nvm/nvm.sh" ]]; then
+               # shellcheck disable=SC1091
+               source "$HOME/.local/share/nvm/nvm.sh" 2>/dev/null || true
+             fi
            else
              die "npm not found. Install Node.js and npm first, then run: npm i -g @google/gemini-cli"
            fi
@@ -528,6 +536,11 @@ if ! ${SKIP_CONFIG:-false}; then
        else
          warn "OAuth setup failed. You can retry later with: uv run python -m wintermute.gemini_auth"
        fi
+       echo ""
+       info "${C_DIM}Systemd note: NVM paths are not available in systemd by default.${C_RESET}"
+       info "${C_DIM}Wintermute auto-probes common NVM/Volta paths at startup.${C_RESET}"
+       info "${C_DIM}If gemini is installed in a non-standard location, add its bin${C_RESET}"
+       info "${C_DIM}directory to Environment=PATH=... in the systemd service unit.${C_RESET}"
        ;;
     cowboy|COWBOY)
        LLM_BASE_URL="http://localhost:11434/v1"

@@ -163,6 +163,23 @@ Available models: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-3-pro-preview`, 
 
 Credentials are saved to `data/gemini_credentials.json` and refreshed automatically.
 
+### Systemd / headless service
+
+When running as a systemd service, NVM paths are **not** in `PATH` by default (systemd uses a minimal environment). Wintermute automatically probes common installation paths at startup:
+
+- `~/.nvm/versions/node/*/bin/gemini` (NVM — default)
+- `~/.local/share/nvm/versions/node/*/bin/gemini` (NVM — XDG)
+- `~/.volta/bin/gemini` (Volta)
+- `~/.local/bin/gemini` (pipx / manual)
+- `/usr/local/bin/gemini` (system-wide npm)
+
+If your Node installation is in an unusual location, add the node `bin` directory to the service's environment:
+
+```ini
+[Service]
+Environment=PATH=/path/to/node/bin:%h/.local/bin:/usr/local/bin:/usr/bin
+```
+
 ## Timezone Configuration
 
 Wintermute injects the current local time into every system prompt so the LLM has accurate time awareness. This relies on the `scheduler.timezone` setting in `config.yaml`:

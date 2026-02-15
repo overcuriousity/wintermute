@@ -131,6 +131,11 @@ to set up credentials, or select the Gemini option during `setup.sh`.
 
 Available models: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-3-pro-preview`, `gemini-3-flash-preview`.
 
+**Systemd note:** NVM paths are not available in systemd's minimal environment.
+Wintermute auto-probes common NVM/Volta paths at startup. See
+[installation.md — Systemd / headless service](installation.md#systemd--headless-service)
+if using a non-standard Node installation.
+
 Mixed configurations work — e.g. `main` on gemini-cli with `compaction` on local Ollama:
 
 ```yaml

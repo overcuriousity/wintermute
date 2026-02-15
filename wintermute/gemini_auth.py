@@ -9,6 +9,7 @@ Credentials are persisted to data/gemini_credentials.json for reuse.
 """
 
 import base64
+import glob as globmod
 import hashlib
 import http.server
 import json
@@ -47,9 +48,37 @@ REDIRECT_URI = f"http://localhost:{REDIRECT_PORT}"
 # 1. Find gemini-cli binary
 # ---------------------------------------------------------------------------
 
+def _probe_gemini_binary() -> str | None:
+    """Try common NVM/node manager paths when ``gemini`` is not on PATH."""
+    home = Path.home()
+    probe_patterns: list[str] = [
+        # NVM (default location)
+        str(home / ".nvm/versions/node/*/bin/gemini"),
+        # NVM (XDG location)
+        str(home / ".local/share/nvm/versions/node/*/bin/gemini"),
+        # Volta
+        str(home / ".volta/bin/gemini"),
+        # pipx / manual
+        str(home / ".local/bin/gemini"),
+        # System-wide npm
+        "/usr/local/bin/gemini",
+    ]
+    for pattern in probe_patterns:
+        matches = sorted(globmod.glob(pattern))
+        if matches:
+            # For NVM globs, take the last (newest) node version
+            found = matches[-1]
+            if os.path.isfile(found) and os.access(found, os.X_OK):
+                logger.info("Discovered gemini binary via probe: %s", found)
+                return found
+    return None
+
+
 def find_gemini_cli() -> Path | None:
     """Locate the `gemini` binary in PATH and resolve to its npm install root."""
     binary = shutil.which("gemini")
+    if binary is None:
+        binary = _probe_gemini_binary()
     if binary is None:
         return None
     resolved = Path(binary).resolve()
