@@ -34,7 +34,7 @@ from wintermute import tools as tool_module
 from wintermute.pulse import PulseLoop
 from openai import AsyncOpenAI
 
-from wintermute.llm_thread import LLMConfig, LLMThread, MultiProviderConfig, ProviderConfig
+from wintermute.llm_thread import BackendPool, LLMThread, MultiProviderConfig, ProviderConfig
 from wintermute.matrix_thread import MatrixConfig, MatrixThread
 from wintermute.dreaming import DreamingConfig, DreamingLoop
 from wintermute.scheduler_thread import ReminderScheduler, SchedulerConfig
@@ -130,86 +130,106 @@ class ShutdownCoordinator:
 # Main
 # ---------------------------------------------------------------------------
 
-def _build_provider(base: dict, overrides: dict) -> ProviderConfig:
-    """Merge partial *overrides* onto *base* and return a ProviderConfig."""
-    merged = {**base, **{k: v for k, v in overrides.items() if v is not None}}
-    return ProviderConfig(
-        model=merged["model"],
-        context_size=merged.get("context_size", 32768),
-        max_tokens=merged.get("max_tokens", 4096),
-        reasoning=merged.get("reasoning", False),
-        provider=merged.get("provider", "openai"),
-        api_key=merged.get("api_key", ""),
-        base_url=merged.get("base_url", ""),
-    )
+def _parse_inference_backends(raw_list: list[dict]) -> dict[str, ProviderConfig]:
+    """Parse the ``inference_backends`` list into a name→ProviderConfig map."""
+    backends: dict[str, ProviderConfig] = {}
+    for entry in raw_list:
+        name = entry.get("name")
+        if not name:
+            print("ERROR: each inference_backends entry must have a 'name' field.")
+            sys.exit(1)
+        if name in backends:
+            print(f"ERROR: duplicate inference_backends name: {name!r}")
+            sys.exit(1)
+        backends[name] = ProviderConfig(
+            name=name,
+            model=entry["model"],
+            context_size=entry.get("context_size", 32768),
+            max_tokens=entry.get("max_tokens", 4096),
+            reasoning=entry.get("reasoning", False),
+            provider=entry.get("provider", "openai"),
+            api_key=entry.get("api_key", ""),
+            base_url=entry.get("base_url", ""),
+        )
+    return backends
 
 
-def _build_multi_provider_config(llm_raw: dict) -> MultiProviderConfig:
-    """Parse the llm: block (with backward compat) into a MultiProviderConfig."""
-    # Base fields (everything except the sub-keys).
-    sub_keys = {"compaction", "sub_sessions", "dreaming", "supervisor"}
-    base = {k: v for k, v in llm_raw.items()
-            if k not in sub_keys and k != "compaction_model"}
+def _resolve_role(role_name: str, names: list[str],
+                  backends: dict[str, ProviderConfig]) -> list[ProviderConfig]:
+    """Resolve a list of backend names into ProviderConfig objects."""
+    result: list[ProviderConfig] = []
+    for n in names:
+        if n not in backends:
+            print(f"ERROR: llm.{role_name} references unknown backend {n!r}. "
+                  f"Available: {', '.join(backends)}")
+            sys.exit(1)
+        result.append(backends[n])
+    return result
 
-    # Backward compat: old flat compaction_model -> compaction.model
-    compaction_overrides = dict(llm_raw.get("compaction") or {})
-    if "compaction_model" in llm_raw and "model" not in compaction_overrides:
-        compaction_overrides["model"] = llm_raw["compaction_model"]
 
-    # Backward compat: old top-level dreaming.model is handled below in main()
-    # after reading the dreaming: section.
+def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
+    """Parse ``inference_backends`` + ``llm`` role mapping into a MultiProviderConfig."""
+    raw_backends = cfg.get("inference_backends")
+    if not raw_backends:
+        print("ERROR: 'inference_backends' section is required in config.yaml. "
+              "See config.yaml.example for the new format.")
+        sys.exit(1)
 
-    main_cfg = _build_provider(base, {})
-    compaction_cfg = _build_provider(base, compaction_overrides)
-    sub_sessions_cfg = _build_provider(base, dict(llm_raw.get("sub_sessions") or {}))
-    dreaming_cfg = _build_provider(base, dict(llm_raw.get("dreaming") or {}))
+    backends = _parse_inference_backends(raw_backends)
+    llm_raw = cfg.get("llm", {})
 
-    # Supervisor: strip the 'enabled' key before passing to _build_provider
-    # (it's not a ProviderConfig field).  Default max_tokens to 150 since the
-    # supervisor only produces a small JSON response — avoids inheriting the
-    # main provider's (much larger) max_tokens.
-    supervisor_overrides = dict(llm_raw.get("supervisor") or {})
-    supervisor_overrides.pop("enabled", None)
-    supervisor_overrides.setdefault("max_tokens", 150)
-    supervisor_cfg = _build_provider(base, supervisor_overrides)
+    # Resolve each role.  Missing roles default to the first defined backend.
+    first_name = next(iter(backends))
+    default_list = [first_name]
+
+    def _get_role(name: str, *, allow_empty: bool = False) -> list[ProviderConfig]:
+        raw = llm_raw.get(name)
+        if raw is None:
+            if allow_empty:
+                return _resolve_role(name, default_list, backends)
+            return _resolve_role(name, default_list, backends)
+        if isinstance(raw, list):
+            if not raw and allow_empty:
+                return []  # explicitly disabled
+            return _resolve_role(name, raw, backends)
+        print(f"ERROR: llm.{name} must be a list of backend names (got {type(raw).__name__})")
+        sys.exit(1)
 
     return MultiProviderConfig(
-        main=main_cfg,
-        compaction=compaction_cfg,
-        sub_sessions=sub_sessions_cfg,
-        dreaming=dreaming_cfg,
-        supervisor=supervisor_cfg,
+        main=_get_role("base"),
+        compaction=_get_role("compaction"),
+        sub_sessions=_get_role("sub_sessions"),
+        dreaming=_get_role("dreaming"),
+        supervisor=_get_role("supervisor", allow_empty=True),
     )
 
 
-def _make_clients(cfg: MultiProviderConfig) -> dict[str, Any]:
-    """Create LLM clients, sharing instances when config matches.
+def _make_client_for_config(cfg: ProviderConfig, cache: dict) -> Any:
+    """Create or reuse a client for the given ProviderConfig."""
+    if cfg.provider == "gemini-cli":
+        key = ("gemini-cli",)
+        if key not in cache:
+            from wintermute import gemini_auth, gemini_client
+            creds = gemini_auth.load_credentials()
+            if not creds:
+                logger.info("No Gemini credentials found — running interactive setup")
+                creds = gemini_auth.setup()
+            cache[key] = gemini_client.GeminiCloudClient(creds)
+        return cache[key]
+    else:
+        key = (cfg.base_url, cfg.api_key)
+        if key not in cache:
+            cache[key] = AsyncOpenAI(api_key=cfg.api_key, base_url=cfg.base_url)
+        return cache[key]
 
-    Returns AsyncOpenAI instances for ``provider="openai"`` and
-    GeminiCloudClient instances for ``provider="gemini-cli"``.  Both
-    expose the same ``client.chat.completions.create()`` interface.
-    """
-    cache: dict = {}
-    result: dict[str, Any] = {}
-    for purpose, pcfg in [("main", cfg.main), ("compaction", cfg.compaction),
-                          ("sub_sessions", cfg.sub_sessions), ("dreaming", cfg.dreaming),
-                          ("supervisor", cfg.supervisor)]:
-        if pcfg.provider == "gemini-cli":
-            key = ("gemini-cli",)
-            if key not in cache:
-                from wintermute import gemini_auth, gemini_client
-                creds = gemini_auth.load_credentials()
-                if not creds:
-                    logger.info("No Gemini credentials found — running interactive setup")
-                    creds = gemini_auth.setup()
-                cache[key] = gemini_client.GeminiCloudClient(creds)
-            result[purpose] = cache[key]
-        else:
-            key = (pcfg.base_url, pcfg.api_key)
-            if key not in cache:
-                cache[key] = AsyncOpenAI(api_key=pcfg.api_key, base_url=pcfg.base_url)
-            result[purpose] = cache[key]
-    return result
+
+def _build_pool(configs: list[ProviderConfig], cache: dict) -> BackendPool:
+    """Build a BackendPool from a list of ProviderConfigs, creating clients as needed."""
+    backends = []
+    for cfg in configs:
+        client = _make_client_for_config(cfg, cache)
+        backends.append((cfg, client))
+    return BackendPool(backends)
 
 
 async def main() -> None:
@@ -225,21 +245,17 @@ async def main() -> None:
     configured_tz = cfg.get("scheduler", {}).get("timezone", "UTC")
     prompt_assembler.set_timezone(configured_tz)
 
-    multi_cfg = _build_multi_provider_config(cfg["llm"])
+    multi_cfg = _build_multi_provider_config(cfg)
 
-    # Backward compat: old top-level dreaming.model -> llm.dreaming.model
+    # Build BackendPools (clients are created/shared internally).
+    client_cache: dict = {}
+    main_pool = _build_pool(multi_cfg.main, client_cache)
+    compaction_pool = _build_pool(multi_cfg.compaction, client_cache)
+    sub_sessions_pool = _build_pool(multi_cfg.sub_sessions, client_cache)
+    dreaming_pool = _build_pool(multi_cfg.dreaming, client_cache)
+    supervisor_pool = _build_pool(multi_cfg.supervisor, client_cache)
+
     dreaming_raw = cfg.get("dreaming", {})
-    if dreaming_raw.get("model") and multi_cfg.dreaming.model == multi_cfg.main.model:
-        multi_cfg.dreaming = _build_provider(
-            {k: v for k, v in cfg["llm"].items()
-             if k not in {"compaction", "sub_sessions", "dreaming", "compaction_model"}},
-            {"model": dreaming_raw["model"]},
-        )
-        # Refresh client cache after dreaming config changed.
-
-    clients = _make_clients(multi_cfg)
-    llm_cfg = multi_cfg.main  # backward-compat alias used throughout
-
     dreaming_cfg = DreamingConfig(
         hour=dreaming_raw.get("hour", 1),
         minute=dreaming_raw.get("minute", 0),
@@ -248,6 +264,7 @@ async def main() -> None:
         timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
     )
     pulse_cfg = cfg.get("pulse", {})
+    pulse_enabled = pulse_cfg.get("enabled", True)
     pulse_interval = pulse_cfg.get("review_interval_minutes", 60)
 
     # --- Optional interfaces ---
@@ -303,16 +320,13 @@ async def main() -> None:
             await web_iface.broadcast(text, thread_id, reasoning=reasoning)
 
     # Build LLM thread with the shared broadcast function.
-    supervisor_enabled = cfg["llm"].get("supervisor", {}).get("enabled", True)
-    llm = LLMThread(config=llm_cfg, broadcast_fn=broadcast,
-                    multi_cfg=multi_cfg, clients=clients,
-                    supervisor_enabled=supervisor_enabled)
+    llm = LLMThread(main_pool=main_pool, compaction_pool=compaction_pool,
+                    supervisor_pool=supervisor_pool, broadcast_fn=broadcast)
 
-    # Build SubSessionManager — shares the LLM client, reports back via
+    # Build SubSessionManager — shares the LLM backend pool, reports back via
     # enqueue_system_event so results enter the parent thread's queue.
     sub_sessions = SubSessionManager(
-        client=clients["sub_sessions"],
-        llm_config=multi_cfg.sub_sessions,
+        pool=sub_sessions_pool,
         enqueue_system_event=llm.enqueue_system_event,
     )
     llm.inject_sub_session_manager(sub_sessions)
@@ -337,19 +351,21 @@ async def main() -> None:
         web_iface._sub_sessions = sub_sessions
         web_iface._scheduler = scheduler
         web_iface._matrix = matrix
-        web_iface._llm_cfg = llm_cfg
+        web_iface._main_pool = main_pool
         web_iface._multi_cfg = multi_cfg
 
-    pulse_loop = PulseLoop(
-        interval_minutes=pulse_interval,
-        sub_session_manager=sub_sessions,
-    )
+    pulse_loop: Optional[PulseLoop] = None
+    if pulse_enabled:
+        pulse_loop = PulseLoop(
+            interval_minutes=pulse_interval,
+            sub_session_manager=sub_sessions,
+        )
+    else:
+        logger.info("Pulse loop disabled by config")
 
     dreaming_loop = DreamingLoop(
         config=dreaming_cfg,
-        llm_client=clients["dreaming"],
-        llm_model=multi_cfg.dreaming.model,
-        reasoning=multi_cfg.dreaming.reasoning,
+        pool=dreaming_pool,
     )
 
     # Inject remaining references for /status and /dream commands.
@@ -369,9 +385,10 @@ async def main() -> None:
 
     tasks = [
         asyncio.create_task(llm.run(),              name="llm"),
-        asyncio.create_task(pulse_loop.run(),        name="pulse"),
         asyncio.create_task(dreaming_loop.run(),     name="dreaming"),
     ]
+    if pulse_loop:
+        tasks.append(asyncio.create_task(pulse_loop.run(), name="pulse"))
     if matrix:
         tasks.append(asyncio.create_task(matrix.run(), name="matrix"))
     if web_iface:
@@ -387,7 +404,8 @@ async def main() -> None:
     await shutdown.wait()
     logger.info("Shutdown requested - stopping components gracefully")
 
-    pulse_loop.stop()
+    if pulse_loop:
+        pulse_loop.stop()
     dreaming_loop.stop()
     if matrix:
         matrix.stop()

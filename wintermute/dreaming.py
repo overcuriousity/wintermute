@@ -7,14 +7,19 @@ PULSE.txt) without user interaction.  Uses a direct API call (no tool loop,
 no thread history) so it never interferes with ongoing conversations.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, time as dt_time, timedelta, timezone
 from pathlib import Path
-from openai import AsyncOpenAI
+from typing import TYPE_CHECKING
 
 from wintermute import prompt_assembler
+
+if TYPE_CHECKING:
+    from wintermute.llm_thread import BackendPool
 
 logger = logging.getLogger(__name__)
 
@@ -78,29 +83,24 @@ def _load_prompt(path: Path, default: str) -> str:
     return default
 
 
-async def _consolidate(client: AsyncOpenAI, model: str,
-                        label: str, prompt_template: str, content: str,
-                        *, reasoning: bool = False) -> str:
+async def _consolidate(pool: "BackendPool",
+                        label: str, prompt_template: str, content: str) -> str:
     """Call the LLM to consolidate a single memory component."""
     prompt = prompt_template
     if "{content}" in prompt:
         prompt = prompt.format(content=content)
     else:
         prompt = prompt + "\n\n" + content
-    token_kwarg = ({"max_completion_tokens": 2048} if reasoning
-                   else {"max_tokens": 2048})
-    response = await client.chat.completions.create(
-        model=model,
+    response = await pool.call(
         messages=[{"role": "user", "content": prompt}],
-        **token_kwarg,
+        max_tokens_override=2048,
     )
     result = (response.choices[0].message.content or "").strip()
     logger.debug("Dreaming: %s consolidated (%d -> %d chars)", label, len(content), len(result))
     return result
 
 
-async def run_dream_cycle(client: AsyncOpenAI, model: str,
-                          *, reasoning: bool = False) -> None:
+async def run_dream_cycle(pool: "BackendPool") -> None:
     """
     Run a full nightly consolidation pass over MEMORIES.txt and PULSE.txt.
 
@@ -112,8 +112,7 @@ async def run_dream_cycle(client: AsyncOpenAI, model: str,
         try:
             mem_prompt = _load_prompt(DREAM_MEMORIES_PROMPT_FILE, _DEFAULT_MEMORIES_PROMPT)
             consolidated = await _consolidate(
-                client, model, "MEMORIES.txt", mem_prompt, memories,
-                reasoning=reasoning,
+                pool, "MEMORIES.txt", mem_prompt, memories,
             )
             if consolidated:
                 prompt_assembler.update_memories(consolidated)
@@ -128,8 +127,7 @@ async def run_dream_cycle(client: AsyncOpenAI, model: str,
         try:
             pulse_prompt = _load_prompt(DREAM_PULSE_PROMPT_FILE, _DEFAULT_PULSE_PROMPT)
             consolidated = await _consolidate(
-                client, model, "PULSE.txt", pulse_prompt, pulse,
-                reasoning=reasoning,
+                pool, "PULSE.txt", pulse_prompt, pulse,
             )
             if consolidated:
                 prompt_assembler.update_pulse(consolidated)
@@ -148,20 +146,16 @@ class DreamingLoop:
     """
 
     def __init__(self, config: DreamingConfig,
-                 llm_client: AsyncOpenAI,
-                 llm_model: str,
-                 reasoning: bool = False) -> None:
+                 pool: "BackendPool") -> None:
         self._cfg = config
-        self._client = llm_client
-        self._model = llm_model
-        self._reasoning = reasoning
+        self._pool = pool
         self._running = False
 
     async def run(self) -> None:
         self._running = True
         target = dt_time(self._cfg.hour, self._cfg.minute)
         logger.info("Dreaming loop started (target=%02d:%02d, model=%s)",
-                     target.hour, target.minute, self._model)
+                     target.hour, target.minute, self._pool.primary.model)
         while self._running:
             delay = self._seconds_until(target)
             logger.debug("Dreaming: next run in %.0f s", delay)
@@ -174,13 +168,13 @@ class DreamingLoop:
         self._running = False
 
     async def _fire(self) -> None:
-        if not self._model:
-            logger.error("Dreaming: no model configured, skipping")
+        if not self._pool.enabled:
+            logger.error("Dreaming: no backends configured, skipping")
             return
-        logger.info("Dreaming: starting nightly consolidation (model=%s)", self._model)
+        logger.info("Dreaming: starting nightly consolidation (model=%s)",
+                     self._pool.primary.model)
         try:
-            await run_dream_cycle(client=self._client, model=self._model,
-                                  reasoning=self._reasoning)
+            await run_dream_cycle(pool=self._pool)
             logger.info("Dreaming: nightly consolidation complete")
         except Exception as exc:  # noqa: BLE001
             logger.exception("Dreaming: nightly consolidation failed: %s", exc)

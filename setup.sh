@@ -766,38 +766,69 @@ web:
   host: $(_yaml_escape "${WEB_HOST}")
   port: ${WEB_PORT}
 
-# LLM backend
-llm:
+# Inference backends
+inference_backends:
+  - name: "main"
 YAML
 
     if [[ "${LLM_PROVIDER:-openai}" == "gemini-cli" ]]; then
       cat <<YAML
-  provider: "gemini-cli"
-  model: $(_yaml_escape "${LLM_MODEL}")
-  context_size: ${LLM_CONTEXT}
-  max_tokens: ${LLM_MAX_TOKENS}
+    provider: "gemini-cli"
+    model: $(_yaml_escape "${LLM_MODEL}")
+    context_size: ${LLM_CONTEXT}
+    max_tokens: ${LLM_MAX_TOKENS}
 YAML
     else
       cat <<YAML
-  base_url: $(_yaml_escape "${LLM_BASE_URL}")
-  api_key: $(_yaml_escape "${LLM_API_KEY}")
-  model: $(_yaml_escape "${LLM_MODEL}")
-  context_size: ${LLM_CONTEXT}
-  max_tokens: ${LLM_MAX_TOKENS}
+    provider: "openai"
+    base_url: $(_yaml_escape "${LLM_BASE_URL}")
+    api_key: $(_yaml_escape "${LLM_API_KEY}")
+    model: $(_yaml_escape "${LLM_MODEL}")
+    context_size: ${LLM_CONTEXT}
+    max_tokens: ${LLM_MAX_TOKENS}
 YAML
     fi
 
     if [[ -n "${LLM_COMPACTION_MODEL:-}" ]]; then
-      echo "  compaction:"
-      echo "    model: $(_yaml_escape "${LLM_COMPACTION_MODEL}")"
+      # Generate a second backend for compaction with a smaller model.
+      if [[ "${LLM_PROVIDER:-openai}" == "gemini-cli" ]]; then
+        cat <<YAML
+  - name: "compaction"
+    provider: "gemini-cli"
+    model: $(_yaml_escape "${LLM_COMPACTION_MODEL}")
+    context_size: ${LLM_CONTEXT}
+    max_tokens: 2048
+YAML
+      else
+        cat <<YAML
+  - name: "compaction"
+    provider: "openai"
+    base_url: $(_yaml_escape "${LLM_BASE_URL}")
+    api_key: $(_yaml_escape "${LLM_API_KEY}")
+    model: $(_yaml_escape "${LLM_COMPACTION_MODEL}")
+    context_size: ${LLM_CONTEXT}
+    max_tokens: 2048
+YAML
+      fi
+    fi
+
+    cat <<YAML
+
+# LLM role mapping
+llm:
+  base: ["main"]
+YAML
+
+    if [[ -n "${LLM_COMPACTION_MODEL:-}" ]]; then
+      echo '  compaction: ["compaction"]'
     else
-      echo "  # compaction:"
-      echo "  #   model: \"\"  # optional: smaller/faster model for summarisation"
+      echo '  # compaction: ["main"]  # uncomment and add a dedicated backend for compaction'
     fi
 
     cat <<YAML
 
 pulse:
+  enabled: true
   review_interval_minutes: 60
 
 context:
