@@ -505,6 +505,9 @@ _DEBUG_HTML = """\
     <button class="tab-btn" data-tab="reminders" onclick="showTab('reminders')">
       Reminders <span class="tab-count" id="cnt-reminders">0</span>
     </button>
+    <button class="tab-btn" data-tab="toolcalls" onclick="showTab('toolcalls')">
+      Tool Calls <span class="tab-count" id="cnt-toolcalls">0</span>
+    </button>
   </nav>
 
   <div id="main">
@@ -566,6 +569,23 @@ _DEBUG_HTML = """\
           </thead>
           <tbody id="jobs-body">
             <tr><td colspan="4" class="empty">Loading\u2026</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Tool Calls ── -->
+    <div class="tab-panel" id="panel-toolcalls">
+      <div class="scroll-area">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Time</th><th>Session</th><th>Tool</th>
+              <th>Inputs</th><th>Duration</th><th>Result</th>
+            </tr>
+          </thead>
+          <tbody id="toolcalls-body">
+            <tr><td colspan="6" class="empty">Loading\u2026</td></tr>
           </tbody>
         </table>
       </div>
@@ -700,6 +720,7 @@ async function loadTab(name) {
       case 'workflows':   await loadWorkflows(); break;
       case 'jobs':        await loadJobs(); break;
       case 'reminders':   await loadReminders(); break;
+      case 'toolcalls':   await loadToolCalls(); break;
     }
   } catch (e) {
     console.error('loadTab error:', e);
@@ -1214,6 +1235,37 @@ async function createReminder(e) {
   await loadReminders();
 }
 
+// ── Tool Calls ──
+async function loadToolCalls() {
+  const r = await fetch('/api/debug/tool-calls');
+  const data = await r.json();
+  const calls = data.calls || [];
+  document.getElementById('cnt-toolcalls').textContent = calls.length;
+  const tbody = document.getElementById('toolcalls-body');
+  if (!calls.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No tool calls recorded yet</td></tr>';
+    return;
+  }
+  tbody.innerHTML = calls.map(c => {
+    const ts = new Date(c.ts * 1000).toLocaleString();
+    const inputsStr = JSON.stringify(c.inputs || {});
+    const shortInputs = inputsStr.length > 120 ? inputsStr.slice(0, 117) + '\u2026' : inputsStr;
+    const resultStr = c.result_preview || '';
+    const shortResult = resultStr.length > 120 ? resultStr.slice(0, 117) + '\u2026' : resultStr;
+    const sessionShort = (c.thread_id || 'unknown').length > 24
+      ? c.thread_id.slice(0, 22) + '\u2026' : (c.thread_id || 'unknown');
+    const stype = sessionType(c.thread_id || '');
+    return `<tr>
+      <td class="dim" style="white-space:nowrap">${esc(ts)}</td>
+      <td>${badge(stype, stype)} <span class="mono" style="font-size:.72rem" title="${esc(c.thread_id || '')}">${esc(sessionShort)}</span></td>
+      <td><strong>${esc(c.tool)}</strong></td>
+      <td class="mono trunc" title="${esc(inputsStr)}">${esc(shortInputs)}</td>
+      <td class="dim" style="white-space:nowrap">${c.duration_ms}ms</td>
+      <td class="mono trunc" title="${esc(resultStr)}">${esc(shortResult)}</td>
+    </tr>`;
+  }).join('');
+}
+
 // ── Config info ──
 async function loadConfig() {
   try {
@@ -1319,6 +1371,7 @@ class WebInterface:
         app.router.add_get("/api/debug/reminders",                      self._api_reminders)
         app.router.add_post("/api/debug/reminders",                     self._api_reminder_create)
         app.router.add_delete("/api/debug/reminders/{job_id}",          self._api_reminder_delete)
+        app.router.add_get("/api/debug/tool-calls",                     self._api_tool_calls)
 
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
@@ -1802,3 +1855,10 @@ class WebInterface:
             return self._json({"error": "Scheduler not available"})
         ok = self._scheduler.delete_reminder(job_id)
         return self._json({"ok": ok, "job_id": job_id})
+
+    # ------------------------------------------------------------------
+    # Debug REST API — tool calls
+    # ------------------------------------------------------------------
+
+    async def _api_tool_calls(self, _request: web.Request) -> web.Response:
+        return self._json({"calls": tool_module.get_tool_call_log()})
