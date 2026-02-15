@@ -11,6 +11,7 @@ sub_session.py, dreaming.py, or supervisor.py.
 import asyncio
 import json
 import logging
+import random
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -26,8 +27,9 @@ CLOUDCODE_BASE = "https://cloudcode-pa.googleapis.com"
 CLOUDCODE_STREAM_URL = f"{CLOUDCODE_BASE}/v1internal:streamGenerateContent"
 
 # Retry settings
-MAX_RETRIES = 3
-INITIAL_BACKOFF = 1.0
+MAX_RETRIES = 6
+INITIAL_BACKOFF = 2.0
+MAX_BACKOFF = 60.0
 
 
 # ---------------------------------------------------------------------------
@@ -398,9 +400,11 @@ class GeminiCloudClient:
                 )
             except httpx.TransportError as exc:
                 if attempt < MAX_RETRIES:
-                    logger.warning("Gemini request transport error (attempt %d): %s", attempt + 1, exc)
-                    await asyncio.sleep(backoff)
-                    backoff *= 2
+                    jitter = random.uniform(0, backoff * 0.5)
+                    wait = min(backoff + jitter, MAX_BACKOFF)
+                    logger.warning("Gemini transport error (attempt %d/%d): %s", attempt + 1, MAX_RETRIES, exc)
+                    await asyncio.sleep(wait)
+                    backoff = min(backoff * 2, MAX_BACKOFF)
                     continue
                 raise
 
@@ -417,13 +421,18 @@ class GeminiCloudClient:
                     )
                 continue
 
-            # 429/503: backoff with Retry-After
+            # 429/503: exponential backoff with jitter
             if resp.status_code in (429, 503) and attempt < MAX_RETRIES:
                 retry_after = resp.headers.get("Retry-After")
-                wait = float(retry_after) if retry_after else backoff
-                logger.warning("Gemini %d — retrying after %.1fs", resp.status_code, wait)
+                if retry_after:
+                    wait = float(retry_after)
+                else:
+                    jitter = random.uniform(0, backoff * 0.5)
+                    wait = min(backoff + jitter, MAX_BACKOFF)
+                logger.warning("Gemini %d — retrying after %.1fs (attempt %d/%d)",
+                               resp.status_code, wait, attempt + 1, MAX_RETRIES)
                 await asyncio.sleep(wait)
-                backoff *= 2
+                backoff = min(backoff * 2, MAX_BACKOFF)
                 continue
 
             if resp.status_code >= 400:
