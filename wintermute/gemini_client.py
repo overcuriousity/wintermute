@@ -267,7 +267,9 @@ class GeminiCloudClient:
         tc_counter = 0
 
         for chunk in chunks:
-            candidates = chunk.get("candidates", [])
+            # Cloud Code Assist wraps the Gemini response in a "response" envelope
+            inner = chunk.get("response", chunk)
+            candidates = inner.get("candidates", [])
             for candidate in candidates:
                 content = candidate.get("content", {})
                 for part in content.get("parts", []):
@@ -294,7 +296,7 @@ class GeminiCloudClient:
                     finish_reason = "stop"
 
             # Usage metadata
-            usage_meta = chunk.get("usageMetadata", {})
+            usage_meta = inner.get("usageMetadata", {})
             if usage_meta:
                 prompt_tokens = max(prompt_tokens, usage_meta.get("promptTokenCount", 0))
                 completion_tokens = max(completion_tokens, usage_meta.get("candidatesTokenCount", 0))
