@@ -22,66 +22,64 @@ web:
   host: "127.0.0.1"   # Use 0.0.0.0 to listen on all interfaces
   port: 8080
 
-llm:
-  # --- Option A: OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI, etc.) ---
-  #   Ollama local:   http://localhost:11434/v1
-  #   vLLM:          http://localhost:8000/v1
-  #   LM Studio:     http://localhost:1234/v1
-  #   OpenAI:        https://api.openai.com/v1
-  base_url: "http://localhost:11434/v1"
-  api_key: "ollama"                        # Use "ollama" for Ollama, actual key for OpenAI etc.
-  model: "qwen2.5:72b"                     # Any model name the endpoint accepts
-  context_size: 32768                      # Total token window the model supports
-  max_tokens: 4096                         # Maximum tokens in a single response
+# ── Inference Backends ─────────────────────────────────────────────
+# Named LLM backend definitions.  Each entry describes one endpoint+model
+# combination.  Backends are referenced by name in the llm: role mapping below.
+inference_backends:
+  - name: "local_large"
+    provider: "openai"                    # "openai" (any OpenAI-compatible) or "gemini-cli"
+    base_url: "http://localhost:11434/v1" # Ollama / vLLM / LM Studio / OpenAI / etc.
+    api_key: "ollama"                     # Use "ollama" for Ollama, actual key for OpenAI etc.
+    model: "qwen2.5:72b"
+    context_size: 32768                   # Total token window the model supports
+    max_tokens: 4096                      # Maximum tokens in a single response
+    reasoning: false                      # Enable for o1/o3, DeepSeek R1, QwQ, etc.
 
-  # --- Option B: Google Gemini via gemini-cli (free, requires `npm i -g @google/gemini-cli`) ---
-  # Uncomment below and comment out Option A to use Gemini via Cloud Code Assist.
-  # Run `uv run python -m wintermute.gemini_auth` to authenticate, or let setup.sh handle it.
-  # provider: "gemini-cli"
-  # model: "gemini-2.5-pro"
-  # context_size: 1048576
-  # max_tokens: 8192
-  # Enable for reasoning/thinking models (OpenAI o1/o3, DeepSeek R1, QwQ, etc.).
-  # Uses max_completion_tokens instead of max_tokens and extracts reasoning tokens.
-  # Reasoning is shown in the web UI but hidden from Matrix to reduce noise.
-  # reasoning: true
+  - name: "local_small"
+    provider: "openai"
+    base_url: "http://localhost:11434/v1"
+    api_key: "ollama"
+    model: "qwen2.5:7b"
+    context_size: 32768
+    max_tokens: 2048
+    reasoning: false
 
-  # Optional per-purpose overrides. Unspecified fields inherit from the parent llm: block.
-  # Each sub-key can override: base_url, api_key, model, context_size, max_tokens, reasoning.
-  compaction:
-    model: "qwen2.5:7b"                     # Cheaper/faster model for context compaction
-    # base_url: "https://api.openai.com/v1" # Use a different provider entirely
-    # api_key: "sk-..."
-    # context_size: 128000
-    # max_tokens: 2048
-    # reasoning: false
-  # sub_sessions:                            # Override for background sub-session workers
-  #   base_url: "https://api.openai.com/v1"
-  #   api_key: "sk-..."
-  #   model: "gpt-4o"
-  #   context_size: 128000
+  # Example: Google Gemini via gemini-cli (free, requires `npm i -g @google/gemini-cli`).
+  # Run `uv run python -m wintermute.gemini_auth` to authenticate.
+  # - name: "gemini_pro"
+  #   provider: "gemini-cli"
+  #   model: "gemini-2.5-pro"
+  #   context_size: 1048576
   #   max_tokens: 8192
   #   reasoning: false
-  # dreaming:                                # Override for nightly memory consolidation
-  #   base_url: "https://api.openai.com/v1"
-  #   api_key: "sk-..."
+
+  # Example: supervisor-specific backend with small max_tokens.
+  # - name: "supervisor_backend"
+  #   provider: "openai"
+  #   base_url: "http://localhost:11434/v1"
+  #   api_key: "ollama"
   #   model: "qwen2.5:7b"
   #   context_size: 32768
-  #   max_tokens: 2048
+  #   max_tokens: 150                     # Supervisor only needs ~150 tokens for JSON response
   #   reasoning: false
-  # supervisor:                              # Override for post-inference workflow validation
-  #   enabled: true                          # Set to false to disable supervisor checks entirely
-  #   base_url: "https://api.openai.com/v1"
-  #   api_key: "sk-..."
-  #   model: "qwen2.5:7b"
-  #   context_size: 32768
-  #   max_tokens: 150
-  #   reasoning: false
+
+# ── LLM Role Mapping ──────────────────────────────────────────────
+# Maps each role to an ordered list of backend names (defined above).
+# Multiple backends = automatic failover: if the first errors, the next is tried.
+# An empty list [] disables the role (only meaningful for supervisor).
+# Omitted roles default to the first backend defined above.
+llm:
+  base: ["local_large"]
+  compaction: ["local_small", "local_large"]
+  sub_sessions: ["local_large"]
+  dreaming: ["local_small"]
+  supervisor: ["local_small"]             # Use [] to disable supervisor checks
 
 # Compaction fires when history tokens exceed: context_size - max_tokens - system_prompt_tokens.
-# No separate threshold setting is needed; adjust context_size and max_tokens above.
+# No separate threshold setting is needed; adjust context_size and max_tokens in the backend.
 
 pulse:
+  enabled: true                           # Set to false to disable periodic pulse reviews
   review_interval_minutes: 60             # How often to auto-review PULSE.txt
 
 context:

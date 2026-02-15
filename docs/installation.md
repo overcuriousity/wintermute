@@ -86,15 +86,20 @@ uv sync
 cp config.yaml.example config.yaml
 ```
 
-Open `config.yaml` and fill in at minimum the `llm` section:
+Open `config.yaml` and fill in at minimum the `inference_backends` and `llm` sections:
 
 ```yaml
+inference_backends:
+  - name: "main"
+    provider: "openai"
+    base_url: "https://api.openai.com/v1"   # or your local endpoint
+    api_key: "sk-..."
+    model: "gpt-4o"
+    context_size: 128000
+    max_tokens: 4096
+
 llm:
-  base_url: "https://api.openai.com/v1"   # or your local endpoint
-  api_key: "sk-..."
-  model: "gpt-4o"
-  context_size: 128000
-  max_tokens: 4096
+  base: ["main"]
 ```
 
 For Matrix, supply the bot's **password** — Wintermute handles login and device creation automatically:
@@ -152,11 +157,15 @@ uv run python -m wintermute.gemini_auth
 ```
 
 ```yaml
+inference_backends:
+  - name: "gemini"
+    provider: "gemini-cli"
+    model: "gemini-2.5-pro"
+    context_size: 1048576
+    max_tokens: 8192
+
 llm:
-  provider: "gemini-cli"
-  model: "gemini-2.5-pro"
-  context_size: 1048576
-  max_tokens: 8192
+  base: ["gemini"]
 ```
 
 Available models: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-3-pro-preview`, `gemini-3-flash-preview`.

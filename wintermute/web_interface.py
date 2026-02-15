@@ -1310,7 +1310,7 @@ class WebInterface:
       _sub_sessions  – SubSessionManager
       _scheduler     – ReminderScheduler
       _matrix        – MatrixThread
-      _llm_cfg       – LLMConfig (for context_size / max_tokens)
+      _main_pool     – BackendPool (for context_size / max_tokens)
     """
 
     def __init__(self, host: str, port: int, llm_thread) -> None:
@@ -1323,7 +1323,7 @@ class WebInterface:
         self._sub_sessions = None
         self._scheduler = None
         self._matrix = None
-        self._llm_cfg = None
+        self._main_pool = None   # BackendPool for main role
         self._multi_cfg = None
 
     # ------------------------------------------------------------------
@@ -1410,9 +1410,9 @@ class WebInterface:
             "role": "system", "text": f"Connected as thread {thread_id}",
             "thread_id": thread_id,
         }
-        if self._llm_cfg:
-            init_msg["model"] = self._llm_cfg.model
-            init_msg["context_size"] = self._llm_cfg.context_size
+        if self._main_pool and self._main_pool.enabled:
+            init_msg["model"] = self._main_pool.primary.model
+            init_msg["context_size"] = self._main_pool.primary.context_size
         await ws.send_str(json.dumps(init_msg))
 
         try:
@@ -1619,14 +1619,15 @@ class WebInterface:
         total_used    = sp_tokens + tools_tokens + hist_tokens
         pct           = total_used / total_limit * 100
         """
-        if self._llm_cfg is None:
+        if not self._main_pool or not self._main_pool.enabled:
             return {"total_limit": 4096, "sp_tokens": 0, "tools_tokens": 0,
                     "hist_tokens": 0, "total_used": 0, "pct": 0.0}
 
         from wintermute import database, prompt_assembler
 
-        total_limit = max(self._llm_cfg.context_size - self._llm_cfg.max_tokens, 1)
-        model = self._llm_cfg.model
+        _cfg = self._main_pool.primary
+        total_limit = max(_cfg.context_size - _cfg.max_tokens, 1)
+        model = _cfg.model
 
         # System prompt (with per-thread compaction summary if available)
         summary = self._llm.get_compaction_summary(thread_id) if self._llm else None
@@ -1755,27 +1756,29 @@ class WebInterface:
             return self._json({"error": str(exc)})
 
     async def _api_config(self, _request: web.Request) -> web.Response:
-        def _provider_dict(cfg):
-            if cfg is None:
-                return None
-            return {
-                "base_url": cfg.base_url,
-                "model": cfg.model,
-                "context_size": cfg.context_size,
-                "max_tokens": cfg.max_tokens,
-                "reasoning": cfg.reasoning,
-            }
+        def _backend_list(configs):
+            """Serialize a list of ProviderConfig into dicts."""
+            return [
+                {
+                    "name": cfg.name,
+                    "provider": cfg.provider,
+                    "base_url": cfg.base_url,
+                    "model": cfg.model,
+                    "context_size": cfg.context_size,
+                    "max_tokens": cfg.max_tokens,
+                    "reasoning": cfg.reasoning,
+                }
+                for cfg in configs
+            ]
         mc = self._multi_cfg
         if mc:
             return self._json({
-                "main": _provider_dict(mc.main),
-                "compaction": _provider_dict(mc.compaction),
-                "sub_sessions": _provider_dict(mc.sub_sessions),
-                "dreaming": _provider_dict(mc.dreaming),
-                "supervisor": _provider_dict(mc.supervisor),
+                "main": _backend_list(mc.main),
+                "compaction": _backend_list(mc.compaction),
+                "sub_sessions": _backend_list(mc.sub_sessions),
+                "dreaming": _backend_list(mc.dreaming),
+                "supervisor": _backend_list(mc.supervisor),
             })
-        elif self._llm_cfg:
-            return self._json({"main": _provider_dict(self._llm_cfg)})
         return self._json({})
 
     async def _api_system_prompt(self, _request: web.Request) -> web.Response:
@@ -1784,13 +1787,11 @@ class WebInterface:
             prompt = prompt_assembler.assemble()
         except Exception as exc:  # noqa: BLE001
             return self._json({"error": str(exc)})
-        model = self._llm_cfg.model if self._llm_cfg else "gpt-4"
+        _cfg = self._main_pool.primary if (self._main_pool and self._main_pool.enabled) else None
+        model = _cfg.model if _cfg else "gpt-4"
         sp_tokens = self._count_tokens(prompt, model)
         tools_tokens = self._count_tokens(json.dumps(tool_module.TOOL_SCHEMAS), model)
-        total_limit = (
-            max(self._llm_cfg.context_size - self._llm_cfg.max_tokens, 1)
-            if self._llm_cfg else 4096
-        )
+        total_limit = max(_cfg.context_size - _cfg.max_tokens, 1) if _cfg else 4096
         combined_tokens = sp_tokens + tools_tokens
         return self._json({
             "prompt": prompt,
