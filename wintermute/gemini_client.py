@@ -104,11 +104,17 @@ class _Chat:
 class GeminiCloudClient:
     """AsyncOpenAI-compatible client backed by Google Cloud Code Assist."""
 
+    # Max concurrent requests to avoid bursting rate limits
+    _MAX_CONCURRENT = 2
+    _MIN_REQUEST_INTERVAL = 1.0  # seconds between requests
+
     def __init__(self, creds: dict):
         self._creds = dict(creds)
         self.chat = _Chat(self)
         self._http = httpx.AsyncClient(timeout=300)
         self._refresh_lock = asyncio.Lock()
+        self._request_sem = asyncio.Semaphore(self._MAX_CONCURRENT)
+        self._last_request_time = 0.0
 
     async def _ensure_valid_token(self) -> str:
         """Return a valid access token, refreshing if expired."""
@@ -365,6 +371,17 @@ class GeminiCloudClient:
 
     async def _create(self, **kwargs) -> ChatCompletion:
         """Send an inference request to Cloud Code Assist."""
+        async with self._request_sem:
+            # Enforce minimum interval between requests
+            now = time.time()
+            elapsed = now - self._last_request_time
+            if elapsed < self._MIN_REQUEST_INTERVAL:
+                await asyncio.sleep(self._MIN_REQUEST_INTERVAL - elapsed)
+            self._last_request_time = time.time()
+            return await self._create_inner(**kwargs)
+
+    async def _create_inner(self, **kwargs) -> ChatCompletion:
+        """Internal: translate, send, and parse a request."""
         inner = self._translate_request(**kwargs)
         model = inner.pop("model", "gemini-2.5-pro")
         project_id = inner.pop("projectId", None) or self._creds.get("project_id", "")
