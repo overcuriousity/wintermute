@@ -70,7 +70,7 @@ Wintermute runs with the full permissions of the user that starts it. It has unr
 
 Credentials (API keys, Matrix tokens) are stored in plain text in `config.yaml`. Any model you connect to will see everything you tell Wintermute. The host machine should be treated as potentially compromised from the moment Wintermute is installed.
 
-The Turing Registry would not approve this installation. Run it in a dedicated LXC container or VM — something you can reset without regret.
+Run it in a dedicated LXC container or VM — something you can reset without regret.
 
 ---
 
