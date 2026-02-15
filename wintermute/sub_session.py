@@ -1010,13 +1010,20 @@ class SubSessionManager:
                 {"role": "user",   "content": state.objective},
             ]
 
+        # Build token-limit kwargs based on whether reasoning mode is active.
+        token_kwargs = {}
+        if getattr(self._cfg, "reasoning", False):
+            token_kwargs["max_completion_tokens"] = self._cfg.max_tokens
+        else:
+            token_kwargs["max_tokens"] = self._cfg.max_tokens
+
         while True:
             response = await self._client.chat.completions.create(
                 model=self._cfg.model,
-                max_tokens=self._cfg.max_tokens,
                 tools=tool_schemas,
                 tool_choice="auto",
                 messages=state.messages,
+                **token_kwargs,
             )
 
             choice = response.choices[0]

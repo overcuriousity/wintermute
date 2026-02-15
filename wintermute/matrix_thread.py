@@ -872,7 +872,9 @@ class MatrixThread:
             except asyncio.CancelledError:
                 pass
             await self._set_typing(thread_id, False)
-        await self.send_message(reply, thread_id)
+        # reply is an LLMReply — only send the visible text to Matrix
+        # (reasoning tokens are intentionally omitted to reduce noise).
+        await self.send_message(str(reply), thread_id)
 
     # ------------------------------------------------------------------
     # /status and /dream command helpers

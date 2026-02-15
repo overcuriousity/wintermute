@@ -36,6 +36,10 @@ llm:
   # Optional: use a smaller/faster model for context compaction summarisation.
   # Falls back to `model` if not set.
   compaction_model: "qwen2.5:7b"
+  # Enable for reasoning/thinking models (OpenAI o1/o3, DeepSeek R1, QwQ, etc.).
+  # Uses max_completion_tokens instead of max_tokens and extracts reasoning tokens.
+  # Reasoning is shown in the web UI but hidden from Matrix to reduce noise.
+  # reasoning: true
 
 # Compaction fires when history tokens exceed: context_size - max_tokens - 2000 (system overhead).
 # No separate threshold setting is needed; adjust context_size and max_tokens above.

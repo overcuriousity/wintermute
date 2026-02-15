@@ -138,11 +138,28 @@ function ts() {
   return new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
 }
 
-function addMsg(role, text) {
+function addMsg(role, text, reasoning) {
   const wrap = document.createElement('div');
   const msg  = document.createElement('div');
   msg.className = 'msg ' + role;
   msg.textContent = text;
+  if (reasoning) {
+    const details = document.createElement('details');
+    details.style.marginTop = '.4rem';
+    details.style.fontSize = '.8rem';
+    details.style.color = '#888';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Reasoning';
+    summary.style.cursor = 'pointer';
+    summary.style.color = '#a8d8ea';
+    const pre = document.createElement('pre');
+    pre.textContent = reasoning;
+    pre.style.whiteSpace = 'pre-wrap';
+    pre.style.marginTop = '.2rem';
+    details.appendChild(summary);
+    details.appendChild(pre);
+    msg.appendChild(details);
+  }
   const t = document.createElement('div');
   t.className = 'ts';
   t.textContent = ts();
@@ -171,7 +188,7 @@ function connect() {
   ws.onmessage = (e) => {
     const d = JSON.parse(e.data);
     if (d.thread_id) threadEl.textContent = d.thread_id;
-    addMsg(d.role, d.text);
+    addMsg(d.role, d.text, d.reasoning);
   };
 
   ws.onclose = () => {
@@ -1234,14 +1251,18 @@ class WebInterface:
     # Public
     # ------------------------------------------------------------------
 
-    async def broadcast(self, text: str, thread_id: str = None) -> None:
+    async def broadcast(self, text: str, thread_id: str = None, *,
+                        reasoning: str = None) -> None:
         """Push a message to all connected clients in a specific thread."""
         if thread_id is None:
             return
         clients = self._threads.get(thread_id, set())
         if not clients:
             return
-        payload = json.dumps({"role": "assistant", "text": text, "thread_id": thread_id})
+        msg = {"role": "assistant", "text": text, "thread_id": thread_id}
+        if reasoning:
+            msg["reasoning"] = reasoning
+        payload = json.dumps(msg)
         dead = set()
         for ws in clients:
             try:
@@ -1323,9 +1344,11 @@ class WebInterface:
 
                 reply = await self._dispatch(text, ws, thread_id)
                 if reply:
-                    await ws.send_str(json.dumps({
-                        "role": "assistant", "text": reply, "thread_id": thread_id,
-                    }))
+                    msg = {"role": "assistant", "text": str(reply), "thread_id": thread_id}
+                    reasoning = getattr(reply, "reasoning", None)
+                    if reasoning:
+                        msg["reasoning"] = reasoning
+                    await ws.send_str(json.dumps(msg))
         finally:
             clients = self._threads.get(thread_id, set())
             clients.discard(ws)

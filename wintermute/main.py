@@ -146,6 +146,7 @@ async def main() -> None:
         context_size=cfg["llm"]["context_size"],
         max_tokens=cfg["llm"].get("max_tokens", 4096),
         compaction_model=cfg["llm"].get("compaction_model"),
+        reasoning=cfg["llm"].get("reasoning", False),
     )
     dreaming_raw = cfg.get("dreaming", {})
     dreaming_cfg = DreamingConfig(
@@ -202,12 +203,14 @@ async def main() -> None:
         )
 
     # Thread-aware broadcast: routes to the correct Matrix room or web client.
-    async def broadcast(text: str, thread_id: str = None) -> None:
+    # Reasoning tokens are only forwarded to the web interface, not Matrix.
+    async def broadcast(text: str, thread_id: str = None, *,
+                        reasoning: str = None) -> None:
         if matrix and thread_id and not thread_id.startswith("web_") and thread_id != "default":
-            # thread_id is a Matrix room_id
+            # thread_id is a Matrix room_id — no reasoning (too noisy)
             await matrix.send_message(text, thread_id)
         if web_iface and thread_id:
-            await web_iface.broadcast(text, thread_id)
+            await web_iface.broadcast(text, thread_id, reasoning=reasoning)
 
     # Build LLM thread with the shared broadcast function.
     llm = LLMThread(config=llm_cfg, broadcast_fn=broadcast)

@@ -9,7 +9,7 @@ multi-step tool-use loops), and delivers responses back through reply Futures.
 
 Public API used by other modules
 ---------------------------------
-  LLMThread.enqueue_user_message(text, thread_id)  -> str  (awaitable)
+  LLMThread.enqueue_user_message(text, thread_id)  -> LLMReply  (awaitable)
   LLMThread.enqueue_system_event(text, thread_id)  -> None (fire-and-forget)
   LLMThread.reset_session(thread_id)
   LLMThread.force_compact(thread_id)
@@ -96,6 +96,17 @@ class LLMConfig:
     context_size: int       # total token window the model supports (e.g. 65536)
     max_tokens: int = 4096  # maximum tokens in a single response
     compaction_model: Optional[str] = None  # cheaper model for summarisation; falls back to model
+    reasoning: bool = False  # enable reasoning/thinking token support (o1/o3, DeepSeek R1, etc.)
+
+
+@dataclass
+class LLMReply:
+    """Response from the LLM, separating visible content from reasoning tokens."""
+    text: str
+    reasoning: Optional[str] = None  # reasoning/thinking tokens (if model supports it)
+
+    def __str__(self) -> str:
+        return self.text
 
 
 @dataclass
@@ -112,7 +123,7 @@ class LLMThread:
     def __init__(self, config: LLMConfig, broadcast_fn,
                  sub_session_manager: "Optional[SubSessionManager]" = None) -> None:
         self._cfg = config
-        self._broadcast = broadcast_fn  # async callable(text: str, thread_id: str | None)
+        self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)
         self._sub_sessions = sub_session_manager  # set post-init via inject_sub_session_manager
         self._queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         self._client = AsyncOpenAI(
@@ -131,8 +142,8 @@ class LLMThread:
     # Public interface
     # ------------------------------------------------------------------
 
-    async def enqueue_user_message(self, text: str, thread_id: str = "default") -> str:
-        """Submit a user message and await the AI reply."""
+    async def enqueue_user_message(self, text: str, thread_id: str = "default") -> "LLMReply":
+        """Submit a user message and await the AI reply (returns LLMReply)."""
         loop = asyncio.get_event_loop()
         fut: asyncio.Future = loop.create_future()
         await self._queue.put(_QueueItem(text=text, thread_id=thread_id, future=fut))
@@ -224,7 +235,7 @@ class LLMThread:
                 reply = await self._process(item)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("LLM processing error")
-                reply = f"[Error during inference: {exc}]"
+                reply = LLMReply(text=f"[Error during inference: {exc}]")
 
             if item.future and not item.future.done():
                 item.future.set_result(reply)
@@ -233,13 +244,14 @@ class LLMThread:
                 # reminders, /pulse commands) have no caller waiting for
                 # the reply.  Broadcast the LLM's response directly so
                 # it reaches the user.
-                text_to_send = reply or item.text  # fallback to raw event
+                text_to_send = reply.text or item.text  # fallback to raw event
                 logger.info(
                     "Broadcasting system-event reply for thread %s (%d chars, reply_empty=%s)",
-                    item.thread_id, len(text_to_send), not reply,
+                    item.thread_id, len(text_to_send), not reply.text,
                 )
                 try:
-                    await self._broadcast(text_to_send, item.thread_id)
+                    await self._broadcast(text_to_send, item.thread_id,
+                                          reasoning=reply.reasoning)
                 except Exception:  # noqa: BLE001
                     logger.exception("Failed to broadcast system-event reply for thread %s",
                                      item.thread_id)
@@ -253,7 +265,7 @@ class LLMThread:
     # Core inference
     # ------------------------------------------------------------------
 
-    async def _process(self, item: _QueueItem) -> str:
+    async def _process(self, item: _QueueItem) -> LLMReply:
         thread_id = item.thread_id
         messages = self._build_messages(item.text, item.is_system_event, thread_id)
 
@@ -289,48 +301,68 @@ class LLMThread:
         elif is_sub_session_result:
             database.save_message("user", f"[SYSTEM EVENT] {item.text}", thread_id)
 
-        response_text = await self._inference_loop(
+        reply = await self._inference_loop(
             system_prompt, messages, thread_id,
             disable_tools=is_sub_session_result,
         )
 
-        database.save_message("assistant", response_text, thread_id)
+        database.save_message("assistant", reply.text, thread_id)
         await self._maybe_summarise_components(
             thread_id, _from_system_event=item.is_system_event,
         )
-        return response_text
+        return reply
 
     # ------------------------------------------------------------------
     # OpenAI inference loop (handles tool-use rounds)
     # ------------------------------------------------------------------
 
+    def _build_api_kwargs(self, *, disable_tools: bool = False) -> dict:
+        """Build keyword arguments for chat.completions.create based on config."""
+        kwargs: dict = {"model": self._cfg.model}
+        if self._cfg.reasoning:
+            # Reasoning models (o1/o3/DeepSeek R1) use max_completion_tokens.
+            kwargs["max_completion_tokens"] = self._cfg.max_tokens
+        else:
+            kwargs["max_tokens"] = self._cfg.max_tokens
+        if not disable_tools:
+            kwargs["tools"] = tool_module.TOOL_SCHEMAS
+            kwargs["tool_choice"] = "auto"
+        return kwargs
+
+    @staticmethod
+    def _extract_reasoning(message) -> Optional[str]:
+        """Extract reasoning/thinking content from a response message, if present."""
+        # OpenAI o-series and DeepSeek R1 use reasoning_content
+        reasoning = getattr(message, "reasoning_content", None)
+        if reasoning:
+            return reasoning.strip()
+        return None
+
     async def _inference_loop(self, system_prompt: str, messages: list[dict],
                               thread_id: str = "default",
-                              disable_tools: bool = False) -> str:
+                              disable_tools: bool = False) -> LLMReply:
         """
         Repeatedly call the API until finish_reason is not 'tool_calls'.
         The system prompt is prepended as a role=system message each call
         (not stored in the DB so it stays fresh on every inference).
         """
         full_messages = [{"role": "system", "content": system_prompt}] + messages
+        api_kwargs = self._build_api_kwargs(disable_tools=disable_tools)
+        reasoning_parts: list[str] = []
 
         while True:
-            if disable_tools:
-                response = await self._client.chat.completions.create(
-                    model=self._cfg.model,
-                    max_tokens=self._cfg.max_tokens,
-                    messages=full_messages,
-                )
-            else:
-                response = await self._client.chat.completions.create(
-                    model=self._cfg.model,
-                    max_tokens=self._cfg.max_tokens,
-                    tools=tool_module.TOOL_SCHEMAS,
-                    tool_choice="auto",
-                    messages=full_messages,
-                )
+            response = await self._client.chat.completions.create(
+                messages=full_messages,
+                **api_kwargs,
+            )
 
             choice = response.choices[0]
+
+            # Collect reasoning tokens from every round (including tool-use rounds).
+            if self._cfg.reasoning:
+                r = self._extract_reasoning(choice.message)
+                if r:
+                    reasoning_parts.append(r)
 
             if choice.finish_reason == "tool_calls" and choice.message.tool_calls:
                 # Append the assistant's tool-call message.
@@ -354,7 +386,9 @@ class LLMThread:
                 continue  # next round
 
             # Terminal response.
-            return (choice.message.content or "").strip()
+            content = (choice.message.content or "").strip()
+            reasoning = "\n\n".join(reasoning_parts) if reasoning_parts else None
+            return LLMReply(text=content, reasoning=reasoning)
 
     # ------------------------------------------------------------------
     # Context compaction
