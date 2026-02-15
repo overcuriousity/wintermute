@@ -42,14 +42,25 @@ llm:
   # Each sub-key can override: base_url, api_key, model, context_size, max_tokens, reasoning.
   compaction:
     model: "qwen2.5:7b"                     # Cheaper/faster model for context compaction
+    # base_url: "https://api.openai.com/v1" # Use a different provider entirely
+    # api_key: "sk-..."
+    # context_size: 128000
+    # max_tokens: 2048
+    # reasoning: false
   # sub_sessions:                            # Override for background sub-session workers
   #   base_url: "https://api.openai.com/v1"
   #   api_key: "sk-..."
   #   model: "gpt-4o"
   #   context_size: 128000
   #   max_tokens: 8192
+  #   reasoning: false
   # dreaming:                                # Override for nightly memory consolidation
+  #   base_url: "https://api.openai.com/v1"
+  #   api_key: "sk-..."
   #   model: "qwen2.5:7b"
+  #   context_size: 32768
+  #   max_tokens: 2048
+  #   reasoning: false
 
 # Compaction fires when history tokens exceed: context_size - max_tokens - system_prompt_tokens.
 # No separate threshold setting is needed; adjust context_size and max_tokens above.
