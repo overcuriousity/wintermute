@@ -27,8 +27,8 @@ CLOUDCODE_BASE = "https://cloudcode-pa.googleapis.com"
 CLOUDCODE_STREAM_URL = f"{CLOUDCODE_BASE}/v1internal:streamGenerateContent"
 
 # Retry settings
-MAX_RETRIES = 6
-INITIAL_BACKOFF = 2.0
+MAX_RETRIES = 15
+INITIAL_BACKOFF = 5.0
 MAX_BACKOFF = 60.0
 
 
