@@ -33,15 +33,25 @@ llm:
   model: "qwen2.5:72b"                     # Any model name the endpoint accepts
   context_size: 32768                      # Total token window the model supports
   max_tokens: 4096                         # Maximum tokens in a single response
-  # Optional: use a smaller/faster model for context compaction summarisation.
-  # Falls back to `model` if not set.
-  compaction_model: "qwen2.5:7b"
   # Enable for reasoning/thinking models (OpenAI o1/o3, DeepSeek R1, QwQ, etc.).
   # Uses max_completion_tokens instead of max_tokens and extracts reasoning tokens.
   # Reasoning is shown in the web UI but hidden from Matrix to reduce noise.
   # reasoning: true
 
-# Compaction fires when history tokens exceed: context_size - max_tokens - 2000 (system overhead).
+  # Optional per-purpose overrides. Unspecified fields inherit from the parent llm: block.
+  # Each sub-key can override: base_url, api_key, model, context_size, max_tokens, reasoning.
+  compaction:
+    model: "qwen2.5:7b"                     # Cheaper/faster model for context compaction
+  # sub_sessions:                            # Override for background sub-session workers
+  #   base_url: "https://api.openai.com/v1"
+  #   api_key: "sk-..."
+  #   model: "gpt-4o"
+  #   context_size: 128000
+  #   max_tokens: 8192
+  # dreaming:                                # Override for nightly memory consolidation
+  #   model: "qwen2.5:7b"
+
+# Compaction fires when history tokens exceed: context_size - max_tokens - system_prompt_tokens.
 # No separate threshold setting is needed; adjust context_size and max_tokens above.
 
 pulse:
@@ -56,8 +66,6 @@ context:
 dreaming:
   hour: 1                                 # Hour (0-23) to run nightly memory consolidation
   minute: 0                               # Minute (0-59)
-  # Optional: use a dedicated model for dreaming. Falls back to compaction_model, then model.
-  # model: "qwen2.5:7b"
 
 scheduler:
   timezone: "UTC"                         # Timezone for reminder scheduling (e.g. Europe/Berlin)

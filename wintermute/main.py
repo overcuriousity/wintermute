@@ -32,7 +32,9 @@ from wintermute import database
 from wintermute import prompt_assembler
 from wintermute import tools as tool_module
 from wintermute.pulse import PulseLoop
-from wintermute.llm_thread import LLMConfig, LLMThread
+from openai import AsyncOpenAI
+
+from wintermute.llm_thread import LLMConfig, LLMThread, MultiProviderConfig, ProviderConfig
 from wintermute.matrix_thread import MatrixConfig, MatrixThread
 from wintermute.dreaming import DreamingConfig, DreamingLoop
 from wintermute.scheduler_thread import ReminderScheduler, SchedulerConfig
@@ -126,6 +128,60 @@ class ShutdownCoordinator:
 # Main
 # ---------------------------------------------------------------------------
 
+def _build_provider(base: dict, overrides: dict) -> ProviderConfig:
+    """Merge partial *overrides* onto *base* and return a ProviderConfig."""
+    merged = {**base, **{k: v for k, v in overrides.items() if v is not None}}
+    return ProviderConfig(
+        api_key=merged["api_key"],
+        base_url=merged["base_url"],
+        model=merged["model"],
+        context_size=merged.get("context_size", 32768),
+        max_tokens=merged.get("max_tokens", 4096),
+        reasoning=merged.get("reasoning", False),
+    )
+
+
+def _build_multi_provider_config(llm_raw: dict) -> MultiProviderConfig:
+    """Parse the llm: block (with backward compat) into a MultiProviderConfig."""
+    # Base fields (everything except the sub-keys).
+    sub_keys = {"compaction", "sub_sessions", "dreaming"}
+    base = {k: v for k, v in llm_raw.items()
+            if k not in sub_keys and k != "compaction_model"}
+
+    # Backward compat: old flat compaction_model -> compaction.model
+    compaction_overrides = dict(llm_raw.get("compaction") or {})
+    if "compaction_model" in llm_raw and "model" not in compaction_overrides:
+        compaction_overrides["model"] = llm_raw["compaction_model"]
+
+    # Backward compat: old top-level dreaming.model is handled below in main()
+    # after reading the dreaming: section.
+
+    main_cfg = _build_provider(base, {})
+    compaction_cfg = _build_provider(base, compaction_overrides)
+    sub_sessions_cfg = _build_provider(base, dict(llm_raw.get("sub_sessions") or {}))
+    dreaming_cfg = _build_provider(base, dict(llm_raw.get("dreaming") or {}))
+
+    return MultiProviderConfig(
+        main=main_cfg,
+        compaction=compaction_cfg,
+        sub_sessions=sub_sessions_cfg,
+        dreaming=dreaming_cfg,
+    )
+
+
+def _make_clients(cfg: MultiProviderConfig) -> dict[str, AsyncOpenAI]:
+    """Create AsyncOpenAI clients, sharing instances when (base_url, api_key) match."""
+    cache: dict[tuple[str, str], AsyncOpenAI] = {}
+    result: dict[str, AsyncOpenAI] = {}
+    for purpose, pcfg in [("main", cfg.main), ("compaction", cfg.compaction),
+                          ("sub_sessions", cfg.sub_sessions), ("dreaming", cfg.dreaming)]:
+        key = (pcfg.base_url, pcfg.api_key)
+        if key not in cache:
+            cache[key] = AsyncOpenAI(api_key=pcfg.api_key, base_url=pcfg.base_url)
+        result[purpose] = cache[key]
+    return result
+
+
 async def main() -> None:
     cfg = load_config()
     setup_logging(cfg)
@@ -139,20 +195,24 @@ async def main() -> None:
     configured_tz = cfg.get("scheduler", {}).get("timezone", "UTC")
     prompt_assembler.set_timezone(configured_tz)
 
-    llm_cfg = LLMConfig(
-        api_key=cfg["llm"]["api_key"],
-        base_url=cfg["llm"]["base_url"],
-        model=cfg["llm"]["model"],
-        context_size=cfg["llm"]["context_size"],
-        max_tokens=cfg["llm"].get("max_tokens", 4096),
-        compaction_model=cfg["llm"].get("compaction_model"),
-        reasoning=cfg["llm"].get("reasoning", False),
-    )
+    multi_cfg = _build_multi_provider_config(cfg["llm"])
+
+    # Backward compat: old top-level dreaming.model -> llm.dreaming.model
     dreaming_raw = cfg.get("dreaming", {})
+    if dreaming_raw.get("model") and multi_cfg.dreaming.model == multi_cfg.main.model:
+        multi_cfg.dreaming = _build_provider(
+            {k: v for k, v in cfg["llm"].items()
+             if k not in {"compaction", "sub_sessions", "dreaming", "compaction_model"}},
+            {"model": dreaming_raw["model"]},
+        )
+        # Refresh client cache after dreaming config changed.
+
+    clients = _make_clients(multi_cfg)
+    llm_cfg = multi_cfg.main  # backward-compat alias used throughout
+
     dreaming_cfg = DreamingConfig(
         hour=dreaming_raw.get("hour", 1),
         minute=dreaming_raw.get("minute", 0),
-        model=dreaming_raw.get("model"),
     )
     scheduler_cfg = SchedulerConfig(
         timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
@@ -213,13 +273,14 @@ async def main() -> None:
             await web_iface.broadcast(text, thread_id, reasoning=reasoning)
 
     # Build LLM thread with the shared broadcast function.
-    llm = LLMThread(config=llm_cfg, broadcast_fn=broadcast)
+    llm = LLMThread(config=llm_cfg, broadcast_fn=broadcast,
+                    multi_cfg=multi_cfg, clients=clients)
 
     # Build SubSessionManager — shares the LLM client, reports back via
     # enqueue_system_event so results enter the parent thread's queue.
     sub_sessions = SubSessionManager(
-        client=llm._client,
-        llm_config=llm_cfg,
+        client=clients["sub_sessions"],
+        llm_config=multi_cfg.sub_sessions,
         enqueue_system_event=llm.enqueue_system_event,
     )
     llm.inject_sub_session_manager(sub_sessions)
@@ -253,10 +314,9 @@ async def main() -> None:
 
     dreaming_loop = DreamingLoop(
         config=dreaming_cfg,
-        llm_client=llm._client,
-        llm_model=llm_cfg.model,
-        compaction_model=llm_cfg.compaction_model,
-        reasoning=llm_cfg.reasoning,
+        llm_client=clients["dreaming"],
+        llm_model=multi_cfg.dreaming.model,
+        reasoning=multi_cfg.dreaming.reasoning,
     )
 
     # Inject remaining references for /status and /dream commands.

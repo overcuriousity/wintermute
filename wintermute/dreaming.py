@@ -12,8 +12,6 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, time as dt_time, timedelta, timezone
 from pathlib import Path
-from typing import Optional
-
 from openai import AsyncOpenAI
 
 from wintermute import prompt_assembler
@@ -29,7 +27,6 @@ DREAM_PULSE_PROMPT_FILE    = DATA_DIR / "DREAM_PULSE_PROMPT.txt"
 class DreamingConfig:
     hour: int = 1
     minute: int = 0
-    model: Optional[str] = None  # None = fall back to compaction_model, then main model
 
 _DEFAULT_MEMORIES_PROMPT = """\
 Below is the current content of MEMORIES.txt — the long-term memory store for \
@@ -153,12 +150,10 @@ class DreamingLoop:
     def __init__(self, config: DreamingConfig,
                  llm_client: AsyncOpenAI,
                  llm_model: str,
-                 compaction_model: Optional[str] = None,
                  reasoning: bool = False) -> None:
         self._cfg = config
         self._client = llm_client
-        # Resolve model: dreaming config override > compaction_model > main model
-        self._model = config.model or compaction_model or llm_model
+        self._model = llm_model
         self._reasoning = reasoning
         self._running = False
 

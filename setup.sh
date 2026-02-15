@@ -656,9 +656,11 @@ llm:
 YAML
 
     if [[ -n "${LLM_COMPACTION_MODEL:-}" ]]; then
-      echo "  compaction_model: \"${LLM_COMPACTION_MODEL}\""
+      echo "  compaction:"
+      echo "    model: \"${LLM_COMPACTION_MODEL}\""
     else
-      echo "  # compaction_model: \"\"  # optional: smaller/faster model for summarisation"
+      echo "  # compaction:"
+      echo "  #   model: \"\"  # optional: smaller/faster model for summarisation"
     fi
 
     cat <<YAML

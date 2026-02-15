@@ -89,14 +89,32 @@ def _count_tokens(text: str, model: str) -> int:
 
 
 @dataclass
-class LLMConfig:
+class ProviderConfig:
     api_key: str
     base_url: str           # e.g. http://localhost:11434/v1  or  https://api.openai.com/v1
     model: str
     context_size: int       # total token window the model supports (e.g. 65536)
     max_tokens: int = 4096  # maximum tokens in a single response
-    compaction_model: Optional[str] = None  # cheaper model for summarisation; falls back to model
     reasoning: bool = False  # enable reasoning/thinking token support (o1/o3, DeepSeek R1, etc.)
+
+
+# Backward-compatible alias.
+LLMConfig = ProviderConfig
+
+
+@dataclass
+class MultiProviderConfig:
+    """Per-purpose LLM provider configurations.
+
+    Each field holds a fully-resolved ProviderConfig.  Auxiliary purposes
+    (compaction, sub_sessions, dreaming) inherit unset fields from *main*
+    at config-build time, so by the time this object exists every field in
+    every ProviderConfig is populated.
+    """
+    main: ProviderConfig
+    compaction: ProviderConfig
+    sub_sessions: ProviderConfig
+    dreaming: ProviderConfig
 
 
 @dataclass
@@ -120,16 +138,25 @@ class _QueueItem:
 class LLMThread:
     """Runs as an asyncio task within the shared event loop."""
 
-    def __init__(self, config: LLMConfig, broadcast_fn,
-                 sub_session_manager: "Optional[SubSessionManager]" = None) -> None:
+    def __init__(self, config: ProviderConfig, broadcast_fn,
+                 sub_session_manager: "Optional[SubSessionManager]" = None,
+                 multi_cfg: Optional[MultiProviderConfig] = None,
+                 clients: Optional[dict[str, AsyncOpenAI]] = None) -> None:
         self._cfg = config
         self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)
         self._sub_sessions = sub_session_manager  # set post-init via inject_sub_session_manager
         self._queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
-        self._client = AsyncOpenAI(
+        self._client = (clients or {}).get("main") or AsyncOpenAI(
             api_key=config.api_key,
             base_url=config.base_url,
         )
+        # Compaction may use a different provider/client.
+        if multi_cfg and clients:
+            self._compaction_cfg = multi_cfg.compaction
+            self._compaction_client = clients.get("compaction", self._client)
+        else:
+            self._compaction_cfg = config
+            self._compaction_client = self._client
         self._running = False
         # Per-thread compaction summaries: thread_id -> summary text
         self._compaction_summaries: dict[str, Optional[str]] = {}
@@ -418,10 +445,10 @@ class LLMThread:
         else:
             summary_prompt = compaction_prompt + history_text
 
-        compact_model = self._cfg.compaction_model or self._cfg.model
-        token_kwarg = ({"max_completion_tokens": 2048} if self._cfg.reasoning
+        compact_model = self._compaction_cfg.model
+        token_kwarg = ({"max_completion_tokens": 2048} if self._compaction_cfg.reasoning
                        else {"max_tokens": 2048})
-        summary_response = await self._client.chat.completions.create(
+        summary_response = await self._compaction_client.chat.completions.create(
             model=compact_model,
             messages=[{"role": "user", "content": summary_prompt}],
             **token_kwarg,

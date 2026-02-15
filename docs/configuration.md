@@ -41,9 +41,17 @@ llm:
   model: "qwen2.5:72b"                    # Any model name the endpoint accepts
   context_size: 32768                      # Total token window the model supports
   max_tokens: 4096                         # Maximum tokens in a single response
-  # Optional: use a smaller/faster model for context compaction summarisation.
-  # Falls back to `model` if not set.
-  compaction_model: "qwen2.5:7b"
+  # Per-purpose overrides. Unspecified fields inherit from the parent llm: block.
+  compaction:
+    model: "qwen2.5:7b"
+  # sub_sessions:
+  #   base_url: "https://api.openai.com/v1"
+  #   api_key: "sk-..."
+  #   model: "gpt-4o"
+  #   context_size: 128000
+  #   max_tokens: 8192
+  # dreaming:
+  #   model: "qwen2.5:7b"
 
 # ── Context Compaction ────────────────────────────────────────────
 # Compaction fires when history tokens exceed:
@@ -66,9 +74,6 @@ context:
 dreaming:
   hour: 1                                 # Hour (0-23, UTC) to run consolidation
   minute: 0                               # Minute (0-59)
-  # Optional: use a dedicated model for dreaming.
-  # Falls back to compaction_model, then model.
-  # model: "qwen2.5:7b"
 
 # ── Scheduler ─────────────────────────────────────────────────────
 scheduler:
@@ -91,7 +96,10 @@ logging:
 | `model` | yes | — | Model name the endpoint accepts |
 | `context_size` | yes | — | Total token window the model supports |
 | `max_tokens` | no | `4096` | Maximum tokens per response |
-| `compaction_model` | no | same as `model` | Cheaper model for context compaction |
+| `reasoning` | no | `false` | Enable reasoning/thinking token support |
+| `compaction` | no | — | Override block for compaction (partial; inherits from parent) |
+| `sub_sessions` | no | — | Override block for sub-sessions (partial; inherits from parent) |
+| `dreaming` | no | — | Override block for dreaming (partial; inherits from parent) |
 
 ### `matrix`
 
@@ -127,7 +135,6 @@ See [matrix-setup.md](matrix-setup.md) for full setup instructions.
 |-----|----------|---------|-------------|
 | `hour` | no | `1` | Hour (UTC, 0-23) for nightly consolidation |
 | `minute` | no | `0` | Minute (0-59) |
-| `model` | no | compaction_model or model | Dedicated model for dreaming |
 
 ### `scheduler`
 
