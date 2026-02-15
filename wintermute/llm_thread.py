@@ -27,6 +27,7 @@ from pathlib import Path
 
 from wintermute import database
 from wintermute import prompt_assembler
+from wintermute import supervisor as supervisor_module
 from wintermute import tools as tool_module
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -122,6 +123,7 @@ class LLMReply:
     """Response from the LLM, separating visible content from reasoning tokens."""
     text: str
     reasoning: Optional[str] = None  # reasoning/thinking tokens (if model supports it)
+    tool_calls_made: list[str] = field(default_factory=list)  # tool names called during inference
 
     def __str__(self) -> str:
         return self.text
@@ -133,6 +135,7 @@ class _QueueItem:
     thread_id: str = "default"
     is_system_event: bool = False
     future: Optional[asyncio.Future] = field(default=None, compare=False)
+    is_supervisor_correction: bool = False  # loop guard: skip supervisor re-check
 
 
 class LLMThread:
@@ -283,10 +286,78 @@ class LLMThread:
                     logger.exception("Failed to broadcast system-event reply for thread %s",
                                      item.thread_id)
 
+            # -- Supervisor workflow validation --
+            # Fire async after the reply is delivered.  Only check
+            # user-facing messages (not system events, not sub-session
+            # threads, and not the supervisor's own corrections).
+            if (
+                not item.is_system_event
+                and not item.is_supervisor_correction
+                and not item.thread_id.startswith("sub_")
+                and reply.text
+            ):
+                asyncio.create_task(
+                    self._run_supervisor_check(
+                        user_message=item.text,
+                        assistant_response=reply.text,
+                        tool_calls_made=reply.tool_calls_made,
+                        thread_id=item.thread_id,
+                    ),
+                    name=f"supervisor_{item.thread_id}",
+                )
+
             self._queue.task_done()
 
     def stop(self) -> None:
         self._running = False
+
+    # ------------------------------------------------------------------
+    # Supervisor workflow validation
+    # ------------------------------------------------------------------
+
+    async def _run_supervisor_check(
+        self,
+        user_message: str,
+        assistant_response: str,
+        tool_calls_made: list[str],
+        thread_id: str,
+    ) -> None:
+        """Fire a one-shot supervisor agent to detect hallucinated workflow spawns.
+
+        Runs asynchronously after the main reply has already been delivered.
+        If the supervisor detects a mismatch it enqueues a corrective system
+        event with the ``is_supervisor_correction`` flag set so the loop
+        guard prevents infinite re-checking.
+        """
+        if not self._sub_sessions:
+            return
+
+        active_sessions = self._sub_sessions.list_active()
+
+        try:
+            correction = await supervisor_module.check_workflow_consistency(
+                client=self._compaction_client,
+                model=self._compaction_cfg.model,
+                user_message=user_message,
+                assistant_response=assistant_response,
+                tool_calls_made=tool_calls_made,
+                active_sessions=active_sessions,
+                reasoning=self._compaction_cfg.reasoning,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Supervisor check raised (non-fatal)")
+            return
+
+        if correction:
+            logger.info(
+                "Supervisor injecting correction into thread %s", thread_id,
+            )
+            await self._queue.put(_QueueItem(
+                text=correction,
+                thread_id=thread_id,
+                is_system_event=True,
+                is_supervisor_correction=True,
+            ))
 
     # ------------------------------------------------------------------
     # Core inference
@@ -376,6 +447,7 @@ class LLMThread:
         full_messages = [{"role": "system", "content": system_prompt}] + messages
         api_kwargs = self._build_api_kwargs(disable_tools=disable_tools)
         reasoning_parts: list[str] = []
+        tool_calls_made: list[str] = []
 
         while True:
             response = await self._client.chat.completions.create(
@@ -397,6 +469,7 @@ class LLMThread:
 
                 # Execute each tool and collect results.
                 for tc in choice.message.tool_calls:
+                    tool_calls_made.append(tc.function.name)
                     try:
                         inputs = json.loads(tc.function.arguments)
                     except json.JSONDecodeError:
@@ -415,7 +488,8 @@ class LLMThread:
             # Terminal response.
             content = (choice.message.content or "").strip()
             reasoning = "\n\n".join(reasoning_parts) if reasoning_parts else None
-            return LLMReply(text=content, reasoning=reasoning)
+            return LLMReply(text=content, reasoning=reasoning,
+                            tool_calls_made=tool_calls_made)
 
     # ------------------------------------------------------------------
     # Context compaction
