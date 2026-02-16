@@ -13,8 +13,10 @@ Design
   - Uses a dedicated LLM provider (cheap/fast model recommended).
   - Receives hard evidence: the list of tool calls actually made during
     the inference round, plus the programmatic list of active sessions.
-  - A ``_supervisor_correction`` flag on the queue item prevents the
-    supervisor from re-checking its own correction events (loop guard).
+  - A ``correction_depth`` counter on the queue item allows the supervisor
+    to re-check responses to its own corrections up to MAX_CORRECTION_DEPTH
+    times, with escalating prompt severity.  This prevents infinite loops
+    while still catching persistent hallucinations.
 
 Prompt configuration
 --------------------
@@ -42,6 +44,8 @@ from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from wintermute.llm_thread import BackendPool
+
+from wintermute.tools import TOOL_SCHEMAS
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +167,23 @@ def _truncate_middle(text: str, keep_head: int, keep_tail: int) -> str:
     return text[:keep_head] + f"\n[… {omitted} chars omitted …]\n" + text[-keep_tail:]
 
 
+def _get_spawn_tool_schema() -> str:
+    """Return a compact JSON string of the spawn_sub_session tool schema."""
+    for tool in TOOL_SCHEMAS:
+        if tool.get("function", {}).get("name") == "spawn_sub_session":
+            return json.dumps(tool, indent=2)
+    return "(spawn_sub_session tool schema not found)"
+
+
+def _ordinal(n: int) -> str:
+    """Return the English ordinal string for *n* (e.g. 1 → '1st')."""
+    if 11 <= (n % 100) <= 13:
+        suffix = "th"
+    else:
+        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
 # ------------------------------------------------------------------
 # Public API
 # ------------------------------------------------------------------
@@ -173,6 +194,7 @@ async def check_workflow_consistency(
     assistant_response: str,
     tool_calls_made: list[str],
     active_sessions: list[dict],
+    correction_depth: int = 0,
 ) -> Optional[str]:
     """Run a one-shot supervisor check with automatic backend failover.
 
@@ -242,17 +264,43 @@ async def check_workflow_consistency(
             logger.warning(
                 "Supervisor detected workflow hallucination: %s", reason,
             )
-            return (
-                "[SUPERVISOR CORRECTION] Your previous response indicated that "
-                "a background session or workflow was started, but no "
-                "spawn_sub_session tool call was actually made during that "
-                f"response.  Detected issue: {reason}\n\n"
-                "You MUST now either:\n"
-                "  1. Actually call spawn_sub_session to start the task, OR\n"
-                "  2. Send a corrected message to the user acknowledging that "
-                "the session was not started and offer to start it now.\n\n"
-                "Do NOT repeat the claim that the session is already running."
-            )
+            tool_schema = _get_spawn_tool_schema()
+
+            if correction_depth == 0:
+                return (
+                    "[SUPERVISOR CORRECTION] Your previous response indicated that "
+                    "a background session or workflow was started, but no "
+                    "spawn_sub_session tool call was actually made during that "
+                    f"response.  Detected issue: {reason}\n\n"
+                    "You MUST now either:\n"
+                    "  1. Actually call spawn_sub_session to start the task, OR\n"
+                    "  2. Send a corrected message to the user acknowledging that "
+                    "the session was not started and offer to start it now.\n\n"
+                    "Do NOT repeat the claim that the session is already running.\n\n"
+                    "Here is the spawn_sub_session tool schema — use it if you "
+                    "intend to start a background task:\n"
+                    f"```json\n{tool_schema}\n```"
+                )
+            else:
+                return (
+                    "[SUPERVISOR CORRECTION — REPEATED VIOLATION] You have AGAIN "
+                    "claimed to start a workflow or session without actually "
+                    "calling spawn_sub_session.  This is the "
+                    f"{_ordinal(correction_depth + 1)} consecutive violation.\n\n"
+                    f"Detected issue: {reason}\n\n"
+                    "You MUST send a message to the user that:\n"
+                    "  - Apologises for the error\n"
+                    "  - States clearly that NO background task is running\n"
+                    "  - Asks the user if they would like you to attempt the "
+                    "task now\n\n"
+                    "Do NOT claim any session is running.  Do NOT fabricate "
+                    "session IDs.  Do NOT use phrases like 'starting now' or "
+                    "'spinning up' unless you are ACTUALLY making a "
+                    "spawn_sub_session tool call in the SAME response.\n\n"
+                    "Here is the spawn_sub_session tool schema — you MUST use "
+                    "this exact tool call format if you want to start a task:\n"
+                    f"```json\n{tool_schema}\n```"
+                )
 
         logger.debug("Supervisor check passed (no hallucination detected)")
         return None

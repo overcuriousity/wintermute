@@ -28,6 +28,10 @@ from wintermute import database
 from wintermute import prompt_assembler
 from wintermute import supervisor as supervisor_module
 from wintermute import tools as tool_module
+
+# Maximum number of consecutive supervisor corrections per turn.
+# After this many corrections the supervisor gives up to prevent infinite loops.
+MAX_CORRECTION_DEPTH = 2
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from wintermute.sub_session import SubSessionManager
@@ -205,7 +209,12 @@ class _QueueItem:
     thread_id: str = "default"
     is_system_event: bool = False
     future: Optional[asyncio.Future] = field(default=None, compare=False)
-    is_supervisor_correction: bool = False  # loop guard: skip supervisor re-check
+    is_supervisor_correction: bool = False  # marks items injected by supervisor
+    # How many consecutive supervisor corrections have been issued for this
+    # turn.  The supervisor will re-check responses up to MAX_CORRECTION_DEPTH
+    # times before giving up (prevents infinite loops while still catching
+    # persistent hallucinations).
+    correction_depth: int = 0
     # Sequence number of the user-message turn this correction was issued for.
     # If the thread has advanced past this number by the time the correction is
     # dequeued, the correction is stale and will be dropped.
@@ -404,10 +413,15 @@ class LLMThread:
             # user-facing messages (not system events, not sub-session
             # threads, and not the supervisor's own corrections).
             if (
-                not item.is_system_event
-                and not item.is_supervisor_correction
-                and not item.thread_id.startswith("sub_")
+                not item.thread_id.startswith("sub_")
                 and reply.text
+                and (
+                    # Normal user message — always check
+                    (not item.is_system_event and not item.is_supervisor_correction)
+                    # Supervisor correction response — re-check up to depth limit
+                    or (item.is_supervisor_correction
+                        and item.correction_depth < MAX_CORRECTION_DEPTH)
+                )
             ):
                 # Snapshot the current sequence number so the correction can
                 # be dropped if the conversation has moved on before it lands.
@@ -419,6 +433,7 @@ class LLMThread:
                         tool_calls_made=reply.tool_calls_made,
                         thread_id=item.thread_id,
                         issued_for_seq=seq_at_fire,
+                        correction_depth=item.correction_depth,
                     ),
                     name=f"supervisor_{item.thread_id}",
                 )
@@ -439,13 +454,15 @@ class LLMThread:
         tool_calls_made: list[str],
         thread_id: str,
         issued_for_seq: int = 0,
+        correction_depth: int = 0,
     ) -> None:
         """Fire a one-shot supervisor agent to detect hallucinated workflow spawns.
 
         Runs asynchronously after the main reply has already been delivered.
         If the supervisor detects a mismatch it enqueues a corrective system
-        event with the ``is_supervisor_correction`` flag set so the loop
-        guard prevents infinite re-checking.
+        event.  ``correction_depth`` tracks how many consecutive corrections
+        have been issued for this turn; the gate in ``_loop`` stops re-checking
+        once ``MAX_CORRECTION_DEPTH`` is reached.
 
         ``issued_for_seq`` records the per-thread sequence number at the time
         the check was fired.  If the thread has advanced past this number by
@@ -465,20 +482,31 @@ class LLMThread:
                 assistant_response=assistant_response,
                 tool_calls_made=tool_calls_made,
                 active_sessions=active_sessions,
+                correction_depth=correction_depth,
             )
         except Exception:  # noqa: BLE001
             logger.exception("Supervisor check raised (non-fatal)")
             return
 
         if correction:
-            logger.info(
-                "Supervisor injecting correction into thread %s", thread_id,
-            )
+            new_depth = correction_depth + 1
+            if new_depth >= MAX_CORRECTION_DEPTH:
+                logger.warning(
+                    "Supervisor injecting FINAL correction (depth %d/%d) "
+                    "into thread %s — no further re-checks will fire",
+                    new_depth, MAX_CORRECTION_DEPTH, thread_id,
+                )
+            else:
+                logger.info(
+                    "Supervisor injecting correction (depth %d/%d) into thread %s",
+                    new_depth, MAX_CORRECTION_DEPTH, thread_id,
+                )
             await self._queue.put(_QueueItem(
                 text=correction,
                 thread_id=thread_id,
                 is_system_event=True,
                 is_supervisor_correction=True,
+                correction_depth=correction_depth + 1,
                 correction_for_seq=issued_for_seq,
             ))
 
