@@ -18,6 +18,7 @@ Public API used by other modules
 import asyncio
 import json
 import logging
+import time as _time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -110,6 +111,7 @@ class BackendPool:
 
     def __init__(self, backends: "list[tuple[ProviderConfig, object]]") -> None:
         self._backends = backends
+        self.last_used: str = backends[0][0].name if backends else ""
 
     # -- Convenience accessors ------------------------------------------------
 
@@ -155,7 +157,9 @@ class BackendPool:
                 call_kwargs["max_tokens"] = max_tok
             call_kwargs.update(extra_kwargs)
             try:
-                return await client.chat.completions.create(**call_kwargs)
+                result = await client.chat.completions.create(**call_kwargs)
+                self.last_used = cfg.name
+                return result
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 backend_desc = f"'{cfg.name}' ({cfg.model})"
@@ -355,6 +359,14 @@ class LLMThread:
                 reply = await self._process(item)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("LLM processing error")
+                try:
+                    database.save_interaction_log(
+                        _time.time(), "chat", item.thread_id,
+                        self._main_pool.last_used,
+                        item.text, str(exc), "error",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
                 err_msg = str(exc)
                 # Provide actionable hint for Gemini auth failures
                 if "401" in err_msg and "Gemini" in err_msg:
@@ -521,6 +533,25 @@ class LLMThread:
             disable_tools=is_sub_session_result,
         )
 
+        # Determine action type for interaction log
+        if item.is_supervisor_correction:
+            _action = "supervisor"
+        elif thread_id.startswith("sub_"):
+            _action = "sub_session"
+        elif item.is_system_event:
+            _action = "system_event"
+        else:
+            _action = "chat"
+
+        try:
+            database.save_interaction_log(
+                _time.time(), _action, thread_id,
+                self._main_pool.last_used,
+                item.text, reply.text, "ok",
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to save interaction log entry", exc_info=True)
+
         database.save_message("assistant", reply.text, thread_id)
         await self._maybe_summarise_components(
             thread_id, _from_system_event=item.is_system_event,
@@ -628,6 +659,15 @@ class LLMThread:
             max_tokens_override=2048,
         )
         summary = (summary_response.choices[0].message.content or "").strip()
+
+        try:
+            database.save_interaction_log(
+                _time.time(), "compaction", thread_id,
+                self._compaction_pool.last_used,
+                summary_prompt, summary, "ok",
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to save compaction interaction log", exc_info=True)
 
         if to_summarise:
             database.archive_messages(to_summarise[-1]["id"], thread_id)
