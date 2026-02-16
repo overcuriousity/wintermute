@@ -3,8 +3,8 @@ Dreaming – Nightly Memory Consolidation
 
 Runs as an autonomous asyncio task that fires at a configurable hour each
 night to review and prune the persistent memory components (MEMORIES.txt,
-PULSE.txt) without user interaction.  Uses a direct API call (no tool loop,
-no thread history) so it never interferes with ongoing conversations.
+pulse DB items) without user interaction.  Uses a direct API call (no tool
+loop, no thread history) so it never interferes with ongoing conversations.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from datetime import datetime, time as dt_time, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from wintermute import database
 from wintermute import prompt_assembler
 
 if TYPE_CHECKING:
@@ -53,19 +54,17 @@ explanation.
 """
 
 _DEFAULT_PULSE_PROMPT = """\
-Below is the current content of PULSE.txt — the active pulse working memory \
-(ongoing goals, recurring tasks) for a personal AI assistant.
+Below are the active pulse items (working memory) for a personal AI assistant.
 
-Your task is to consolidate it:
-- Remove completed or clearly stale items.
-- Merge duplicate or overlapping goals.
-- Keep all genuinely active tasks.
-- Return the result as a concise, well-structured list.
+Review each item and return a JSON array of actions to take. Valid actions:
+- {{"action": "keep", "id": <id>}} — item is still relevant, no change
+- {{"action": "complete", "id": <id>}} — item is done or clearly stale
+- {{"action": "update", "id": <id>, "content": "new text"}} — reword/merge
+- {{"action": "update", "id": <id>, "priority": <1-10>}} — adjust priority
 
-Return ONLY the consolidated PULSE.txt content, with no preamble or \
-explanation.
+Return ONLY the JSON array, no preamble or explanation.
 
---- PULSE.txt ---
+--- Active Pulse Items ---
 {content}
 """
 
@@ -102,7 +101,7 @@ async def _consolidate(pool: "BackendPool",
 
 async def run_dream_cycle(pool: "BackendPool") -> None:
     """
-    Run a full nightly consolidation pass over MEMORIES.txt and PULSE.txt.
+    Run a full nightly consolidation pass over MEMORIES.txt and pulse DB items.
 
     Skips any component that is empty or missing.  Each component is
     consolidated independently so a failure in one does not abort the other.
@@ -122,20 +121,44 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
     else:
         logger.debug("Dreaming: MEMORIES.txt empty or missing, skipping")
 
-    pulse = prompt_assembler._read(prompt_assembler.PULSE_FILE)
-    if pulse:
+    pulse_items = database.list_pulse_items("active")
+    if pulse_items:
         try:
             pulse_prompt = _load_prompt(DREAM_PULSE_PROMPT_FILE, _DEFAULT_PULSE_PROMPT)
-            consolidated = await _consolidate(
-                pool, "PULSE.txt", pulse_prompt, pulse,
+            formatted = "\n".join(
+                f"[P{it['priority']}] #{it['id']}: {it['content']}"
+                for it in pulse_items
             )
-            if consolidated:
-                prompt_assembler.update_pulse(consolidated)
-                logger.info("Dreaming: PULSE.txt updated (%d chars)", len(consolidated))
+            raw = await _consolidate(pool, "pulse", pulse_prompt, formatted)
+            if raw:
+                import json as _json
+                try:
+                    actions = _json.loads(raw)
+                except _json.JSONDecodeError:
+                    logger.warning("Dreaming: pulse LLM returned non-JSON, skipping")
+                    actions = []
+                applied = 0
+                for act in actions:
+                    a = act.get("action")
+                    aid = act.get("id")
+                    if a == "complete" and aid is not None:
+                        database.complete_pulse_item(int(aid))
+                        applied += 1
+                    elif a == "update" and aid is not None:
+                        kwargs = {}
+                        if "content" in act:
+                            kwargs["content"] = act["content"]
+                        if "priority" in act:
+                            kwargs["priority"] = int(act["priority"])
+                        if kwargs:
+                            database.update_pulse_item(int(aid), **kwargs)
+                            applied += 1
+                logger.info("Dreaming: applied %d pulse actions", applied)
+            database.delete_old_completed_pulse(30)
         except Exception:  # noqa: BLE001
-            logger.exception("Dreaming: failed to consolidate PULSE.txt")
+            logger.exception("Dreaming: failed to consolidate pulse")
     else:
-        logger.debug("Dreaming: PULSE.txt empty or missing, skipping")
+        logger.debug("Dreaming: no active pulse items, skipping")
 
 
 class DreamingLoop:

@@ -6,7 +6,7 @@ Wintermute includes several autonomous background systems that operate without u
 
 **Module:** `wintermute/dreaming.py`
 
-A nightly consolidation pass that reviews and prunes MEMORIES.txt and PULSE.txt.
+A nightly consolidation pass that reviews and prunes MEMORIES.txt and pulse DB items.
 
 - Fires at a configurable hour (default: 01:00 UTC)
 - Uses a direct LLM API call — no tool loop, no conversation side effects
@@ -16,7 +16,7 @@ A nightly consolidation pass that reviews and prunes MEMORIES.txt and PULSE.txt.
 
 **Consolidation logic:**
 - MEMORIES.txt: removes duplicates, merges related facts, preserves distinct useful facts
-- PULSE.txt: removes completed/stale items, merges overlapping goals, keeps active tasks
+- Pulse items: LLM returns JSON actions (complete, update, keep) applied via DB; completed items older than 30 days are purged
 
 The prompts used for consolidation are stored in `data/DREAM_MEMORIES_PROMPT.txt` and `data/DREAM_PULSE_PROMPT.txt` and can be customised. See [system-prompts.md](system-prompts.md#customisable-prompt-templates).
 
@@ -24,11 +24,11 @@ The prompts used for consolidation are stored in `data/DREAM_MEMORIES_PROMPT.txt
 
 **Module:** `wintermute/pulse.py`
 
-Periodic autonomous reviews of PULSE.txt.
+Periodic autonomous reviews of active pulse items.
 
 - Runs at a configurable interval (default: every 60 minutes)
 - Spawns an isolated sub-session in `full` mode (fire-and-forget, no parent thread)
-- The sub-session reads PULSE.txt and takes appropriate actions (set reminders, update memories, run commands, etc.)
+- The sub-session lists pulse items via the `pulse` tool and takes appropriate actions (complete items, add new ones, set reminders, update memories, run commands, etc.)
 - Never pollutes any user-facing conversation history
 
 ## Sub-sessions and Workflow DAG
@@ -140,7 +140,7 @@ After every inference, Wintermute checks if any memory component exceeds its siz
 | Component | Default Limit |
 |-----------|---------------|
 | MEMORIES.txt | 10,000 chars |
-| PULSE.txt | 5,000 chars |
+| Pulse (DB) | 5,000 chars |
 | skills/ (total) | 20,000 chars |
 
 When exceeded, a system event is enqueued asking the AI to read, condense, and update the component.

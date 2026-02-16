@@ -5,7 +5,7 @@ Order:
   1. BASE_PROMPT.txt   – immutable core
   2. Current datetime   – local time + timezone
   3. MEMORIES.txt      – long-term user facts
-  4. PULSE.txt         – active goals / working memory
+  4. Pulse (from DB)   – active goals / working memory
   5. skills/*.md       – capability documentation
 """
 
@@ -15,12 +15,13 @@ from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+from wintermute import database
+
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data")
 BASE_PROMPT_FILE  = DATA_DIR / "BASE_PROMPT.txt"
 MEMORIES_FILE     = DATA_DIR / "MEMORIES.txt"
-PULSE_FILE        = DATA_DIR / "PULSE.txt"
 SKILLS_DIR        = DATA_DIR / "skills"
 
 # Size thresholds (characters) that trigger AI summarisation
@@ -88,7 +89,7 @@ def assemble(extra_summary: Optional[str] = None) -> str:
     if memories:
         sections.append(f"# User Memories\n\n{memories}")
 
-    pulse = _read(PULSE_FILE)
+    pulse = database.get_active_pulse_text()
     if pulse:
         sections.append(f"# Active Pulse\n\n{pulse}")
 
@@ -108,7 +109,7 @@ def check_component_sizes() -> dict[str, bool]:
     Keys: 'memories', 'pulse', 'skills'
     """
     memories_len = len(_read(MEMORIES_FILE))
-    pulse_len    = len(_read(PULSE_FILE))
+    pulse_len    = len(database.get_active_pulse_text())
     skills_len   = len(_read_skills())
 
     return {
@@ -135,12 +136,6 @@ def append_memory(entry: str) -> int:
     MEMORIES_FILE.write_text(new_content, encoding="utf-8")
     logger.info("MEMORIES.txt appended (%d chars total)", len(new_content))
     return len(new_content)
-
-
-def update_pulse(content: str) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    PULSE_FILE.write_text(content, encoding="utf-8")
-    logger.info("PULSE.txt updated (%d chars)", len(content))
 
 
 def add_skill(skill_name: str, documentation: str) -> None:

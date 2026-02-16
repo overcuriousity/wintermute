@@ -832,7 +832,7 @@ class MatrixThread:
         if text == "/pulse":
             await self._llm.enqueue_system_event(
                 "The user manually triggered a pulse review. "
-                "Review your PULSE.txt and report what actions, if any, you take.",
+                "Review your active pulse items using the pulse tool and report what actions, if any, you take.",
                 thread_id,
             )
             await self.send_message("Pulse review triggered.", thread_id)
@@ -935,8 +935,9 @@ class MatrixThread:
             return
 
         dl = self._dreaming_loop
+        from wintermute import database as db
         mem_before = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
-        pulse_before = len(prompt_assembler._read(prompt_assembler.PULSE_FILE) or "")
+        pulse_before = len(db.list_pulse_items("active"))
 
         await self.send_message("Starting dream cycle...", thread_id)
         try:
@@ -947,12 +948,12 @@ class MatrixThread:
             return
 
         mem_after = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
-        pulse_after = len(prompt_assembler._read(prompt_assembler.PULSE_FILE) or "")
+        pulse_after = len(db.list_pulse_items("active"))
 
         await self.send_message(
             f"Dream cycle complete.\n"
             f"MEMORIES.txt: {mem_before} -> {mem_after} chars\n"
-            f"PULSE.txt: {pulse_before} -> {pulse_after} chars",
+            f"Pulse items: {pulse_before} -> {pulse_after} active",
             thread_id,
         )
 

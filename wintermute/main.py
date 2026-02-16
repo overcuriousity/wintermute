@@ -101,7 +101,7 @@ DATA_DIR = Path("data")
 def bootstrap_data_files() -> None:
     """Ensure required data directories exist.
 
-    All prompt files (BASE_PROMPT.txt, MEMORIES.txt, PULSE.txt,
+    All prompt files (BASE_PROMPT.txt, MEMORIES.txt,
     DREAM_*_PROMPT.txt, COMPACTION_PROMPT.txt) are shipped in data/ and
     managed as editable configuration — they are NOT auto-generated.
     """

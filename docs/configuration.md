@@ -92,14 +92,14 @@ llm:
 # ── Pulse Reviews ─────────────────────────────────────────────────
 pulse:
   enabled: true                           # Set to false to disable pulse reviews
-  review_interval_minutes: 60             # How often to auto-review PULSE.txt
+  review_interval_minutes: 60             # How often to auto-review pulse items
 
 # ── Component Size Limits ─────────────────────────────────────────
 # Characters before a component triggers AI auto-summarisation.
 context:
   component_size_limits:
     memories: 10000                       # MEMORIES.txt
-    pulse: 5000                           # PULSE.txt
+    pulse: 5000                           # Pulse items (DB)
     skills_total: 20000                   # Total across all skills/*.md
 
 # ── Dreaming (Nightly Consolidation) ─────────────────────────────
@@ -262,5 +262,5 @@ See [matrix-setup.md](matrix-setup.md) for full setup instructions.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `memories` | `10000` | Char limit before MEMORIES.txt auto-summarisation |
-| `pulse` | `5000` | Char limit before PULSE.txt auto-summarisation |
+| `pulse` | `5000` | Char limit before pulse auto-summarisation |
 | `skills_total` | `20000` | Total char limit across all skills |

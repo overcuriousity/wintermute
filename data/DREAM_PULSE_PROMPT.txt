@@ -1,12 +1,12 @@
-Below is the current content of PULSE.txt — the active pulse working memory (ongoing goals, recurring tasks) for a personal AI assistant.
+Below are the active pulse items (working memory) for a personal AI assistant.
 
-Your task is to consolidate it:
-- Remove completed or clearly stale items.
-- Merge duplicate or overlapping goals.
-- Keep all genuinely active tasks.
-- Return the result as a concise, well-structured list.
+Review each item and return a JSON array of actions to take. Valid actions:
+- {"action": "keep", "id": <id>} — item is still relevant, no change
+- {"action": "complete", "id": <id>} — item is done or clearly stale
+- {"action": "update", "id": <id>, "content": "new text"} — reword/merge
+- {"action": "update", "id": <id>, "priority": <1-10>} — adjust priority
 
-Return ONLY the consolidated PULSE.txt content, with no preamble or explanation.
+Return ONLY the JSON array, no preamble or explanation.
 
---- PULSE.txt ---
+--- Active Pulse Items ---
 {content}

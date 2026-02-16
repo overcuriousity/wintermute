@@ -148,7 +148,7 @@ llm:
   # Also used by pulse reviews (pulse spawns sub-sessions internally).
   sub_sessions: ["local_large"]
 
-  # Dreaming — nightly autonomous memory consolidation (MEMORIES.txt, PULSE.txt).
+  # Dreaming — nightly autonomous memory consolidation (MEMORIES.txt, pulse DB items).
   # Runs once per night; a smaller model keeps costs low.
   dreaming: ["local_small"]
 
@@ -164,8 +164,8 @@ llm:
 # max_tokens in the backend definition.
 
 # ── Pulse Reviews ─────────────────────────────────────────────────
-# Periodic autonomous review of PULSE.txt.  Spawns a sub-session to
-# read the pulse file and take actions (set reminders, update memories, etc.).
+# Periodic autonomous review of active pulse items.  Spawns a sub-session to
+# list pulse items and take actions (complete items, set reminders, update memories, etc.).
 pulse:
   enabled: true                           # Set to false to disable pulse reviews entirely
   review_interval_minutes: 60             # Minutes between automatic reviews
@@ -176,12 +176,12 @@ pulse:
 context:
   component_size_limits:
     memories: 10000                       # MEMORIES.txt char limit
-    pulse: 5000                           # PULSE.txt char limit
+    pulse: 5000                           # Pulse items (DB) char limit
     skills_total: 20000                   # Total chars across all skills/*.md
 
 # ── Dreaming (Nightly Consolidation) ─────────────────────────────
 # Autonomous nightly pass that prunes and consolidates MEMORIES.txt
-# and PULSE.txt.  Uses a direct LLM call (no tool loop).
+# and pulse items.  Uses a direct LLM call (no tool loop).
 dreaming:
   hour: 1                                 # Hour (0-23, UTC) to run consolidation
   minute: 0                               # Minute (0-59)
