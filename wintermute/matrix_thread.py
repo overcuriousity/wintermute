@@ -509,7 +509,7 @@ class MatrixThread:
         """
         try:
             current_key = olm.account.signing_key
-            logger.info(
+            logger.debug(
                 "Device fingerprint (Ed25519, for manual verification): %s",
                 olm.account.fingerprint,
             )
