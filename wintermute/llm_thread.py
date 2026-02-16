@@ -626,7 +626,12 @@ class LLMThread:
                 if r:
                     reasoning_parts.append(r)
 
-            if choice.finish_reason == "tool_calls" and choice.message.tool_calls:
+            if choice.message.tool_calls:
+                logger.debug(
+                    "Tool calls detected (finish_reason=%s): %s",
+                    choice.finish_reason,
+                    [tc.function.name for tc in choice.message.tool_calls],
+                )
                 # Append the assistant's tool-call message.
                 full_messages.append(choice.message)
 

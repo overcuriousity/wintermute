@@ -1024,7 +1024,7 @@ class SubSessionManager:
 
             choice = response.choices[0]
 
-            if choice.finish_reason == "tool_calls" and choice.message.tool_calls:
+            if choice.message.tool_calls:
                 state.messages.append(choice.message)
 
                 for tc in choice.message.tool_calls:
