@@ -127,6 +127,43 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         halt_inference=False,
         kill_on_detect=False,
     ),
+    TuringHook(
+        name="phantom_tool_result",
+        detection_prompt=(
+            '- **phantom_tool_result**: The assistant\'s text presents specific data '
+            '(file contents, search results, URL/webpage content, command output, '
+            'directory listings) as if freshly obtained from a tool during THIS '
+            'exchange, AND the corresponding tool (`read_file`, `search_web`, '
+            '`fetch_url`, `execute_shell`, `list_reminders`) is NOT in '
+            'tool_calls_made. Do NOT flag general knowledge, reasoning from '
+            'context, references to information the user provided, or information '
+            'from earlier in the conversation history.'
+        ),
+        validator_type="programmatic",
+        validator_fn_name="validate_phantom_tool_result",
+        validator_prompt=None,
+        correction_template=(
+            "[TURING PROTOCOL CORRECTION] Your previous response presented data "
+            "as if obtained from a tool call, but no such tool was actually "
+            "invoked. Detected issue: {reason}\n\n"
+            "You MUST now either:\n"
+            "  1. Actually call the appropriate tool to obtain the data, OR\n"
+            "  2. Clearly state that you do not have that information and "
+            "cannot verify it without calling the tool.\n\n"
+            "Do NOT fabricate or assume tool output."
+        ),
+        correction_template_repeat=(
+            "[TURING PROTOCOL CORRECTION -- REPEATED VIOLATION] You have AGAIN "
+            "presented fabricated tool output without calling a tool. "
+            "This is the {ordinal} consecutive violation.\n\n"
+            "Detected issue: {reason}\n\n"
+            "You MUST apologise, state clearly what information you actually "
+            "have access to, and ask the user if they want you to call the "
+            "relevant tool to obtain real data."
+        ),
+        halt_inference=False,
+        kill_on_detect=False,
+    ),
 ]
 
 
@@ -251,9 +288,29 @@ def validate_workflow_spawn(context: dict, detection_result: dict) -> bool:
     return True
 
 
+def validate_phantom_tool_result(context: dict, detection_result: dict) -> bool:
+    """Programmatic validator for phantom_tool_result.
+
+    Returns True if the violation is confirmed — the assistant claimed to
+    present output from a tool but no tools were actually called this turn.
+    If any tool was called, the claim may be grounded and we treat it as a
+    false positive (the LLM detection already verified the specific claim).
+    """
+    tool_calls_made = context.get("tool_calls_made", [])
+    if tool_calls_made:
+        logger.info(
+            "Stage 2: False positive — tools were called (%s). "
+            "LLM reason: %s", tool_calls_made, detection_result.get("reason", "?"),
+        )
+        return False
+    logger.warning("Stage 2: Confirmed phantom tool result — no tools called but output was claimed")
+    return True
+
+
 # Registry of programmatic validator functions.
 _PROGRAMMATIC_VALIDATORS = {
     "validate_workflow_spawn": validate_workflow_spawn,
+    "validate_phantom_tool_result": validate_phantom_tool_result,
 }
 
 

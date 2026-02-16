@@ -97,6 +97,7 @@ turing_protocol:
   backends: ["local_small"]               # small/fast model recommended
   validators:
     workflow_spawn: true                   # detect hallucinated workflow spawn claims
+    phantom_tool_result: true              # detect fabricated tool output claims
 
 # ── Context Compaction ────────────────────────────────────────────
 # Compaction fires when history tokens exceed:
@@ -193,6 +194,7 @@ turing_protocol:
   backends: ["ollama_small"]
   validators:
     workflow_spawn: true
+    phantom_tool_result: true
 ```
 
 #### Provider: `gemini-cli`
@@ -276,6 +278,7 @@ Currently available validators:
 | Validator | Description |
 |-----------|-------------|
 | `workflow_spawn` | Detects when the model claims to have spawned a session without calling `spawn_sub_session` |
+| `phantom_tool_result` | Detects when the model presents fabricated tool output (file contents, search results, command output) without having called the tool |
 
 ### `matrix`
 

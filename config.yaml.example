@@ -184,7 +184,7 @@ turing_protocol:
   backends: ["local_small"]               # small/fast model recommended
   validators:
     workflow_spawn: true                   # detect hallucinated workflow spawn claims
-    # future validators added here
+    phantom_tool_result: true              # detect fabricated tool output claims
 
 # ── Context Compaction ────────────────────────────────────────────
 # Compaction fires automatically when history tokens exceed:
