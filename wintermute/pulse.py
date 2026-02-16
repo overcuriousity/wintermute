@@ -1,7 +1,7 @@
 """
 Pulse Review Loop
 
-Periodically invokes the LLM to review PULSE.txt and take autonomous
+Periodically invokes the LLM to review active pulse items and take autonomous
 actions.  Runs as an isolated sub-session (fire-and-forget, no parent
 thread) so it never pollutes any user-facing conversation history.
 """
@@ -17,10 +17,12 @@ logger = logging.getLogger(__name__)
 
 PULSE_REVIEW_PROMPT = (
     "This is an automatic pulse review. "
-    "Please read your current PULSE.txt using the read_file tool, "
+    "Use the pulse tool with action 'list' to see current items, "
     "then review each item and take any appropriate actions (set reminders, "
-    "update memories, run shell commands, etc.). "
-    "If you update your pulse or take actions, briefly summarise what you did. "
+    "update memories, complete items, run shell commands, etc.). "
+    "Use pulse(action='complete', item_id=...) for finished items, "
+    "and pulse(action='add', content='...') for new items discovered. "
+    "If you take actions, briefly summarise what you did. "
     "If nothing needs attention right now, respond with a short status note."
 )
 

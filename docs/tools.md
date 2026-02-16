@@ -10,7 +10,7 @@ Tools are grouped into three categories that control which tools are available i
 |----------|-------------|-------|
 | **execution** | All agents | `execute_shell`, `read_file`, `write_file` |
 | **research** | All agents | `search_web`, `fetch_url` |
-| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `set_reminder`, `append_memory`, `update_memories`, `update_pulse`, `add_skill`, `list_reminders` |
+| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `set_reminder`, `append_memory`, `update_memories`, `pulse`, `add_skill`, `list_reminders` |
 
 ## Tool Filtering by Sub-session Mode
 
@@ -138,13 +138,17 @@ Overwrite MEMORIES.txt with new content. Use only for restructuring or removing 
 |-----------|------|----------|-------------|
 | `content` | string | yes | Full replacement text for MEMORIES.txt |
 
-#### `update_pulse`
+#### `pulse`
 
-Overwrite PULSE.txt with new content. Include only active items; omit completed goals.
+Manage active pulse items (working memory for ongoing tasks). Pulse items are stored in SQLite — no file rewrites needed.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `content` | string | yes | Full replacement text for PULSE.txt |
+| `action` | enum | yes | `"add"`, `"complete"`, `"list"`, `"update"` |
+| `content` | string | no | Item text (for add/update) |
+| `item_id` | integer | no | Item ID (for complete/update) |
+| `priority` | integer | no | 1 (urgent) to 10 (low), default 5 |
+| `status` | enum | no | Filter for list: `"active"` (default), `"completed"`, `"all"` |
 
 #### `add_skill`
 

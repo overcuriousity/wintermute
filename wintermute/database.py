@@ -1,5 +1,5 @@
 """
-SQLite database operations for conversation history.
+SQLite database operations for conversation history and pulse.
 The APScheduler job store uses its own SQLite file (scheduler.db).
 """
 
@@ -43,6 +43,20 @@ def init_db() -> None:
         _migrate_add_thread_id(conn, "messages")
         _migrate_add_thread_id(conn, "summaries")
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS pulse (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                content   TEXT    NOT NULL,
+                status    TEXT    NOT NULL DEFAULT 'active',
+                priority  INTEGER NOT NULL DEFAULT 5,
+                created   REAL    NOT NULL,
+                updated   REAL,
+                thread_id TEXT
+            )
+        """)
+        conn.commit()
+
+    _migrate_pulse_from_file()
     logger.debug("Database initialised at %s", CONVERSATION_DB)
 
 
@@ -171,3 +185,124 @@ def get_thread_stats(thread_id: str = "default") -> dict:
             (thread_id,),
         ).fetchone()
     return {"msg_count": row[0], "token_used": int(row[1])}
+
+
+# ---------------------------------------------------------------------------
+# Pulse CRUD
+# ---------------------------------------------------------------------------
+
+def add_pulse_item(content: str, priority: int = 5, thread_id: str | None = None) -> int:
+    """Insert a new active pulse item. Returns the row id."""
+    with sqlite3.connect(CONVERSATION_DB) as conn:
+        cur = conn.execute(
+            "INSERT INTO pulse (content, status, priority, created, thread_id) "
+            "VALUES (?, 'active', ?, ?, ?)",
+            (content, priority, time.time(), thread_id),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def complete_pulse_item(item_id: int) -> bool:
+    """Mark a pulse item as completed. Returns True if a row was updated."""
+    with sqlite3.connect(CONVERSATION_DB) as conn:
+        n = conn.execute(
+            "UPDATE pulse SET status='completed', updated=? WHERE id=?",
+            (time.time(), item_id),
+        ).rowcount
+        conn.commit()
+    return n > 0
+
+
+def update_pulse_item(item_id: int, **kwargs) -> bool:
+    """Update fields on a pulse item. Supported: content, priority, status."""
+    allowed = {"content", "priority", "status"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return False
+    updates["updated"] = time.time()
+    set_clause = ", ".join(f"{k}=?" for k in updates)
+    values = list(updates.values()) + [item_id]
+    with sqlite3.connect(CONVERSATION_DB) as conn:
+        n = conn.execute(f"UPDATE pulse SET {set_clause} WHERE id=?", values).rowcount
+        conn.commit()
+    return n > 0
+
+
+def list_pulse_items(status: str = "active") -> list[dict]:
+    """Return pulse items filtered by status, ordered by priority then id."""
+    with sqlite3.connect(CONVERSATION_DB) as conn:
+        conn.row_factory = sqlite3.Row
+        if status == "all":
+            rows = conn.execute(
+                "SELECT id, content, status, priority, created, updated, thread_id "
+                "FROM pulse ORDER BY priority ASC, id ASC"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, content, status, priority, created, updated, thread_id "
+                "FROM pulse WHERE status=? ORDER BY priority ASC, id ASC",
+                (status,),
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_active_pulse_text() -> str:
+    """Compact formatted string of active pulse items for system prompt injection."""
+    items = list_pulse_items("active")
+    if not items:
+        return ""
+    return "\n".join(f"[P{it['priority']}] #{it['id']}: {it['content']}" for it in items)
+
+
+def delete_old_completed_pulse(days: int = 30) -> int:
+    """Delete completed pulse items older than *days*. Returns count deleted."""
+    cutoff = time.time() - days * 86400
+    with sqlite3.connect(CONVERSATION_DB) as conn:
+        n = conn.execute(
+            "DELETE FROM pulse WHERE status='completed' AND created < ?",
+            (cutoff,),
+        ).rowcount
+        conn.commit()
+    if n:
+        logger.info("Purged %d completed pulse items older than %d days", n, days)
+    return n
+
+
+def _migrate_pulse_from_file() -> None:
+    """One-time migration: import PULSE.txt content into the DB."""
+    pulse_file = Path("data/PULSE.txt")
+    if not pulse_file.exists():
+        return
+    try:
+        text = pulse_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return
+    if not text:
+        pulse_file.rename(pulse_file.with_suffix(".txt.migrated"))
+        return
+    # Skip if it's just the default placeholder
+    if "no active pulse" in text.lower():
+        pulse_file.rename(pulse_file.with_suffix(".txt.migrated"))
+        logger.info("PULSE.txt was empty placeholder, renamed to .migrated")
+        return
+    # Parse line by line — each non-empty, non-header line becomes an item
+    now = time.time()
+    items = []
+    for line in text.splitlines():
+        line = line.strip().lstrip("-•*").strip()
+        if not line or line.startswith("#"):
+            continue
+        items.append(line)
+    if not items:
+        # Single blob
+        items = [text]
+    with sqlite3.connect(CONVERSATION_DB) as conn:
+        for item in items:
+            conn.execute(
+                "INSERT INTO pulse (content, status, priority, created) VALUES (?, 'active', 5, ?)",
+                (item, now),
+            )
+        conn.commit()
+    pulse_file.rename(pulse_file.with_suffix(".txt.migrated"))
+    logger.info("Migrated %d pulse items from PULSE.txt to DB", len(items))

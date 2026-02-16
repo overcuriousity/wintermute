@@ -25,6 +25,7 @@ from typing import Any, Optional
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from wintermute import database
 from wintermute import prompt_assembler
 
 logger = logging.getLogger(__name__)
@@ -239,20 +240,26 @@ TOOL_SCHEMAS = [
         },
     ),
     _fn(
-        "update_pulse",
-        (
-            "Overwrite PULSE.txt. Include only active items; omit completed goals. "
-            "Pass the *full* desired content."
-        ),
+        "pulse",
+        "Manage active pulse items (working memory for ongoing tasks).",
         {
             "type": "object",
             "properties": {
-                "content": {
+                "action": {
                     "type": "string",
-                    "description": "Full replacement text for PULSE.txt.",
-                }
+                    "enum": ["add", "complete", "list", "update"],
+                    "description": "add: create new item. complete: mark done. list: show items. update: modify existing.",
+                },
+                "content": {"type": "string", "description": "Item text (for add/update)."},
+                "item_id": {"type": "integer", "description": "Item ID (for complete/update)."},
+                "priority": {"type": "integer", "description": "1 (urgent) to 10 (low), default 5."},
+                "status": {
+                    "type": "string",
+                    "enum": ["active", "completed", "all"],
+                    "description": "Filter for list action, default 'active'.",
+                },
             },
-            "required": ["content"],
+            "required": ["action"],
         },
     ),
     _fn(
@@ -391,7 +398,7 @@ TOOL_CATEGORIES: dict[str, str] = {
     "set_reminder":       "orchestration",
     "append_memory":      "orchestration",
     "update_memories":    "orchestration",
-    "update_pulse":  "orchestration",
+    "pulse":              "orchestration",
     "add_skill":          "orchestration",
     "list_reminders":     "orchestration",
 }
@@ -530,12 +537,43 @@ def _tool_update_memories(inputs: dict, **_kw) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _tool_update_pulse(inputs: dict, **_kw) -> str:
+def _tool_pulse(inputs: dict, **_kw) -> str:
     try:
-        prompt_assembler.update_pulse(inputs["content"])
-        return json.dumps({"status": "ok"})
+        action = inputs.get("action", "list")
+        if action == "add":
+            content = inputs.get("content")
+            if not content:
+                return json.dumps({"error": "content is required for add action"})
+            item_id = database.add_pulse_item(
+                content, priority=int(inputs.get("priority", 5)),
+                thread_id=inputs.get("thread_id"),
+            )
+            return json.dumps({"status": "ok", "item_id": item_id})
+        elif action == "complete":
+            item_id = inputs.get("item_id")
+            if item_id is None:
+                return json.dumps({"error": "item_id is required for complete action"})
+            ok = database.complete_pulse_item(int(item_id))
+            return json.dumps({"status": "ok" if ok else "not_found"})
+        elif action == "update":
+            item_id = inputs.get("item_id")
+            if item_id is None:
+                return json.dumps({"error": "item_id is required for update action"})
+            kwargs = {}
+            if "content" in inputs:
+                kwargs["content"] = inputs["content"]
+            if "priority" in inputs:
+                kwargs["priority"] = int(inputs["priority"])
+            ok = database.update_pulse_item(int(item_id), **kwargs)
+            return json.dumps({"status": "ok" if ok else "not_found"})
+        elif action == "list":
+            status = inputs.get("status", "active")
+            items = database.list_pulse_items(status)
+            return json.dumps({"items": items, "count": len(items)})
+        else:
+            return json.dumps({"error": f"Unknown action: {action}"})
     except Exception as exc:  # noqa: BLE001
-        logger.exception("update_pulse failed")
+        logger.exception("pulse tool failed")
         return json.dumps({"error": str(exc)})
 
 
@@ -760,7 +798,7 @@ _DISPATCH: dict[str, Any] = {
     "set_reminder":       _tool_set_reminder,
     "append_memory":      _tool_append_memory,
     "update_memories":    _tool_update_memories,
-    "update_pulse":  _tool_update_pulse,
+    "pulse":              _tool_pulse,
     "add_skill":          _tool_add_skill,
     "execute_shell":      _tool_execute_shell,
     "read_file":          _tool_read_file,

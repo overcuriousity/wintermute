@@ -12,11 +12,11 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **SubSessionManager** | `sub_session.py` | Manages background worker sub-sessions and workflow DAGs |
 | **Supervisor** | `supervisor.py` | Post-inference validation: detects hallucinated workflow spawns |
 | **ReminderScheduler** | `scheduler_thread.py` | APScheduler-based reminder system |
-| **PulseLoop** | `pulse.py` | Periodic autonomous PULSE.txt reviews |
+| **PulseLoop** | `pulse.py` | Periodic autonomous pulse item reviews |
 | **DreamingLoop** | `dreaming.py` | Nightly memory consolidation |
 | **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
 | **PromptAssembler** | `prompt_assembler.py` | Builds system prompts from file components |
-| **Database** | `database.py` | SQLite message persistence and thread management |
+| **Database** | `database.py` | SQLite message persistence, thread management, and pulse storage |
 
 ## System Diagram
 
@@ -29,7 +29,7 @@ User (Matrix / Browser)
         |
         |-- tool calls --> execute_shell / read_file / write_file
         |                  search_web / fetch_url
-        |                  append_memory / update_memories / update_pulse / add_skill
+        |                  append_memory / update_memories / pulse / add_skill
         |                  set_reminder / list_reminders
         |
         +-- spawn_sub_session --> SubSessionManager
@@ -117,10 +117,10 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 data/
   BASE_PROMPT.txt            -- Immutable core instructions
   MEMORIES.txt               -- Long-term user facts (updated via append_memory / update_memories)
-  PULSE.txt                  -- Active goals / working memory (updated via update_pulse tool)
+  conversation.db (pulse)    -- Active goals / working memory (managed via pulse tool, stored in SQLite)
   skills/                    -- Learned procedures as *.md files (updated via add_skill tool)
   DREAM_MEMORIES_PROMPT.txt  -- Customisable dreaming prompt for MEMORIES consolidation
-  DREAM_PULSE_PROMPT.txt     -- Customisable dreaming prompt for PULSE consolidation
+  DREAM_PULSE_PROMPT.txt     -- Customisable dreaming prompt for pulse consolidation
   COMPACTION_PROMPT.txt      -- Customisable prompt for context compaction summarisation
   matrix_crypto.db           -- Matrix E2E encryption keys
   matrix_recovery.key        -- Cross-signing recovery key
