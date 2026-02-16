@@ -367,11 +367,14 @@ class LLMThread:
 
             if item.future and not item.future.done():
                 item.future.set_result(reply)
-            elif item.is_system_event and not item.future:
+            elif item.is_system_event and not item.future and not item.is_supervisor_correction:
                 # System events without a future (sub-session results,
                 # reminders, /pulse commands) have no caller waiting for
                 # the reply.  Broadcast the LLM's response directly so
                 # it reaches the user.
+                # Supervisor corrections are excluded: both the correction
+                # prompt and the model's response to it stay in the DB only
+                # (visible in the web debug interface but silent in Matrix).
                 text_to_send = reply.text or item.text  # fallback to raw event
                 logger.info(
                     "Broadcasting system-event reply for thread %s (%d chars, reply_empty=%s)",
@@ -506,6 +509,12 @@ class LLMThread:
             database.save_message("user", item.text, thread_id)
         elif is_sub_session_result:
             database.save_message("user", f"[SYSTEM EVENT] {item.text}", thread_id)
+        elif item.is_supervisor_correction:
+            # Save the correction prompt to the DB so it is visible in the web
+            # debug interface, but do NOT broadcast it to Matrix (see broadcast
+            # guard below).  The model's reply is saved normally via the
+            # assistant save below.
+            database.save_message("user", item.text, thread_id)
 
         reply = await self._inference_loop(
             system_prompt, messages, thread_id,
