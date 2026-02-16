@@ -2,7 +2,7 @@
 Tool definitions and execution for the AI assistant.
 
 Tools are expressed as OpenAI-compatible function-calling schemas so they work
-with any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI, etc.).
+with any OpenAI-compatible endpoint (llama-server, vLLM, LM Studio, OpenAI, etc.).
 The dispatcher ``execute_tool`` is the single entry point used by the LLM thread.
 
 Tool categories

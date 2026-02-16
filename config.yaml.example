@@ -45,7 +45,7 @@ web:
 #   name          – unique identifier (referenced in llm: section below)
 #   provider      – "openai" (any OpenAI-compatible endpoint) or "gemini-cli"
 #   base_url      – API base URL (required for provider "openai")
-#   api_key       – API key (required for provider "openai"; use "ollama" for Ollama)
+#   api_key       – API key (required for provider "openai"; use "llama-server" for llama-server)
 #   model         – model name the endpoint accepts
 #   context_size  – total token window the model supports (default: 32768)
 #   max_tokens    – maximum tokens per response (default: 4096)
@@ -60,8 +60,8 @@ inference_backends:
   # ── Primary backend (large model for conversation) ──────────────
   - name: "local_large"
     provider: "openai"                    # "openai" = any OpenAI-compatible endpoint
-    base_url: "http://localhost:11434/v1" # Ollama default; also works for vLLM, LM Studio, OpenAI, etc.
-    api_key: "ollama"                     # Use "ollama" for Ollama, real key for OpenAI/DeepSeek/etc.
+    base_url: "http://localhost:8080/v1" # llama-server default; also works for vLLM, LM Studio, OpenAI, etc.
+    api_key: "llama-server"                     # Use "llama-server" for llama-server, real key for OpenAI/DeepSeek/etc.
     model: "qwen2.5:72b"                 # Any model name the endpoint accepts
     context_size: 32768                   # Total token window the model supports
     max_tokens: 4096                      # Maximum tokens in a single response
@@ -70,8 +70,8 @@ inference_backends:
   # ── Secondary backend (smaller/cheaper model) ───────────────────
   - name: "local_small"
     provider: "openai"
-    base_url: "http://localhost:11434/v1"
-    api_key: "ollama"
+    base_url: "http://localhost:8080/v1"
+    api_key: "llama-server"
     model: "qwen2.5:7b"
     context_size: 32768
     max_tokens: 2048                      # Smaller response budget for auxiliary tasks
@@ -120,8 +120,8 @@ inference_backends:
   #
   # - name: "turing_backend"
   #   provider: "openai"
-  #   base_url: "http://localhost:11434/v1"
-  #   api_key: "ollama"
+  #   base_url: "http://localhost:8080/v1"
+  #   api_key: "llama-server"
   #   model: "qwen2.5:7b"
   #   context_size: 32768
   #   max_tokens: 150                     # Protocol only needs ~150 tokens

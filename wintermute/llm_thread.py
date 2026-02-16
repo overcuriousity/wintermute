@@ -2,7 +2,7 @@
 LLM Inference Thread
 
 Owns the conversation history and all interactions with any OpenAI-compatible
-API endpoint (Ollama, vLLM, LM Studio, OpenAI, etc.).
+API endpoint (llama-server, vLLM, LM Studio, OpenAI, etc.).
 
 Receives user messages via an asyncio Queue, runs inference (including
 multi-step tool-use loops), and delivers responses back through reply Futures.
@@ -101,7 +101,7 @@ class ProviderConfig:
     reasoning: bool = False  # enable reasoning/thinking token support (o1/o3, DeepSeek R1, etc.)
     provider: str = "openai"  # "openai", "gemini-cli", or "kimi-code"
     api_key: str = ""
-    base_url: str = ""       # e.g. http://localhost:11434/v1  or  https://api.openai.com/v1
+    base_url: str = ""       # e.g. http://localhost:8080/v1  or  https://api.openai.com/v1
 
 
 

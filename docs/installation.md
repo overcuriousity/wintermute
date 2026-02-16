@@ -130,7 +130,7 @@ The web interface starts at `http://127.0.0.1:8080` by default.
 > **Alpha:** The Gemini Cloud Code Assist integration is experimental. Known
 > limitations include aggressive rate limiting from Google's API and occasional
 > tool-call parsing issues. For production use, an OpenAI-compatible endpoint
-> (Ollama, vLLM, OpenAI, etc.) is recommended.
+> (llama-server, vLLM, OpenAI, etc.) is recommended.
 
 > **Unstable / Alpha** — The `gemini-cli` provider piggybacks on Google's
 > Cloud Code Assist OAuth flow. Credentials may expire unpredictably and

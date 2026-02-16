@@ -39,8 +39,8 @@ web:
 inference_backends:
   - name: "local_large"
     provider: "openai"                    # "openai", "gemini-cli", or "kimi-code"
-    base_url: "http://localhost:11434/v1"
-    api_key: "ollama"
+    base_url: "http://localhost:8080/v1"
+    api_key: "llama-server"
     model: "qwen2.5:72b"
     context_size: 32768
     max_tokens: 4096
@@ -48,8 +48,8 @@ inference_backends:
 
   - name: "local_small"
     provider: "openai"
-    base_url: "http://localhost:11434/v1"
-    api_key: "ollama"
+    base_url: "http://localhost:8080/v1"
+    api_key: "llama-server"
     model: "qwen2.5:7b"
     context_size: 32768
     max_tokens: 2048
@@ -75,8 +75,8 @@ inference_backends:
 
   # - name: "turing_backend"
   #   provider: "openai"
-  #   base_url: "http://localhost:11434/v1"
-  #   api_key: "ollama"
+  #   base_url: "http://localhost:8080/v1"
+  #   api_key: "llama-server"
   #   model: "qwen2.5:7b"
   #   context_size: 32768
   #   max_tokens: 150
@@ -175,22 +175,22 @@ inference_backends:
     model: "gemini-2.5-pro"
     context_size: 1048576
     max_tokens: 8192
-
+llama-server
   - name: "ollama_small"
     provider: "openai"
-    base_url: "http://localhost:11434/v1"
+    base_url: llama-server//localhost:8080/v1"
     api_key: "ollama"
     model: "qwen2.5:7b"
     context_size: 32768
     max_tokens: 2048
 
 llm:
-  base: ["gemini"]
-  compaction: ["ollama_small"]
-  sub_sessions: ["gemini", "ollama_small"]   # failover
+  base: ["geminillama-server
+  compaction: ["ollama_smallllama-server
+  sub_sessionsllama-servermini", "ollama_small"]   # failover
   dreaming: ["ollama_small"]
 
-turing_protocol:
+turing_protocollama-server
   backends: ["ollama_small"]
   validators:
     workflow_spawn: true

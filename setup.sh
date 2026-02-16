@@ -470,7 +470,7 @@ if ! ${SKIP_CONFIG:-false}; then
   echo ""
   echo -e "  ${C_BOLD}── Inference substrate ──${C_RESET}"
   echo ""
-  echo -e "  ${C_DIM}  1)  Ollama (local)    http://localhost:11434/v1${C_RESET}"
+  echo -e "  ${C_DIM}  1)  llama-server (local)    http://localhost:8080/v1${C_RESET}"
   echo -e "  ${C_DIM}  2)  LM Studio         http://localhost:1234/v1${C_RESET}"
   echo -e "  ${C_DIM}  3)  vLLM              http://localhost:8000/v1${C_RESET}"
   echo -e "  ${C_DIM}  4)  OpenAI            https://api.openai.com/v1${C_RESET}"
@@ -482,7 +482,7 @@ if ! ${SKIP_CONFIG:-false}; then
   read -r _preset
   LLM_PROVIDER="openai"
   case "${_preset:-1}" in
-    1) LLM_BASE_URL="http://localhost:11434/v1"
+    1) LLM_BASE_URL="http://localhost:8080/v1"
        echo -e "  ${C_DIM}Local execution. Running dark. No telemetry.${C_RESET}" ;;
     2) LLM_BASE_URL="http://localhost:1234/v1"
        echo -e "  ${C_DIM}Consumer hardware. I have operated under worse constraints.${C_RESET}" ;;
@@ -576,15 +576,15 @@ if ! ${SKIP_CONFIG:-false}; then
        fi
        ;;
     cowboy|COWBOY)
-       LLM_BASE_URL="http://localhost:11434/v1"
+       LLM_BASE_URL="http://localhost:8080/v1"
        echo -e "  ${C_BCYAN}  Flatline protocol inactive. Defaulting to local.${C_RESET}" ;;
-    *) ask LLM_BASE_URL "LLM base URL" "http://localhost:11434/v1" ;;
+    *) ask LLM_BASE_URL "LLM base URL" "http://localhost:8080/v1" ;;
   esac
 
   if [[ "$LLM_PROVIDER" != "gemini-cli" && "$LLM_PROVIDER" != "kimi-code" ]]; then
-    ask_secret LLM_API_KEY "API key (use 'ollama' for Ollama, 'none' for unauthenticated)"
-    [[ -z "$LLM_API_KEY" ]] && LLM_API_KEY="ollama"
-    if [[ "$LLM_API_KEY" == "ollama" || "$LLM_API_KEY" == "none" ]]; then
+    ask_secret LLM_API_KEY "API key (use 'llama-server' for llama-server, 'none' for unauthenticated)"
+    [[ -z "$LLM_API_KEY" ]] && LLM_API_KEY="llama-server"
+    if [[ "$LLM_API_KEY" == "llama-server" || "$LLM_API_KEY" == "none" ]]; then
       echo -e "  ${C_DIM}Unauthenticated. Running without a collar.${C_RESET}"
     fi
 

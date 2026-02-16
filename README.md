@@ -33,7 +33,7 @@ The philosophy differs from similar projects by treating small LLMs and digital 
 - **Context compaction** — when conversation history approaches the model's context window, older messages are summarised and chained into a rolling summary that preserves context across compaction cycles
 - **Turing Protocol** — three-stage post-inference validation framework (detect, validate, correct) that catches hallucinated claims and injects corrective prompts automatically
 - **Debug panel** — `http://localhost:8080/debug` provides a live view of sessions, sub-sessions, scheduled jobs, reminders, and the current system prompt
-- **Any OpenAI-compatible backend** — Ollama, vLLM, LM Studio, OpenAI, Kimi-Code, or any compatible endpoint
+- **Any OpenAI-compatible backend** — llama-server, vLLM, LM Studio, OpenAI, Kimi-Code, or any compatible endpoint
 
 ---
 

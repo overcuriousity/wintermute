@@ -1,6 +1,6 @@
 # Tools
 
-Wintermute exposes 12 tools as OpenAI-compatible function-calling schemas, compatible with any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, OpenAI, etc.).
+Wintermute exposes 12 tools as OpenAI-compatible function-calling schemas, compatible with any OpenAI-compatible endpoint (llama-server, vLLM, LM Studio, OpenAI, etc.).
 
 ## Tool Categories
 
