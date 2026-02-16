@@ -68,10 +68,28 @@ def _common_headers() -> dict[str, str]:
 
 
 def api_headers() -> dict[str, str]:
-    """Headers to pass to the OpenAI client for Kimi API calls."""
-    headers = _common_headers()
-    headers["User-Agent"] = "kimi-cli/1.12.0"
-    return headers
+    """Headers to pass to the OpenAI client for Kimi API calls.
+
+    Includes User-Agent and strips X-Stainless-* headers that the openai SDK
+    adds by default (Kimi rejects requests that identify as generic SDK calls).
+    """
+    from openai import Omit
+
+    headers: dict[str, str | Omit] = _common_headers()
+    headers["User-Agent"] = "KimiCLI/1.12.0"
+    # Suppress openai SDK fingerprint headers that Kimi uses to reject
+    # non-recognized coding agents.
+    for key in (
+        "X-Stainless-Lang",
+        "X-Stainless-Package-Version",
+        "X-Stainless-OS",
+        "X-Stainless-Arch",
+        "X-Stainless-Runtime",
+        "X-Stainless-Runtime-Version",
+        "X-Stainless-Async",
+    ):
+        headers[key] = Omit()
+    return headers  # type: ignore[return-value]
 
 
 # ---------------------------------------------------------------------------
