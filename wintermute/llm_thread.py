@@ -202,6 +202,10 @@ class _QueueItem:
     is_system_event: bool = False
     future: Optional[asyncio.Future] = field(default=None, compare=False)
     is_supervisor_correction: bool = False  # loop guard: skip supervisor re-check
+    # Sequence number of the user-message turn this correction was issued for.
+    # If the thread has advanced past this number by the time the correction is
+    # dequeued, the correction is stale and will be dropped.
+    correction_for_seq: Optional[int] = None
 
 
 class LLMThread:
@@ -221,6 +225,10 @@ class LLMThread:
         self._running = False
         # Per-thread compaction summaries: thread_id -> summary text
         self._compaction_summaries: dict[str, Optional[str]] = {}
+        # Per-thread sequence counter for user-facing turns.  Incremented each
+        # time a non-system-event item is processed.  Used to detect stale
+        # supervisor corrections that arrived after the conversation moved on.
+        self._thread_seq: dict[str, int] = {}
 
     def inject_sub_session_manager(self, manager: "SubSessionManager") -> None:
         """Called after construction once SubSessionManager is built."""
@@ -323,6 +331,26 @@ class LLMThread:
             except asyncio.TimeoutError:
                 continue
 
+            # Drop supervisor corrections that are stale — i.e. the thread has
+            # already processed at least one new user-facing turn since the
+            # correction was issued, making it no longer relevant.
+            if item.is_supervisor_correction and item.correction_for_seq is not None:
+                current_seq = self._thread_seq.get(item.thread_id, 0)
+                if current_seq > item.correction_for_seq:
+                    logger.warning(
+                        "Dropping stale supervisor correction for thread %s "
+                        "(issued at seq=%d, current seq=%d)",
+                        item.thread_id, item.correction_for_seq, current_seq,
+                    )
+                    self._queue.task_done()
+                    continue
+
+            # Advance the per-thread sequence counter for every user-facing turn.
+            if not item.is_system_event:
+                self._thread_seq[item.thread_id] = (
+                    self._thread_seq.get(item.thread_id, 0) + 1
+                )
+
             try:
                 reply = await self._process(item)
             except Exception as exc:  # noqa: BLE001
@@ -366,12 +394,16 @@ class LLMThread:
                 and not item.thread_id.startswith("sub_")
                 and reply.text
             ):
+                # Snapshot the current sequence number so the correction can
+                # be dropped if the conversation has moved on before it lands.
+                seq_at_fire = self._thread_seq.get(item.thread_id, 0)
                 asyncio.create_task(
                     self._run_supervisor_check(
                         user_message=item.text,
                         assistant_response=reply.text,
                         tool_calls_made=reply.tool_calls_made,
                         thread_id=item.thread_id,
+                        issued_for_seq=seq_at_fire,
                     ),
                     name=f"supervisor_{item.thread_id}",
                 )
@@ -391,6 +423,7 @@ class LLMThread:
         assistant_response: str,
         tool_calls_made: list[str],
         thread_id: str,
+        issued_for_seq: int = 0,
     ) -> None:
         """Fire a one-shot supervisor agent to detect hallucinated workflow spawns.
 
@@ -398,6 +431,12 @@ class LLMThread:
         If the supervisor detects a mismatch it enqueues a corrective system
         event with the ``is_supervisor_correction`` flag set so the loop
         guard prevents infinite re-checking.
+
+        ``issued_for_seq`` records the per-thread sequence number at the time
+        the check was fired.  If the thread has advanced past this number by
+        the time the correction is dequeued, the correction is dropped as
+        stale (the user has already sent a follow-up and the context has moved
+        on).
         """
         if not self._supervisor_pool.enabled or not self._sub_sessions:
             return
@@ -425,6 +464,7 @@ class LLMThread:
                 thread_id=thread_id,
                 is_system_event=True,
                 is_supervisor_correction=True,
+                correction_for_seq=issued_for_seq,
             ))
 
     # ------------------------------------------------------------------
