@@ -1473,6 +1473,11 @@ class WebInterface:
     # Public
     # ------------------------------------------------------------------
 
+    @property
+    def connected_thread_ids(self) -> set[str]:
+        """Return thread IDs with active WebSocket connections."""
+        return {tid for tid, clients in self._threads.items() if clients}
+
     async def broadcast(self, text: str, thread_id: str = None, *,
                         reasoning: str = None) -> None:
         """Push a message to all connected clients in a specific thread."""

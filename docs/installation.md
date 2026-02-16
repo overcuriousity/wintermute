@@ -247,6 +247,10 @@ llm:
   base: ["kimi"]
 ```
 
+Available models include `kimi-for-coding` (default), `kimi-code`, and `kimi-k2.5`
+(supports reasoning — set `reasoning: true`). The full list is dynamic; see
+[configuration.md](configuration.md#provider-kimi-code) for details.
+
 ### Authentication
 
 Credentials are stored in `data/kimi_credentials.json` and tokens are refreshed

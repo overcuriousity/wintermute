@@ -108,10 +108,11 @@ inference_backends:
   #   provider: "kimi-code"              # base_url and api_key are ignored
   #   base_url: ""                       # (not used for kimi-code)
   #   api_key: ""                        # (not used for kimi-code)
-  #   model: "kimi-for-coding"
+  #   model: "kimi-for-coding"           # kimi-for-coding, kimi-k2.5,
+  #                                       # kimi-code (dynamic via /models endpoint)
   #   context_size: 131072
   #   max_tokens: 8192
-  #   reasoning: false
+  #   reasoning: false                    # set true for kimi-k2.5 (supports thinking)
 
   # ── Example: dedicated supervisor backend ────────────────────────
   # The supervisor only produces a small JSON response (~50 tokens),

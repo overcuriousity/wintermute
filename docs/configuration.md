@@ -238,6 +238,18 @@ Credentials are stored in `data/kimi_credentials.json` and persist across restar
   max_tokens: 8192
 ```
 
+**Available models:** The model list is dynamic (fetched from `https://api.kimi.com/coding/v1/models`).
+Known models include:
+
+| Model | Context | Reasoning | Notes |
+|-------|---------|-----------|-------|
+| `kimi-for-coding` | 131072 | no | Default coding model |
+| `kimi-code` | 131072 | no | Current Kimi Code platform model |
+| `kimi-k2.5` | 131072 | yes | Latest model, supports thinking/reasoning, image and video input |
+
+Set `reasoning: true` for models that support thinking (e.g. `kimi-k2.5`) to enable
+`max_completion_tokens` and reasoning token extraction in the web UI.
+
 ### `llm.supervisor`
 
 Post-inference workflow validation. A lightweight one-shot LLM check that detects
