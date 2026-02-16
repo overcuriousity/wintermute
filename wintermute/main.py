@@ -417,18 +417,22 @@ async def main() -> None:
     if kimi_client_instance and not kimi_client_instance.authenticated:
         async def _kimi_auto_auth() -> None:
             from wintermute import kimi_auth
-            # Wait for Matrix to finish its first sync so we have room IDs.
+            # Wait for Matrix client to be ready (connected + synced).
             if matrix:
-                for _ in range(60):  # up to 60 s
-                    if matrix.joined_room_ids:
+                for _ in range(30):
+                    if matrix._client is not None:
                         break
                     await asyncio.sleep(1)
+                # Extra pause for first sync to complete.
+                await asyncio.sleep(3)
             try:
                 async def _broadcast_auth(msg: str) -> None:
                     sent = False
-                    # Broadcast to all connected Matrix rooms.
+                    # Broadcast to all joined Matrix rooms (via API, not state store).
                     if matrix:
-                        for room_id in matrix.joined_room_ids:
+                        rooms = await matrix.get_joined_rooms()
+                        logger.debug("Kimi auto-auth: Matrix rooms=%s", rooms)
+                        for room_id in rooms:
                             await matrix.send_message(msg, room_id)
                             sent = True
                     # Broadcast to all connected web clients.
@@ -437,7 +441,6 @@ async def main() -> None:
                             await web_iface.broadcast(msg, tid)
                             sent = True
                     if not sent:
-                        # No interface available — log prominently.
                         logger.warning("Kimi auth (no interface connected): %s", msg)
                 creds = await kimi_auth.run_device_flow(_broadcast_auth)
                 kimi_client_instance.update_credentials(creds)

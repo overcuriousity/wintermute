@@ -245,6 +245,17 @@ class MatrixThread:
         except Exception:  # noqa: BLE001
             return set()
 
+    async def get_joined_rooms(self) -> set[str]:
+        """Fetch joined rooms via the Matrix API (reliable even with ignore_initial_sync)."""
+        if self._client is None:
+            return set()
+        try:
+            resp = await self._client.get_joined_rooms()
+            return {str(r) for r in resp}
+        except Exception:  # noqa: BLE001
+            # Fallback to state store
+            return self.joined_room_ids
+
     # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
