@@ -47,7 +47,11 @@ class KimiCodeClient:
 
     def _build_client(self) -> AsyncOpenAI:
         token = self._creds.get("access_token", "placeholder")
-        return AsyncOpenAI(api_key=token, base_url=KIMI_BASE_URL)
+        return AsyncOpenAI(
+            api_key=token,
+            base_url=KIMI_BASE_URL,
+            default_headers=kimi_auth.api_headers(),
+        )
 
     def update_credentials(self, creds: dict) -> None:
         """Update credentials (e.g. after /kimi-auth completes)."""

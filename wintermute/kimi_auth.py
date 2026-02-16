@@ -56,15 +56,20 @@ def _get_device_id() -> str:
 
 
 def _common_headers() -> dict[str, str]:
-    """Build X-Msh-* headers expected by Kimi's OAuth endpoints."""
+    """Build X-Msh-* headers expected by Kimi's OAuth and API endpoints."""
     return {
-        "X-Msh-Platform": "wintermute",
-        "X-Msh-Version": "1.0.0",
+        "X-Msh-Platform": "kimi_cli",
+        "X-Msh-Version": "1.12.0",
         "X-Msh-Device-Name": platform.node() or socket.gethostname(),
         "X-Msh-Device-Model": f"{platform.system()} {platform.release()} {platform.machine()}".strip(),
         "X-Msh-Os-Version": platform.version(),
         "X-Msh-Device-Id": _get_device_id(),
     }
+
+
+def api_headers() -> dict[str, str]:
+    """Headers to pass to the OpenAI client for Kimi API calls."""
+    return _common_headers()
 
 
 # ---------------------------------------------------------------------------
