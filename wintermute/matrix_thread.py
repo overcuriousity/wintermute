@@ -547,10 +547,12 @@ class MatrixThread:
             CRYPTO_MARKER_PATH.write_text(current_key)
             logger.info(
                 "Cross-signing complete.  Recovery key saved to %s\n"
+                "  Recovery key: %s\n"
                 "  Verify the bot in Element: Settings → Security → Sessions → Verify Session.\n"
                 "  The bot will complete the SAS handshake automatically.\n"
                 "  All future restarts and DB wipes will reuse this identity automatically.",
                 CRYPTO_RECOVERY_KEY_PATH,
+                CRYPTO_RECOVERY_KEY_PATH.read_text().strip(),
             )
 
         except Exception as exc:  # noqa: BLE001

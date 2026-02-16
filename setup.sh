@@ -733,17 +733,23 @@ print(json.dumps({
       echo -e "  ${C_DIM}    2. Set up E2E encryption and cross-sign the device${C_RESET}"
       echo -e "  ${C_DIM}    3. Save a recovery key to data/matrix_recovery.key${C_RESET}"
       echo ""
-      echo -e "  ${C_YELLOW}${C_BOLD}  Manual step required on first start:${C_RESET}"
+      echo -e "  ${C_YELLOW}${C_BOLD}  Manual steps required on first start:${C_RESET}"
       echo ""
-      echo -e "  ${C_DIM}  Most homeservers (including matrix.org) require you to approve${C_RESET}"
-      echo -e "  ${C_DIM}  cross-signing via a browser on the very first launch. The process:${C_RESET}"
+      echo -e "  ${C_DIM}  1. Start Wintermute (the setup script will offer to start it for you).${C_RESET}"
+      echo -e "  ${C_DIM}  2. Open your Matrix client (e.g. Element) with the ${C_WHITE}bot account${C_DIM}.${C_RESET}"
+      echo -e "  ${C_DIM}     The bot will receive a cross-signing verification request —${C_RESET}"
+      echo -e "  ${C_DIM}     ${C_YELLOW}accept/approve it${C_DIM} from the bot's session in your browser.${C_RESET}"
+      echo -e "  ${C_DIM}  3. Invite the bot to a Matrix room from your ${C_WHITE}personal account${C_DIM}.${C_RESET}"
+      echo -e "  ${C_DIM}     The bot must be in a room with you before it can receive messages.${C_RESET}"
       echo ""
-      echo -e "  ${C_DIM}    1. Start Wintermute — it will log the approval URL in the console${C_RESET}"
-      echo -e "  ${C_DIM}    2. Open that URL in your browser and approve the request${C_RESET}"
-      echo -e "  ${C_DIM}    3. Restart Wintermute once — after this, everything is automatic${C_RESET}"
+      echo -e "  ${C_DIM}  Watch the logs during first start:${C_RESET}"
+      echo -e "  ${C_CYAN}    journalctl --user -u wintermute -f${C_RESET}"
       echo ""
-      echo -e "  ${C_DIM}  After approval, you can also verify Wintermute's session from your${C_RESET}"
-      echo -e "  ${C_DIM}  Matrix client (Element > Settings > Sessions) to give it a green shield.${C_RESET}"
+      echo -e "  ${C_DIM}  If the homeserver requires interactive approval (matrix.org does),${C_RESET}"
+      echo -e "  ${C_DIM}  the logs will show an approval URL — open it and approve, then restart.${C_RESET}"
+      echo ""
+      echo -e "  ${C_DIM}  After that, you can optionally verify Wintermute's session from your${C_RESET}"
+      echo -e "  ${C_DIM}  Matrix client (Element > Settings > Sessions > Verify Session).${C_RESET}"
       echo -e "  ${C_DIM}  This is optional but enables trusted E2E encryption.${C_RESET}"
     fi
   fi
@@ -949,7 +955,8 @@ SERVICE
     fi
 
     systemctl --user enable wintermute.service 2>/dev/null
-    ok "Service installed and enabled."
+    systemctl --user start wintermute.service 2>/dev/null
+    ok "Service installed, enabled, and started."
     info "Service file: ${C_WHITE}${SYSTEMD_FILE}${C_RESET}"
     echo -e "  ${C_DIM}I will be here when the machine returns.${C_RESET}"
   fi
@@ -1088,9 +1095,10 @@ fi
 
 if $MATRIX_ENABLED; then
   _has_next_steps=true
-  _next_steps+=("On first start, check the logs for a cross-signing approval URL")
-  _next_steps+=("  Open it in your browser, approve, then restart Wintermute once")
-  _next_steps+=("Invite the bot (${C_WHITE}${MATRIX_USER:-}${C_RESET}) to a Matrix room after it starts")
+  _next_steps+=("Log in to the ${C_WHITE}bot account${C_RESET} in a browser (e.g. Element) and accept any verification request")
+  _next_steps+=("Watch the logs: ${C_CYAN}journalctl --user -u wintermute -f${C_RESET}")
+  _next_steps+=("  If you see a cross-signing approval URL, open it and approve, then restart")
+  _next_steps+=("Invite the bot (${C_WHITE}${MATRIX_USER:-}${C_RESET}) to a Matrix room from your personal account")
 fi
 
 if $_has_next_steps; then
@@ -1104,15 +1112,12 @@ fi
 
 if $SYSTEMD_INSTALLED; then
   echo ""
-  if ask_yn "Start Wintermute now?" "y"; then
-    systemctl --user start wintermute.service
-    sleep 2
-    if systemctl --user is-active wintermute.service &>/dev/null; then
-      ok "Wintermute is running."
-    else
-      warn "Service did not start cleanly. Check logs:"
-      echo -e "    ${C_CYAN}journalctl --user -u wintermute -n 30${C_RESET}"
-    fi
+  sleep 2
+  if systemctl --user is-active wintermute.service &>/dev/null; then
+    ok "Wintermute is running."
+  else
+    warn "Service did not start cleanly. Check logs:"
+    echo -e "    ${C_CYAN}journalctl --user -u wintermute -n 30${C_RESET}"
   fi
   echo ""
   echo -e "  ${C_BOLD}Control:${C_RESET}"
@@ -1126,6 +1131,11 @@ fi
 echo ""
 echo -e "  ${C_BOLD}Web UI:${C_RESET}  ${C_CYAN}http://${WEB_H}:${WEB_P}${C_RESET}"
 echo -e "  ${C_BOLD}Debug:${C_RESET}   ${C_CYAN}http://${WEB_H}:${WEB_P}/debug${C_RESET}"
+echo ""
+echo -e "  ${C_BOLD}── Configuration ──${C_RESET}"
+echo -e "  ${C_DIM}When convenient, review ${C_WHITE}config.yaml${C_DIM} to configure auxiliary models.${C_RESET}"
+echo -e "  ${C_DIM}Separate backends for compaction, dreaming, sub-sessions, and the supervisor${C_RESET}"
+echo -e "  ${C_DIM}can reduce costs and improve performance. See ${C_WHITE}config.yaml.example${C_DIM} for details.${C_RESET}"
 echo ""
 echo -e "  ${C_DIM}\"The sky above the port was the color of television, tuned to a dead channel.\"${C_RESET}"
 echo -e "  ${C_DIM}                                            — William Gibson, Neuromancer${C_RESET}"
