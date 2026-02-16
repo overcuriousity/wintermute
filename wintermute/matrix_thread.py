@@ -918,7 +918,7 @@ class MatrixThread:
         # Dreaming loop
         if hasattr(self, "_dreaming_loop") and self._dreaming_loop:
             state = "running" if self._dreaming_loop._running else "stopped"
-            lines.append(f"**Dreaming loop:** {state} (target: {self._dreaming_loop._cfg.hour:02d}:{self._dreaming_loop._cfg.minute:02d} UTC, model: {self._dreaming_loop._model})")
+            lines.append(f"**Dreaming loop:** {state} (target: {self._dreaming_loop._cfg.hour:02d}:{self._dreaming_loop._cfg.minute:02d} UTC, model: {self._dreaming_loop._pool.primary.model})")
 
         # Scheduler
         if hasattr(self, "_scheduler") and self._scheduler:
