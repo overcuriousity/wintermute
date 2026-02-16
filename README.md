@@ -49,7 +49,7 @@ The philosophy differs from similar projects by treating small LLMs and digital 
 ## Quickstart
 
 ```bash
-git clone https://git.mikoshi.de/overcuriousity/wintermute.git wintermute
+git clone https://github.com/overcuriousity/wintermute.git wintermute
 cd wintermute
 bash setup.sh
 ```
