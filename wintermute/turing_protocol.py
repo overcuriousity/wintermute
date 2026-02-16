@@ -40,12 +40,15 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import time as _time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from wintermute.llm_thread import BackendPool
+
+from wintermute import database
 
 from wintermute.tools import TOOL_SCHEMAS
 
@@ -331,6 +334,7 @@ async def run_turing_protocol(
     active_sessions: list[dict],
     correction_depth: int = 0,
     enabled_validators: Optional[dict[str, bool]] = None,
+    thread_id: str = "unknown",
 ) -> TuringResult:
     """Run the three-stage Turing Protocol validation pipeline.
 
@@ -402,6 +406,16 @@ async def run_turing_protocol(
 
         result = json.loads(raw)
         violations = result.get("violations", [])
+
+        try:
+            log_status = "ok" if not violations else "violation_detected"
+            database.save_interaction_log(
+                _time.time(), "turing_protocol", thread_id,
+                pool.last_used,
+                json.dumps(context)[:2000], raw[:2000], log_status,
+            )
+        except Exception:
+            pass
 
         if not violations:
             logger.debug("Stage 1: No violations detected")

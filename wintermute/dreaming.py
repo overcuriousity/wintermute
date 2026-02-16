@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time as _time
 from dataclasses import dataclass
 from datetime import datetime, time as dt_time, timedelta, timezone
 from pathlib import Path
@@ -95,6 +96,14 @@ async def _consolidate(pool: "BackendPool",
         max_tokens_override=2048,
     )
     result = (response.choices[0].message.content or "").strip()
+    try:
+        database.save_interaction_log(
+            _time.time(), "dreaming", f"system:dreaming:{label}",
+            pool.last_used,
+            prompt[:2000], result[:2000], "ok",
+        )
+    except Exception:
+        pass
     logger.debug("Dreaming: %s consolidated (%d -> %d chars)", label, len(content), len(result))
     return result
 

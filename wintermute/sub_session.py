@@ -59,12 +59,14 @@ hops are allowed before the chain gives up and reports partial progress.
 import asyncio
 import json
 import logging
+import time as _time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Callable, Coroutine, Optional
 
+from wintermute import database
 from wintermute import prompt_assembler
 from wintermute import tools as tool_module
 from wintermute.llm_thread import BackendPool
@@ -761,6 +763,14 @@ class SubSessionManager:
         except asyncio.TimeoutError:
             state.status = "timeout"
             state.completed_at = datetime.now(timezone.utc).isoformat()
+            try:
+                database.save_interaction_log(
+                    _time.time(), "sub_session", state.session_id,
+                    self._pool.last_used,
+                    state.objective[:500], "timeout", "timeout",
+                )
+            except Exception:
+                pass
             logger.warning(
                 "Sub-session %s timed out after %ds (depth=%d, tool_calls=%d)",
                 state.session_id, timeout, state.continuation_depth,
@@ -842,6 +852,14 @@ class SubSessionManager:
             state.status = "failed"
             state.error = str(exc)
             state.completed_at = datetime.now(timezone.utc).isoformat()
+            try:
+                database.save_interaction_log(
+                    _time.time(), "sub_session", state.session_id,
+                    self._pool.last_used,
+                    state.objective[:500], str(exc)[:500], "error",
+                )
+            except Exception:
+                pass
             msg = f"[SUB-SESSION {state.session_id} FAILED] {exc}"
             logger.exception("Sub-session %s failed", state.session_id)
             await self._report(state, msg)
@@ -1024,6 +1042,27 @@ class SubSessionManager:
 
             choice = response.choices[0]
 
+            # Log this inference round
+            try:
+                content_text = (choice.message.content or "").strip()
+                if choice.message.tool_calls:
+                    tc_names = [tc.function.name for tc in choice.message.tool_calls]
+                    output_summary = f"[tool_calls: {', '.join(tc_names)}]"
+                else:
+                    output_summary = content_text[:500]
+                raw_output_data = json.dumps({
+                    "content": content_text[:500],
+                    "tool_calls": [tc.function.name for tc in (choice.message.tool_calls or [])],
+                })
+                database.save_interaction_log(
+                    _time.time(), "sub_session", state.session_id,
+                    self._pool.last_used,
+                    state.objective[:500], output_summary, "ok",
+                    raw_output=raw_output_data,
+                )
+            except Exception:
+                pass
+
             if choice.message.tool_calls:
                 state.messages.append(choice.message)
 
@@ -1039,6 +1078,16 @@ class SubSessionManager:
                         thread_id=state.session_id,
                         nesting_depth=state.nesting_depth,
                     )
+                    # Log the tool call
+                    try:
+                        database.save_interaction_log(
+                            _time.time(), "tool_call", state.session_id,
+                            self._pool.last_used,
+                            json.dumps({"tool": tc.function.name, "arguments": tc.function.arguments}),
+                            result[:500], "ok",
+                        )
+                    except Exception:
+                        pass
                     # Track progress on state so the timeout handler can report
                     # and continue from it.
                     result_preview = result[:120].replace("\n", " ")

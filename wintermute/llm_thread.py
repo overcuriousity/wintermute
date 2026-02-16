@@ -490,6 +490,7 @@ class LLMThread:
                 active_sessions=active_sessions,
                 correction_depth=correction_depth,
                 enabled_validators=self._turing_protocol_validators,
+                thread_id=thread_id,
             )
         except Exception:  # noqa: BLE001
             logger.exception("Turing Protocol check raised (non-fatal)")
