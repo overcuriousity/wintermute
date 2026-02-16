@@ -69,7 +69,9 @@ def _common_headers() -> dict[str, str]:
 
 def api_headers() -> dict[str, str]:
     """Headers to pass to the OpenAI client for Kimi API calls."""
-    return _common_headers()
+    headers = _common_headers()
+    headers["User-Agent"] = "kimi-cli/1.12.0"
+    return headers
 
 
 # ---------------------------------------------------------------------------

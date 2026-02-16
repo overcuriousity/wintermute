@@ -428,13 +428,16 @@ async def main() -> None:
             try:
                 async def _broadcast_auth(msg: str) -> None:
                     sent = False
-                    # Broadcast to all joined Matrix rooms (via API, not state store).
+                    # Broadcast to allowed Matrix rooms only.
                     if matrix:
-                        rooms = await matrix.get_joined_rooms()
-                        logger.debug("Kimi auto-auth: Matrix rooms=%s", rooms)
-                        for room_id in rooms:
-                            await matrix.send_message(msg, room_id)
-                            sent = True
+                        allowed = set(matrix._cfg.allowed_rooms) if matrix._cfg.allowed_rooms else await matrix.get_joined_rooms()
+                        logger.debug("Kimi auto-auth: broadcasting to rooms=%s", allowed)
+                        for room_id in allowed:
+                            try:
+                                await matrix.send_message(msg, room_id)
+                                sent = True
+                            except Exception as exc:
+                                logger.debug("Kimi auth broadcast to %s failed: %s", room_id, exc)
                     # Broadcast to all connected web clients.
                     if web_iface:
                         for tid in list(web_iface.connected_thread_ids):
