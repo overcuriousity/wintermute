@@ -56,6 +56,20 @@ def init_db() -> None:
         """)
         conn.commit()
 
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS interaction_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp   REAL    NOT NULL,
+                action      TEXT    NOT NULL,
+                session     TEXT    NOT NULL,
+                llm         TEXT    NOT NULL,
+                input       TEXT    NOT NULL,
+                output      TEXT    NOT NULL,
+                status      TEXT    NOT NULL DEFAULT 'ok'
+            )
+        """)
+        conn.commit()
+
     _migrate_pulse_from_file()
     logger.debug("Database initialised at %s", CONVERSATION_DB)
 
@@ -306,3 +320,62 @@ def _migrate_pulse_from_file() -> None:
         conn.commit()
     pulse_file.rename(pulse_file.with_suffix(".txt.migrated"))
     logger.info("Migrated %d pulse items from PULSE.txt to DB", len(items))
+
+
+# ---------------------------------------------------------------------------
+# Interaction Log CRUD
+# ---------------------------------------------------------------------------
+
+def save_interaction_log(timestamp: float, action: str, session: str,
+                         llm: str, input_text: str, output_text: str,
+                         status: str = "ok") -> int:
+    """Insert an interaction log entry and return its row id."""
+    with sqlite3.connect(CONVERSATION_DB) as conn:
+        cur = conn.execute(
+            "INSERT INTO interaction_log (timestamp, action, session, llm, input, output, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (timestamp, action, session, llm, input_text, output_text, status),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def get_interaction_log(limit: int = 200, offset: int = 0,
+                        session_filter: Optional[str] = None) -> list[dict]:
+    """Return interaction log entries, newest first. No truncation."""
+    with sqlite3.connect(CONVERSATION_DB) as conn:
+        conn.row_factory = sqlite3.Row
+        if session_filter:
+            rows = conn.execute(
+                "SELECT * FROM interaction_log WHERE session=? ORDER BY id DESC LIMIT ? OFFSET ?",
+                (session_filter, limit, offset),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM interaction_log ORDER BY id DESC LIMIT ? OFFSET ?",
+                (limit, offset),
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_interaction_log_entry(entry_id: int) -> Optional[dict]:
+    """Return a single interaction log entry by id, or None."""
+    with sqlite3.connect(CONVERSATION_DB) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM interaction_log WHERE id=?", (entry_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def count_interaction_log(session_filter: Optional[str] = None) -> int:
+    """Return total count of interaction log entries."""
+    with sqlite3.connect(CONVERSATION_DB) as conn:
+        if session_filter:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM interaction_log WHERE session=?",
+                (session_filter,),
+            ).fetchone()
+        else:
+            row = conn.execute("SELECT COUNT(*) FROM interaction_log").fetchone()
+    return row[0]

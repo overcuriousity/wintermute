@@ -508,6 +508,9 @@ _DEBUG_HTML = """\
     <button class="tab-btn" data-tab="toolcalls" onclick="showTab('toolcalls')">
       Tool Calls <span class="tab-count" id="cnt-toolcalls">0</span>
     </button>
+    <button class="tab-btn" data-tab="interactions" onclick="showTab('interactions')">
+      Interactions <span class="tab-count" id="cnt-interactions">0</span>
+    </button>
   </nav>
 
   <div id="main">
@@ -664,6 +667,35 @@ _DEBUG_HTML = """\
         <div class="empty">Loading\u2026</div>
       </div>
     </div>
+
+    <!-- ── Interaction Log ── -->
+    <div class="tab-panel" id="panel-interactions">
+      <div class="form-bar" style="gap:.8rem">
+        <div class="form-group">
+          <label>Filter by session</label>
+          <select id="il-filter-session" onchange="loadInteractionLog()" style="min-width:180px">
+            <option value="">All sessions</option>
+          </select>
+        </div>
+        <div class="form-group" style="justify-content:flex-end">
+          <label>&nbsp;</label>
+          <button class="btn btn-sm" onclick="loadMoreInteractions()">Load more</button>
+        </div>
+      </div>
+      <div class="scroll-area">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Time</th><th>Action</th><th>Session</th><th>LLM</th>
+              <th>Input</th><th>Output</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="interactions-body">
+            <tr><td colspan="7" class="empty">Loading\u2026</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -729,6 +761,7 @@ async function loadTab(name) {
       case 'jobs':        await loadJobs(); break;
       case 'reminders':   await loadReminders(); break;
       case 'toolcalls':   await loadToolCalls(); break;
+      case 'interactions': await loadInteractionLog(); break;
     }
   } catch (e) {
     console.error('loadTab error:', e);
@@ -1409,6 +1442,88 @@ async function loadToolCalls() {
   }).join('');
 }
 
+// ── Interaction Log ──
+let ilOffset = 0;
+const IL_PAGE = 200;
+
+async function loadInteractionLog(append) {
+  if (!append) ilOffset = 0;
+  const session = document.getElementById('il-filter-session').value;
+  const params = new URLSearchParams({limit: IL_PAGE, offset: ilOffset});
+  if (session) params.set('session', session);
+  const r = await fetch('/api/debug/interaction-log?' + params);
+  const data = await r.json();
+  const entries = data.entries || [];
+  const total = data.total || 0;
+  document.getElementById('cnt-interactions').textContent = total;
+
+  // Update session filter dropdown
+  if (!append) {
+    const filterSel = document.getElementById('il-filter-session');
+    const currentFilter = filterSel.value;
+    const r2 = await fetch('/api/debug/interaction-log?limit=1000&offset=0');
+    const d2 = await r2.json();
+    const sessions = [...new Set((d2.entries || []).map(e => e.session).filter(Boolean))];
+    const existing = new Set([...filterSel.options].map(o => o.value));
+    sessions.forEach(s => {
+      if (!existing.has(s)) {
+        const opt = document.createElement('option');
+        opt.value = s; opt.textContent = s;
+        filterSel.appendChild(opt);
+      }
+    });
+    filterSel.value = currentFilter;
+  }
+
+  const tbody = document.getElementById('interactions-body');
+  if (!entries.length && !append) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No interactions recorded yet</td></tr>';
+    return;
+  }
+  const html = entries.map(e => {
+    const ts = new Date(e.timestamp * 1000).toLocaleString();
+    const inputPreview = (e.input || '').length > 120 ? e.input.slice(0, 117) + '\u2026' : (e.input || '');
+    const outputPreview = (e.output || '').length > 120 ? e.output.slice(0, 117) + '\u2026' : (e.output || '');
+    const statusCls = e.status === 'ok' ? 'completed' : (e.status === 'error' ? 'failed' : 'pending');
+    const sessionShort = (e.session || '').length > 24 ? e.session.slice(0, 22) + '\u2026' : (e.session || '');
+    return `<tr style="cursor:pointer" onclick="toggleILDetail(this, ${e.id})">
+      <td class="dim" style="white-space:nowrap">${esc(ts)}</td>
+      <td>${badge(e.action === 'chat' ? 'web' : (e.action === 'error' ? 'failed' : 'system'), e.action)}</td>
+      <td class="mono" style="font-size:.72rem" title="${esc(e.session || '')}">${esc(sessionShort)}</td>
+      <td class="mono" style="font-size:.72rem">${esc(e.llm || '')}</td>
+      <td class="trunc" title="${esc(e.input || '')}">${esc(inputPreview)}</td>
+      <td class="trunc" title="${esc(e.output || '')}">${esc(outputPreview)}</td>
+      <td>${badge(statusCls, e.status)}</td>
+    </tr>`;
+  }).join('');
+  if (append) tbody.insertAdjacentHTML('beforeend', html);
+  else tbody.innerHTML = html;
+}
+
+async function toggleILDetail(row, id) {
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains('il-detail')) {
+    next.remove();
+    return;
+  }
+  const r = await fetch('/api/debug/interaction-log/' + id);
+  const e = await r.json();
+  const detail = document.createElement('tr');
+  detail.className = 'il-detail';
+  detail.innerHTML = '<td colspan="7" style="background:#0d1526;padding:1rem">' +
+    '<div style="margin-bottom:.6rem"><strong style="color:#a8d8ea">Input:</strong></div>' +
+    '<pre style="white-space:pre-wrap;word-break:break-word;color:#ccc;max-height:none;overflow:visible;font-size:.8rem">' + esc(e.input || '') + '</pre>' +
+    '<div style="margin:.6rem 0"><strong style="color:#a8d8ea">Output:</strong></div>' +
+    '<pre style="white-space:pre-wrap;word-break:break-word;color:#ccc;max-height:none;overflow:visible;font-size:.8rem">' + esc(e.output || '') + '</pre>' +
+    '</td>';
+  row.after(detail);
+}
+
+function loadMoreInteractions() {
+  ilOffset += IL_PAGE;
+  loadInteractionLog(true);
+}
+
 // ── Config info ──
 async function loadConfig() {
   try {
@@ -1521,6 +1636,8 @@ class WebInterface:
         app.router.add_post("/api/debug/reminders",                     self._api_reminder_create)
         app.router.add_delete("/api/debug/reminders/{job_id}",          self._api_reminder_delete)
         app.router.add_get("/api/debug/tool-calls",                     self._api_tool_calls)
+        app.router.add_get("/api/debug/interaction-log",                 self._api_interaction_log)
+        app.router.add_get("/api/debug/interaction-log/{id}",            self._api_interaction_log_entry)
 
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
@@ -2064,3 +2181,25 @@ class WebInterface:
 
     async def _api_tool_calls(self, _request: web.Request) -> web.Response:
         return self._json({"calls": tool_module.get_tool_call_log()})
+
+    # ------------------------------------------------------------------
+    # Interaction Log
+    # ------------------------------------------------------------------
+
+    async def _api_interaction_log(self, request: web.Request) -> web.Response:
+        from wintermute import database
+        limit = int(request.query.get("limit", "200"))
+        offset = int(request.query.get("offset", "0"))
+        session = request.query.get("session") or None
+        entries = database.get_interaction_log(limit=limit, offset=offset,
+                                               session_filter=session)
+        total = database.count_interaction_log(session_filter=session)
+        return self._json({"entries": entries, "total": total})
+
+    async def _api_interaction_log_entry(self, request: web.Request) -> web.Response:
+        from wintermute import database
+        entry_id = int(request.match_info["id"])
+        entry = database.get_interaction_log_entry(entry_id)
+        if not entry:
+            return web.json_response({"error": "not found"}, status=404)
+        return self._json(entry)
