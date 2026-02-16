@@ -65,13 +65,26 @@ def init_db() -> None:
                 llm         TEXT    NOT NULL,
                 input       TEXT    NOT NULL,
                 output      TEXT    NOT NULL,
-                status      TEXT    NOT NULL DEFAULT 'ok'
+                status      TEXT    NOT NULL DEFAULT 'ok',
+                raw_output  TEXT
             )
         """)
         conn.commit()
 
+        # Migration: add raw_output column if missing
+        _migrate_add_column(conn, "interaction_log", "raw_output", "TEXT")
+
     _migrate_pulse_from_file()
     logger.debug("Database initialised at %s", CONVERSATION_DB)
+
+
+def _migrate_add_column(conn: sqlite3.Connection, table: str, column: str, col_type: str) -> None:
+    """Add a column to a table if it doesn't exist."""
+    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+        conn.commit()
+        logger.info("Migrated %s: added %s column", table, column)
 
 
 def _migrate_add_thread_id(conn: sqlite3.Connection, table: str) -> None:
@@ -328,13 +341,14 @@ def _migrate_pulse_from_file() -> None:
 
 def save_interaction_log(timestamp: float, action: str, session: str,
                          llm: str, input_text: str, output_text: str,
-                         status: str = "ok") -> int:
+                         status: str = "ok",
+                         raw_output: Optional[str] = None) -> int:
     """Insert an interaction log entry and return its row id."""
     with sqlite3.connect(CONVERSATION_DB) as conn:
         cur = conn.execute(
-            "INSERT INTO interaction_log (timestamp, action, session, llm, input, output, status) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (timestamp, action, session, llm, input_text, output_text, status),
+            "INSERT INTO interaction_log (timestamp, action, session, llm, input, output, status, raw_output) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (timestamp, action, session, llm, input_text, output_text, status, raw_output),
         )
         conn.commit()
         return cur.lastrowid

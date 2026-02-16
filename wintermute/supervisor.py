@@ -1,38 +1,37 @@
 """
-Lightweight Supervisor Agent for Workflow Validation
+Lightweight Two-Stage Supervisor Agent for Workflow Validation
 
-One-shot post-inference check that detects when the main model claims to have
+Post-inference check that detects when the main model claims to have
 started a background workflow/session without actually calling
 spawn_sub_session.  When a mismatch is found, a corrective system event is
 enqueued so the main model can self-correct.
 
-Design
-------
+Two-Stage Design
+----------------
+  **Stage 1 (LLM analysis):** A supervisor LLM analyses the assistant's
+  response to detect claims of having spawned a session/workflow.  This
+  always runs — there is no early programmatic exit.
+
+  **Stage 2 (programmatic validation):** Only fires when Stage 1 flags
+  ``hallucination_detected=true``.  Cross-checks against ``tool_calls_made``
+  and ``active_sessions``.  If ``spawn_sub_session`` IS in
+  ``tool_calls_made``, this is a false positive — log and return None.
+  Otherwise, inject the correction.
+
+Other details
+-------------
   - Runs asynchronously *after* the main reply is broadcast (zero added
     latency on the happy path).
   - Uses a dedicated LLM provider (cheap/fast model recommended).
-  - Receives hard evidence: the list of tool calls actually made during
-    the inference round, plus the programmatic list of active sessions.
   - A ``correction_depth`` counter on the queue item allows the supervisor
     to re-check responses to its own corrections up to MAX_CORRECTION_DEPTH
-    times, with escalating prompt severity.  This prevents infinite loops
-    while still catching persistent hallucinations.
+    times, with escalating prompt severity.
 
 Prompt configuration
 --------------------
   Supervisor prompts are loaded from ``data/SUPERVISOR_PROMPTS.txt``, which
   must be a JSON array of objects with ``"name"`` and ``"system_prompt"``
-  keys.  Example::
-
-      [
-        {
-          "name": "workflow_spawn",
-          "system_prompt": "..."
-        }
-      ]
-
-  If the file is absent or malformed the built-in defaults are used so the
-  system never silently breaks.
+  keys.  If the file is absent or malformed the built-in defaults are used.
 """
 
 from __future__ import annotations
@@ -215,9 +214,8 @@ async def check_workflow_consistency(
     active_sessions : list[dict]
         Output of SubSessionManager.list_active().
     """
-    # Quick exit: if spawn_sub_session WAS called, nothing to check.
-    if "spawn_sub_session" in tool_calls_made:
-        return None
+    # Stage 1: Always run the LLM analysis — no early programmatic exit.
+    logger.debug("Stage 1: Running LLM analysis (tool_calls_made=%s)", tool_calls_made)
 
     prompts = _load_supervisor_prompts()
     system_prompt = prompts["workflow_spawn"]
@@ -262,8 +260,18 @@ async def check_workflow_consistency(
         if result.get("hallucination_detected"):
             reason = result.get("reason", "workflow claim without actual spawn")
             logger.warning(
-                "Supervisor detected workflow hallucination: %s", reason,
+                "Stage 1: LLM detected workflow hallucination: %s", reason,
             )
+
+            # Stage 2: Programmatic validation — cross-check against ground truth.
+            if "spawn_sub_session" in tool_calls_made:
+                logger.info(
+                    "Stage 2: False positive — spawn_sub_session was actually called. "
+                    "LLM reason: %s", reason,
+                )
+                return None
+            logger.warning("Stage 2: Confirmed hallucination — spawn_sub_session NOT in tool_calls_made")
+
             tool_schema = _get_spawn_tool_schema()
 
             if correction_depth == 0:
@@ -302,7 +310,7 @@ async def check_workflow_consistency(
                     f"```json\n{tool_schema}\n```"
                 )
 
-        logger.debug("Supervisor check passed (no hallucination detected)")
+        logger.debug("Stage 1: LLM check passed (no hallucination detected)")
         return None
 
     except (json.JSONDecodeError, KeyError) as exc:

@@ -1486,9 +1486,10 @@ async function loadInteractionLog(append) {
     const outputPreview = (e.output || '').length > 120 ? e.output.slice(0, 117) + '\u2026' : (e.output || '');
     const statusCls = e.status === 'ok' ? 'completed' : (e.status === 'error' ? 'failed' : 'pending');
     const sessionShort = (e.session || '').length > 24 ? e.session.slice(0, 22) + '\u2026' : (e.session || '');
-    return `<tr style="cursor:pointer" onclick="toggleILDetail(this, ${e.id})">
+    const actionStyle = e.action === 'tool_call' ? 'tool' : (e.action === 'chat' ? 'web' : (e.action === 'error' ? 'failed' : 'system'));
+    return `<tr style="cursor:pointer${e.action === 'tool_call' ? ';background:#0a0f1a' : ''}" onclick="toggleILDetail(this, ${e.id})">
       <td class="dim" style="white-space:nowrap">${esc(ts)}</td>
-      <td>${badge(e.action === 'chat' ? 'web' : (e.action === 'error' ? 'failed' : 'system'), e.action)}</td>
+      <td>${badge(actionStyle, e.action)}</td>
       <td class="mono" style="font-size:.72rem" title="${esc(e.session || '')}">${esc(sessionShort)}</td>
       <td class="mono" style="font-size:.72rem">${esc(e.llm || '')}</td>
       <td class="trunc" title="${esc(e.input || '')}">${esc(inputPreview)}</td>
@@ -1510,11 +1511,34 @@ async function toggleILDetail(row, id) {
   const e = await r.json();
   const detail = document.createElement('tr');
   detail.className = 'il-detail';
+  let rawSection = '';
+  if (e.raw_output) {
+    try {
+      const raw = JSON.parse(e.raw_output);
+      const parts = [];
+      if (raw.tool_calls && raw.tool_calls.length) {
+        parts.push('<div style="margin:.6rem 0"><strong style="color:#f0c040">Tool Calls (' + raw.tool_calls.length + '):</strong></div>');
+        raw.tool_calls.forEach((tc, i) => {
+          parts.push('<div style="margin-left:1rem;margin-bottom:.4rem"><span style="color:#a8d8ea">' + esc(tc.name) + '</span>');
+          parts.push('<pre style="white-space:pre-wrap;word-break:break-word;color:#888;font-size:.75rem;margin:.2rem 0">' + esc(tc.arguments || '') + '</pre>');
+          parts.push('<pre style="white-space:pre-wrap;word-break:break-word;color:#6a6;font-size:.75rem;margin:.2rem 0">' + esc((tc.result || '').slice(0, 300)) + '</pre></div>');
+        });
+      }
+      if (raw.reasoning) {
+        parts.push('<div style="margin:.6rem 0"><strong style="color:#c0a0f0">Reasoning:</strong></div>');
+        parts.push('<pre style="white-space:pre-wrap;word-break:break-word;color:#999;font-size:.75rem">' + esc(raw.reasoning) + '</pre>');
+      }
+      rawSection = parts.join('');
+    } catch(ex) {
+      rawSection = '<div style="margin:.6rem 0"><strong style="color:#a8d8ea">Raw Output:</strong></div><pre style="white-space:pre-wrap;word-break:break-word;color:#888;font-size:.75rem">' + esc(e.raw_output) + '</pre>';
+    }
+  }
   detail.innerHTML = '<td colspan="7" style="background:#0d1526;padding:1rem">' +
     '<div style="margin-bottom:.6rem"><strong style="color:#a8d8ea">Input:</strong></div>' +
     '<pre style="white-space:pre-wrap;word-break:break-word;color:#ccc;max-height:none;overflow:visible;font-size:.8rem">' + esc(e.input || '') + '</pre>' +
     '<div style="margin:.6rem 0"><strong style="color:#a8d8ea">Output:</strong></div>' +
     '<pre style="white-space:pre-wrap;word-break:break-word;color:#ccc;max-height:none;overflow:visible;font-size:.8rem">' + esc(e.output || '') + '</pre>' +
+    rawSection +
     '</td>';
   row.after(detail);
 }

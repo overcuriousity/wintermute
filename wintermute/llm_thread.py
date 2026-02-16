@@ -198,6 +198,7 @@ class LLMReply:
     text: str
     reasoning: Optional[str] = None  # reasoning/thinking tokens (if model supports it)
     tool_calls_made: list[str] = field(default_factory=list)  # tool names called during inference
+    tool_call_details: list[dict] = field(default_factory=list)  # [{name, arguments, result}, ...]
 
     def __str__(self) -> str:
         return self.text
@@ -572,11 +573,26 @@ class LLMThread:
             _action = "chat"
 
         try:
+            raw_output_data = {
+                "content": reply.text,
+                "tool_calls": reply.tool_call_details,
+                "reasoning": reply.reasoning,
+            }
             database.save_interaction_log(
                 _time.time(), _action, thread_id,
                 self._main_pool.last_used,
                 item.text, reply.text, "ok",
+                raw_output=json.dumps(raw_output_data),
             )
+            # Log each individual tool call as a separate entry
+            for tc in reply.tool_call_details:
+                database.save_interaction_log(
+                    _time.time(), "tool_call", thread_id,
+                    self._main_pool.last_used,
+                    json.dumps({"tool": tc["name"], "arguments": tc["arguments"]}),
+                    tc.get("result", ""),
+                    "ok",
+                )
         except Exception:  # noqa: BLE001
             logger.debug("Failed to save interaction log entry", exc_info=True)
 
@@ -611,6 +627,7 @@ class LLMThread:
         tools = None if disable_tools else tool_module.TOOL_SCHEMAS
         reasoning_parts: list[str] = []
         tool_calls_made: list[str] = []
+        tool_call_details: list[dict] = []
 
         while True:
             response = await self._main_pool.call(
@@ -645,6 +662,11 @@ class LLMThread:
                     result = tool_module.execute_tool(tc.function.name, inputs,
                                                      thread_id=thread_id,
                                                      nesting_depth=0)
+                    tool_call_details.append({
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                        "result": result[:500],
+                    })
                     logger.debug("Tool %s -> %s", tc.function.name, result[:200])
                     full_messages.append({
                         "role":         "tool",
@@ -657,7 +679,8 @@ class LLMThread:
             content = (choice.message.content or "").strip()
             reasoning = "\n\n".join(reasoning_parts) if reasoning_parts else None
             return LLMReply(text=content, reasoning=reasoning,
-                            tool_calls_made=tool_calls_made)
+                            tool_calls_made=tool_calls_made,
+                            tool_call_details=tool_call_details)
 
     # ------------------------------------------------------------------
     # Context compaction
