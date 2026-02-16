@@ -539,13 +539,13 @@ _DEBUG_HTML = """\
         <table class="data-table">
           <thead>
             <tr>
-              <th>ID</th><th>Workflow</th><th>Deps</th><th>Parent</th><th>Status</th>
-              <th>Objective</th><th>Mode</th>
+              <th></th><th>ID</th><th>Workflow</th><th>Deps</th><th>Parent</th><th>Status</th>
+              <th>Tools</th><th>Objective</th><th>Mode</th>
               <th>Created</th><th>Duration</th><th>Result / Error</th>
             </tr>
           </thead>
           <tbody id="subsessions-body">
-            <tr><td colspan="10" class="empty">Loading\u2026</td></tr>
+            <tr><td colspan="12" class="empty">Loading\u2026</td></tr>
           </tbody>
         </table>
       </div>
@@ -576,6 +576,14 @@ _DEBUG_HTML = """\
 
     <!-- ── Tool Calls ── -->
     <div class="tab-panel" id="panel-toolcalls">
+      <div class="form-bar" style="gap:.8rem">
+        <div class="form-group">
+          <label>Filter by session</label>
+          <select id="tc-filter-session" onchange="loadToolCalls()" style="min-width:180px">
+            <option value="">All sessions</option>
+          </select>
+        </div>
+      </div>
       <div class="scroll-area">
         <table class="data-table">
           <thead>
@@ -960,6 +968,8 @@ function toggleSpSection(id) {
 }
 
 // ── Sub-sessions ──
+let _expandedSubSessions = new Set();
+
 async function loadSubSessions() {
   const r = await fetch('/api/debug/subsessions');
   const data = await r.json();
@@ -967,7 +977,7 @@ async function loadSubSessions() {
   document.getElementById('cnt-subsessions').textContent = sessions.length;
   const tbody = document.getElementById('subsessions-body');
   if (!sessions.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="empty">No sub-sessions recorded</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="empty">No sub-sessions recorded</td></tr>';
     return;
   }
   tbody.innerHTML = sessions.map(s => {
@@ -981,19 +991,104 @@ async function loadSubSessions() {
     const wfShort = s.workflow_id || '\u2014';
     const deps = (s.depends_on || []);
     const depsStr = deps.length ? deps.join(', ') : '\u2014';
-    return `<tr>
-      <td class="mono">${esc(s.session_id)}</td>
+    const tcCount = s.tool_call_count || 0;
+    const isExpanded = _expandedSubSessions.has(s.session_id);
+    const arrow = isExpanded ? '\u25bc' : '\u25b6';
+    const activityIndicator = s.status === 'running' && tcCount > 0
+      ? ' <span style="color:#6fe06f" title="Active tool calls">\u25cf</span>' : '';
+    return `<tr style="cursor:pointer" onclick="toggleSubSession('${esc(s.session_id)}')">
+      <td style="width:1.5em;text-align:center;color:#666">${arrow}</td>
+      <td class="mono">${esc(s.session_id)}${activityIndicator}</td>
       <td class="mono dim">${esc(wfShort)}</td>
       <td class="mono dim" title="${esc(depsStr)}">${deps.length ? esc(deps.map(d => d.slice(0,12)).join(', ')) : '\u2014'}</td>
       <td class="mono dim" title="${esc(s.parent_thread_id || '')}">${esc(parentShort)}</td>
       <td>${badge(s.status, s.status)}</td>
+      <td class="dim">${tcCount}</td>
       <td class="trunc" title="${esc(s.objective)}">${esc(s.objective.slice(0, 60))}${s.objective.length > 60 ? '\u2026' : ''}</td>
       <td class="dim">${esc(s.system_prompt_mode)}</td>
       <td class="dim" style="white-space:nowrap">${fmtTime(s.created_at)}</td>
       <td class="dim" style="white-space:nowrap">${duration}</td>
       <td class="trunc" title="${esc(resultText)}">${esc(resultText)}</td>
+    </tr>
+    <tr id="ssdetail-${esc(s.session_id)}" style="display:${isExpanded ? '' : 'none'}">
+      <td colspan="12" style="background:#0d1526;padding:.6rem 1rem">
+        <div id="sscontent-${esc(s.session_id)}" style="font-size:.8rem;color:#999">Loading\u2026</div>
+      </td>
     </tr>`;
   }).join('');
+  // Re-fetch content for expanded rows
+  for (const sid of _expandedSubSessions) {
+    fetchSubSessionDetail(sid);
+  }
+}
+
+async function toggleSubSession(sid) {
+  const detailRow = document.getElementById('ssdetail-' + sid);
+  if (!detailRow) return;
+  if (_expandedSubSessions.has(sid)) {
+    _expandedSubSessions.delete(sid);
+    detailRow.style.display = 'none';
+  } else {
+    _expandedSubSessions.add(sid);
+    detailRow.style.display = '';
+    fetchSubSessionDetail(sid);
+  }
+  // Update arrow
+  const tbody = document.getElementById('subsessions-body');
+  const rows = tbody.querySelectorAll('tr[onclick]');
+  rows.forEach(r => {
+    const m = r.getAttribute('onclick').match(/toggleSubSession\('([^']+)'\)/);
+    if (m) {
+      const arrow = _expandedSubSessions.has(m[1]) ? '\u25bc' : '\u25b6';
+      r.querySelector('td').textContent = arrow;
+    }
+  });
+}
+
+async function fetchSubSessionDetail(sid) {
+  const el = document.getElementById('sscontent-' + sid);
+  if (!el) return;
+  try {
+    const r = await fetch('/api/debug/subsessions/' + encodeURIComponent(sid) + '/messages');
+    const data = await r.json();
+    const msgs = data.messages || [];
+    if (!msgs.length) {
+      el.innerHTML = '<span class="dim">No messages recorded (session may still be initializing)</span>';
+      return;
+    }
+    let html = '<div style="margin-bottom:.5rem"><strong style="color:#a8d8ea">Messages (' + msgs.length + ')</strong>' +
+      ' <button class="btn btn-sm" onclick="event.stopPropagation();filterToolCallsBySession(\'' + esc(sid) + '\')">View tool calls</button></div>';
+    html += '<div style="max-height:400px;overflow-y:auto;border:1px solid #0f3460;border-radius:.3rem;padding:.4rem">';
+    msgs.forEach((m, i) => {
+      const roleColor = m.role === 'assistant' ? '#a8d8ea' : m.role === 'user' ? '#90ee90' : m.role === 'tool' ? '#c9b0ff' : '#888';
+      const content = (m.content || '').slice(0, 500) + ((m.content || '').length > 500 ? '\u2026' : '');
+      html += '<div style="margin-bottom:.4rem;padding:.3rem .5rem;border-left:2px solid ' + roleColor + '">';
+      html += '<span style="color:' + roleColor + ';font-weight:600;font-size:.72rem;text-transform:uppercase">' + esc(m.role) + '</span>';
+      if (m.tool_call_id) html += ' <span class="mono dim" style="font-size:.68rem">' + esc(m.tool_call_id) + '</span>';
+      if (m.tool_calls) {
+        m.tool_calls.forEach(tc => {
+          html += ' <span class="badge badge-system" style="font-size:.62rem">' + esc(tc.name) + '</span>';
+        });
+      }
+      html += '<div style="white-space:pre-wrap;word-break:break-word;margin-top:.2rem;font-size:.78rem;color:#ccc">' + esc(content) + '</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = '<span style="color:#ff9090">Failed to load: ' + esc(String(e)) + '</span>';
+  }
+}
+
+function filterToolCallsBySession(sid) {
+  showTab('toolcalls');
+  const sel = document.getElementById('tc-filter-session');
+  // Add option if not present
+  let found = false;
+  for (const opt of sel.options) { if (opt.value === sid) { found = true; break; } }
+  if (!found) { const opt = document.createElement('option'); opt.value = sid; opt.textContent = sid; sel.appendChild(opt); }
+  sel.value = sid;
+  loadToolCalls();
 }
 
 // ── Workflows ──
@@ -1007,13 +1102,38 @@ async function loadWorkflows() {
     area.innerHTML = '<div class="empty">No workflows recorded</div>';
     return;
   }
+  // Check which parent threads have recent tool calls (activity after workflow)
+  let parentActivity = {};
+  try {
+    const tcr = await fetch('/api/debug/tool-calls');
+    const tcd = await tcr.json();
+    const tcalls = tcd.calls || [];
+    workflows.forEach(wf => {
+      if (!wf.parent_thread_id) return;
+      const wfCompleted = wf.status === 'completed' || wf.status === 'failed';
+      if (!wfCompleted) return;
+      // Find tool calls from parent thread after workflow creation
+      const parentCalls = tcalls.filter(c => c.thread_id === wf.parent_thread_id);
+      parentActivity[wf.workflow_id] = parentCalls.length > 0;
+    });
+  } catch(e) { /* ignore */ }
+
   area.innerHTML = workflows.map(wf => {
+    const runningNodes = wf.nodes.filter(n => n.status === 'running');
+    const activityNote = runningNodes.length > 0
+      ? ' <span style="color:#6fe06f">\u25cf ' + runningNodes.length + ' active</span>'
+      : '';
+    const parentNote = (wf.status === 'completed' || wf.status === 'failed') && parentActivity[wf.workflow_id]
+      ? ' <span class="badge" style="background:#1a3a3a;color:#80cccc;font-size:.62rem">parent still processing</span>'
+      : '';
     const nodesHtml = wf.nodes.map(n => {
       const depsStr = n.depends_on.length ? ' \u2190 ' + n.depends_on.join(', ') : '';
       const detail = n.error ? '\u26a0 ' + esc(n.error)
         : (n.result_preview ? esc(n.result_preview) : '');
+      const nodeActivity = n.status === 'running'
+        ? '<span style="color:#6fe06f" title="Running">\u25cf</span> ' : '';
       return `<tr>
-        <td class="mono">${esc(n.node_id)}</td>
+        <td class="mono">${nodeActivity}${esc(n.node_id)}</td>
         <td>${badge(n.status, n.status)}</td>
         <td class="trunc" title="${esc(n.objective)}">${esc(n.objective.slice(0, 80))}${n.objective.length > 80 ? '\u2026' : ''}</td>
         <td class="mono dim">${esc(depsStr || 'none')}</td>
@@ -1024,9 +1144,10 @@ async function loadWorkflows() {
       <div class="section-hdr open" onclick="toggleSection(this)">
         <span>
           <span class="mono" style="font-size:.78rem">${esc(wf.workflow_id)}</span>
-          ${badge(wf.status, wf.status)}
+          ${badge(wf.status, wf.status)}${activityNote}
           <span class="dim">${wf.node_count} node${wf.node_count !== 1 ? 's' : ''}</span>
           <span class="dim">${esc(wf.parent_thread_id || 'no parent')}</span>
+          ${parentNote}
         </span>
         <span>\u25bc</span>
       </div>
@@ -1239,11 +1360,29 @@ async function createReminder(e) {
 async function loadToolCalls() {
   const r = await fetch('/api/debug/tool-calls');
   const data = await r.json();
-  const calls = data.calls || [];
-  document.getElementById('cnt-toolcalls').textContent = calls.length;
+  const allCalls = data.calls || [];
+  const filterSel = document.getElementById('tc-filter-session');
+  // Update filter dropdown with unique thread_ids
+  const currentFilter = filterSel.value;
+  const threadIds = [...new Set(allCalls.map(c => c.thread_id).filter(Boolean))];
+  const existingVals = new Set([...filterSel.options].map(o => o.value));
+  threadIds.forEach(tid => {
+    if (!existingVals.has(tid)) {
+      const opt = document.createElement('option');
+      opt.value = tid; opt.textContent = tid;
+      filterSel.appendChild(opt);
+    }
+  });
+  filterSel.value = currentFilter; // preserve selection
+
+  const calls = currentFilter
+    ? allCalls.filter(c => c.thread_id === currentFilter)
+    : allCalls;
+  document.getElementById('cnt-toolcalls').textContent = allCalls.length;
   const tbody = document.getElementById('toolcalls-body');
   if (!calls.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty">No tool calls recorded yet</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">' +
+      (currentFilter ? 'No tool calls for this session' : 'No tool calls recorded yet') + '</td></tr>';
     return;
   }
   tbody.innerHTML = calls.map(c => {
@@ -1255,9 +1394,13 @@ async function loadToolCalls() {
     const sessionShort = (c.thread_id || 'unknown').length > 24
       ? c.thread_id.slice(0, 22) + '\u2026' : (c.thread_id || 'unknown');
     const stype = sessionType(c.thread_id || '');
-    return `<tr>
+    const isSubSession = (c.thread_id || '').startsWith('sub_');
+    const filterBtn = isSubSession
+      ? ` <span style="cursor:pointer;color:#a8d8ea;font-size:.68rem" onclick="filterToolCallsBySession('${esc(c.thread_id)}')" title="Filter by this session">\u229b</span>`
+      : '';
+    return `<tr${isSubSession ? ' style="background:#0d1020"' : ''}>
       <td class="dim" style="white-space:nowrap">${esc(ts)}</td>
-      <td>${badge(stype, stype)} <span class="mono" style="font-size:.72rem" title="${esc(c.thread_id || '')}">${esc(sessionShort)}</span></td>
+      <td>${badge(stype, stype)} <span class="mono" style="font-size:.72rem" title="${esc(c.thread_id || '')}">${esc(sessionShort)}</span>${filterBtn}</td>
       <td><strong>${esc(c.tool)}</strong></td>
       <td class="mono trunc" title="${esc(inputsStr)}">${esc(shortInputs)}</td>
       <td class="dim" style="white-space:nowrap">${c.duration_ms}ms</td>
@@ -1364,6 +1507,7 @@ class WebInterface:
         app.router.add_post("/api/debug/sessions/{thread_id}/delete",   self._api_session_delete)
         app.router.add_post("/api/debug/sessions/{thread_id}/compact",  self._api_session_compact)
         app.router.add_get("/api/debug/subsessions",                    self._api_subsessions)
+        app.router.add_get("/api/debug/subsessions/{id}/messages",      self._api_subsession_messages)
         app.router.add_get("/api/debug/workflows",                     self._api_workflows)
         app.router.add_get("/api/debug/jobs",                           self._api_jobs)
         app.router.add_get("/api/debug/config",                          self._api_config)
@@ -1811,6 +1955,35 @@ class WebInterface:
         if self._sub_sessions is None:
             return self._json({"sessions": []})
         return self._json({"sessions": self._sub_sessions.list_all()})
+
+    async def _api_subsession_messages(self, request: web.Request) -> web.Response:
+        sid = request.match_info["id"]
+        if self._sub_sessions is None:
+            return self._json({"session_id": sid, "messages": []})
+        msgs = self._sub_sessions.get_messages(sid)
+        # Serialize messages for the frontend
+        serialized = []
+        for m in msgs:
+            if isinstance(m, dict):
+                entry = {
+                    "role": m.get("role", "unknown"),
+                    "content": m.get("content", ""),
+                }
+                if m.get("tool_call_id"):
+                    entry["tool_call_id"] = m["tool_call_id"]
+                serialized.append(entry)
+            else:
+                # OpenAI message object
+                entry = {"role": getattr(m, "role", "assistant")}
+                entry["content"] = getattr(m, "content", None) or ""
+                if hasattr(m, "tool_calls") and m.tool_calls:
+                    entry["tool_calls"] = [
+                        {"id": tc.id, "name": tc.function.name,
+                         "arguments": tc.function.arguments}
+                        for tc in m.tool_calls
+                    ]
+                serialized.append(entry)
+        return self._json({"session_id": sid, "messages": serialized})
 
     async def _api_workflows(self, _request: web.Request) -> web.Response:
         if self._sub_sessions is None:

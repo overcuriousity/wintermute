@@ -687,9 +687,17 @@ class SubSessionManager:
             reverse=True,
         )
 
+    def get_messages(self, session_id: str) -> list:
+        """Return the in-memory message list for a sub-session, or empty list."""
+        state = self._states.get(session_id)
+        if state is None:
+            return []
+        return list(state.messages)
+
     def _serialise(self, state: SubSessionState) -> dict:
         """Return state as a dict, omitting the (potentially large) messages list."""
         d = {k: v for k, v in state.__dict__.items() if k != "messages"}
+        d["tool_call_count"] = len(state.tool_calls_log)
         # Enrich with workflow metadata.
         wf_id = self._session_to_workflow.get(state.session_id)
         d["workflow_id"] = wf_id
