@@ -216,6 +216,15 @@ def _make_client_for_config(cfg: ProviderConfig, cache: dict) -> Any:
                 creds = gemini_auth.setup()
             cache[key] = gemini_client.GeminiCloudClient(creds)
         return cache[key]
+    elif cfg.provider == "kimi-code":
+        key = ("kimi-code",)
+        if key not in cache:
+            from wintermute import kimi_auth, kimi_client
+            creds = kimi_auth.load_credentials()
+            # Client is created even without creds — auto-auth runs after
+            # interfaces are up, or the user can run /kimi-auth manually.
+            cache[key] = kimi_client.KimiCodeClient(creds)
+        return cache[key]
     else:
         key = (cfg.base_url, cfg.api_key)
         if key not in cache:
@@ -336,8 +345,10 @@ async def main() -> None:
     if matrix:
         matrix._llm = llm
         matrix._sub_sessions = sub_sessions
+        matrix._kimi_client = client_cache.get(("kimi-code",))
     if web_iface:
         web_iface._llm = llm
+        web_iface._kimi_client = client_cache.get(("kimi-code",))
 
     scheduler = ReminderScheduler(
         config=scheduler_cfg,
@@ -400,6 +411,22 @@ async def main() -> None:
     if web_enabled:
         interfaces.append(f"web http://{web_cfg.get('host','127.0.0.1')}:{web_cfg.get('port',8080)}")
     logger.info("All components started. Interfaces: %s", ", ".join(interfaces))
+
+    # Auto-trigger Kimi-Code device auth if credentials are missing.
+    kimi_client_instance = client_cache.get(("kimi-code",))
+    if kimi_client_instance and not kimi_client_instance.authenticated:
+        async def _kimi_auto_auth() -> None:
+            from wintermute import kimi_auth
+            try:
+                async def _broadcast_auth(msg: str) -> None:
+                    logger.info("Kimi auth: %s", msg)
+                    await broadcast(msg, "default")
+                creds = await kimi_auth.run_device_flow(_broadcast_auth)
+                kimi_client_instance.update_credentials(creds)
+                logger.info("Kimi-Code auto-auth completed")
+            except Exception:
+                logger.exception("Kimi-Code auto-auth failed — use /kimi-auth to retry")
+        tasks.append(asyncio.create_task(_kimi_auto_auth(), name="kimi-auth"))
 
     await shutdown.wait()
     logger.info("Shutdown requested - stopping components gracefully")

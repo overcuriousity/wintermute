@@ -212,6 +212,49 @@ If your Node installation is in an unusual location, add the node `bin` director
 Environment=PATH=/path/to/node/bin:%h/.local/bin:/usr/local/bin:/usr/bin
 ```
 
+## Kimi-Code Provider ($19/mo Subscription)
+
+Wintermute supports [Kimi-Code](https://kimi.com) as an inference backend. Kimi-Code
+provides an OpenAI-compatible endpoint via a flat-rate subscription, authenticated with
+OAuth device-code flow.
+
+### Setup via setup.sh
+
+Run `bash setup.sh` and select option **7) Kimi-Code** when prompted. The script will:
+
+1. Prompt for a model (default: `kimi-for-coding`)
+2. Run the device-code auth flow (prints a URL — open it in any browser)
+3. Write `config.yaml` with `provider: "kimi-code"`
+
+### Manual setup
+
+```bash
+# 1. Run device-code auth
+uv run python -m wintermute.kimi_auth
+
+# 2. Configure config.yaml
+```
+
+```yaml
+inference_backends:
+  - name: "kimi"
+    provider: "kimi-code"
+    model: "kimi-for-coding"
+    context_size: 131072
+    max_tokens: 8192
+
+llm:
+  base: ["kimi"]
+```
+
+### Authentication
+
+Credentials are stored in `data/kimi_credentials.json` and tokens are refreshed
+automatically. If credentials are missing on startup, Wintermute auto-triggers the
+device flow and broadcasts the verification URL to connected interfaces.
+
+You can also authenticate manually via the `/kimi-auth` command in Matrix or the web UI.
+
 ## Timezone Configuration
 
 Wintermute injects the current local time into every system prompt so the LLM has accurate time awareness. This relies on the `scheduler.timezone` setting in `config.yaml`:

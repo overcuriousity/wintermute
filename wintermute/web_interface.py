@@ -1631,6 +1631,10 @@ class WebInterface:
             await self._handle_dream_command(system)
             return None
 
+        if text == "/kimi-auth":
+            await self._handle_kimi_auth(system)
+            return None
+
         if text == "/commands":
             await system(
                 "**Available commands:**\n"
@@ -1640,6 +1644,7 @@ class WebInterface:
                 "- `/pulse` – Trigger a pulse review\n"
                 "- `/status` – Show system status\n"
                 "- `/dream` – Trigger a dream cycle\n"
+                "- `/kimi-auth` – Authenticate Kimi-Code backend\n"
                 "- `/commands` – Show this list"
             )
             return None
@@ -1725,6 +1730,23 @@ class WebInterface:
             f"MEMORIES.txt: {mem_before} -> {mem_after} chars\n"
             f"Pulse items: {pulse_before} -> {pulse_after} active"
         )
+
+    async def _handle_kimi_auth(self, system) -> None:
+        kimi_client = getattr(self, "_kimi_client", None)
+        if kimi_client is None:
+            await system(
+                "No kimi-code backend configured. Add a `provider: kimi-code` "
+                "entry to inference_backends in config.yaml."
+            )
+            return
+
+        from wintermute import kimi_auth
+
+        try:
+            creds = await kimi_auth.run_device_flow(system)
+            kimi_client.update_credentials(creds)
+        except Exception as exc:
+            await system(f"Kimi-Code authentication failed: {exc}")
 
     # ------------------------------------------------------------------
     # Debug panel handler

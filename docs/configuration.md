@@ -38,7 +38,7 @@ web:
 # Referenced by name in the llm: role mapping.
 inference_backends:
   - name: "local_large"
-    provider: "openai"                    # "openai" or "gemini-cli"
+    provider: "openai"                    # "openai", "gemini-cli", or "kimi-code"
     base_url: "http://localhost:11434/v1"
     api_key: "ollama"
     model: "qwen2.5:72b"
@@ -62,6 +62,15 @@ inference_backends:
   #   provider: "gemini-cli"
   #   model: "gemini-2.5-pro"
   #   context_size: 1048576
+  #   max_tokens: 8192
+
+  # Kimi-Code — $19/mo flat-rate subscription with device-code OAuth.
+  # Auth: uv run python -m wintermute.kimi_auth  (or /kimi-auth in chat)
+  # Credentials: data/kimi_credentials.json
+  # - name: "kimi"
+  #   provider: "kimi-code"
+  #   model: "kimi-for-coding"
+  #   context_size: 131072
   #   max_tokens: 8192
 
   # - name: "supervisor_backend"
@@ -127,9 +136,9 @@ combination that can be referenced by name in the `llm` role mapping.
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
 | `name` | yes | — | Unique name for this backend (referenced in `llm` role mapping) |
-| `provider` | no | `"openai"` | `"openai"` (any OpenAI-compatible endpoint) or `"gemini-cli"` |
-| `base_url` | openai only | — | OpenAI-compatible API base URL (not needed for `gemini-cli`) |
-| `api_key` | openai only | — | API key (not needed for `gemini-cli`) |
+| `provider` | no | `"openai"` | `"openai"`, `"gemini-cli"`, or `"kimi-code"` |
+| `base_url` | openai only | — | OpenAI-compatible API base URL (not needed for `gemini-cli` or `kimi-code`) |
+| `api_key` | openai only | — | API key (not needed for `gemini-cli` or `kimi-code`) |
 | `model` | yes | — | Model name the endpoint accepts |
 | `context_size` | no | `32768` | Total token window the model supports |
 | `max_tokens` | no | `4096` | Maximum tokens per response |
@@ -203,6 +212,31 @@ Available models: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-3-pro-preview`, 
 Wintermute auto-probes common NVM/Volta paths at startup. See
 [installation.md — Systemd / headless service](installation.md#systemd--headless-service)
 if using a non-standard Node installation.
+
+#### Provider: `kimi-code`
+
+Uses [Kimi-Code](https://kimi.com) ($19/month flat-rate subscription) via an OpenAI-compatible
+endpoint at `https://api.kimi.com/coding/v1`. Authentication uses OAuth device-code flow —
+no API keys needed.
+
+When `provider: "kimi-code"` is set, `base_url` and `api_key` are not needed.
+Credentials are stored in `data/kimi_credentials.json` and persist across restarts.
+
+**Authentication:**
+- During `setup.sh`: option 7 runs interactive device-code auth
+- CLI: `uv run python -m wintermute.kimi_auth`
+- In chat: `/kimi-auth` command (Matrix or web UI)
+- Auto-trigger: if kimi-code is configured but not authenticated, Wintermute
+  automatically starts the device flow on startup and broadcasts the verification
+  URL to connected interfaces
+
+```yaml
+- name: "kimi"
+  provider: "kimi-code"
+  model: "kimi-for-coding"
+  context_size: 131072
+  max_tokens: 8192
+```
 
 ### `llm.supervisor`
 

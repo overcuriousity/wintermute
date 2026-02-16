@@ -846,6 +846,10 @@ class MatrixThread:
             await self._handle_dream_command(thread_id)
             return
 
+        if text == "/kimi-auth":
+            await self._handle_kimi_auth(thread_id)
+            return
+
         if text == "/commands":
             await self.send_message(
                 "**Available commands:**\n"
@@ -855,6 +859,7 @@ class MatrixThread:
                 "- `/pulse` – Trigger a pulse review\n"
                 "- `/status` – Show system status\n"
                 "- `/dream` – Trigger a dream cycle\n"
+                "- `/kimi-auth` – Authenticate Kimi-Code backend\n"
                 "- `/commands` – Show this list",
                 thread_id,
             )
@@ -956,6 +961,27 @@ class MatrixThread:
             f"Pulse items: {pulse_before} -> {pulse_after} active",
             thread_id,
         )
+
+    async def _handle_kimi_auth(self, thread_id: str) -> None:
+        kimi_client = getattr(self, "_kimi_client", None)
+        if kimi_client is None:
+            await self.send_message(
+                "No kimi-code backend configured. Add a `provider: kimi-code` "
+                "entry to inference_backends in config.yaml.",
+                thread_id,
+            )
+            return
+
+        from wintermute import kimi_auth
+
+        async def _broadcast(msg: str) -> None:
+            await self.send_message(msg, thread_id)
+
+        try:
+            creds = await kimi_auth.run_device_flow(_broadcast)
+            kimi_client.update_credentials(creds)
+        except Exception as exc:
+            await self.send_message(f"Kimi-Code authentication failed: {exc}", thread_id)
 
     # ------------------------------------------------------------------
     # Helpers

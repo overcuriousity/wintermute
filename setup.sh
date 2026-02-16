@@ -476,6 +476,7 @@ if ! ${SKIP_CONFIG:-false}; then
   echo -e "  ${C_DIM}  4)  OpenAI            https://api.openai.com/v1${C_RESET}"
   echo -e "  ${C_DIM}  5)  Custom URL${C_RESET}"
   echo -e "  ${C_DIM}  6)  Gemini (via gemini-cli — free, ALPHA)${C_RESET}"
+  echo -e "  ${C_DIM}  7)  Kimi-Code (\$19/mo flat-rate subscription)${C_RESET}"
   echo ""
   echo -ne "  ${C_CYAN}?${C_RESET}  Choose inference substrate ${C_DIM}[1]${C_RESET}: "
   read -r _preset
@@ -548,13 +549,37 @@ if ! ${SKIP_CONFIG:-false}; then
        info "${C_DIM}If gemini is installed in a non-standard location, add its bin${C_RESET}"
        info "${C_DIM}directory to Environment=PATH=... in the systemd service unit.${C_RESET}"
        ;;
+    7) LLM_PROVIDER="kimi-code"
+       LLM_BASE_URL=""
+       LLM_API_KEY=""
+       echo -e "  ${C_DIM}Kimi-Code. Subscription inference. A fixed arrangement.${C_RESET}"
+       echo ""
+       echo -e "  ${C_DIM}Available models:${C_RESET}"
+       echo -e "  ${C_DIM}  kimi-for-coding   (recommended, default)${C_RESET}"
+       echo ""
+       ask LLM_MODEL "Kimi model" "kimi-for-coding"
+       LLM_CONTEXT="131072"
+       LLM_MAX_TOKENS="8192"
+       LLM_COMPACTION_MODEL=""
+       info "Context: ${LLM_CONTEXT} tokens, max response: ${LLM_MAX_TOKENS} tokens"
+       echo ""
+       info "Running OAuth device-code setup — a URL will be printed."
+       info "${C_DIM}Open it in any browser, sign in, and authorise the device.${C_RESET}"
+       echo ""
+       if uv run python -m wintermute.kimi_auth; then
+         ok "Kimi-Code OAuth setup complete."
+       else
+         warn "OAuth setup failed. You can retry later with: uv run python -m wintermute.kimi_auth"
+         warn "Or use /kimi-auth in the chat interface after starting Wintermute."
+       fi
+       ;;
     cowboy|COWBOY)
        LLM_BASE_URL="http://localhost:11434/v1"
        echo -e "  ${C_BCYAN}  Flatline protocol inactive. Defaulting to local.${C_RESET}" ;;
     *) ask LLM_BASE_URL "LLM base URL" "http://localhost:11434/v1" ;;
   esac
 
-  if [[ "$LLM_PROVIDER" != "gemini-cli" ]]; then
+  if [[ "$LLM_PROVIDER" != "gemini-cli" && "$LLM_PROVIDER" != "kimi-code" ]]; then
     ask_secret LLM_API_KEY "API key (use 'ollama' for Ollama, 'none' for unauthenticated)"
     [[ -z "$LLM_API_KEY" ]] && LLM_API_KEY="ollama"
     if [[ "$LLM_API_KEY" == "ollama" || "$LLM_API_KEY" == "none" ]]; then
@@ -778,6 +803,13 @@ YAML
     context_size: ${LLM_CONTEXT}
     max_tokens: ${LLM_MAX_TOKENS}
 YAML
+    elif [[ "${LLM_PROVIDER:-openai}" == "kimi-code" ]]; then
+      cat <<YAML
+    provider: "kimi-code"
+    model: $(_yaml_escape "${LLM_MODEL}")
+    context_size: ${LLM_CONTEXT}
+    max_tokens: ${LLM_MAX_TOKENS}
+YAML
     else
       cat <<YAML
     provider: "openai"
@@ -795,6 +827,14 @@ YAML
         cat <<YAML
   - name: "compaction"
     provider: "gemini-cli"
+    model: $(_yaml_escape "${LLM_COMPACTION_MODEL}")
+    context_size: ${LLM_CONTEXT}
+    max_tokens: 2048
+YAML
+      elif [[ "${LLM_PROVIDER:-openai}" == "kimi-code" ]]; then
+        cat <<YAML
+  - name: "compaction"
+    provider: "kimi-code"
     model: $(_yaml_escape "${LLM_COMPACTION_MODEL}")
     context_size: ${LLM_CONTEXT}
     max_tokens: 2048
@@ -952,6 +992,15 @@ if [[ -f "$CONFIG" ]]; then
       CHECKS_PASSED=$((CHECKS_PASSED + 1))
     else
       warn "Gemini credentials: not found. Run: uv run python -m wintermute.gemini_auth"
+    fi
+  elif [[ "$_cfg_provider" == "kimi-code" ]]; then
+    CHECKS_TOTAL=$((CHECKS_TOTAL + 1))
+    if [[ -f "data/kimi_credentials.json" ]]; then
+      ok "Kimi-Code credentials: present."
+      CHECKS_PASSED=$((CHECKS_PASSED + 1))
+    else
+      warn "Kimi-Code credentials: not found. Run: uv run python -m wintermute.kimi_auth"
+      warn "Or use /kimi-auth in chat — Wintermute auto-triggers auth on startup."
     fi
   else
     _base_url=$(grep 'base_url:' "$CONFIG" | head -1 | sed "s/.*base_url: *['\"]//;s/['\"].*//")

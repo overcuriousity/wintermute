@@ -10,4 +10,5 @@ All commands are available in both Matrix and the web UI.
 | `/pulse` | Manually trigger a pulse review. Enqueues a system event asking the AI to review active pulse items and report any actions taken. |
 | `/status` | Show detailed system status: running asyncio tasks, active sub-sessions, workflow state, pulse/dreaming loop status, and reminder count. |
 | `/dream` | Manually trigger the nightly dreaming consolidation of MEMORIES.txt and pulse items. Shows before/after counts. |
+| `/kimi-auth` | Start Kimi-Code OAuth device-code flow. Broadcasts the verification URL to the current chat. Only relevant when a `kimi-code` backend is configured. |
 | `/commands` | List all available slash commands with short descriptions. |

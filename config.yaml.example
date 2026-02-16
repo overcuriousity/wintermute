@@ -96,6 +96,23 @@ inference_backends:
   #   max_tokens: 8192
   #   reasoning: false
 
+  # ── Example: Kimi-Code ($19/mo flat-rate subscription) ──────────
+  # OpenAI-compatible endpoint with OAuth device-code auth.
+  # On first start, Wintermute auto-triggers device auth and broadcasts
+  # the verification URL.  Credentials persist in data/kimi_credentials.json.
+  #
+  # Auth:     uv run python -m wintermute.kimi_auth
+  # In chat:  /kimi-auth
+  #
+  # - name: "kimi"
+  #   provider: "kimi-code"              # base_url and api_key are ignored
+  #   base_url: ""                       # (not used for kimi-code)
+  #   api_key: ""                        # (not used for kimi-code)
+  #   model: "kimi-for-coding"
+  #   context_size: 131072
+  #   max_tokens: 8192
+  #   reasoning: false
+
   # ── Example: dedicated supervisor backend ────────────────────────
   # The supervisor only produces a small JSON response (~50 tokens),
   # so a very low max_tokens keeps costs down.
