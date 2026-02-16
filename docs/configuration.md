@@ -73,7 +73,7 @@ inference_backends:
   #   context_size: 131072
   #   max_tokens: 8192
 
-  # - name: "supervisor_backend"
+  # - name: "turing_backend"
   #   provider: "openai"
   #   base_url: "http://localhost:11434/v1"
   #   api_key: "ollama"
@@ -84,14 +84,19 @@ inference_backends:
 # ── LLM Role Mapping ──────────────────────────────────────────────
 # Maps roles to ordered lists of backend names.
 # Multiple backends = automatic failover on API errors.
-# Empty list [] = disabled (only meaningful for supervisor).
+# Empty list [] = disabled.
 # Omitted roles default to the first defined backend.
 llm:
   base: ["local_large"]
   compaction: ["local_small", "local_large"]
   sub_sessions: ["local_large"]
   dreaming: ["local_small"]
-  supervisor: ["local_small"]             # Use [] to disable
+
+# -- Turing Protocol (Post-Inference Validation) ---------------------
+turing_protocol:
+  backends: ["local_small"]               # small/fast model recommended
+  validators:
+    workflow_spawn: true                   # detect hallucinated workflow spawn claims
 
 # ── Context Compaction ────────────────────────────────────────────
 # Compaction fires when history tokens exceed:
@@ -156,14 +161,9 @@ fails (API error, timeout), the next one is tried automatically.
 | `compaction` | no | first backend | Context history summarisation |
 | `sub_sessions` | no | first backend | Background sub-session workers |
 | `dreaming` | no | first backend | Nightly memory consolidation |
-| `supervisor` | no | first backend | Post-inference workflow validation; `[]` to disable |
-
 **Failover:** When multiple backends are listed, they are tried in order on
 API errors. The first backend's `context_size` is used for token budget
 calculations.
-
-**Disabling a role:** Set `supervisor: []` to disable supervisor checks
-entirely. Other roles should not be empty.
 
 #### Example: mixed providers
 
@@ -188,7 +188,11 @@ llm:
   compaction: ["ollama_small"]
   sub_sessions: ["gemini", "ollama_small"]   # failover
   dreaming: ["ollama_small"]
-  supervisor: ["ollama_small"]
+
+turing_protocol:
+  backends: ["ollama_small"]
+  validators:
+    workflow_spawn: true
 ```
 
 #### Provider: `gemini-cli`
@@ -250,16 +254,28 @@ Known models include:
 Set `reasoning: true` for models that support thinking (e.g. `kimi-k2.5`) to enable
 `max_completion_tokens` and reasoning token extraction in the web UI.
 
-### `llm.supervisor`
+### `turing_protocol`
 
-Post-inference workflow validation. A lightweight one-shot LLM check that detects
-when the main model claims to have started a background session without actually
-calling `spawn_sub_session`. Runs asynchronously after the reply is delivered
-(zero added latency on the happy path).
+Three-stage post-inference validation pipeline that detects, validates, and
+corrects violations in assistant responses.  Fires after each inference round.
 
-To disable, set `supervisor: []` in the `llm` section. For optimal cost, create
-a dedicated backend with `max_tokens: 150` (the supervisor only produces a small
-JSON response).
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `backends` | no | first backend | Ordered list of backend names for the protocol's own LLM calls |
+| `validators` | no | all enabled | Per-hook enable/disable overrides (`hook_name: true/false`) |
+
+**Disabling:** Set `backends: []` to disable entirely, or set individual
+validators to `false` to suppress specific checks.
+
+**Default behavior:** If the `turing_protocol:` section is omitted entirely,
+the protocol defaults to using the base model backends with all validators
+enabled.
+
+Currently available validators:
+
+| Validator | Description |
+|-----------|-------------|
+| `workflow_spawn` | Detects when the model claims to have spawned a session without calling `spawn_sub_session` |
 
 ### `matrix`
 

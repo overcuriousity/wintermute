@@ -5,7 +5,7 @@ Implements the ``client.chat.completions.create()`` interface used by all
 wintermute inference code, translating between OpenAI and Google formats.
 
 Drop-in replacement for ``AsyncOpenAI`` — no changes needed in llm_thread.py,
-sub_session.py, dreaming.py, or supervisor.py.
+sub_session.py, dreaming.py, or turing_protocol.py.
 """
 
 import asyncio

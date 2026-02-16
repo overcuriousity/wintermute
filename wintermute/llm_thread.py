@@ -26,11 +26,11 @@ from pathlib import Path
 
 from wintermute import database
 from wintermute import prompt_assembler
-from wintermute import supervisor as supervisor_module
+from wintermute import turing_protocol as turing_protocol_module
 from wintermute import tools as tool_module
 
-# Maximum number of consecutive supervisor corrections per turn.
-# After this many corrections the supervisor gives up to prevent infinite loops.
+# Maximum number of consecutive Turing Protocol corrections per turn.
+# After this many corrections the protocol gives up to prevent infinite loops.
 MAX_CORRECTION_DEPTH = 2
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -110,7 +110,7 @@ class BackendPool:
 
     On API errors the next backend in the list is tried automatically.
     An empty pool (``len(pool) == 0``) signals "disabled" — relevant for
-    optional roles like supervisor.
+    optional roles like turing_protocol.
     """
 
     def __init__(self, backends: "list[tuple[ProviderConfig, object]]") -> None:
@@ -183,13 +183,13 @@ class MultiProviderConfig:
     list of ProviderConfig objects; the runtime BackendPool is built from
     these lists plus the corresponding clients.
 
-    An empty list for *supervisor* means "disabled".
+    An empty list for *turing_protocol* means "disabled".
     """
     main: list[ProviderConfig]
     compaction: list[ProviderConfig]
     sub_sessions: list[ProviderConfig]
     dreaming: list[ProviderConfig]
-    supervisor: list[ProviderConfig]
+    turing_protocol: list[ProviderConfig]
 
 
 @dataclass
@@ -210,9 +210,9 @@ class _QueueItem:
     thread_id: str = "default"
     is_system_event: bool = False
     future: Optional[asyncio.Future] = field(default=None, compare=False)
-    is_supervisor_correction: bool = False  # marks items injected by supervisor
-    # How many consecutive supervisor corrections have been issued for this
-    # turn.  The supervisor will re-check responses up to MAX_CORRECTION_DEPTH
+    is_turing_correction: bool = False  # marks items injected by Turing Protocol
+    # How many consecutive Turing Protocol corrections have been issued for
+    # this turn.  The protocol will re-check responses up to MAX_CORRECTION_DEPTH
     # times before giving up (prevents infinite loops while still catching
     # persistent hallucinations).
     correction_depth: int = 0
@@ -226,11 +226,13 @@ class LLMThread:
     """Runs as an asyncio task within the shared event loop."""
 
     def __init__(self, main_pool: BackendPool, compaction_pool: BackendPool,
-                 supervisor_pool: BackendPool, broadcast_fn,
-                 sub_session_manager: "Optional[SubSessionManager]" = None) -> None:
+                 turing_protocol_pool: BackendPool, broadcast_fn,
+                 sub_session_manager: "Optional[SubSessionManager]" = None,
+                 turing_protocol_validators: "Optional[dict[str, bool]]" = None) -> None:
         self._main_pool = main_pool
         self._compaction_pool = compaction_pool
-        self._supervisor_pool = supervisor_pool
+        self._turing_protocol_pool = turing_protocol_pool
+        self._turing_protocol_validators = turing_protocol_validators
         # Convenience: primary config for context_size / model name lookups.
         self._cfg = main_pool.primary
         self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)
@@ -241,8 +243,11 @@ class LLMThread:
         self._compaction_summaries: dict[str, Optional[str]] = {}
         # Per-thread sequence counter for user-facing turns.  Incremented each
         # time a non-system-event item is processed.  Used to detect stale
-        # supervisor corrections that arrived after the conversation moved on.
+        # Turing Protocol corrections that arrived after the conversation moved on.
         self._thread_seq: dict[str, int] = {}
+        # Pre-compute whether any enabled hook has halt_inference=True.
+        hooks = turing_protocol_module.get_hooks(self._turing_protocol_validators)
+        self._has_halt_hooks = any(h.halt_inference for h in hooks)
 
     def inject_sub_session_manager(self, manager: "SubSessionManager") -> None:
         """Called after construction once SubSessionManager is built."""
@@ -334,10 +339,10 @@ class LLMThread:
             if summary:
                 self._compaction_summaries[tid] = summary
         logger.info("LLM thread started (endpoint=%s model=%s)", self._cfg.base_url, self._cfg.model)
-        if self._supervisor_pool.enabled:
-            logger.info("Supervisor enabled (model=%s)", self._supervisor_pool.primary.model)
+        if self._turing_protocol_pool.enabled:
+            logger.info("Turing Protocol enabled (model=%s)", self._turing_protocol_pool.primary.model)
         else:
-            logger.info("Supervisor disabled")
+            logger.info("Turing Protocol disabled")
 
         while self._running:
             try:
@@ -345,14 +350,14 @@ class LLMThread:
             except asyncio.TimeoutError:
                 continue
 
-            # Drop supervisor corrections that are stale — i.e. the thread has
-            # already processed at least one new user-facing turn since the
+            # Drop Turing Protocol corrections that are stale — i.e. the thread
+            # has already processed at least one new user-facing turn since the
             # correction was issued, making it no longer relevant.
-            if item.is_supervisor_correction and item.correction_for_seq is not None:
+            if item.is_turing_correction and item.correction_for_seq is not None:
                 current_seq = self._thread_seq.get(item.thread_id, 0)
                 if current_seq > item.correction_for_seq:
                     logger.warning(
-                        "Dropping stale supervisor correction for thread %s "
+                        "Dropping stale Turing Protocol correction for thread %s "
                         "(issued at seq=%d, current seq=%d)",
                         item.thread_id, item.correction_for_seq, current_seq,
                     )
@@ -389,12 +394,12 @@ class LLMThread:
 
             if item.future and not item.future.done():
                 item.future.set_result(reply)
-            elif item.is_system_event and not item.future and not item.is_supervisor_correction:
+            elif item.is_system_event and not item.future and not item.is_turing_correction:
                 # System events without a future (sub-session results,
                 # reminders, /pulse commands) have no caller waiting for
                 # the reply.  Broadcast the LLM's response directly so
                 # it reaches the user.
-                # Supervisor corrections are excluded: both the correction
+                # Turing Protocol corrections are excluded: both the correction
                 # prompt and the model's response to it stay in the DB only
                 # (visible in the web debug interface but silent in Matrix).
                 text_to_send = reply.text or item.text  # fallback to raw event
@@ -409,18 +414,18 @@ class LLMThread:
                     logger.exception("Failed to broadcast system-event reply for thread %s",
                                      item.thread_id)
 
-            # -- Supervisor workflow validation --
+            # -- Turing Protocol validation --
             # Fire async after the reply is delivered.  Only check
             # user-facing messages (not system events, not sub-session
-            # threads, and not the supervisor's own corrections).
+            # threads, and not the protocol's own corrections).
             if (
                 not item.thread_id.startswith("sub_")
                 and reply.text
                 and (
                     # Normal user message — always check
-                    (not item.is_system_event and not item.is_supervisor_correction)
-                    # Supervisor correction response — re-check up to depth limit
-                    or (item.is_supervisor_correction
+                    (not item.is_system_event and not item.is_turing_correction)
+                    # Turing correction response — re-check up to depth limit
+                    or (item.is_turing_correction
                         and item.correction_depth < MAX_CORRECTION_DEPTH)
                 )
             ):
@@ -428,7 +433,7 @@ class LLMThread:
                 # be dropped if the conversation has moved on before it lands.
                 seq_at_fire = self._thread_seq.get(item.thread_id, 0)
                 asyncio.create_task(
-                    self._run_supervisor_check(
+                    self._run_turing_check(
                         user_message=item.text,
                         assistant_response=reply.text,
                         tool_calls_made=reply.tool_calls_made,
@@ -436,7 +441,7 @@ class LLMThread:
                         issued_for_seq=seq_at_fire,
                         correction_depth=item.correction_depth,
                     ),
-                    name=f"supervisor_{item.thread_id}",
+                    name=f"turing_{item.thread_id}",
                 )
 
             self._queue.task_done()
@@ -445,10 +450,10 @@ class LLMThread:
         self._running = False
 
     # ------------------------------------------------------------------
-    # Supervisor workflow validation
+    # Turing Protocol validation
     # ------------------------------------------------------------------
 
-    async def _run_supervisor_check(
+    async def _run_turing_check(
         self,
         user_message: str,
         assistant_response: str,
@@ -457,12 +462,12 @@ class LLMThread:
         issued_for_seq: int = 0,
         correction_depth: int = 0,
     ) -> None:
-        """Fire a one-shot supervisor agent to detect hallucinated workflow spawns.
+        """Fire the Turing Protocol pipeline to detect violations.
 
         Runs asynchronously after the main reply has already been delivered.
-        If the supervisor detects a mismatch it enqueues a corrective system
-        event.  ``correction_depth`` tracks how many consecutive corrections
-        have been issued for this turn; the gate in ``_loop`` stops re-checking
+        If violations are confirmed, a corrective system event is enqueued.
+        ``correction_depth`` tracks how many consecutive corrections have been
+        issued for this turn; the gate in the main loop stops re-checking
         once ``MAX_CORRECTION_DEPTH`` is reached.
 
         ``issued_for_seq`` records the per-thread sequence number at the time
@@ -471,42 +476,43 @@ class LLMThread:
         stale (the user has already sent a follow-up and the context has moved
         on).
         """
-        if not self._supervisor_pool.enabled or not self._sub_sessions:
+        if not self._turing_protocol_pool.enabled or not self._sub_sessions:
             return
 
         active_sessions = self._sub_sessions.list_active()
 
         try:
-            correction = await supervisor_module.check_workflow_consistency(
-                pool=self._supervisor_pool,
+            result = await turing_protocol_module.run_turing_protocol(
+                pool=self._turing_protocol_pool,
                 user_message=user_message,
                 assistant_response=assistant_response,
                 tool_calls_made=tool_calls_made,
                 active_sessions=active_sessions,
                 correction_depth=correction_depth,
+                enabled_validators=self._turing_protocol_validators,
             )
         except Exception:  # noqa: BLE001
-            logger.exception("Supervisor check raised (non-fatal)")
+            logger.exception("Turing Protocol check raised (non-fatal)")
             return
 
-        if correction:
+        if result.correction:
             new_depth = correction_depth + 1
             if new_depth >= MAX_CORRECTION_DEPTH:
                 logger.warning(
-                    "Supervisor injecting FINAL correction (depth %d/%d) "
+                    "Turing Protocol injecting FINAL correction (depth %d/%d) "
                     "into thread %s — no further re-checks will fire",
                     new_depth, MAX_CORRECTION_DEPTH, thread_id,
                 )
             else:
                 logger.info(
-                    "Supervisor injecting correction (depth %d/%d) into thread %s",
+                    "Turing Protocol injecting correction (depth %d/%d) into thread %s",
                     new_depth, MAX_CORRECTION_DEPTH, thread_id,
                 )
             await self._queue.put(_QueueItem(
-                text=correction,
+                text=result.correction,
                 thread_id=thread_id,
                 is_system_event=True,
-                is_supervisor_correction=True,
+                is_turing_correction=True,
                 correction_depth=correction_depth + 1,
                 correction_for_seq=issued_for_seq,
             ))
@@ -550,7 +556,7 @@ class LLMThread:
             database.save_message("user", item.text, thread_id)
         elif is_sub_session_result:
             database.save_message("user", f"[SYSTEM EVENT] {item.text}", thread_id)
-        elif item.is_supervisor_correction:
+        elif item.is_turing_correction:
             # Save the correction prompt to the DB so it is visible in the web
             # debug interface, but do NOT broadcast it to Matrix (see broadcast
             # guard below).  The model's reply is saved normally via the
@@ -563,8 +569,8 @@ class LLMThread:
         )
 
         # Determine action type for interaction log
-        if item.is_supervisor_correction:
-            _action = "supervisor"
+        if item.is_turing_correction:
+            _action = "turing_protocol"
         elif thread_id.startswith("sub_"):
             _action = "sub_session"
         elif item.is_system_event:

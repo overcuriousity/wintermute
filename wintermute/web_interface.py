@@ -2090,7 +2090,7 @@ class WebInterface:
                 "compaction": _backend_list(mc.compaction),
                 "sub_sessions": _backend_list(mc.sub_sessions),
                 "dreaming": _backend_list(mc.dreaming),
-                "supervisor": _backend_list(mc.supervisor),
+                "turing_protocol": _backend_list(mc.turing_protocol),
             })
         return self._json({})
 

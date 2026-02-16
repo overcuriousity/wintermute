@@ -155,12 +155,14 @@ def _parse_inference_backends(raw_list: list[dict]) -> dict[str, ProviderConfig]
 
 
 def _resolve_role(role_name: str, names: list[str],
-                  backends: dict[str, ProviderConfig]) -> list[ProviderConfig]:
+                  backends: dict[str, ProviderConfig],
+                  config_path: str = None) -> list[ProviderConfig]:
     """Resolve a list of backend names into ProviderConfig objects."""
+    label = config_path or f"llm.{role_name}"
     result: list[ProviderConfig] = []
     for n in names:
         if n not in backends:
-            print(f"ERROR: llm.{role_name} references unknown backend {n!r}. "
+            print(f"ERROR: {label} references unknown backend {n!r}. "
                   f"Available: {', '.join(backends)}")
             sys.exit(1)
         result.append(backends[n])
@@ -195,12 +197,29 @@ def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
         print(f"ERROR: llm.{name} must be a list of backend names (got {type(raw).__name__})")
         sys.exit(1)
 
+    # -- Turing Protocol backends --
+    tp_raw = cfg.get("turing_protocol", {}) or {}
+    tp_backends_raw = tp_raw.get("backends")
+    if tp_backends_raw is None:
+        # Omitted → default to base model backends
+        tp_configs = _resolve_role("turing_protocol", default_list, backends,
+                                   config_path="turing_protocol.backends")
+    elif isinstance(tp_backends_raw, list):
+        if not tp_backends_raw:
+            tp_configs = []  # explicitly disabled
+        else:
+            tp_configs = _resolve_role("turing_protocol", tp_backends_raw, backends,
+                                       config_path="turing_protocol.backends")
+    else:
+        print(f"ERROR: turing_protocol.backends must be a list (got {type(tp_backends_raw).__name__})")
+        sys.exit(1)
+
     return MultiProviderConfig(
         main=_get_role("base"),
         compaction=_get_role("compaction"),
         sub_sessions=_get_role("sub_sessions"),
         dreaming=_get_role("dreaming"),
-        supervisor=_get_role("supervisor", allow_empty=True),
+        turing_protocol=tp_configs,
     )
 
 
@@ -262,7 +281,7 @@ async def main() -> None:
     compaction_pool = _build_pool(multi_cfg.compaction, client_cache)
     sub_sessions_pool = _build_pool(multi_cfg.sub_sessions, client_cache)
     dreaming_pool = _build_pool(multi_cfg.dreaming, client_cache)
-    supervisor_pool = _build_pool(multi_cfg.supervisor, client_cache)
+    turing_protocol_pool = _build_pool(multi_cfg.turing_protocol, client_cache)
 
     dreaming_raw = cfg.get("dreaming", {})
     dreaming_cfg = DreamingConfig(
@@ -329,8 +348,10 @@ async def main() -> None:
             await web_iface.broadcast(text, thread_id, reasoning=reasoning)
 
     # Build LLM thread with the shared broadcast function.
+    tp_validators = (cfg.get("turing_protocol", {}) or {}).get("validators")
     llm = LLMThread(main_pool=main_pool, compaction_pool=compaction_pool,
-                    supervisor_pool=supervisor_pool, broadcast_fn=broadcast)
+                    turing_protocol_pool=turing_protocol_pool, broadcast_fn=broadcast,
+                    turing_protocol_validators=tp_validators)
 
     # Build SubSessionManager — shares the LLM backend pool, reports back via
     # enqueue_system_event so results enter the parent thread's queue.

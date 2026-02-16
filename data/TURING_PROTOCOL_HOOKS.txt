@@ -1,0 +1,12 @@
+[
+  {
+    "name": "workflow_spawn",
+    "detection_prompt": "- **workflow_spawn**: The assistant's text claims -- in any tense or phrasing -- that a session, workflow, or background task was started/spawned/launched during this response, AND \"spawn_sub_session\" is NOT in tool_calls_made. Do NOT flag pure intentions (\"I'll start...\"). Do NOT flag references to sessions in active_sessions.",
+    "validator_type": "programmatic",
+    "validator_fn_name": "validate_workflow_spawn",
+    "correction_template": "[TURING PROTOCOL CORRECTION] Your previous response indicated that a background session or workflow was started, but no spawn_sub_session tool call was actually made. Detected issue: {reason}\n\nYou MUST now either:\n  1. Actually call spawn_sub_session to start the task, OR\n  2. Send a corrected message acknowledging the session was not started.\n\nDo NOT repeat the claim that the session is already running.\n\nspawn_sub_session tool schema:\n```json\n{tool_schema}\n```",
+    "correction_template_repeat": "[TURING PROTOCOL CORRECTION -- REPEATED VIOLATION] You have AGAIN claimed to start a workflow without calling spawn_sub_session. This is the {ordinal} consecutive violation.\n\nDetected issue: {reason}\n\nYou MUST apologise, state NO background task is running, and ask the user if they want you to attempt it now.\n\nspawn_sub_session tool schema:\n```json\n{tool_schema}\n```",
+    "halt_inference": false,
+    "kill_on_detect": false
+  }
+]

@@ -114,17 +114,17 @@ inference_backends:
   #   max_tokens: 8192
   #   reasoning: false                    # set true for kimi-k2.5 (supports thinking)
 
-  # ── Example: dedicated supervisor backend ────────────────────────
-  # The supervisor only produces a small JSON response (~50 tokens),
+  # ── Example: dedicated Turing Protocol backend ──────────────────
+  # The protocol only produces a small JSON response (~50 tokens),
   # so a very low max_tokens keeps costs down.
   #
-  # - name: "supervisor_backend"
+  # - name: "turing_backend"
   #   provider: "openai"
   #   base_url: "http://localhost:11434/v1"
   #   api_key: "ollama"
   #   model: "qwen2.5:7b"
   #   context_size: 32768
-  #   max_tokens: 150                     # Supervisor only needs ~150 tokens
+  #   max_tokens: 150                     # Protocol only needs ~150 tokens
   #   reasoning: false
 
   # ── Example: reasoning model ─────────────────────────────────────
@@ -148,7 +148,6 @@ inference_backends:
 #            token budget calculations.
 #
 # Disabling: An empty list [] disables the role entirely.
-#            Only meaningful for supervisor (other roles should not be empty).
 #
 # Defaults:  Any role omitted here defaults to the first backend defined
 #            in inference_backends.
@@ -170,10 +169,22 @@ llm:
   # Runs once per night; a smaller model keeps costs low.
   dreaming: ["local_small"]
 
-  # Supervisor — post-inference one-shot check for hallucinated workflow spawns.
-  # Set to [] to disable supervisor checks entirely.
-  # For best results, use a dedicated backend with max_tokens: 150.
-  supervisor: ["local_small"]
+# -- Turing Protocol (Post-Inference Validation) ---------------------
+# Three-stage pipeline that detects, validates, and corrects violations
+# in assistant responses.  Fires after each inference round.
+#
+# backends:    Ordered list of inference backends for the protocol's own
+#              LLM calls.  Omit or leave empty to default to the base model.
+#              For best results use a small, fast model with good JSON
+#              compliance (e.g. Qwen 2.5, Phi-3, Gemma 2).
+#
+# validators:  Enable/disable individual violation detectors.
+#              Set a validator to false to suppress it.
+turing_protocol:
+  backends: ["local_small"]               # small/fast model recommended
+  validators:
+    workflow_spawn: true                   # detect hallucinated workflow spawn claims
+    # future validators added here
 
 # ── Context Compaction ────────────────────────────────────────────
 # Compaction fires automatically when history tokens exceed:
