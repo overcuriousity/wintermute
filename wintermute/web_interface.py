@@ -1057,7 +1057,7 @@ async function fetchSubSessionDetail(sid) {
       return;
     }
     let html = '<div style="margin-bottom:.5rem"><strong style="color:#a8d8ea">Messages (' + msgs.length + ')</strong>' +
-      ' <button class="btn btn-sm" onclick="event.stopPropagation();filterToolCallsBySession(\'' + esc(sid) + '\')">View tool calls</button></div>';
+      ' <button class="btn btn-sm" data-sid="' + esc(sid) + '" onclick="event.stopPropagation();filterToolCallsBySession(this.dataset.sid)">View tool calls</button></div>';
     html += '<div style="max-height:400px;overflow-y:auto;border:1px solid #0f3460;border-radius:.3rem;padding:.4rem">';
     msgs.forEach((m, i) => {
       const roleColor = m.role === 'assistant' ? '#a8d8ea' : m.role === 'user' ? '#90ee90' : m.role === 'tool' ? '#c9b0ff' : '#888';
