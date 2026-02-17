@@ -661,7 +661,7 @@ class MatrixThread:
             data = await self._client.download_media(evt.content.file.url)
             return decrypt_attachment(
                 data,
-                evt.content.file.key.k,
+                evt.content.file.key.key,
                 evt.content.file.hashes["sha256"],
                 evt.content.file.iv,
             )
