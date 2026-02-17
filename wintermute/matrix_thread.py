@@ -42,6 +42,7 @@ except ImportError:
 
 from mautrix.client import Client, InternalEventType
 from mautrix.crypto import OlmMachine
+from mautrix.crypto.attachments import decrypt_attachment
 from mautrix.crypto.store import PgCryptoStore
 from mautrix.errors import MUnknownToken
 from mautrix.types import (
@@ -55,6 +56,7 @@ from mautrix.util.async_db import Database
 
 logger = logging.getLogger(__name__)
 
+VOICE_DIR = Path("data/voice")
 CRYPTO_DB_PATH = Path("data/matrix_crypto.db")
 CRYPTO_MARKER_PATH = Path("data/matrix_signed.marker")
 CRYPTO_RECOVERY_KEY_PATH = Path("data/matrix_recovery.key")
@@ -587,21 +589,83 @@ class MatrixThread:
         if self._cfg.allowed_rooms and str(evt.room_id) not in self._cfg.allowed_rooms:
             return
 
-        # Only handle text messages.
-        if getattr(evt.content, "msgtype", None) != MessageType.TEXT:
-            return
-
-        text = evt.content.body.strip()
-        if not text:
+        msgtype = getattr(evt.content, "msgtype", None)
+        if msgtype not in (MessageType.TEXT, MessageType.IMAGE, MessageType.AUDIO):
             return
 
         thread_id = str(evt.room_id)
-        logger.info("Received message from %s in %s: %s", evt.sender, thread_id, text[:100])
-
-        # Mark message as read so the sender sees it was received.
         await self._send_read_receipt(thread_id, evt.event_id)
 
+        # --- Reply context ---
+        reply_prefix = ""
+        reply_to = evt.content.get_reply_to()
+        if reply_to:
+            try:
+                orig = await self._client.get_event(RoomID(thread_id), reply_to)
+                orig_body = getattr(getattr(orig, "content", None), "body", None) or ""
+                reply_prefix = f"> {orig.sender}: {orig_body}\n>\n"
+            except Exception:  # noqa: BLE001
+                logger.debug("Could not fetch replied-to event %s", reply_to)
+
+        # --- Image ---
+        if msgtype == MessageType.IMAGE:
+            try:
+                data = await self._download_media(evt)
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to download image from %s", evt.sender)
+                return
+            mimetype = getattr(getattr(evt.content, "info", None), "mimetype", "image/png") or "image/png"
+            b64data = _base64.b64encode(data).decode()
+            caption = (evt.content.body or "").strip()
+            text_for_db = reply_prefix + (caption or "[image attached]")
+            content_parts: list[dict] = []
+            if reply_prefix or caption:
+                content_parts.append({"type": "text", "text": reply_prefix + caption})
+            content_parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{mimetype};base64,{b64data}"},
+            })
+            logger.info("Received image from %s in %s", evt.sender, thread_id)
+            await self._dispatch(text_for_db, thread_id, content=content_parts)
+            return
+
+        # --- Audio / voice ---
+        if msgtype == MessageType.AUDIO:
+            try:
+                data = await self._download_media(evt)
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to download audio from %s", evt.sender)
+                return
+            VOICE_DIR.mkdir(parents=True, exist_ok=True)
+            body = evt.content.body or str(evt.event_id)
+            ext = Path(body).suffix or ".ogg"
+            filename = f"{evt.event_id}{ext}".replace("$", "").replace(":", "_")
+            voice_path = VOICE_DIR / filename
+            voice_path.write_bytes(data)
+            text = reply_prefix + f"[Voice message received: {voice_path}]"
+            logger.info("Saved voice message from %s to %s", evt.sender, voice_path)
+            await self._dispatch(text, thread_id)
+            return
+
+        # --- Text ---
+        text = (evt.content.body or "").strip()
+        if not text:
+            return
+        text = reply_prefix + text
+        logger.info("Received message from %s in %s: %s", evt.sender, thread_id, text[:100])
         await self._dispatch(text, thread_id)
+
+    async def _download_media(self, evt) -> bytes:
+        """Download media from a Matrix event, handling E2EE decryption."""
+        if evt.content.file:
+            data = await self._client.download_media(evt.content.file.url)
+            return decrypt_attachment(
+                data,
+                evt.content.file.key.k,
+                evt.content.file.hashes["sha256"],
+                evt.content.file.iv,
+            )
+        return await self._client.download_media(evt.content.url)
 
     async def _on_invite(self, evt) -> None:
         """Auto-join rooms when invited by an allowed user."""
@@ -818,13 +882,13 @@ class MatrixThread:
     # Command dispatch
     # ------------------------------------------------------------------
 
-    async def _dispatch(self, text: str, thread_id: str) -> None:
-        if text == "/new":
+    async def _dispatch(self, text: str, thread_id: str, *, content: list | None = None) -> None:
+        if content is None and text == "/new":
             await self._llm.reset_session(thread_id)
             await self.send_message("Session reset. Starting fresh conversation.", thread_id)
             return
 
-        if text == "/compact":
+        if content is None and text == "/compact":
             before = self._llm.get_token_budget(thread_id)
             await self._llm.force_compact(thread_id)
             after = self._llm.get_token_budget(thread_id)
@@ -836,13 +900,13 @@ class MatrixThread:
             )
             return
 
-        if text == "/reminders":
+        if content is None and text == "/reminders":
             from wintermute import tools as tool_module
             result = tool_module.execute_tool("list_reminders", {})
             await self.send_message(f"Reminders:\n```json\n{result}\n```", thread_id)
             return
 
-        if text == "/pulse":
+        if content is None and text == "/pulse":
             await self._llm.enqueue_system_event(
                 "The user manually triggered a pulse review. "
                 "Review your active pulse items using the pulse tool and report what actions, if any, you take.",
@@ -851,19 +915,19 @@ class MatrixThread:
             await self.send_message("Pulse review triggered.", thread_id)
             return
 
-        if text == "/status":
+        if content is None and text == "/status":
             await self._handle_status_command(thread_id)
             return
 
-        if text == "/dream":
+        if content is None and text == "/dream":
             await self._handle_dream_command(thread_id)
             return
 
-        if text == "/kimi-auth":
+        if content is None and text == "/kimi-auth":
             await self._handle_kimi_auth(thread_id)
             return
 
-        if text == "/commands":
+        if content is None and text == "/commands":
             await self.send_message(
                 "**Available commands:**\n"
                 "- `/new` – Reset conversation history\n"
@@ -882,7 +946,7 @@ class MatrixThread:
             self._typing_loop(thread_id), name=f"typing_{thread_id}",
         )
         try:
-            reply = await self._llm.enqueue_user_message(text, thread_id)
+            reply = await self._llm.enqueue_user_message(text, thread_id, content=content)
         finally:
             typing_task.cancel()
             try:

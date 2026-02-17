@@ -178,6 +178,7 @@ class _QueueItem:
     is_system_event: bool = False
     future: Optional[asyncio.Future] = field(default=None, compare=False)
     is_turing_correction: bool = False  # marks items injected by Turing Protocol
+    content: Optional[list] = None  # multimodal content parts (OpenAI vision format)
     # How many consecutive Turing Protocol corrections have been issued for
     # this turn.  The protocol will re-check responses up to MAX_CORRECTION_DEPTH
     # times before giving up (prevents infinite loops while still catching
@@ -224,11 +225,22 @@ class LLMThread:
     # Public interface
     # ------------------------------------------------------------------
 
-    async def enqueue_user_message(self, text: str, thread_id: str = "default") -> "LLMReply":
-        """Submit a user message and await the AI reply (returns LLMReply)."""
+    async def enqueue_user_message(
+        self, text: str, thread_id: str = "default",
+        content: Optional[list] = None,
+    ) -> "LLMReply":
+        """Submit a user message and await the AI reply (returns LLMReply).
+
+        *content* is an optional list of OpenAI multimodal content parts
+        (e.g. text + image_url).  When set, it is used as the message
+        payload sent to the API instead of *text*.  *text* is always used
+        for DB storage and logging.
+        """
         loop = asyncio.get_event_loop()
         fut: asyncio.Future = loop.create_future()
-        await self._queue.put(_QueueItem(text=text, thread_id=thread_id, future=fut))
+        await self._queue.put(_QueueItem(
+            text=text, thread_id=thread_id, future=fut, content=content,
+        ))
         return await fut
 
     async def enqueue_system_event(self, text: str, thread_id: str = "default") -> None:
@@ -491,7 +503,7 @@ class LLMThread:
 
     async def _process(self, item: _QueueItem) -> LLMReply:
         thread_id = item.thread_id
-        messages = self._build_messages(item.text, item.is_system_event, thread_id)
+        messages = self._build_messages(item.text, item.is_system_event, thread_id, item.content)
 
         # Assemble system prompt first so we can measure its real token cost.
         summary = self._compaction_summaries.get(thread_id)
@@ -514,14 +526,17 @@ class LLMThread:
                 history_tokens, overhead_tokens, compaction_threshold, thread_id,
             )
             await self._compact_context(thread_id)
-            messages = self._build_messages(item.text, item.is_system_event, thread_id)
+            messages = self._build_messages(item.text, item.is_system_event, thread_id, item.content)
             # Reassemble with the updated compaction summary.
             summary = self._compaction_summaries.get(thread_id)
             system_prompt = prompt_assembler.assemble(extra_summary=summary)
 
         is_sub_session_result = item.is_system_event and "[SUB-SESSION " in item.text
         if not item.is_system_event:
-            database.save_message("user", item.text, thread_id)
+            db_text = item.text
+            if item.content is not None:
+                db_text = item.text or "[image attached]"
+            database.save_message("user", db_text, thread_id)
         elif is_sub_session_result:
             database.save_message("user", f"[SYSTEM EVENT] {item.text}", thread_id)
         elif item.is_turing_correction:
@@ -738,9 +753,13 @@ class LLMThread:
     # ------------------------------------------------------------------
 
     def _build_messages(self, new_text: str, is_system_event: bool,
-                        thread_id: str = "default") -> list[dict]:
+                        thread_id: str = "default",
+                        content: Optional[list] = None) -> list[dict]:
         rows = database.load_active_messages(thread_id)
         messages = [{"role": r["role"], "content": r["content"]} for r in rows]
         prefix = "[SYSTEM EVENT] " if is_system_event else ""
-        messages.append({"role": "user", "content": f"{prefix}{new_text}"})
+        if content is not None and not is_system_event:
+            messages.append({"role": "user", "content": content})
+        else:
+            messages.append({"role": "user", "content": f"{prefix}{new_text}"})
         return messages
