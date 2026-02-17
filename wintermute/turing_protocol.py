@@ -443,6 +443,10 @@ def validate_empty_promise(context: dict, detection_result: dict) -> bool:
     an action but no tools were called at all this turn.  If any tool was
     called, the promise may have been fulfilled and we treat it as a false
     positive.
+
+    Also rejects false positives where the response ends with a question
+    asking for user confirmation before acting — this is the assistant
+    deliberately waiting for approval, not an empty promise.
     """
     tool_calls_made = context.get("tool_calls_made", [])
     if tool_calls_made:
@@ -451,6 +455,24 @@ def validate_empty_promise(context: dict, detection_result: dict) -> bool:
             "LLM reason: %s", tool_calls_made, detection_result.get("reason", "?"),
         )
         return False
+
+    # Check if the response ends with a question (seeking user confirmation).
+    # This catches the common pattern where the assistant explains a situation
+    # and then asks "Should I do X?" — which is deliberately waiting for
+    # approval, not an unfulfilled promise.
+    assistant_response = context.get("assistant_response", "")
+    # Get the last non-empty line, stripping markdown/whitespace.
+    lines = [ln.strip().strip("*_~`") for ln in assistant_response.splitlines() if ln.strip()]
+    if lines:
+        last_line = lines[-1]
+        if last_line.endswith("?"):
+            logger.info(
+                "Stage 2: False positive (empty_promise) — response ends with a "
+                "question (seeking confirmation): %r. LLM reason: %s",
+                last_line[-80:], detection_result.get("reason", "?"),
+            )
+            return False
+
     logger.warning("Stage 2: Confirmed empty_promise — action committed but no tools called")
     return True
 
