@@ -137,7 +137,12 @@ TOOL_SCHEMAS = [
     ),
     _fn(
         "set_reminder",
-        "Schedule a one-time or recurring reminder.",
+        (
+            "Schedule a one-time or recurring reminder. Use ai_prompt to make "
+            "the reminder autonomous — when it fires, an AI inference with full "
+            "tool access executes the prompt and delivers results to chat. "
+            "Without ai_prompt, only a passive text notification is sent."
+        ),
         {
             "type": "object",
             "properties": {
@@ -148,8 +153,16 @@ TOOL_SCHEMAS = [
                 "ai_prompt": {
                     "type": "string",
                     "description": (
-                        "If set, a background AI inference runs with this prompt "
-                        "when the reminder fires. The result is not sent to chat."
+                        "If set, an autonomous AI inference with full tool access "
+                        "(search_web, fetch_url, etc.) runs this prompt when the "
+                        "reminder fires. For thread-bound reminders the result is "
+                        "delivered to chat automatically. ALWAYS set this when the "
+                        "user wants something DONE at a scheduled time (research, "
+                        "monitoring, analysis) — without it, only a passive text "
+                        "notification is sent. Write the prompt as a complete task "
+                        "instruction, e.g. 'Search for today's AI news using "
+                        "search_web, fetch the top 3 articles with fetch_url, and "
+                        "compile a concise summary.'"
                     ),
                 },
                 "schedule_type": {
