@@ -1840,7 +1840,7 @@ class WebInterface:
         # Dreaming loop
         if hasattr(self, "_dreaming_loop") and self._dreaming_loop:
             state = "running" if self._dreaming_loop._running else "stopped"
-            lines.append(f"**Dreaming loop:** {state} (target: {self._dreaming_loop._cfg.hour:02d}:{self._dreaming_loop._cfg.minute:02d} UTC, model: {self._dreaming_loop._model})")
+            lines.append(f"**Dreaming loop:** {state} (target: {self._dreaming_loop._cfg.hour:02d}:{self._dreaming_loop._cfg.minute:02d} UTC, model: {self._dreaming_loop._pool.primary.model})")
 
         # Scheduler
         if hasattr(self, "_scheduler") and self._scheduler:
@@ -1863,8 +1863,7 @@ class WebInterface:
 
         await system("Starting dream cycle...")
         try:
-            await dreaming.run_dream_cycle(client=dl._client, model=dl._model,
-                                              reasoning=dl._reasoning)
+            await dreaming.run_dream_cycle(pool=dl._pool)
         except Exception as exc:
             await system(f"Dream cycle failed: {exc}")
             return
