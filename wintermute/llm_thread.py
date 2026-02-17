@@ -597,11 +597,11 @@ class LLMThread:
         model = self._cfg.model
         total = sum(
             _count_tokens(
-                m["content"] if isinstance(m.get("content"), str)
+                m.get("content") if isinstance(m, dict) and isinstance(m.get("content"), str)
                 else " ".join(
-                    p.get("text", "") for p in m["content"]
+                    p.get("text", "") for p in m.get("content", [])
                     if isinstance(p, dict)
-                ) if isinstance(m.get("content"), list)
+                ) if isinstance(m, dict) and isinstance(m.get("content"), list)
                 else str(getattr(m, "content", "") or ""),
                 model,
             )
