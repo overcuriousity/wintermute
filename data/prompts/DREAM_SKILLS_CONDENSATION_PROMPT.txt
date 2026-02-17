@@ -1,0 +1,11 @@
+Below is a skill file for a personal AI assistant. Condense it to at most 200 tokens while preserving all critical procedural information.
+
+Rules:
+- Keep exact commands, file paths, API endpoints, and parameter names.
+- Remove verbose explanations and examples where the key fact is already clear.
+- Use terse, imperative bullet points or numbered steps.
+- Do not omit any step whose absence would cause the procedure to fail.
+- Do not add a preamble, heading, or explanation — return only the condensed skill body.
+
+--- Skill: {skill_name} ---
+{content}

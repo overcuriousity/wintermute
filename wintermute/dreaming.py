@@ -10,6 +10,7 @@ loop, no thread history) so it never interferes with ongoing conversations.
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
 import time as _time
 from dataclasses import dataclass
@@ -58,6 +59,77 @@ async def _consolidate(pool: "BackendPool",
     return result
 
 
+async def _consolidate_skills(pool: "BackendPool") -> None:
+    """Deduplicate and condense all skill .md files in data/skills/."""
+    skills_dir = prompt_assembler.SKILLS_DIR
+    if not skills_dir.exists():
+        logger.debug("Dreaming: skills dir missing, skipping")
+        return
+
+    skill_files = sorted(skills_dir.glob("*.md"))
+    if not skill_files:
+        logger.debug("Dreaming: no skill files, skipping")
+        return
+
+    # stem -> (path, content)
+    skills: dict[str, tuple[Path, str]] = {}
+    for f in skill_files:
+        content = f.read_text(encoding="utf-8").strip()
+        if content:
+            skills[f.stem] = (f, content)
+
+    if not skills:
+        return
+
+    # ── Step 1: Deduplication ────────────────────────────────────────────────
+    if len(skills) > 1:
+        try:
+            dedup_prompt = prompt_loader.load("DREAM_SKILLS_DEDUP_PROMPT.txt")
+            formatted = "\n\n".join(
+                f"=== {name} ===\n{content}"
+                for name, (_, content) in skills.items()
+            )
+            raw = await _consolidate(pool, "skills_dedup", dedup_prompt, formatted)
+            actions = _json.loads(raw)
+            for act in actions:
+                if act.get("action") == "delete":
+                    name = act.get("file", "")
+                    if name in skills:
+                        skills[name][0].unlink()
+                        logger.info("Dreaming: deleted duplicate skill '%s'", name)
+                        del skills[name]
+        except _json.JSONDecodeError:
+            logger.warning("Dreaming: skill dedup returned non-JSON, skipping dedup")
+        except Exception:  # noqa: BLE001
+            logger.exception("Dreaming: skill dedup failed")
+
+    # ── Step 2: Condense each surviving skill ────────────────────────────────
+    condense_template = prompt_loader.load("DREAM_SKILLS_CONDENSATION_PROMPT.txt")
+    for name, (fpath, content) in list(skills.items()):
+        try:
+            prompt = condense_template.format(skill_name=name, content=content)
+            response = await pool.call(
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens_override=300,
+            )
+            result = (response.choices[0].message.content or "").strip()
+            if result:
+                fpath.write_text(result, encoding="utf-8")
+                logger.info(
+                    "Dreaming: condensed skill '%s' (%d -> %d chars)",
+                    name, len(content), len(result),
+                )
+                try:
+                    database.save_interaction_log(
+                        _time.time(), "dreaming", f"system:dreaming:skill:{name}",
+                        pool.last_used, prompt[:2000], result[:2000], "ok",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception:  # noqa: BLE001
+            logger.exception("Dreaming: failed to condense skill '%s'", name)
+
+
 async def run_dream_cycle(pool: "BackendPool") -> None:
     """
     Run a full nightly consolidation pass over MEMORIES.txt and pulse DB items.
@@ -90,7 +162,6 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
             )
             raw = await _consolidate(pool, "pulse", pulse_prompt, formatted)
             if raw:
-                import json as _json
                 try:
                     actions = _json.loads(raw)
                 except _json.JSONDecodeError:
@@ -118,6 +189,11 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
             logger.exception("Dreaming: failed to consolidate pulse")
     else:
         logger.debug("Dreaming: no active pulse items, skipping")
+
+    try:
+        await _consolidate_skills(pool)
+    except Exception:  # noqa: BLE001
+        logger.exception("Dreaming: failed to consolidate skills")
 
 
 class DreamingLoop:

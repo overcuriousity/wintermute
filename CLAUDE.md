@@ -66,3 +66,4 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 - Turing Protocol hooks have `phase` (post_inference/pre_execution/post_execution) and `scope` (main/sub_session) fields. Main thread uses async correction injection; sub-sessions use synchronous inline injection. `objective_completion` hook gates sub-session exit with LLM-based evaluation. Each hook fires at most once per turn (single-shot, no escalation). Stage 2 programmatic validators catch false positives (e.g. responses ending with `?` are not empty promises).
 - Database migrations are applied inline at startup via `ALTER TABLE ... ADD COLUMN`
 - Slash commands (`/new`, `/compact`, `/pulse`, `/status`, `/dream`, etc.) are handled at the interface layer before reaching the LLM
+- all of the application architecture is aimed to optimize it to work even with weak/small models like ministral-3:8b in the backend.

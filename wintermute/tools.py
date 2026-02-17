@@ -230,7 +230,7 @@ TOOL_SCHEMAS = [
                 },
                 "documentation": {
                     "type": "string",
-                    "description": "Markdown documentation for the skill.",
+                    "description": "Markdown documentation for the skill. Be concise, max 500 chars.",
                 },
             },
             "required": ["skill_name", "documentation"],
