@@ -77,7 +77,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 300       # seconds per hop
 MAX_CONTINUATION_DEPTH = 3  # max auto-continuation hops before giving up
-MAX_TP_RETRIES = 3          # max Turing Protocol correction rounds per sub-session exit
 
 # Tool categories available per system_prompt_mode.
 _MODE_TOOL_CATEGORIES: dict[str, set[str]] = {
@@ -1029,7 +1028,7 @@ class SubSessionManager:
         tool_schemas = tool_module.get_tool_schemas(categories)
 
         tp_enabled = bool(self._tp_pool and self._tp_pool.enabled)
-        tp_correction_depth = 0  # tracks consecutive objective-not-met retries
+        tp_corrected = False  # single-shot: only one objective correction allowed
         tool_calls_made: list[str] = []  # accumulated across the session
 
         if state.messages:
@@ -1161,20 +1160,20 @@ class SubSessionManager:
             final_text = (choice.message.content or "").strip()
 
             # -- Turing Protocol: post_inference phase (objective gatekeeper) --
-            if tp_enabled and tp_correction_depth < MAX_TP_RETRIES:
+            # Single-shot: one correction at most, no re-checking.
+            if tp_enabled and not tp_corrected:
                 pi_result = await self._run_tp_phase(
                     phase="post_inference",
                     state=state,
                     tool_calls_made=tool_calls_made,
                     assistant_response=final_text,
-                    correction_depth=tp_correction_depth,
                 )
                 if pi_result and pi_result.correction:
-                    tp_correction_depth += 1
+                    tp_corrected = True
                     logger.info(
-                        "Sub-session %s: objective not met (attempt %d/%d) — "
-                        "injecting correction and resuming loop",
-                        state.session_id, tp_correction_depth, MAX_TP_RETRIES,
+                        "Sub-session %s: objective not met — injecting "
+                        "correction and resuming loop",
+                        state.session_id,
                     )
                     # Append the model's response and the correction as a
                     # system message, then re-enter the inference loop.
@@ -1203,7 +1202,6 @@ class SubSessionManager:
         tool_name: Optional[str] = None,
         tool_args: Optional[dict] = None,
         tool_result: Optional[str] = None,
-        correction_depth: int = 0,
     ) -> Optional[turing_protocol_module.TuringResult]:
         """Run Turing Protocol hooks for a specific phase in sub-session scope.
 
@@ -1228,7 +1226,6 @@ class SubSessionManager:
                 assistant_response=assistant_response,
                 tool_calls_made=tool_calls_made,
                 active_sessions=[],
-                correction_depth=correction_depth,
                 enabled_validators=self._tp_validators,
                 thread_id=state.session_id,
                 phase=phase,

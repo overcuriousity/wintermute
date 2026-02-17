@@ -29,6 +29,10 @@ Three-Stage Design (per phase batch)
   single correction prompt injected into the conversation thread (main) or
   appended to the sub-session message list (sub-sessions).
 
+Each hook fires at most once per turn.  There is no escalation or
+re-checking of the model's response to a correction — one clear,
+concise correction is issued and the protocol moves on.
+
 Hook configuration
 ------------------
   Hook definitions are loaded from ``data/TURING_PROTOCOL_HOOKS.txt``
@@ -88,8 +92,7 @@ class TuringHook:
     validator_type: str                    # "programmatic" or "llm"
     validator_fn_name: Optional[str]       # Stage 2 programmatic: registered function name
     validator_prompt: Optional[str]        # Stage 2 LLM: system prompt (future use)
-    correction_template: str              # Stage 3: first violation
-    correction_template_repeat: str       # Stage 3: repeated violations
+    correction_template: str              # Stage 3: single correction prompt
     halt_inference: bool = False           # Stage 2: block inference thread until validation completes
     kill_on_detect: bool = False           # Stage 2: if confirmed, discard the response entirely
     enabled: bool = True
@@ -124,25 +127,10 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         validator_fn_name="validate_workflow_spawn",
         validator_prompt=None,
         correction_template=(
-            "[TURING PROTOCOL CORRECTION] Your previous response indicated that "
-            "a background session or workflow was started, but no "
-            "spawn_sub_session tool call was actually made. "
-            "Detected issue: {reason}\n\n"
-            "You MUST now either:\n"
-            "  1. Actually call spawn_sub_session to start the task, OR\n"
-            "  2. Send a corrected message acknowledging the session was not "
-            "started.\n\n"
-            "Do NOT repeat the claim that the session is already running.\n\n"
-            "spawn_sub_session tool schema:\n"
-            "```json\n{tool_schema}\n```"
-        ),
-        correction_template_repeat=(
-            "[TURING PROTOCOL CORRECTION -- REPEATED VIOLATION] You have AGAIN "
-            "claimed to start a workflow without calling spawn_sub_session. "
-            "This is the {ordinal} consecutive violation.\n\n"
-            "Detected issue: {reason}\n\n"
-            "You MUST apologise, state NO background task is running, and ask "
-            "the user if they want you to attempt it now.\n\n"
+            "[TURING PROTOCOL CORRECTION] You claimed a background session/workflow "
+            "was started, but spawn_sub_session was never called.\n"
+            "Issue: {reason}\n\n"
+            "Either call spawn_sub_session now, or acknowledge no session was started.\n\n"
             "spawn_sub_session tool schema:\n"
             "```json\n{tool_schema}\n```"
         ),
@@ -170,23 +158,11 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         validator_fn_name="validate_phantom_tool_result",
         validator_prompt=None,
         correction_template=(
-            "[TURING PROTOCOL CORRECTION] Your previous response presented data "
-            "as if obtained from a tool call, but no such tool was actually "
-            "invoked. Detected issue: {reason}\n\n"
-            "You MUST now either:\n"
-            "  1. Actually call the appropriate tool to obtain the data, OR\n"
-            "  2. Clearly state that you do not have that information and "
-            "cannot verify it without calling the tool.\n\n"
-            "Do NOT fabricate or assume tool output."
-        ),
-        correction_template_repeat=(
-            "[TURING PROTOCOL CORRECTION -- REPEATED VIOLATION] You have AGAIN "
-            "presented fabricated tool output without calling a tool. "
-            "This is the {ordinal} consecutive violation.\n\n"
-            "Detected issue: {reason}\n\n"
-            "You MUST apologise, state clearly what information you actually "
-            "have access to, and ask the user if they want you to call the "
-            "relevant tool to obtain real data."
+            "[TURING PROTOCOL CORRECTION] You presented data as if obtained from "
+            "a tool, but no such tool was called.\n"
+            "Issue: {reason}\n\n"
+            "Either call the appropriate tool now, or state clearly that you "
+            "do not have this information."
         ),
         halt_inference=False,
         kill_on_detect=False,
@@ -214,22 +190,11 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         validator_fn_name="validate_empty_promise",
         validator_prompt=None,
         correction_template=(
-            "[TURING PROTOCOL CORRECTION] Your previous response committed to "
-            "performing an action but you did not actually execute it — no tool "
-            "was called. Detected issue: {reason}\n\n"
-            "You MUST now either:\n"
-            "  1. Actually call the appropriate tool to perform the action, OR\n"
-            "  2. Explain clearly why you cannot perform it and ask the user "
-            "how to proceed.\n\n"
-            "Do NOT repeat the promise without acting."
-        ),
-        correction_template_repeat=(
-            "[TURING PROTOCOL CORRECTION -- REPEATED VIOLATION] You have AGAIN "
-            "promised to perform an action without actually calling any tool. "
-            "This is the {ordinal} consecutive violation.\n\n"
-            "Detected issue: {reason}\n\n"
-            "You MUST apologise, state clearly that you failed to execute the "
-            "action, and ask the user if they want you to attempt it now."
+            "[TURING PROTOCOL CORRECTION] You committed to an action but did not "
+            "execute it — no tool was called.\n"
+            "Issue: {reason}\n\n"
+            "Either call the appropriate tool now, or explain why you cannot "
+            "and ask the user how to proceed."
         ),
         halt_inference=False,
         kill_on_detect=False,
@@ -237,10 +202,10 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         scope=["main"],
     ),
     # -- objective_completion: sub-session exit gatekeeper --
-    # Fires on the final text-only response of a sub-session.  Uses an LLM
-    # call to evaluate whether the response actually satisfies the stated
-    # objective.  If not, a correction is injected and the worker loop
-    # continues instead of exiting.
+    # Fires once on the final text-only response of a sub-session.  Uses an
+    # LLM call to evaluate whether the response satisfies the stated
+    # objective.  If not, a single correction is injected and the worker
+    # loop continues.
     TuringHook(
         name="objective_completion",
         detection_prompt="",  # Not used — this hook has its own dedicated LLM call
@@ -250,21 +215,11 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         correction_template=(
             "[TURING PROTOCOL — OBJECTIVE NOT MET] Your response does not "
             "satisfy the task objective.\n\n"
-            "Objective: {objective}\n\n"
+            "Objective: {objective}\n"
             "Issue: {reason}\n\n"
-            "You MUST continue working toward the objective. Use the "
-            "available tools to make progress. Do NOT produce a final "
-            "summary until the objective is genuinely complete."
-        ),
-        correction_template_repeat=(
-            "[TURING PROTOCOL — OBJECTIVE STILL NOT MET] This is the "
-            "{ordinal} attempt. Your response still does not satisfy the "
-            "objective.\n\n"
-            "Objective: {objective}\n\n"
-            "Issue: {reason}\n\n"
-            "Focus on the specific gap identified above. If the objective "
-            "is truly impossible to complete with available tools, explain "
-            "exactly what is blocking you and what partial progress was made."
+            "Continue working toward the objective using available tools. "
+            "Do not produce a final summary until the objective is genuinely "
+            "complete. If truly impossible, explain what is blocking you."
         ),
         halt_inference=False,
         kill_on_detect=False,
@@ -324,7 +279,6 @@ def _load_hooks(
                         validator_fn_name=entry.get("validator_fn_name"),
                         validator_prompt=entry.get("validator_prompt"),
                         correction_template=entry.get("correction_template", ""),
-                        correction_template_repeat=entry.get("correction_template_repeat", ""),
                         halt_inference=entry.get("halt_inference", False),
                         kill_on_detect=entry.get("kill_on_detect", False),
                         phase=raw_phase,
@@ -490,7 +444,7 @@ _PROGRAMMATIC_VALIDATORS = {
 # ------------------------------------------------------------------
 
 def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook],
-                      correction_depth: int, *, objective: Optional[str] = None) -> str:
+                      *, objective: Optional[str] = None) -> str:
     """Build an aggregated correction prompt from all confirmed violations."""
     parts = []
     tool_schema = _get_spawn_tool_schema()
@@ -501,14 +455,8 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook
             continue
 
         reason = violation.get("reason", "unknown violation")
-        if correction_depth == 0:
-            template = hook.correction_template
-        else:
-            template = hook.correction_template_repeat
-
-        part = template.format(
+        part = hook.correction_template.format(
             reason=reason,
-            ordinal=_ordinal(correction_depth + 1),
             tool_schema=tool_schema,
             objective=objective or "(unknown)",
         )
@@ -542,15 +490,6 @@ def _get_spawn_tool_schema() -> str:
     return "(spawn_sub_session tool schema not found)"
 
 
-def _ordinal(n: int) -> str:
-    """Return the English ordinal string for *n* (e.g. 1 -> '1st')."""
-    if 11 <= (n % 100) <= 13:
-        suffix = "th"
-    else:
-        suffix = {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
-    return f"{n}{suffix}"
-
-
 # ------------------------------------------------------------------
 # Public API
 # ------------------------------------------------------------------
@@ -561,7 +500,6 @@ async def run_turing_protocol(
     assistant_response: str,
     tool_calls_made: list[str],
     active_sessions: list[dict],
-    correction_depth: int = 0,
     enabled_validators: Optional[dict[str, Any]] = None,
     thread_id: str = "unknown",
     *,
@@ -575,6 +513,7 @@ async def run_turing_protocol(
     """Run the three-stage Turing Protocol validation pipeline.
 
     Returns a ``TuringResult`` with aggregated correction and metadata.
+    Each hook fires at most once per turn — no escalation or re-checking.
 
     Parameters
     ----------
@@ -588,8 +527,6 @@ async def run_turing_protocol(
         Tool function names actually invoked during this inference round.
     active_sessions : list[dict]
         Output of SubSessionManager.list_active().
-    correction_depth : int
-        How many consecutive corrections have already been issued.
     enabled_validators : dict or None
         Per-hook enable/disable overrides from config.
     phase : str
@@ -783,7 +720,7 @@ async def run_turing_protocol(
                         len(confirmed), phase, scope)
 
         correction_text = _build_correction(
-            confirmed, hooks_by_name, correction_depth, objective=objective,
+            confirmed, hooks_by_name, objective=objective,
         )
 
         # Log Stage 3 correction
