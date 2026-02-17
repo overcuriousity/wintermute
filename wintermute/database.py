@@ -6,6 +6,7 @@ The APScheduler job store uses its own SQLite file (scheduler.db).
 import sqlite3
 import time
 import logging
+from importlib import resources
 from pathlib import Path
 from typing import Optional
 
@@ -13,87 +14,65 @@ logger = logging.getLogger(__name__)
 
 CONVERSATION_DB = Path("data/conversation.db")
 
+# All migration files in order.  Add new entries at the end.
+_MIGRATIONS = [
+    "001_initial_schema.sql",
+    "002_add_pulse.sql",
+    "003_add_interaction_log.sql",
+    "004_add_thread_id.sql",
+    "005_add_raw_output.sql",
+]
+
+
+def run_migrations(conn: sqlite3.Connection) -> None:
+    """Apply pending SQL migrations from wintermute/migrations/."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            name       TEXT PRIMARY KEY,
+            applied_at REAL NOT NULL
+        )
+    """)
+    conn.commit()
+
+    applied = {row[0] for row in conn.execute("SELECT name FROM schema_migrations").fetchall()}
+
+    # Bootstrap: existing DB already has the full schema from inline CREATE TABLE
+    if not applied:
+        tables = {row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()}
+        if "messages" in tables:
+            now = time.time()
+            for name in _MIGRATIONS:
+                conn.execute(
+                    "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+                    (name, now),
+                )
+            conn.commit()
+            logger.info("Bootstrap: marked %d existing migrations as applied", len(_MIGRATIONS))
+            return
+
+    migration_pkg = resources.files("wintermute.migrations")
+    for name in _MIGRATIONS:
+        if name in applied:
+            continue
+        sql = (migration_pkg / name).read_text(encoding="utf-8")
+        conn.executescript(sql)
+        conn.execute(
+            "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+            (name, time.time()),
+        )
+        conn.commit()
+        logger.info("Applied migration: %s", name)
+
 
 def init_db() -> None:
     """Create tables if they don't exist, and run migrations."""
     CONVERSATION_DB.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(CONVERSATION_DB) as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS messages (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp   REAL    NOT NULL,
-                role        TEXT    NOT NULL,
-                content     TEXT    NOT NULL,
-                token_count INTEGER,
-                archived    INTEGER NOT NULL DEFAULT 0,
-                thread_id   TEXT    NOT NULL DEFAULT 'default'
-            )
-        """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS summaries (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp REAL    NOT NULL,
-                content   TEXT    NOT NULL,
-                thread_id TEXT    NOT NULL DEFAULT 'default'
-            )
-        """)
-        conn.commit()
-
-        # Migration: add thread_id column if missing
-        _migrate_add_thread_id(conn, "messages")
-        _migrate_add_thread_id(conn, "summaries")
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS pulse (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                content   TEXT    NOT NULL,
-                status    TEXT    NOT NULL DEFAULT 'active',
-                priority  INTEGER NOT NULL DEFAULT 5,
-                created   REAL    NOT NULL,
-                updated   REAL,
-                thread_id TEXT
-            )
-        """)
-        conn.commit()
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS interaction_log (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp   REAL    NOT NULL,
-                action      TEXT    NOT NULL,
-                session     TEXT    NOT NULL,
-                llm         TEXT    NOT NULL,
-                input       TEXT    NOT NULL,
-                output      TEXT    NOT NULL,
-                status      TEXT    NOT NULL DEFAULT 'ok',
-                raw_output  TEXT
-            )
-        """)
-        conn.commit()
-
-        # Migration: add raw_output column if missing
-        _migrate_add_column(conn, "interaction_log", "raw_output", "TEXT")
-
+        run_migrations(conn)
     _migrate_pulse_from_file()
     logger.debug("Database initialised at %s", CONVERSATION_DB)
-
-
-def _migrate_add_column(conn: sqlite3.Connection, table: str, column: str, col_type: str) -> None:
-    """Add a column to a table if it doesn't exist."""
-    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-    if column not in cols:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
-        conn.commit()
-        logger.info("Migrated %s: added %s column", table, column)
-
-
-def _migrate_add_thread_id(conn: sqlite3.Connection, table: str) -> None:
-    """Add thread_id column to table if it doesn't exist."""
-    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-    if "thread_id" not in cols:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN thread_id TEXT NOT NULL DEFAULT 'default'")
-        conn.commit()
-        logger.info("Migrated %s: added thread_id column", table)
 
 
 def save_message(role: str, content: str, thread_id: str = "default",

@@ -11,7 +11,7 @@ data/matrix_crypto.db-wal
 data/matrix_crypto.db-shm
 data/matrix_signed.marker
 data/matrix_recovery.key
-data/gemini_credentials.json
+data/*credentials*.json
 logs/
 
 # Python
@@ -29,7 +29,6 @@ build/
 .vscode/
 *.swp
 data/MEMORIES.txt
-=0.7.0
 static/*.png
 !static/Gemini_Generated_Image_50dxia50dxia50dx.png
 static/*.jpg
