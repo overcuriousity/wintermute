@@ -1,17 +1,5 @@
-# ══════════════════════════════════════════════════════════════════
-#  Wintermute Configuration
-# ══════════════════════════════════════════════════════════════════
-# Copy this file to config.yaml and fill in your settings.
-#
-# At minimum you need:
-#   1. At least one entry in inference_backends:
-#   2. The llm: section mapping roles to backend names
-#
-# Both Matrix and the web interface are optional; at least one must
-# be enabled for Wintermute to start.
-
-# ── Matrix (optional) ─────────────────────────────────────────────
-# Remove or leave empty to disable Matrix.  The web UI works standalone.
+# ── Matrix (recommended) ─────────────────────────────────────────────
+# Remove or leave empty to disable Matrix. The web UI works standalone.
 matrix:
   homeserver: https://matrix.org          # Your Matrix homeserver URL
   user_id: "@bot:matrix.org"              # Full Matrix user ID of the bot account
@@ -22,219 +10,113 @@ matrix:
   # Option B: supply token + device_id from a manual login (leave password empty).
   access_token: ""
   device_id: ""                           # Auto-filled when using password login.
-                                          # The bot cross-signs this device automatically at startup.
 
   allowed_users:                          # Matrix user IDs allowed to interact
     - "@admin:matrix.org"
-  allowed_rooms: []                       # Room ID whitelist (empty = any room if invited by allowed user)
+  allowed_rooms: []                       # Room ID whitelist (empty = any room)
 
 # ── Web Interface ─────────────────────────────────────────────────
-# Enabled by default.  Open http://127.0.0.1:8080 in your browser.
+# Enabled by default. Open http://127.0.0.1:8080 in your browser.
 web:
   enabled: true
   host: "127.0.0.1"                       # Use 0.0.0.0 to listen on all interfaces
   port: 8080
 
-# ══════════════════════════════════════════════════════════════════
-#  Inference Backends
-# ══════════════════════════════════════════════════════════════════
-# Named LLM backend definitions.  Each entry describes one endpoint+model
-# combination.  Backends are referenced by name in the llm: role mapping.
-#
-# Fields per backend:
-#   name          – unique identifier (referenced in llm: section below)
-#   provider      – "openai" (any OpenAI-compatible endpoint) or "gemini-cli"
-#   base_url      – API base URL (required for provider "openai")
-#   api_key       – API key (required for provider "openai"; use "llama-server" for llama-server)
-#   model         – model name the endpoint accepts
-#   context_size  – total token window the model supports (default: 32768)
-#   max_tokens    – maximum tokens per response (default: 4096)
-#   reasoning     – set true for thinking/reasoning models: o1/o3, DeepSeek R1,
-#                   QwQ, etc.  Uses max_completion_tokens instead of max_tokens
-#                   and extracts reasoning tokens for the web UI. (default: false)
-#
-# You can define as many backends as you need — different models, endpoints,
-# or the same model with different max_tokens for different roles.
-
+# ── Inference Backends ─────────────────────────────────────────────
+# Named backend definitions. Each describes one endpoint+model combination.
+# Referenced by name in the llm: role mapping.
 inference_backends:
-  # ── Primary backend (large model for conversation) ──────────────
   - name: "local_large"
-    provider: "openai"                    # "openai" = any OpenAI-compatible endpoint
-    base_url: "http://localhost:8080/v1" # llama-server default; also works for vLLM, LM Studio, OpenAI, etc.
-    api_key: "llama-server"                     # Use "llama-server" for llama-server, real key for OpenAI/DeepSeek/etc.
-    model: "qwen2.5:72b"                 # Any model name the endpoint accepts
-    context_size: 32768                   # Total token window the model supports
-    max_tokens: 4096                      # Maximum tokens in a single response
-    reasoning: false                      # Set true for o1/o3, DeepSeek R1, QwQ, etc.
+    provider: "openai"                    # "openai", "gemini-cli", or "kimi-code"
+    base_url: "http://localhost:8080/v1"
+    api_key: "llama-server"
+    model: "qwen2.5:72b"
+    context_size: 32768
+    max_tokens: 4096
+    reasoning: false
 
-  # ── Secondary backend (smaller/cheaper model) ───────────────────
   - name: "local_small"
     provider: "openai"
     base_url: "http://localhost:8080/v1"
     api_key: "llama-server"
     model: "qwen2.5:7b"
     context_size: 32768
-    max_tokens: 2048                      # Smaller response budget for auxiliary tasks
+    max_tokens: 2048
     reasoning: false
 
-  # ── Example: Google Gemini via gemini-cli ────────────────────────
-  # UNSTABLE / ALPHA — the gemini-cli provider piggybacks on Google's
-  # Cloud Code Assist OAuth flow.  Credentials may expire unpredictably
-  # and the upstream API surface may change without notice.  Suitable
-  # for experimentation; not recommended as your only backend.
-  #
-  # Requires: npm i -g @google/gemini-cli
-  # Auth:     uv run python -m wintermute.gemini_auth
-  #
+  # UNSTABLE/ALPHA — gemini-cli piggybacks on Google's Cloud Code Assist
+  # OAuth flow.  Credentials may expire unpredictably.  Not recommended
+  # as your only backend.
   # - name: "gemini_pro"
-  #   provider: "gemini-cli"              # base_url and api_key are ignored
-  #   base_url: ""                        # (not used for gemini-cli)
-  #   api_key: ""                         # (not used for gemini-cli)
-  #   model: "gemini-2.5-pro"             # gemini-2.5-pro, gemini-2.5-flash,
-  #                                       # gemini-3-pro-preview, gemini-3-flash-preview
+  #   provider: "gemini-cli"
+  #   model: "gemini-2.5-pro"
   #   context_size: 1048576
   #   max_tokens: 8192
-  #   reasoning: false
 
-  # ── Example: Kimi-Code ($19/mo flat-rate subscription) ──────────
-  # OpenAI-compatible endpoint with OAuth device-code auth.
-  # On first start, Wintermute auto-triggers device auth and broadcasts
-  # the verification URL.  Credentials persist in data/kimi_credentials.json.
-  #
-  # Auth:     uv run python -m wintermute.kimi_auth
-  # In chat:  /kimi-auth
-  #
+  # Kimi-Code — flat-rate subscription with device-code OAuth.
+  # Auth: uv run python -m wintermute.kimi_auth  (or /kimi-auth in chat)
+  # Credentials: data/kimi_credentials.json
   # - name: "kimi"
-  #   provider: "kimi-code"              # base_url and api_key are ignored
-  #   base_url: ""                       # (not used for kimi-code)
-  #   api_key: ""                        # (not used for kimi-code)
-  #   model: "kimi-for-coding"           # kimi-for-coding, kimi-k2.5,
-  #                                       # kimi-code (dynamic via /models endpoint)
+  #   provider: "kimi-code"
+  #   model: "kimi-for-coding"
   #   context_size: 131072
   #   max_tokens: 8192
-  #   reasoning: false                    # set true for kimi-k2.5 (supports thinking)
 
-  # ── Example: dedicated Turing Protocol backend ──────────────────
-  # The protocol only produces a small JSON response (~50 tokens),
-  # so a very low max_tokens keeps costs down.
-  #
   # - name: "turing_backend"
   #   provider: "openai"
   #   base_url: "http://localhost:8080/v1"
   #   api_key: "llama-server"
   #   model: "qwen2.5:7b"
   #   context_size: 32768
-  #   max_tokens: 150                     # Protocol only needs ~150 tokens
-  #   reasoning: false
+  #   max_tokens: 150
 
-  # ── Example: reasoning model ─────────────────────────────────────
-  # - name: "deepseek_r1"
-  #   provider: "openai"
-  #   base_url: "https://api.deepseek.com/v1"
-  #   api_key: "sk-..."
-  #   model: "deepseek-reasoner"
-  #   context_size: 65536
-  #   max_tokens: 8192
-  #   reasoning: true                     # Enables max_completion_tokens + reasoning extraction
-
-# ══════════════════════════════════════════════════════════════════
-#  LLM Role Mapping
-# ══════════════════════════════════════════════════════════════════
-# Maps each system role to an ordered list of backend names.
-#
-# Failover:  When multiple backends are listed, they are tried in order.
-#            If the first backend returns an API error, the next is tried
-#            automatically.  The first backend's context_size is used for
-#            token budget calculations.
-#
-# Disabling: An empty list [] disables the role entirely.
-#
-# Defaults:  Any role omitted here defaults to the first backend defined
-#            in inference_backends.
-
+# ── LLM Role Mapping ──────────────────────────────────────────────
+# Maps roles to ordered lists of backend names.
+# Multiple backends = automatic failover on API errors.
+# Empty list [] = disabled.
+# Omitted roles default to the first defined backend.
 llm:
-  # Primary conversation model — used for all user-facing inference.
   base: ["local_large"]
-
-  # Context compaction — summarises old messages when the context window fills.
-  # A smaller/cheaper model works well here.  Failover: if local_small fails,
-  # falls back to local_large.
-  compaction: ["local_small", "local_large"]
-
-  # Sub-sessions — background workers for multi-step tool-use tasks.
-  # Also used by pulse reviews (pulse spawns sub-sessions internally).
+  compaction: ["local_small", "local_large"] # strongly recommended to use the same llm, or one with the same context size as the main model
   sub_sessions: ["local_large"]
-
-  # Dreaming — nightly autonomous memory consolidation (MEMORIES.txt, pulse DB items).
-  # Runs once per night; a smaller model keeps costs low.
   dreaming: ["local_small"]
 
-# -- Turing Protocol (Phase-Aware Validation) -------------------------
-# Three-stage pipeline that detects, validates, and corrects violations
-# in assistant responses.  Hooks fire at configurable phases and scopes.
-#
-# backends:    Ordered list of inference backends for the protocol's own
-#              LLM calls.  Omit or leave empty to default to the base model.
-#              For best results use a small, fast model with good JSON
-#              compliance (e.g. Qwen 2.5, Phi-3, Gemma 2).
-#
-# validators:  Enable/disable individual violation detectors.
-#              Simple form:  validator_name: true/false
-#              Extended form (override scope/phase per hook):
-#                validator_name:
-#                  enabled: true
-#                  scope: ["main", "sub_session"]   # where to run
-#                  phase: "post_inference"           # when to fire
-#
-# Phases:      post_inference  — after LLM response, before delivery
-#              pre_execution   — before tool call executes
-#              post_execution  — after tool call returns
-#
-# Scopes:      main            — main conversation thread
-#              sub_session     — background worker sub-sessions
+# -- Turing Protocol (Post-Inference Validation) ---------------------
 turing_protocol:
   backends: ["local_small"]               # small/fast model recommended
   validators:
     workflow_spawn: true                   # detect hallucinated workflow spawn claims
     phantom_tool_result: true              # detect fabricated tool output claims
     empty_promise: true                    # detect unfulfilled action commitments
-    objective_completion: true             # sub-session exit gatekeeper (LLM-based)
 
 # ── Context Compaction ────────────────────────────────────────────
-# Compaction fires automatically when history tokens exceed:
+# Compaction fires when history tokens exceed:
 #   context_size - max_tokens - system_prompt_tokens
-# No separate threshold setting is needed — adjust context_size and
-# max_tokens in the backend definition.
+# No separate threshold setting is needed; adjust in the backend definition.
 
 # ── Pulse Reviews ─────────────────────────────────────────────────
-# Periodic autonomous review of active pulse items.  Spawns a sub-session to
-# list pulse items and take actions (complete items, set reminders, update memories, etc.).
 pulse:
-  enabled: true                           # Set to false to disable pulse reviews entirely
-  review_interval_minutes: 60             # Minutes between automatic reviews
+  enabled: true                           # Set to false to disable pulse reviews
+  review_interval_minutes: 60             # How often to auto-review pulse items
 
 # ── Component Size Limits ─────────────────────────────────────────
-# Character limits before a component triggers AI auto-summarisation.
-# When a component exceeds its limit, the LLM is asked to condense it.
+# Characters before a component triggers AI auto-summarisation.
 context:
   component_size_limits:
-    memories: 10000                       # MEMORIES.txt char limit
-    pulse: 5000                           # Pulse items (DB) char limit
-    skills_total: 20000                   # Total chars across all skills/*.md
+    memories: 10000                       # MEMORIES.txt
+    pulse: 5000                           # Pulse items (DB)
+    skills_total: 20000                   # Total across all skills/*.md
 
 # ── Dreaming (Nightly Consolidation) ─────────────────────────────
-# Autonomous nightly pass that prunes and consolidates MEMORIES.txt
-# and pulse items.  Uses a direct LLM call (no tool loop).
 dreaming:
   hour: 1                                 # Hour (0-23, UTC) to run consolidation
   minute: 0                               # Minute (0-59)
 
 # ── Scheduler ─────────────────────────────────────────────────────
-# Timezone for the reminder system (set_reminder tool).
 scheduler:
-  timezone: "UTC"                         # e.g. "Europe/Berlin", "America/New_York"
+  timezone: "UTC"                         # Timezone for reminder scheduling (e.g. Europe/Berlin)
 
 # ── Logging ───────────────────────────────────────────────────────
 logging:
   level: "INFO"                           # DEBUG | INFO | WARN | ERROR
-  directory: "logs"                       # Log files are rotated nightly, kept 14 days
+  directory: "logs"
