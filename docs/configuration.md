@@ -9,7 +9,7 @@ cp config.yaml.example config.yaml
 ## Full Annotated Example
 
 ```yaml
-# ── Matrix (optional) ─────────────────────────────────────────────
+# ── Matrix (recommended) ─────────────────────────────────────────────
 # Remove or leave empty to disable Matrix. The web UI works standalone.
 matrix:
   homeserver: https://matrix.org          # Your Matrix homeserver URL
@@ -64,7 +64,7 @@ inference_backends:
   #   context_size: 1048576
   #   max_tokens: 8192
 
-  # Kimi-Code — $19/mo flat-rate subscription with device-code OAuth.
+  # Kimi-Code — flat-rate subscription with device-code OAuth.
   # Auth: uv run python -m wintermute.kimi_auth  (or /kimi-auth in chat)
   # Credentials: data/kimi_credentials.json
   # - name: "kimi"
@@ -88,7 +88,7 @@ inference_backends:
 # Omitted roles default to the first defined backend.
 llm:
   base: ["local_large"]
-  compaction: ["local_small", "local_large"]
+  compaction: ["local_small", "local_large"] # strongly recommended to use the same llm, or one with the same context size as the main model
   sub_sessions: ["local_large"]
   dreaming: ["local_small"]
 
