@@ -1020,6 +1020,8 @@ class MatrixThread:
         from wintermute import database as db
         mem_before = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
         pulse_before = len(db.list_pulse_items("active"))
+        skills_before = sorted(prompt_assembler.SKILLS_DIR.glob("*.md")) if prompt_assembler.SKILLS_DIR.exists() else []
+        skills_size_before = sum(f.stat().st_size for f in skills_before)
 
         await self.send_message("Starting dream cycle...", thread_id)
         try:
@@ -1030,11 +1032,15 @@ class MatrixThread:
 
         mem_after = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
         pulse_after = len(db.list_pulse_items("active"))
+        skills_after = sorted(prompt_assembler.SKILLS_DIR.glob("*.md")) if prompt_assembler.SKILLS_DIR.exists() else []
+        skills_size_after = sum(f.stat().st_size for f in skills_after)
 
         await self.send_message(
             f"Dream cycle complete.\n"
             f"MEMORIES.txt: {mem_before} -> {mem_after} chars\n"
-            f"Pulse items: {pulse_before} -> {pulse_after} active",
+            f"Pulse items: {pulse_before} -> {pulse_after} active\n"
+            f"Skills: {len(skills_before)} -> {len(skills_after)} files, "
+            f"{skills_size_before} -> {skills_size_after} bytes",
             thread_id,
         )
 

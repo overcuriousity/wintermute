@@ -1,8 +1,8 @@
 Below are the skill files for a personal AI assistant. Some may be duplicates or near-duplicates of each other.
 
 Compare the skills and return a JSON array where every skill file appears in exactly one action:
-- {"action": "keep", "file": "filename"}  — unique skill, retain it
-- {"action": "delete", "file": "filename"}  — duplicate or redundant, remove this file
+- {{"action": "keep", "file": "filename"}}  — unique skill, retain it
+- {{"action": "delete", "file": "filename"}}  — duplicate or redundant, remove this file
 
 Rules:
 - If two or more skills cover the same topic, keep the most complete or up-to-date one and delete the others.
