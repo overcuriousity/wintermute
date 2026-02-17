@@ -334,21 +334,39 @@ def save_interaction_log(timestamp: float, action: str, session: str,
 
 
 def get_interaction_log(limit: int = 200, offset: int = 0,
-                        session_filter: Optional[str] = None) -> list[dict]:
-    """Return interaction log entries, newest first. No truncation."""
+                        session_filter: Optional[str] = None,
+                        before_id: Optional[int] = None,
+                        after_id: Optional[int] = None) -> list[dict]:
+    """Return interaction log entries. Newest first unless after_id is set (then ASC)."""
+    conditions: list[str] = []
+    params: list = []
+    if session_filter:
+        conditions.append("session=?")
+        params.append(session_filter)
+    if before_id is not None:
+        conditions.append("id < ?")
+        params.append(before_id)
+    if after_id is not None:
+        conditions.append("id > ?")
+        params.append(after_id)
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    order = "ORDER BY id ASC" if after_id is not None else "ORDER BY id DESC"
     with sqlite3.connect(CONVERSATION_DB) as conn:
         conn.row_factory = sqlite3.Row
-        if session_filter:
-            rows = conn.execute(
-                "SELECT * FROM interaction_log WHERE session=? ORDER BY id DESC LIMIT ? OFFSET ?",
-                (session_filter, limit, offset),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM interaction_log ORDER BY id DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            ).fetchall()
+        rows = conn.execute(
+            f"SELECT * FROM interaction_log {where} {order} LIMIT ? OFFSET ?",
+            params + [limit, offset],
+        ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_interaction_log_max_id() -> int:
+    """Return the highest id in interaction_log, or 0 if empty."""
+    with sqlite3.connect(CONVERSATION_DB) as conn:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(id), 0) FROM interaction_log"
+        ).fetchone()
+    return row[0]
 
 
 def get_interaction_log_entry(entry_id: int) -> Optional[dict]:

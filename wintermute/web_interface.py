@@ -1,243 +1,20 @@
 """
 Web Interface
 
-A minimal aiohttp HTTP + WebSocket server that mirrors the Matrix interface.
-Each WebSocket connection gets its own thread_id for independent conversation
-context.  Supports all special commands (/new, /compact, /reminders, /pulse).
-
-Debug panel
------------
-Available at /debug (same host/port).  Provides a read/write inspection view
-of all running sessions, sub-sessions, scheduled jobs, and reminders.
+Debug panel available at /debug.  Provides a read/write inspection view of all
+running sessions, sub-sessions, scheduled jobs, and reminders.
 REST API under /api/debug/* is consumed by the embedded SPA.
-
-Works standalone when no Matrix account is configured.
 """
 
 import asyncio
 import json
 import logging
-import secrets
-from typing import Optional
 
 from aiohttp import web
 
 from wintermute import tools as tool_module
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Chat UI (unchanged from original)
-# ---------------------------------------------------------------------------
-
-_CHAT_HTML = """\
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Wintermute</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: system-ui, sans-serif;
-    background: #1a1a2e; color: #e0e0e0;
-    display: flex; flex-direction: column; height: 100dvh;
-  }
-  header {
-    padding: .6rem 1rem;
-    background: #16213e;
-    border-bottom: 1px solid #0f3460;
-    display: flex; align-items: center; gap: .8rem;
-  }
-  header h1 { font-size: 1.1rem; font-weight: 600; color: #a8d8ea; }
-  #model-info {
-    font-size: .7rem; color: #888;
-    display: flex; gap: .5rem; align-items: center;
-  }
-  #model-info .model-name { color: #a8d8ea; font-weight: 500; }
-  #model-info .ctx-size { color: #666; }
-  header a { font-size: .75rem; color: #a8d8ea; text-decoration: none; margin-left: auto; }
-  header a:hover { text-decoration: underline; }
-  #status {
-    font-size: .75rem; padding: .2rem .5rem;
-    border-radius: 99px;
-    background: #333; color: #aaa;
-  }
-  #status.connected { background: #0f3460; color: #a8d8ea; }
-  #thread-id {
-    font-size: .65rem; color: #666;
-  }
-  #log {
-    flex: 1; overflow-y: auto;
-    padding: 1rem;
-    display: flex; flex-direction: column; gap: .6rem;
-  }
-  .msg {
-    max-width: 80%; padding: .5rem .8rem;
-    border-radius: .6rem; line-height: 1.45;
-    white-space: pre-wrap; word-break: break-word;
-    font-size: .9rem;
-  }
-  .msg.user {
-    align-self: flex-end;
-    background: #0f3460; color: #e0e0e0;
-    border-bottom-right-radius: .1rem;
-  }
-  .msg.assistant {
-    align-self: flex-start;
-    background: #16213e; color: #e0e0e0;
-    border-bottom-left-radius: .1rem;
-  }
-  .msg.system {
-    align-self: center;
-    background: transparent; color: #888;
-    font-size: .78rem; font-style: italic;
-  }
-  .reasoning-toggle {
-    margin-top: .4rem; font-size: .8rem; color: #888;
-  }
-  .reasoning-toggle summary {
-    cursor: pointer; color: #a8d8ea; font-size: .78rem;
-    user-select: none;
-  }
-  .reasoning-toggle summary:hover { color: #cde; }
-  .reasoning-toggle pre {
-    white-space: pre-wrap; margin-top: .3rem;
-    padding: .4rem .6rem;
-    background: rgba(0,0,0,.2); border-radius: .3rem;
-    font-size: .78rem; line-height: 1.4;
-    color: #999; border-left: 2px solid #334;
-  }
-  .ts { font-size: .65rem; color: #666; margin-top: .25rem; }
-  form {
-    display: flex; gap: .5rem;
-    padding: .75rem 1rem;
-    background: #16213e;
-    border-top: 1px solid #0f3460;
-  }
-  input {
-    flex: 1; padding: .55rem .8rem;
-    background: #1a1a2e; color: #e0e0e0;
-    border: 1px solid #0f3460; border-radius: .4rem;
-    font-size: .9rem; outline: none;
-  }
-  input:focus { border-color: #a8d8ea; }
-  button {
-    padding: .55rem 1.1rem;
-    background: #0f3460; color: #a8d8ea;
-    border: none; border-radius: .4rem;
-    cursor: pointer; font-size: .9rem;
-  }
-  button:hover { background: #1a4a80; }
-  button:disabled { opacity: .4; cursor: default; }
-</style>
-</head>
-<body>
-<header>
-  <h1>Wintermute</h1>
-  <span id="model-info"></span>
-  <span id="status">connecting\u2026</span>
-  <span id="thread-id"></span>
-  <a href="/debug">Debug \u2197</a>
-</header>
-<div id="log"></div>
-<form id="form">
-  <input id="input" type="text" placeholder="Message or /command\u2026" autocomplete="off" disabled>
-  <button id="send" type="submit" disabled>Send</button>
-</form>
-<script>
-const log    = document.getElementById('log');
-const form   = document.getElementById('form');
-const input  = document.getElementById('input');
-const send   = document.getElementById('send');
-const status = document.getElementById('status');
-const threadEl = document.getElementById('thread-id');
-
-let ws;
-
-function ts() {
-  return new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-}
-
-function addMsg(role, text, reasoning) {
-  const wrap = document.createElement('div');
-  const msg  = document.createElement('div');
-  msg.className = 'msg ' + role;
-  msg.textContent = text;
-  if (reasoning) {
-    const details = document.createElement('details');
-    details.className = 'reasoning-toggle';
-    const summary = document.createElement('summary');
-    summary.textContent = '\u2699 Reasoning (' + reasoning.length + ' chars)';
-    const pre = document.createElement('pre');
-    pre.textContent = reasoning;
-    details.appendChild(summary);
-    details.appendChild(pre);
-    msg.appendChild(details);
-  }
-  const t = document.createElement('div');
-  t.className = 'ts';
-  t.textContent = ts();
-  wrap.style.display = 'flex';
-  wrap.style.flexDirection = 'column';
-  wrap.style.alignItems = role === 'user' ? 'flex-end'
-                        : role === 'system' ? 'center' : 'flex-start';
-  wrap.appendChild(msg);
-  wrap.appendChild(t);
-  log.appendChild(wrap);
-  log.scrollTop = log.scrollHeight;
-}
-
-function connect() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(proto + '://' + location.host + '/ws');
-
-  ws.onopen = () => {
-    status.textContent = 'connected';
-    status.className = 'connected';
-    input.disabled = false;
-    send.disabled  = false;
-    input.focus();
-  };
-
-  ws.onmessage = (e) => {
-    const d = JSON.parse(e.data);
-    if (d.thread_id) threadEl.textContent = d.thread_id;
-    if (d.model) {
-      const mi = document.getElementById('model-info');
-      const ctx = d.context_size ? (d.context_size >= 1000 ? (d.context_size/1000).toFixed(0) + 'k' : d.context_size) : '';
-      mi.innerHTML = '<span class="model-name">' + d.model + '</span>'
-        + (ctx ? '<span class="ctx-size">' + ctx + ' ctx</span>' : '');
-    }
-    addMsg(d.role, d.text, d.reasoning);
-  };
-
-  ws.onclose = () => {
-    status.textContent = 'disconnected \u2013 retrying\u2026';
-    status.className = '';
-    input.disabled = true;
-    send.disabled  = true;
-    setTimeout(connect, 3000);
-  };
-
-  ws.onerror = () => ws.close();
-}
-
-form.addEventListener('submit', (e) => {
-  e.preventDefault();
-  const text = input.value.trim();
-  if (!text || ws.readyState !== WebSocket.OPEN) return;
-  addMsg('user', text);
-  ws.send(JSON.stringify({text}));
-  input.value = '';
-});
-
-connect();
-</script>
-</body>
-</html>
-"""
 
 # ---------------------------------------------------------------------------
 # Debug panel SPA
@@ -269,13 +46,8 @@ _DEBUG_HTML = """\
   header a { color: #a8d8ea; text-decoration: none; font-size: .82rem; }
   header a:hover { text-decoration: underline; }
   .header-right { margin-left: auto; display: flex; align-items: center; gap: .8rem; }
-  #refresh-status { font-size: .72rem; color: #555; }
-  #refresh-toggle {
-    font-size: .75rem; padding: .2rem .6rem;
-    background: #16213e; color: #a8d8ea;
-    border: 1px solid #0f3460; border-radius: 99px; cursor: pointer;
-  }
-  #refresh-toggle:hover { background: #1a4a80; }
+  .stream-connected { color: #6fe06f; }
+  .stream-error { color: #f39c12; }
   #layout { display: flex; flex: 1; overflow: hidden; }
   /* Sidebar */
   #sidebar {
@@ -483,10 +255,8 @@ _DEBUG_HTML = """\
 <header>
   <h1>Wintermute Debug</h1>
   <span id="cfg-info" style="font-size:.72rem;color:#888"></span>
-  <a href="/">&#8592; Chat</a>
   <div class="header-right">
-    <span id="refresh-status"></span>
-    <button id="refresh-toggle" onclick="toggleRefresh()">Auto-refresh: ON</button>
+    <span id="stream-status" style="font-size:.72rem;color:#555">\u25cf connecting</span>
   </div>
 </header>
 <div id="layout">
@@ -505,9 +275,6 @@ _DEBUG_HTML = """\
     </button>
     <button class="tab-btn" data-tab="reminders" onclick="showTab('reminders')">
       Reminders <span class="tab-count" id="cnt-reminders">0</span>
-    </button>
-    <button class="tab-btn" data-tab="toolcalls" onclick="showTab('toolcalls')">
-      Tool Calls <span class="tab-count" id="cnt-toolcalls">0</span>
     </button>
     <button class="tab-btn" data-tab="interactions" onclick="showTab('interactions')">
       Interactions <span class="tab-count" id="cnt-interactions">0</span>
@@ -573,31 +340,6 @@ _DEBUG_HTML = """\
           </thead>
           <tbody id="jobs-body">
             <tr><td colspan="4" class="empty">Loading\u2026</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- ── Tool Calls ── -->
-    <div class="tab-panel" id="panel-toolcalls">
-      <div class="form-bar" style="gap:.8rem">
-        <div class="form-group">
-          <label>Filter by session</label>
-          <select id="tc-filter-session" onchange="loadToolCalls()" style="min-width:180px">
-            <option value="">All sessions</option>
-          </select>
-        </div>
-      </div>
-      <div class="scroll-area">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Time</th><th>Session</th><th>Tool</th>
-              <th>Inputs</th><th>Duration</th><th>Result</th>
-            </tr>
-          </thead>
-          <tbody id="toolcalls-body">
-            <tr><td colspan="6" class="empty">Loading\u2026</td></tr>
           </tbody>
         </table>
       </div>
@@ -678,10 +420,6 @@ _DEBUG_HTML = """\
             <option value="">All sessions</option>
           </select>
         </div>
-        <div class="form-group" style="justify-content:flex-end">
-          <label>&nbsp;</label>
-          <button class="btn btn-sm" onclick="loadMoreInteractions()">Load more</button>
-        </div>
       </div>
       <div class="scroll-area">
         <table class="data-table">
@@ -704,9 +442,13 @@ _DEBUG_HTML = """\
 // ── State ──
 let currentTab = 'sessions';
 let selectedSession = null;
-let autoRefresh = true;
-let refreshTimer = null;
-const REFRESH_MS = 5000;
+const _closedWorkflows = new Set();
+const _closedReminders = new Set();
+let ilMaxId = 0;
+let ilMinId = null;
+let ilAllLoaded = false;
+let ilLoading = false;
+let ilObserver;
 
 // ── Helpers ──
 function esc(s) {
@@ -761,7 +503,6 @@ async function loadTab(name) {
       case 'workflows':   await loadWorkflows(); break;
       case 'jobs':        await loadJobs(); break;
       case 'reminders':   await loadReminders(); break;
-      case 'toolcalls':   await loadToolCalls(); break;
       case 'interactions': await loadInteractionLog(); break;
     }
   } catch (e) {
@@ -769,37 +510,40 @@ async function loadTab(name) {
   }
 }
 
-// ── Auto-refresh ──
-function scheduleRefresh() {
-  clearTimeout(refreshTimer);
-  if (!autoRefresh) return;
-  refreshTimer = setTimeout(async () => {
-    await loadTab(currentTab);
-    document.getElementById('refresh-status').textContent =
-      'Updated ' + new Date().toLocaleTimeString();
-    scheduleRefresh();
-  }, REFRESH_MS);
-}
-
-function toggleRefresh() {
-  autoRefresh = !autoRefresh;
-  document.getElementById('refresh-toggle').textContent =
-    'Auto-refresh: ' + (autoRefresh ? 'ON' : 'OFF');
-  if (autoRefresh) scheduleRefresh();
-  else clearTimeout(refreshTimer);
+// ── SSE stream ──
+function connectStream() {
+  const es = new EventSource('/api/debug/stream');
+  const statusEl = document.getElementById('stream-status');
+  es.onopen = () => {
+    statusEl.textContent = '\u25cf live';
+    statusEl.className = 'stream-connected';
+  };
+  es.onerror = () => {
+    statusEl.textContent = '\u25cf reconnecting';
+    statusEl.className = 'stream-error';
+  };
+  es.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    renderSessions(data.sessions || []);
+    renderSubSessions(data.subsessions || []);
+    renderWorkflows(data.workflows || []);
+    renderJobs(data.jobs || []);
+    renderReminders(data.reminders || {});
+    updateInteractionsCount(data.interactions_total, data.interactions_max_id);
+  };
 }
 
 // ── Sessions ──
-async function loadSessions() {
-  const r = await fetch('/api/debug/sessions');
-  const data = await r.json();
-  const sessions = data.sessions || [];
+function renderSessions(sessions) {
   document.getElementById('cnt-sessions').textContent = sessions.length;
   renderSessionList(sessions);
-  if (selectedSession) {
-    // Re-load messages for current selection (may have new entries)
-    await loadSessionMessages(selectedSession);
-  }
+  if (selectedSession) loadSessionMessages(selectedSession);
+}
+
+async function loadSessions() {
+  const r = await fetch('/api/debug/sessions');
+  const d = await r.json();
+  renderSessions(d.sessions || []);
 }
 
 function renderSessionList(sessions) {
@@ -1004,10 +748,7 @@ function toggleSpSection(id) {
 // ── Sub-sessions ──
 let _expandedSubSessions = new Set();
 
-async function loadSubSessions() {
-  const r = await fetch('/api/debug/subsessions');
-  const data = await r.json();
-  const sessions = data.sessions || [];
+function renderSubSessions(sessions) {
   document.getElementById('cnt-subsessions').textContent = sessions.length;
   const tbody = document.getElementById('subsessions-body');
   if (!sessions.length) {
@@ -1056,6 +797,12 @@ async function loadSubSessions() {
   }
 }
 
+async function loadSubSessions() {
+  const r = await fetch('/api/debug/subsessions');
+  const d = await r.json();
+  renderSubSessions(d.sessions || []);
+}
+
 async function toggleSubSession(sid) {
   const detailRow = document.getElementById('ssdetail-' + sid);
   if (!detailRow) return;
@@ -1090,8 +837,7 @@ async function fetchSubSessionDetail(sid) {
       el.innerHTML = '<span class="dim">No messages recorded (session may still be initializing)</span>';
       return;
     }
-    let html = '<div style="margin-bottom:.5rem"><strong style="color:#a8d8ea">Messages (' + msgs.length + ')</strong>' +
-      ' <button class="btn btn-sm" data-sid="' + esc(sid) + '" onclick="event.stopPropagation();filterToolCallsBySession(this.dataset.sid)">View tool calls</button></div>';
+    let html = '<div style="margin-bottom:.5rem"><strong style="color:#a8d8ea">Messages (' + msgs.length + ')</strong></div>';
     html += '<div style="max-height:400px;overflow-y:auto;border:1px solid #0f3460;border-radius:.3rem;padding:.4rem">';
     msgs.forEach((m, i) => {
       const roleColor = m.role === 'assistant' ? '#a8d8ea' : m.role === 'user' ? '#90ee90' : m.role === 'tool' ? '#c9b0ff' : '#888';
@@ -1114,52 +860,20 @@ async function fetchSubSessionDetail(sid) {
   }
 }
 
-function filterToolCallsBySession(sid) {
-  showTab('toolcalls');
-  const sel = document.getElementById('tc-filter-session');
-  // Add option if not present
-  let found = false;
-  for (const opt of sel.options) { if (opt.value === sid) { found = true; break; } }
-  if (!found) { const opt = document.createElement('option'); opt.value = sid; opt.textContent = sid; sel.appendChild(opt); }
-  sel.value = sid;
-  loadToolCalls();
-}
-
 // ── Workflows ──
-async function loadWorkflows() {
-  const r = await fetch('/api/debug/workflows');
-  const data = await r.json();
-  const workflows = data.workflows || [];
+function renderWorkflows(workflows) {
   document.getElementById('cnt-workflows').textContent = workflows.length;
   const area = document.getElementById('workflows-area');
   if (!workflows.length) {
     area.innerHTML = '<div class="empty">No workflows recorded</div>';
     return;
   }
-  // Check which parent threads have recent tool calls (activity after workflow)
-  let parentActivity = {};
-  try {
-    const tcr = await fetch('/api/debug/tool-calls');
-    const tcd = await tcr.json();
-    const tcalls = tcd.calls || [];
-    workflows.forEach(wf => {
-      if (!wf.parent_thread_id) return;
-      const wfCompleted = wf.status === 'completed' || wf.status === 'failed';
-      if (!wfCompleted) return;
-      // Find tool calls from parent thread after workflow creation
-      const parentCalls = tcalls.filter(c => c.thread_id === wf.parent_thread_id);
-      parentActivity[wf.workflow_id] = parentCalls.length > 0;
-    });
-  } catch(e) { /* ignore */ }
-
   area.innerHTML = workflows.map(wf => {
     const runningNodes = wf.nodes.filter(n => n.status === 'running');
     const activityNote = runningNodes.length > 0
       ? ' <span style="color:#6fe06f">\u25cf ' + runningNodes.length + ' active</span>'
       : '';
-    const parentNote = (wf.status === 'completed' || wf.status === 'failed') && parentActivity[wf.workflow_id]
-      ? ' <span class="badge" style="background:#1a3a3a;color:#80cccc;font-size:.62rem">parent still processing</span>'
-      : '';
+    const isClosed = _closedWorkflows.has(wf.workflow_id);
     const nodesHtml = wf.nodes.map(n => {
       const depsStr = n.depends_on.length ? ' \u2190 ' + n.depends_on.join(', ') : '';
       const detail = n.error ? '\u26a0 ' + esc(n.error)
@@ -1175,17 +889,18 @@ async function loadWorkflows() {
       </tr>`;
     }).join('');
     return `
-      <div class="section-hdr open" onclick="toggleSection(this)">
+      <div class="section-hdr${isClosed ? '' : ' open'}"
+           data-section-id="${esc(wf.workflow_id)}" data-section-type="workflow"
+           onclick="toggleSection(this)">
         <span>
           <span class="mono" style="font-size:.78rem">${esc(wf.workflow_id)}</span>
           ${badge(wf.status, wf.status)}${activityNote}
           <span class="dim">${wf.node_count} node${wf.node_count !== 1 ? 's' : ''}</span>
           <span class="dim">${esc(wf.parent_thread_id || 'no parent')}</span>
-          ${parentNote}
         </span>
         <span>\u25bc</span>
       </div>
-      <div class="section-body">
+      <div class="section-body" style="${isClosed ? 'display:none' : ''}">
         <table class="data-table">
           <thead><tr>
             <th>Node ID</th><th>Status</th><th>Objective</th><th>Depends On</th><th>Result / Error</th>
@@ -1196,11 +911,14 @@ async function loadWorkflows() {
   }).join('');
 }
 
+async function loadWorkflows() {
+  const r = await fetch('/api/debug/workflows');
+  const d = await r.json();
+  renderWorkflows(d.workflows || []);
+}
+
 // ── Jobs ──
-async function loadJobs() {
-  const r = await fetch('/api/debug/jobs');
-  const data = await r.json();
-  const jobs = data.jobs || [];
+function renderJobs(jobs) {
   document.getElementById('cnt-jobs').textContent = jobs.length;
   const tbody = document.getElementById('jobs-body');
   if (!jobs.length) {
@@ -1221,10 +939,14 @@ async function loadJobs() {
   }).join('');
 }
 
+async function loadJobs() {
+  const r = await fetch('/api/debug/jobs');
+  const d = await r.json();
+  renderJobs(d.jobs || []);
+}
+
 // ── Reminders ──
-async function loadReminders() {
-  const r = await fetch('/api/debug/reminders');
-  const data = await r.json();
+function renderReminders(data) {
   const active = data.active || [];
   const completed = data.completed || [];
   const failed = data.failed || [];
@@ -1233,20 +955,28 @@ async function loadReminders() {
 
   const area = document.getElementById('reminders-area');
   area.innerHTML =
-    renderReminderSection('active-body',    'Active',    active,    true)  +
-    renderReminderSection('completed-body', 'Completed', completed, false) +
-    renderReminderSection('failed-body',    'Failed',    failed,    false) +
-    (cancelled.length ? renderReminderSection('cancelled-body', 'Cancelled', cancelled, false) : '');
+    renderReminderSection('active-body',    'active',    'Active',    active,    true)  +
+    renderReminderSection('completed-body', 'completed', 'Completed', completed, false) +
+    renderReminderSection('failed-body',    'failed',    'Failed',    failed,    false) +
+    (cancelled.length ? renderReminderSection('cancelled-body', 'cancelled', 'Cancelled', cancelled, false) : '');
 }
 
-function renderReminderSection(id, label, reminders, showActions) {
-  const cols = showActions ? 8 : 6;
+async function loadReminders() {
+  const r = await fetch('/api/debug/reminders');
+  const d = await r.json();
+  renderReminders(d);
+}
+
+function renderReminderSection(id, sectionKey, label, reminders, showActions) {
+  const isClosed = _closedReminders.has(sectionKey);
   return `
-    <div class="section-hdr open" onclick="toggleSection(this)">
+    <div class="section-hdr${isClosed ? '' : ' open'}"
+         data-section-id="${esc(sectionKey)}" data-section-type="reminder"
+         onclick="toggleSection(this)">
       <span>${label} <small>(${reminders.length})</small></span>
       <span>&#9660;</span>
     </div>
-    <div class="section-body">
+    <div class="section-body" style="${isClosed ? 'display:none' : ''}">
       <table class="data-table">
         <thead><tr>
           <th>ID</th><th>Schedule</th><th>Message</th>
@@ -1283,7 +1013,12 @@ function reminderRows(reminders, showActions) {
 function toggleSection(hdr) {
   hdr.classList.toggle('open');
   const body = hdr.nextElementSibling;
-  body.style.display = body.style.display === 'none' ? '' : 'none';
+  body.style.display = hdr.classList.contains('open') ? '' : 'none';
+  const id   = hdr.dataset.sectionId;
+  const type = hdr.dataset.sectionType;
+  if (!id) return;
+  const set = type === 'workflow' ? _closedWorkflows : _closedReminders;
+  hdr.classList.contains('open') ? set.delete(id) : set.add(id);
 }
 
 async function deleteReminder(jobId) {
@@ -1389,117 +1124,119 @@ async function createReminder(e) {
   onScheduleTypeChange('once');
   await loadReminders();
 }
+// ── Interaction Log ──
+function _makeILRow(e) {
+  const ts = new Date(e.timestamp * 1000).toLocaleString();
+  const inputPreview = (e.input || '').length > 120 ? e.input.slice(0, 117) + '\u2026' : (e.input || '');
+  const outputPreview = (e.output || '').length > 120 ? e.output.slice(0, 117) + '\u2026' : (e.output || '');
+  const statusCls = e.status === 'ok' ? 'completed' : (e.status === 'error' ? 'failed' : 'pending');
+  const sessionShort = (e.session || '').length > 24 ? e.session.slice(0, 22) + '\u2026' : (e.session || '');
+  const actionStyle = e.action.startsWith('turing') ? 'turing' : (e.action === 'tool_call' ? 'tool' : (e.action === 'chat' ? 'web' : (e.action === 'error' ? 'failed' : 'system')));
+  return `<tr style="cursor:pointer${e.action === 'tool_call' ? ';background:#0a0f1a' : ''}" onclick="toggleILDetail(this, ${e.id})">
+    <td class="dim" style="white-space:nowrap">${esc(ts)}</td>
+    <td>${badge(actionStyle, e.action)}</td>
+    <td class="mono" style="font-size:.72rem" title="${esc(e.session || '')}">${esc(sessionShort)}</td>
+    <td class="mono" style="font-size:.72rem">${esc(e.llm || '')}</td>
+    <td class="trunc" title="${esc(e.input || '')}">${esc(inputPreview)}</td>
+    <td class="trunc" title="${esc(e.output || '')}">${esc(outputPreview)}</td>
+    <td>${badge(statusCls, e.status)}</td>
+  </tr>`;
+}
 
-// ── Tool Calls ──
-async function loadToolCalls() {
-  const r = await fetch('/api/debug/tool-calls');
-  const data = await r.json();
-  const allCalls = data.calls || [];
-  const filterSel = document.getElementById('tc-filter-session');
-  // Update filter dropdown with unique thread_ids
+function _fetchIL({limit = 200, before_id, after_id} = {}) {
+  const session = document.getElementById('il-filter-session').value;
+  const params = new URLSearchParams({limit});
+  if (session) params.set('session', session);
+  if (before_id != null) params.set('before_id', before_id);
+  if (after_id != null)  params.set('after_id', after_id);
+  return fetch('/api/debug/interaction-log?' + params)
+    .then(r => r.json()).then(d => d.entries || []);
+}
+
+async function _refreshILSessions() {
+  const filterSel = document.getElementById('il-filter-session');
   const currentFilter = filterSel.value;
-  const threadIds = [...new Set(allCalls.map(c => c.thread_id).filter(Boolean))];
-  const existingVals = new Set([...filterSel.options].map(o => o.value));
-  threadIds.forEach(tid => {
-    if (!existingVals.has(tid)) {
+  const r = await fetch('/api/debug/interaction-log?limit=1000&offset=0');
+  const d = await r.json();
+  const sessions = [...new Set((d.entries || []).map(e => e.session).filter(Boolean))];
+  const existing = new Set([...filterSel.options].map(o => o.value));
+  sessions.forEach(s => {
+    if (!existing.has(s)) {
       const opt = document.createElement('option');
-      opt.value = tid; opt.textContent = tid;
+      opt.value = s; opt.textContent = s;
       filterSel.appendChild(opt);
     }
   });
-  filterSel.value = currentFilter; // preserve selection
-
-  const calls = currentFilter
-    ? allCalls.filter(c => c.thread_id === currentFilter)
-    : allCalls;
-  document.getElementById('cnt-toolcalls').textContent = allCalls.length;
-  const tbody = document.getElementById('toolcalls-body');
-  if (!calls.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty">' +
-      (currentFilter ? 'No tool calls for this session' : 'No tool calls recorded yet') + '</td></tr>';
-    return;
-  }
-  tbody.innerHTML = calls.map(c => {
-    const ts = new Date(c.ts * 1000).toLocaleString();
-    const inputsStr = JSON.stringify(c.inputs || {});
-    const shortInputs = inputsStr.length > 120 ? inputsStr.slice(0, 117) + '\u2026' : inputsStr;
-    const resultStr = c.result_preview || '';
-    const shortResult = resultStr.length > 120 ? resultStr.slice(0, 117) + '\u2026' : resultStr;
-    const sessionShort = (c.thread_id || 'unknown').length > 24
-      ? c.thread_id.slice(0, 22) + '\u2026' : (c.thread_id || 'unknown');
-    const stype = sessionType(c.thread_id || '');
-    const isSubSession = (c.thread_id || '').startsWith('sub_');
-    const filterBtn = isSubSession
-      ? ` <span style="cursor:pointer;color:#a8d8ea;font-size:.68rem" onclick="filterToolCallsBySession('${esc(c.thread_id)}')" title="Filter by this session">\u229b</span>`
-      : '';
-    return `<tr${isSubSession ? ' style="background:#0d1020"' : ''}>
-      <td class="dim" style="white-space:nowrap">${esc(ts)}</td>
-      <td>${badge(stype, stype)} <span class="mono" style="font-size:.72rem" title="${esc(c.thread_id || '')}">${esc(sessionShort)}</span>${filterBtn}</td>
-      <td><strong>${esc(c.tool)}</strong></td>
-      <td class="mono trunc" title="${esc(inputsStr)}">${esc(shortInputs)}</td>
-      <td class="dim" style="white-space:nowrap">${c.duration_ms}ms</td>
-      <td class="mono trunc" title="${esc(resultStr)}">${esc(shortResult)}</td>
-    </tr>`;
-  }).join('');
+  filterSel.value = currentFilter;
 }
 
-// ── Interaction Log ──
-let ilOffset = 0;
-const IL_PAGE = 200;
-
-async function loadInteractionLog(append) {
-  if (!append) ilOffset = 0;
-  const session = document.getElementById('il-filter-session').value;
-  const params = new URLSearchParams({limit: IL_PAGE, offset: ilOffset});
-  if (session) params.set('session', session);
-  const r = await fetch('/api/debug/interaction-log?' + params);
-  const data = await r.json();
-  const entries = data.entries || [];
-  const total = data.total || 0;
-  document.getElementById('cnt-interactions').textContent = total;
-
-  // Update session filter dropdown
-  if (!append) {
-    const filterSel = document.getElementById('il-filter-session');
-    const currentFilter = filterSel.value;
-    const r2 = await fetch('/api/debug/interaction-log?limit=1000&offset=0');
-    const d2 = await r2.json();
-    const sessions = [...new Set((d2.entries || []).map(e => e.session).filter(Boolean))];
-    const existing = new Set([...filterSel.options].map(o => o.value));
-    sessions.forEach(s => {
-      if (!existing.has(s)) {
-        const opt = document.createElement('option');
-        opt.value = s; opt.textContent = s;
-        filterSel.appendChild(opt);
-      }
-    });
-    filterSel.value = currentFilter;
-  }
+function renderILEntries(entries, append, prepend = false) {
+  if (!entries.length) return;
+  const ids = entries.map(e => e.id);
+  if (!prepend) ilMinId = Math.min(ilMinId ?? Infinity, ...ids);
+  ilMaxId = Math.max(ilMaxId, ...ids);
 
   const tbody = document.getElementById('interactions-body');
-  if (!entries.length && !append) {
+  const sentinel = document.getElementById('il-sentinel');
+  if (sentinel) sentinel.remove();
+
+  // after_id returns ASC order — reverse so newest renders at top when prepending
+  const ordered = prepend ? [...entries].reverse() : entries;
+  const html = ordered.map(e => _makeILRow(e)).join('');
+
+  if (prepend)       tbody.insertAdjacentHTML('afterbegin', html);
+  else if (append)   tbody.insertAdjacentHTML('beforeend', html);
+  else               tbody.innerHTML = html;
+
+  const sentinelRow = document.createElement('tr');
+  sentinelRow.id = 'il-sentinel';
+  sentinelRow.innerHTML = '<td colspan="7"></td>';
+  tbody.appendChild(sentinelRow);
+  if (ilObserver) ilObserver.observe(sentinelRow);
+}
+
+async function loadInteractionLog() {
+  ilMaxId = 0; ilMinId = null; ilAllLoaded = false;
+  const tbody = document.getElementById('interactions-body');
+  tbody.innerHTML = '<tr><td colspan="7" class="empty">Loading\u2026</td></tr>';
+  await _refreshILSessions();
+  const entries = await _fetchIL({limit: 200});
+  if (!entries.length) {
     tbody.innerHTML = '<tr><td colspan="7" class="empty">No interactions recorded yet</td></tr>';
     return;
   }
-  const html = entries.map(e => {
-    const ts = new Date(e.timestamp * 1000).toLocaleString();
-    const inputPreview = (e.input || '').length > 120 ? e.input.slice(0, 117) + '\u2026' : (e.input || '');
-    const outputPreview = (e.output || '').length > 120 ? e.output.slice(0, 117) + '\u2026' : (e.output || '');
-    const statusCls = e.status === 'ok' ? 'completed' : (e.status === 'error' ? 'failed' : 'pending');
-    const sessionShort = (e.session || '').length > 24 ? e.session.slice(0, 22) + '\u2026' : (e.session || '');
-    const actionStyle = e.action.startsWith('turing') ? 'turing' : (e.action === 'tool_call' ? 'tool' : (e.action === 'chat' ? 'web' : (e.action === 'error' ? 'failed' : 'system')));
-    return `<tr style="cursor:pointer${e.action === 'tool_call' ? ';background:#0a0f1a' : ''}" onclick="toggleILDetail(this, ${e.id})">
-      <td class="dim" style="white-space:nowrap">${esc(ts)}</td>
-      <td>${badge(actionStyle, e.action)}</td>
-      <td class="mono" style="font-size:.72rem" title="${esc(e.session || '')}">${esc(sessionShort)}</td>
-      <td class="mono" style="font-size:.72rem">${esc(e.llm || '')}</td>
-      <td class="trunc" title="${esc(e.input || '')}">${esc(inputPreview)}</td>
-      <td class="trunc" title="${esc(e.output || '')}">${esc(outputPreview)}</td>
-      <td>${badge(statusCls, e.status)}</td>
-    </tr>`;
-  }).join('');
-  if (append) tbody.insertAdjacentHTML('beforeend', html);
-  else tbody.innerHTML = html;
+  renderILEntries(entries, false);
+}
+
+async function loadOlderInteractions() {
+  if (ilLoading || ilAllLoaded || ilMinId === null) return;
+  ilLoading = true;
+  try {
+    const entries = await _fetchIL({limit: 200, before_id: ilMinId});
+    if (!entries.length) { ilAllLoaded = true; }
+    else renderILEntries(entries, true);
+  } finally {
+    ilLoading = false;
+  }
+}
+
+async function loadNewInteractions() {
+  if (!ilMaxId) return;
+  const entries = await _fetchIL({limit: 100, after_id: ilMaxId});
+  if (entries.length) renderILEntries(entries, false, true);
+}
+
+function updateInteractionsCount(total, maxId) {
+  if (total != null) document.getElementById('cnt-interactions').textContent = total;
+  if (maxId > ilMaxId && ilMaxId > 0) loadNewInteractions();
+}
+
+function setupILObserver() {
+  ilObserver = new IntersectionObserver((entries) => {
+    if (entries[0].isIntersecting && !ilLoading && !ilAllLoaded) {
+      loadOlderInteractions();
+    }
+  }, {rootMargin: '200px'});
 }
 
 async function toggleILDetail(row, id) {
@@ -1544,11 +1281,6 @@ async function toggleILDetail(row, id) {
   row.after(detail);
 }
 
-function loadMoreInteractions() {
-  ilOffset += IL_PAGE;
-  loadInteractionLog(true);
-}
-
 // ── Config info ──
 async function loadConfig() {
   try {
@@ -1570,7 +1302,8 @@ async function loadConfig() {
 // ── Init ──
 loadConfig();
 loadTab('sessions');
-scheduleRefresh();
+connectStream();
+setupILObserver();
 </script>
 </body>
 </html>
@@ -1584,10 +1317,7 @@ scheduleRefresh();
 
 class WebInterface:
     """
-    Runs an aiohttp web server.
-    Each WebSocket connection gets its own thread_id.
-    ``broadcast`` can be called from any task to push a message to clients
-    in a specific thread.
+    Runs an aiohttp web server serving the debug panel at /debug.
 
     Optional debug dependencies (injected post-construction in main.py):
       _sub_sessions  – SubSessionManager
@@ -1640,9 +1370,6 @@ class WebInterface:
 
     async def run(self) -> None:
         app = web.Application()
-        # Chat
-        app.router.add_get("/",   self._handle_index)
-        app.router.add_get("/ws", self._handle_ws)
         # Debug panel
         app.router.add_get("/debug", self._handle_debug)
         # Debug REST API
@@ -1660,9 +1387,9 @@ class WebInterface:
         app.router.add_get("/api/debug/reminders",                      self._api_reminders)
         app.router.add_post("/api/debug/reminders",                     self._api_reminder_create)
         app.router.add_delete("/api/debug/reminders/{job_id}",          self._api_reminder_delete)
-        app.router.add_get("/api/debug/tool-calls",                     self._api_tool_calls)
         app.router.add_get("/api/debug/interaction-log",                 self._api_interaction_log)
         app.router.add_get("/api/debug/interaction-log/{id}",            self._api_interaction_log_entry)
+        app.router.add_get("/api/debug/stream",                          self._api_stream)
 
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
@@ -1680,225 +1407,6 @@ class WebInterface:
                     await ws.close()
             self._threads.clear()
             await runner.cleanup()
-
-    # ------------------------------------------------------------------
-    # Chat handlers
-    # ------------------------------------------------------------------
-
-    async def _handle_index(self, _request: web.Request) -> web.Response:
-        return web.Response(text=_CHAT_HTML, content_type="text/html")
-
-    async def _handle_ws(self, request: web.Request) -> web.WebSocketResponse:
-        ws = web.WebSocketResponse()
-        await ws.prepare(request)
-
-        thread_id = f"web_{secrets.token_hex(8)}"
-        self._threads.setdefault(thread_id, set()).add(ws)
-        logger.info("Web client connected as thread %s (%d threads total)",
-                     thread_id, len(self._threads))
-
-        init_msg = {
-            "role": "system", "text": f"Connected as thread {thread_id}",
-            "thread_id": thread_id,
-        }
-        if self._main_pool and self._main_pool.enabled:
-            init_msg["model"] = self._main_pool.primary.model
-            init_msg["context_size"] = self._main_pool.primary.context_size
-        await ws.send_str(json.dumps(init_msg))
-
-        try:
-            async for msg in ws:
-                if msg.type != web.WSMsgType.TEXT:
-                    continue
-                try:
-                    data = json.loads(msg.data)
-                    text = data.get("text", "").strip()
-                except (json.JSONDecodeError, AttributeError):
-                    continue
-                if not text:
-                    continue
-
-                reply = await self._dispatch(text, ws, thread_id)
-                if reply:
-                    msg = {"role": "assistant", "text": str(reply), "thread_id": thread_id}
-                    reasoning = getattr(reply, "reasoning", None)
-                    if reasoning:
-                        msg["reasoning"] = reasoning
-                    await ws.send_str(json.dumps(msg))
-        finally:
-            clients = self._threads.get(thread_id, set())
-            clients.discard(ws)
-            if not clients:
-                self._threads.pop(thread_id, None)
-            logger.info("Web client disconnected from thread %s", thread_id)
-
-        return ws
-
-    async def _dispatch(self, text: str, ws: web.WebSocketResponse,
-                        thread_id: str) -> Optional[str]:
-        async def system(msg: str) -> None:
-            await ws.send_str(json.dumps({
-                "role": "system", "text": msg, "thread_id": thread_id,
-            }))
-
-        if text == "/new":
-            await self._llm.reset_session(thread_id)
-            await system("Session reset.")
-            return None
-
-        if text == "/compact":
-            before = self._llm.get_token_budget(thread_id)
-            await self._llm.force_compact(thread_id)
-            after = self._llm.get_token_budget(thread_id)
-            await system(
-                f"Context compacted.\n"
-                f"Before: {before['total_used']} tokens ({before['msg_count']} msgs, {before['pct']}%)\n"
-                f"After: {after['total_used']} tokens ({after['msg_count']} msgs, {after['pct']}%)"
-            )
-            return None
-
-        if text == "/reminders":
-            result = tool_module.execute_tool("list_reminders", {})
-            return result
-
-        if text == "/pulse":
-            await system("Pulse review triggered.")
-            await self._llm.enqueue_system_event(
-                "The user manually triggered a pulse review. "
-                "Review your active pulse items using the pulse tool and report what actions, if any, you take.",
-                thread_id,
-            )
-            return None
-
-        if text == "/status":
-            await self._handle_status_command(system)
-            return None
-
-        if text == "/dream":
-            await self._handle_dream_command(system)
-            return None
-
-        if text == "/kimi-auth":
-            await self._handle_kimi_auth(system)
-            return None
-
-        if text == "/commands":
-            await system(
-                "**Available commands:**\n"
-                "- `/new` – Reset conversation history\n"
-                "- `/compact` – Compact context (summarise old messages)\n"
-                "- `/reminders` – List active reminders\n"
-                "- `/pulse` – Trigger a pulse review\n"
-                "- `/status` – Show system status\n"
-                "- `/dream` – Trigger a dream cycle\n"
-                "- `/kimi-auth` – Authenticate Kimi-Code backend\n"
-                "- `/commands` – Show this list"
-            )
-            return None
-
-        return await self._llm.enqueue_user_message(text, thread_id)
-
-    # ------------------------------------------------------------------
-    # /status and /dream command helpers
-    # ------------------------------------------------------------------
-
-    async def _handle_status_command(self, system) -> None:
-        import asyncio as _asyncio
-        lines = ["**Wintermute Status**\n"]
-
-        # Asyncio tasks
-        tasks = sorted(_asyncio.all_tasks(), key=lambda t: t.get_name())
-        running_names = [t.get_name() for t in tasks if not t.done()]
-        lines.append(f"**Core tasks:** {', '.join(running_names)}\n")
-
-        # Sub-sessions
-        if self._sub_sessions:
-            active = self._sub_sessions.list_active()
-            if active:
-                lines.append(f"**Active sub-sessions ({len(active)}):**")
-                for s in active:
-                    lines.append(f"- `{s['session_id']}` [{s['status']}] {s['objective'][:80]}")
-            else:
-                lines.append("**Sub-sessions:** none active")
-            workflows = self._sub_sessions.list_workflows()
-            running_wfs = [w for w in workflows if w["status"] == "running"]
-            if running_wfs:
-                lines.append(f"\n**Active workflows ({len(running_wfs)}):**")
-                for w in running_wfs:
-                    nodes_summary = ", ".join(
-                        f"{n['node_id']}[{n['status']}]" for n in w["nodes"]
-                    )
-                    lines.append(f"- `{w['workflow_id']}`: {nodes_summary}")
-        else:
-            lines.append("**Sub-sessions:** not available")
-
-        # Pulse loop
-        if hasattr(self, "_pulse_loop") and self._pulse_loop:
-            state = "running" if self._pulse_loop._running else "stopped"
-            lines.append(f"\n**Pulse loop:** {state} (interval: {self._pulse_loop._interval // 60}m)")
-
-        # Dreaming loop
-        if hasattr(self, "_dreaming_loop") and self._dreaming_loop:
-            state = "running" if self._dreaming_loop._running else "stopped"
-            lines.append(f"**Dreaming loop:** {state} (target: {self._dreaming_loop._cfg.hour:02d}:{self._dreaming_loop._cfg.minute:02d} UTC, model: {self._dreaming_loop._pool.primary.model})")
-
-        # Scheduler
-        if hasattr(self, "_scheduler") and self._scheduler:
-            reminders = self._scheduler.list_reminders()
-            lines.append(f"**Reminders:** {len(reminders.get('active', []))} active")
-
-        await system("\n".join(lines))
-
-    async def _handle_dream_command(self, system) -> None:
-        from wintermute import dreaming, prompt_assembler
-
-        if not hasattr(self, "_dreaming_loop") or not self._dreaming_loop:
-            await system("Dreaming loop not available.")
-            return
-
-        dl = self._dreaming_loop
-        from wintermute import database as db
-        mem_before = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
-        pulse_before = len(db.list_pulse_items("active"))
-        skills_before = sorted(prompt_assembler.SKILLS_DIR.glob("*.md")) if prompt_assembler.SKILLS_DIR.exists() else []
-        skills_size_before = sum(f.stat().st_size for f in skills_before)
-
-        await system("Starting dream cycle...")
-        try:
-            await dreaming.run_dream_cycle(pool=dl._pool)
-        except Exception as exc:
-            await system(f"Dream cycle failed: {exc}")
-            return
-
-        mem_after = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
-        pulse_after = len(db.list_pulse_items("active"))
-        skills_after = sorted(prompt_assembler.SKILLS_DIR.glob("*.md")) if prompt_assembler.SKILLS_DIR.exists() else []
-        skills_size_after = sum(f.stat().st_size for f in skills_after)
-
-        await system(
-            f"Dream cycle complete.\n"
-            f"MEMORIES.txt: {mem_before} -> {mem_after} chars\n"
-            f"Pulse items: {pulse_before} -> {pulse_after} active\n"
-            f"Skills: {len(skills_before)} -> {len(skills_after)} files, "
-            f"{skills_size_before} -> {skills_size_after} bytes"
-        )
-
-    async def _handle_kimi_auth(self, system) -> None:
-        kimi_client = getattr(self, "_kimi_client", None)
-        if kimi_client is None:
-            await system(
-                "No kimi-code backend configured. Add a `provider: kimi-code` "
-                "entry to inference_backends in config.yaml."
-            )
-            return
-
-        from wintermute import kimi_auth
-
-        try:
-            creds = await kimi_auth.run_device_flow(system)
-            kimi_client.update_credentials(creds)
-        except Exception as exc:
-            await system(f"Kimi-Code authentication failed: {exc}")
 
     # ------------------------------------------------------------------
     # Debug panel handler
@@ -2153,12 +1661,6 @@ class WebInterface:
         ok = self._scheduler.delete_reminder(job_id)
         return self._json({"ok": ok, "job_id": job_id})
 
-    # ------------------------------------------------------------------
-    # Debug REST API — tool calls
-    # ------------------------------------------------------------------
-
-    async def _api_tool_calls(self, _request: web.Request) -> web.Response:
-        return self._json({"calls": tool_module.get_tool_call_log()})
 
     # ------------------------------------------------------------------
     # Interaction Log
@@ -2169,8 +1671,14 @@ class WebInterface:
         limit = int(request.query.get("limit", "200"))
         offset = int(request.query.get("offset", "0"))
         session = request.query.get("session") or None
+        before_id_s = request.query.get("before_id")
+        after_id_s = request.query.get("after_id")
+        before_id = int(before_id_s) if before_id_s else None
+        after_id = int(after_id_s) if after_id_s else None
         entries = database.get_interaction_log(limit=limit, offset=offset,
-                                               session_filter=session)
+                                               session_filter=session,
+                                               before_id=before_id,
+                                               after_id=after_id)
         total = database.count_interaction_log(session_filter=session)
         return self._json({"entries": entries, "total": total})
 
@@ -2181,3 +1689,91 @@ class WebInterface:
         if not entry:
             return web.json_response({"error": "not found"}, status=404)
         return self._json(entry)
+
+    # ------------------------------------------------------------------
+    # SSE stream
+    # ------------------------------------------------------------------
+
+    async def _build_stream_snapshot(self) -> dict:
+        from wintermute import database
+
+        # Sessions
+        db_threads = set(database.get_active_thread_ids())
+        web_live = set(self._threads.keys())
+        matrix_rooms: set[str] = set()
+        if self._matrix is not None:
+            try:
+                matrix_rooms = self._matrix.joined_room_ids
+            except Exception:  # noqa: BLE001
+                pass
+        all_ids = db_threads | web_live | matrix_rooms
+        sessions = []
+        for tid in sorted(all_ids):
+            budget = self._token_budget(tid)
+            ttype = (
+                "web" if tid.startswith("web_")
+                else "matrix" if (tid.startswith("!") and ":" in tid)
+                else "system"
+            )
+            sessions.append({
+                "id": tid,
+                "type": ttype,
+                "live": tid in web_live or tid in matrix_rooms,
+                "msg_count": budget["msg_count"],
+                "sp_tokens": budget["sp_tokens"],
+                "tools_tokens": budget["tools_tokens"],
+                "hist_tokens": budget["hist_tokens"],
+                "total_used": budget["total_used"],
+                "total_limit": budget["total_limit"],
+                "context_pct": budget["pct"],
+            })
+
+        # Sub-sessions and workflows
+        subsessions = self._sub_sessions.list_all() if self._sub_sessions else []
+        workflows = self._sub_sessions.list_workflows() if self._sub_sessions else []
+
+        # Scheduled jobs
+        jobs = self._scheduler.list_jobs() if self._scheduler else []
+
+        # Reminders
+        raw = tool_module.execute_tool("list_reminders", {})
+        try:
+            reminders = json.loads(raw)
+        except json.JSONDecodeError:
+            reminders = {"active": [], "completed": [], "failed": []}
+
+        # Interaction log counts
+        interactions_total = database.count_interaction_log()
+        interactions_max_id = database.get_interaction_log_max_id()
+
+        return {
+            "sessions": sessions,
+            "subsessions": subsessions,
+            "workflows": workflows,
+            "jobs": jobs,
+            "reminders": reminders,
+            "interactions_total": interactions_total,
+            "interactions_max_id": interactions_max_id,
+        }
+
+    async def _api_stream(self, request: web.Request) -> web.StreamResponse:
+        response = web.StreamResponse()
+        response.headers.update({
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        })
+        await response.prepare(request)
+        try:
+            while True:
+                try:
+                    payload = await self._build_stream_snapshot()
+                    await response.write(
+                        ("data: " + json.dumps(payload) + "\n\n").encode()
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("SSE snapshot error: %s", exc)
+                await asyncio.sleep(3)
+        except (ConnectionResetError, asyncio.CancelledError):
+            pass
+        return response

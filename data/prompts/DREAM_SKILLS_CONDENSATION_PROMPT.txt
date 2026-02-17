@@ -1,4 +1,4 @@
-Below is a skill file for a personal AI assistant. Condense it to at most 200 tokens while preserving all critical procedural information.
+Below is a skill file for a personal AI assistant. Condense it to at most 50 tokens while preserving all critical procedural information.
 
 Rules:
 - Keep exact commands, file paths, API endpoints, and parameter names.
