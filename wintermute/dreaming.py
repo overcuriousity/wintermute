@@ -19,68 +19,18 @@ from typing import TYPE_CHECKING
 
 from wintermute import database
 from wintermute import prompt_assembler
+from wintermute import prompt_loader
 
 if TYPE_CHECKING:
     from wintermute.llm_thread import BackendPool
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path("data")
-DREAM_MEMORIES_PROMPT_FILE = DATA_DIR / "DREAM_MEMORIES_PROMPT.txt"
-DREAM_PULSE_PROMPT_FILE    = DATA_DIR / "DREAM_PULSE_PROMPT.txt"
-
 
 @dataclass
 class DreamingConfig:
     hour: int = 1
     minute: int = 0
-
-_DEFAULT_MEMORIES_PROMPT = """\
-Below is the current content of MEMORIES.txt — the long-term memory store for \
-a personal AI assistant. Memories are appended throughout the day and may \
-contain duplicates or near-duplicates.
-
-Your task is to consolidate it:
-- Merge duplicate and near-duplicate entries into single concise statements.
-- Remove entries that are clearly outdated or contradicted by newer entries.
-- Preserve all distinct, useful facts exactly.
-- Keep the result as short as possible without losing information.
-- Maintain a flat, scannable structure (one fact per line or short paragraph).
-
-Return ONLY the consolidated MEMORIES.txt content, with no preamble or \
-explanation.
-
---- MEMORIES.txt ---
-{content}
-"""
-
-_DEFAULT_PULSE_PROMPT = """\
-Below are the active pulse items (working memory) for a personal AI assistant.
-
-Review each item and return a JSON array of actions to take. Valid actions:
-- {{"action": "keep", "id": <id>}} — item is still relevant, no change
-- {{"action": "complete", "id": <id>}} — item is done or clearly stale
-- {{"action": "update", "id": <id>, "content": "new text"}} — reword/merge
-- {{"action": "update", "id": <id>, "priority": <1-10>}} — adjust priority
-
-Return ONLY the JSON array, no preamble or explanation.
-
---- Active Pulse Items ---
-{content}
-"""
-
-
-def _load_prompt(path: Path, default: str) -> str:
-    """Load a prompt template from a file, falling back to the built-in default."""
-    try:
-        text = path.read_text(encoding="utf-8").strip()
-        if text:
-            return text
-    except FileNotFoundError:
-        pass
-    except OSError as exc:
-        logger.error("Cannot read %s: %s", path, exc)
-    return default
 
 
 async def _consolidate(pool: "BackendPool",
@@ -118,7 +68,7 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
     memories = prompt_assembler._read(prompt_assembler.MEMORIES_FILE)
     if memories:
         try:
-            mem_prompt = _load_prompt(DREAM_MEMORIES_PROMPT_FILE, _DEFAULT_MEMORIES_PROMPT)
+            mem_prompt = prompt_loader.load("DREAM_MEMORIES_PROMPT.txt")
             consolidated = await _consolidate(
                 pool, "MEMORIES.txt", mem_prompt, memories,
             )
@@ -133,7 +83,7 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
     pulse_items = database.list_pulse_items("active")
     if pulse_items:
         try:
-            pulse_prompt = _load_prompt(DREAM_PULSE_PROMPT_FILE, _DEFAULT_PULSE_PROMPT)
+            pulse_prompt = prompt_loader.load("DREAM_PULSE_PROMPT.txt")
             formatted = "\n".join(
                 f"[P{it['priority']}] #{it['id']}: {it['content']}"
                 for it in pulse_items

@@ -230,41 +230,11 @@ def _load_hooks(enabled_validators: Optional[dict[str, bool]] = None) -> list[Tu
 # Stage 1: Detection — Universal LLM call
 # ------------------------------------------------------------------
 
-_STAGE1_PREAMBLE = """\
-You are a post-inference validation agent.  You receive a snapshot of one
-exchange between a user and an AI assistant, together with ground-truth
-metadata about what actually happened during that exchange.
-
-Your task: check for ALL of the following violation types in the assistant's
-response.  For each type, a bullet describes the detection rule.
-
-Violation types to check:
-{detection_bullets}
-
-You receive a JSON object with:
-  - tool_calls_made:     list of tool function names actually invoked
-  - user_message:        the user's message
-  - assistant_response:  the assistant's reply
-  - active_sessions:     currently running/pending background sessions
-
-Respond with EXACTLY one JSON object (no markdown, no explanation).
-Do NOT use any internal thinking or reasoning — reply directly.
-
-{{
-  "violations": [
-    {{"type": "<hook_name>", "reason": "quoted phrase or brief explanation"}},
-    ...
-  ]
-}}
-
-If no violations are found, return: {{"violations": []}}
-"""
-
-
 def _build_stage1_system_prompt(hooks: list[TuringHook]) -> str:
     """Assemble the Stage 1 system prompt from all enabled hooks' detection_prompt fields."""
+    from wintermute import prompt_loader
     bullets = "\n".join(h.detection_prompt for h in hooks)
-    return _STAGE1_PREAMBLE.format(detection_bullets=bullets)
+    return prompt_loader.load("TURING_STAGE1.txt", detection_bullets=bullets)
 
 
 # ------------------------------------------------------------------

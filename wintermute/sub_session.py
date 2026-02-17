@@ -68,6 +68,7 @@ from typing import Callable, Coroutine, Optional
 
 from wintermute import database
 from wintermute import prompt_assembler
+from wintermute import prompt_loader
 from wintermute import tools as tool_module
 from wintermute.llm_thread import BackendPool
 
@@ -1018,10 +1019,9 @@ class SubSessionManager:
             # is already in state.messages; just append a resumption note.
             state.messages.append({
                 "role":    "user",
-                "content": (
-                    f"You were interrupted by a timeout "
-                    f"(this is continuation {state.continuation_depth}). "
-                    "Continue the task from exactly where you left off."
+                "content": prompt_loader.load(
+                    "WORKER_CONTINUATION.txt",
+                    continuation_depth=state.continuation_depth,
                 ),
             })
         else:
@@ -1116,15 +1116,11 @@ class SubSessionManager:
         if mode == "none":
             base = ""
         elif mode == "minimal":
-            base = (
-                "You are a background worker executing a specific task. "
-                "Use the available tools to complete the objective. "
-                "Be concise and report only what was done and any important results."
-            )
+            base = prompt_loader.load("WORKER_MINIMAL.txt")
         elif mode == "full":
             base = prompt_assembler.assemble()
         else:  # "base_only"
-            raw = prompt_assembler._read(prompt_assembler.BASE_PROMPT_FILE)
+            raw = prompt_loader.load("BASE_PROMPT.txt")
             base = f"# Core Instructions\n\n{raw}" if raw else ""
 
         parts = [base] if base else []
@@ -1133,11 +1129,6 @@ class SubSessionManager:
             blobs_text = "\n\n".join(context_blobs)
             parts.append(f"# Task Context\n\n{blobs_text}")
 
-        parts.append(
-            f"# Current Objective\n\n{objective}\n\n"
-            "Work autonomously using the available tools. "
-            "When you have completed the objective, provide a concise summary of "
-            "what was done and any important results or file paths."
-        )
+        parts.append(prompt_loader.load("WORKER_OBJECTIVE.txt", objective=objective))
 
         return "\n\n---\n\n".join(parts)

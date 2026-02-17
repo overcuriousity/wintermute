@@ -16,11 +16,11 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from wintermute import database
+from wintermute import prompt_loader
 
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data")
-BASE_PROMPT_FILE  = DATA_DIR / "BASE_PROMPT.txt"
 MEMORIES_FILE     = DATA_DIR / "MEMORIES.txt"
 SKILLS_DIR        = DATA_DIR / "skills"
 
@@ -70,10 +70,7 @@ def assemble(extra_summary: Optional[str] = None) -> str:
     """
     sections: list[str] = []
 
-    base = _read(BASE_PROMPT_FILE)
-    if not base:
-        logger.warning("BASE_PROMPT.txt is empty or missing – using fallback")
-        base = "You are a helpful personal AI assistant."
+    base = prompt_loader.load("BASE_PROMPT.txt")
     sections.append(f"# Core Instructions\n\n{base}")
 
     # Inject current local datetime so the LLM has accurate time awareness.

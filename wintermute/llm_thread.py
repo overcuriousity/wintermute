@@ -22,10 +22,9 @@ import time as _time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from pathlib import Path
-
 from wintermute import database
 from wintermute import prompt_assembler
+from wintermute import prompt_loader
 from wintermute import turing_protocol as turing_protocol_module
 from wintermute import tools as tool_module
 
@@ -41,38 +40,6 @@ logger = logging.getLogger(__name__)
 # Keep the last N messages untouched during compaction.
 COMPACTION_KEEP_RECENT = 10
 
-COMPACTION_PROMPT_FILE = Path("data") / "COMPACTION_PROMPT.txt"
-
-_DEFAULT_COMPACTION_PROMPT = (
-    "Summarise the following into a single structured reference document. "
-    "This summary will be injected into a system prompt, so optimise for quick "
-    "scanning by an AI assistant.\n\n"
-    "The input may contain a [PRIOR SUMMARY] section (from an earlier compaction) "
-    "followed by [NEW MESSAGES]. Merge both into one cohesive summary — do not "
-    "keep them separate. When new information supersedes prior summary content, "
-    "keep only the latest state.\n\n"
-    "Preserve: decisions made and their reasoning, facts learned about the user, "
-    "task outcomes and current status of ongoing work, file paths, URLs, "
-    "credentials references, and technical details mentioned, any commitments "
-    "or promises made to the user.\n\n"
-    "Omit: greetings, pleasantries, filler, superseded information (only keep "
-    "the latest state), tool call details unless the outcome matters.\n\n"
-    "Format as a concise bulleted list grouped by topic. Do not add commentary.\n\n"
-    "--- conversation history ---\n"
-)
-
-
-def _load_compaction_prompt() -> str:
-    """Load the compaction prompt from a file, falling back to the built-in default."""
-    try:
-        text = COMPACTION_PROMPT_FILE.read_text(encoding="utf-8").strip()
-        if text:
-            return text
-    except FileNotFoundError:
-        pass
-    except OSError as exc:
-        logger.error("Cannot read %s: %s", COMPACTION_PROMPT_FILE, exc)
-    return _DEFAULT_COMPACTION_PROMPT
 
 
 def _count_tokens(text: str, model: str) -> int:
@@ -711,11 +678,7 @@ class LLMThread:
         ))
         history_text = "\n\n".join(parts)
 
-        compaction_prompt = _load_compaction_prompt()
-        if "{history}" in compaction_prompt:
-            summary_prompt = compaction_prompt.format(history=history_text)
-        else:
-            summary_prompt = compaction_prompt + history_text
+        summary_prompt = prompt_loader.load("COMPACTION_PROMPT.txt", history=history_text)
 
         summary_response = await self._compaction_pool.call(
             messages=[{"role": "user", "content": summary_prompt}],
@@ -760,11 +723,7 @@ class LLMThread:
             if not oversized:
                 continue
             logger.info("Component '%s' oversized – requesting AI summarisation", component)
-            prompt = (
-                f"The {component} section of your memory has grown large. "
-                f"Read its current content via read_file, condense and prioritise it, "
-                f"then update it using the appropriate tool."
-            )
+            prompt = prompt_loader.load("COMPONENT_OVERSIZE.txt", component=component)
             try:
                 await self.enqueue_system_event(prompt, thread_id)
                 await self._broadcast(

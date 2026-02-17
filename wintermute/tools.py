@@ -95,10 +95,11 @@ TOOL_SCHEMAS = [
                     "enum": ["minimal", "full", "base_only", "none"],
                     "description": (
                         "Worker context level. "
-                        "'minimal' (default) — execution agent. "
-                        "'full' — includes memories, pulse, skills. "
-                        "'base_only' — core instructions only. "
-                        "'none' — bare tool loop."
+                        "'minimal' (default) — lightweight execution agent, no memories/skills. "
+                        "'full' — complete context: base prompt + memories + pulse + skills. "
+                        "Use when worker needs user preferences or learned procedures. "
+                        "'base_only' — core instructions only, no memories/pulse/skills. "
+                        "'none' — bare tool loop, no system prompt."
                     ),
                 },
                 "timeout": {

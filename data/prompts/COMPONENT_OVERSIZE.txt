@@ -1,0 +1,1 @@
+The {component} section of your memory has grown large. Read its current content via read_file, condense and prioritise it, then update it using the appropriate tool.

@@ -30,6 +30,7 @@ import yaml
 
 from wintermute import database
 from wintermute import prompt_assembler
+from wintermute import prompt_loader
 from wintermute import tools as tool_module
 from wintermute.pulse import PulseLoop
 from openai import AsyncOpenAI
@@ -101,9 +102,8 @@ DATA_DIR = Path("data")
 def bootstrap_data_files() -> None:
     """Ensure required data directories exist.
 
-    All prompt files (BASE_PROMPT.txt, MEMORIES.txt,
-    DREAM_*_PROMPT.txt, COMPACTION_PROMPT.txt) are shipped in data/ and
-    managed as editable configuration — they are NOT auto-generated.
+    Prompt files live in data/prompts/ and are validated separately
+    by prompt_loader.validate_all().
     """
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     (DATA_DIR / "skills").mkdir(exist_ok=True)
@@ -267,6 +267,7 @@ async def main() -> None:
     logger.info("Wintermute starting up")
 
     bootstrap_data_files()
+    prompt_loader.validate_all()
     database.init_db()
 
     # Set timezone for prompt assembler (used to inject current datetime).
