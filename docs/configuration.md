@@ -260,13 +260,26 @@ Set `reasoning: true` for models that support thinking (e.g. `kimi-k2.5`) to ena
 
 ### `turing_protocol`
 
-Three-stage post-inference validation pipeline that detects, validates, and
-corrects violations in assistant responses.  Fires after each inference round.
+Phase-aware three-stage validation pipeline (detect → validate → correct)
+that catches and corrects violations in assistant responses. Each hook fires
+at most once per turn — a single, concise correction is issued with no
+escalation or re-checking.
+
+Hooks operate at three **phases** of the inference cycle:
+
+| Phase | When it fires |
+|-------|---------------|
+| `post_inference` | After the LLM produces a response, before delivery |
+| `pre_execution` | After the LLM requests a tool call, before `execute_tool()` runs |
+| `post_execution` | After `execute_tool()` returns, before the result enters history |
+
+Hooks are **scoped** to run in `main` (user-facing thread), `sub_session`
+(background workers), or both.
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
 | `backends` | no | first backend | Ordered list of backend names for the protocol's own LLM calls |
-| `validators` | no | all enabled | Per-hook enable/disable overrides (`hook_name: true/false`) |
+| `validators` | no | all enabled | Per-hook enable/disable overrides (see below) |
 
 **Disabling:** Set `backends: []` to disable entirely, or set individual
 validators to `false` to suppress specific checks.
@@ -277,11 +290,26 @@ enabled.
 
 Currently available validators:
 
-| Validator | Description |
-|-----------|-------------|
-| `workflow_spawn` | Detects when the model claims to have spawned a session without calling `spawn_sub_session` |
-| `phantom_tool_result` | Detects when the model presents fabricated tool output (past tense — "I checked and found…") without having called the tool |
-| `empty_promise` | Detects when the model commits to an action ("I'll do X", "Let me check") as a final response without calling any tool |
+| Validator | Phase | Scope | Description |
+|-----------|-------|-------|-------------|
+| `workflow_spawn` | post_inference | main | Detects when the model claims to have spawned a session without calling `spawn_sub_session` |
+| `phantom_tool_result` | post_inference | main | Detects when the model presents fabricated tool output ("I checked and found…") without having called the tool |
+| `empty_promise` | post_inference | main | Detects when the model commits to an action ("I'll do X") as a final response without calling any tool. Excludes responses that end with a question (seeking confirmation) |
+| `objective_completion` | post_inference | sub_session | Gates sub-session exit: uses a dedicated LLM call to evaluate whether the worker's response genuinely satisfies its objective before allowing it to finish |
+
+**Validator overrides** support simple booleans or granular dicts:
+
+```yaml
+turing_protocol:
+  backends: ["local_small"]
+  validators:
+    workflow_spawn: true
+    phantom_tool_result: true
+    empty_promise: true
+    objective_completion:
+      enabled: true
+      scope: "sub_session"          # "main", "sub_session", or both
+```
 
 ### `matrix`
 

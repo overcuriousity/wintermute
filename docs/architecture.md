@@ -81,10 +81,13 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 7. If the model returns tool calls, they are executed and inference continues
 8. Final response is saved to the DB and broadcast back to the user
 9. Turing Protocol fires asynchronously (if enabled): runs a three-stage
-   pipeline (detect, validate, correct) against the response. If violations
-   are confirmed (e.g. the model claimed to spawn a session but
-   `spawn_sub_session` is not in `tool_calls_made`), a corrective system
-   event is injected so the model can self-correct
+   pipeline (detect → validate → correct) against the response, scoped by
+   phase (`post_inference`, `pre_execution`, `post_execution`) and context
+   (`main` thread or `sub_session`). If violations are confirmed (e.g. the
+   model claimed to spawn a session but `spawn_sub_session` is not in
+   `tool_calls_made`), a single corrective system event is injected so the
+   model can self-correct. Each hook fires at most once per turn — there is
+   no escalation or re-checking of the correction response
 
 ## Sub-session Lifecycle
 

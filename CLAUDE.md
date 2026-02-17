@@ -63,6 +63,6 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 
 - System prompt is reassembled fresh every turn via `PromptAssembler`
 - Sub-sessions use a DAG with event-driven dependency resolution (`_resolve_dependents()`)
-- Turing Protocol hooks have `phase` (post_inference/pre_execution/post_execution) and `scope` (main/sub_session) fields. Main thread uses async correction injection; sub-sessions use synchronous inline injection. `objective_completion` hook gates sub-session exit with LLM-based evaluation. Max 2 re-checks per main-thread turn; max 3 TP retries per sub-session exit.
+- Turing Protocol hooks have `phase` (post_inference/pre_execution/post_execution) and `scope` (main/sub_session) fields. Main thread uses async correction injection; sub-sessions use synchronous inline injection. `objective_completion` hook gates sub-session exit with LLM-based evaluation. Each hook fires at most once per turn (single-shot, no escalation). Stage 2 programmatic validators catch false positives (e.g. responses ending with `?` are not empty promises).
 - Database migrations are applied inline at startup via `ALTER TABLE ... ADD COLUMN`
 - Slash commands (`/new`, `/compact`, `/pulse`, `/status`, `/dream`, etc.) are handled at the interface layer before reaching the LLM
