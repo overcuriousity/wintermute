@@ -29,7 +29,7 @@ User (Matrix / Browser)
         |
         |-- tool calls --> execute_shell / read_file / write_file
         |                  search_web / fetch_url
-        |                  append_memory / update_memories / pulse / add_skill
+        |                  append_memory / pulse / add_skill
         |                  set_reminder / list_reminders
         |
         +-- spawn_sub_session --> SubSessionManager
@@ -120,7 +120,7 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 ```
 data/
   BASE_PROMPT.txt            -- Immutable core instructions
-  MEMORIES.txt               -- Long-term user facts (updated via append_memory / update_memories)
+  MEMORIES.txt               -- Long-term user facts (updated via append_memory)
   conversation.db (pulse)    -- Active goals / working memory (managed via pulse tool, stored in SQLite)
   skills/                    -- Learned procedures as *.md files (updated via add_skill tool)
   DREAM_MEMORIES_PROMPT.txt  -- Customisable dreaming prompt for MEMORIES consolidation

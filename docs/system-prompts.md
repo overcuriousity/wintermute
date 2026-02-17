@@ -22,7 +22,7 @@ Content covers:
 
 ### 2. MEMORIES.txt — Long-Term Facts
 
-Stores persistent facts about the user — preferences, biographical details, established decisions. Updated day-to-day via `append_memory` (preferred) or restructured via `update_memories` (full rewrite). Consolidated nightly by the dreaming loop to merge duplicates and prune outdated entries.
+Stores persistent facts about the user — preferences, biographical details, established decisions. Updated day-to-day via `append_memory` (preferred). Consolidated nightly by the dreaming loop to merge duplicates and prune outdated entries.
 
 Key rule: if information would still matter in a month with no active project around it, it belongs in MEMORIES.
 

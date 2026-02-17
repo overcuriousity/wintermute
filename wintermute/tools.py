@@ -70,67 +70,46 @@ TOOL_SCHEMAS = [
         "spawn_sub_session",
         (
             "Spawn an autonomous background worker. Returns a session_id immediately; "
-            "the result arrives later as a [SYSTEM EVENT]."
+            "result arrives as a [SYSTEM EVENT]."
         ),
         {
             "type": "object",
             "properties": {
                 "objective": {
                     "type": "string",
-                    "description": (
-                        "Full task description. Be specific — the worker has "
-                        "no access to the current conversation."
-                    ),
+                    "description": "Task description. Worker has no conversation access — be specific.",
                 },
                 "context_blobs": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": (
-                        "Manual context snippets for the worker. Not needed when "
-                        "using depends_on (dependency results are passed automatically)."
-                    ),
+                    "description": "Context snippets for the worker. Unneeded when using depends_on.",
                 },
                 "system_prompt_mode": {
                     "type": "string",
                     "enum": ["minimal", "full", "base_only", "none"],
                     "description": (
-                        "Worker context level. "
-                        "'minimal' (default) — lightweight execution agent, no memories/skills. "
-                        "'full' — complete context: base prompt + memories + pulse + skills. "
-                        "Use when worker needs user preferences or learned procedures. "
-                        "'base_only' — core instructions only, no memories/pulse/skills. "
-                        "'none' — bare tool loop, no system prompt."
+                        "'minimal' (default): lightweight agent, no memories/skills. "
+                        "'full': complete context (memories + pulse + skills). "
+                        "'base_only': core instructions only. "
+                        "'none': no system prompt."
                     ),
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Max seconds before timeout. Default 300.",
+                    "description": "Max seconds before timeout (default: 300).",
                 },
                 "depends_on": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": (
-                        "Session IDs that must complete first. Their results are "
-                        "auto-passed as context to this worker. "
-                        "Prefer depends_on_previous over manually listing IDs."
-                    ),
+                    "description": "Session IDs to wait for; results auto-passed as context. Prefer depends_on_previous.",
                 },
                 "depends_on_previous": {
                     "type": "boolean",
-                    "description": (
-                        "If true, automatically depend on ALL sessions you have "
-                        "spawned so far in this worker context. Their results are "
-                        "auto-passed as context. Use this instead of manually "
-                        "listing session IDs in depends_on to avoid errors."
-                    ),
+                    "description": "Depend on all sessions spawned in this context; avoids manually tracking IDs.",
                 },
                 "not_before": {
                     "type": "string",
-                    "description": (
-                        "Earliest datetime to start this task (ISO-8601). "
-                        "Task waits even if dependencies are satisfied. "
-                        "Use for time-gated workflows, e.g. 'upload after 20:00'."
-                    ),
+                    "description": "Earliest start time (ISO-8601). Waits even if deps are satisfied.",
                 },
             },
             "required": ["objective"],
@@ -139,10 +118,8 @@ TOOL_SCHEMAS = [
     _fn(
         "set_reminder",
         (
-            "Schedule a one-time or recurring reminder. Use ai_prompt to make "
-            "the reminder autonomous — when it fires, an AI inference with full "
-            "tool access executes the prompt and delivers results to chat. "
-            "Without ai_prompt, only a passive text notification is sent."
+            "Schedule a one-time or recurring reminder. With ai_prompt, an autonomous AI "
+            "inference runs when it fires; without, only a text notification is sent."
         ),
         {
             "type": "object",
@@ -154,64 +131,51 @@ TOOL_SCHEMAS = [
                 "ai_prompt": {
                     "type": "string",
                     "description": (
-                        "If set, an autonomous AI inference with full tool access "
-                        "(search_web, fetch_url, etc.) runs this prompt when the "
-                        "reminder fires. For thread-bound reminders the result is "
-                        "delivered to chat automatically. ALWAYS set this when the "
-                        "user wants something DONE at a scheduled time (research, "
-                        "monitoring, analysis) — without it, only a passive text "
-                        "notification is sent. Write the prompt as a complete task "
-                        "instruction, e.g. 'Search for today's AI news using "
-                        "search_web, fetch the top 3 articles with fetch_url, and "
-                        "compile a concise summary.'"
+                        "AI prompt to run when the reminder fires (full tool access). "
+                        "Set whenever the user wants an action performed, not just a notification. "
+                        "Write as a complete task instruction."
                     ),
                 },
                 "schedule_type": {
                     "type": "string",
                     "enum": ["once", "daily", "weekly", "monthly", "interval"],
                     "description": (
-                        "'once' — fire at a specific time. "
-                        "'daily' — every day at a fixed time. "
-                        "'weekly' — requires day_of_week. "
-                        "'monthly' — requires day_of_month. "
-                        "'interval' — every N seconds (requires interval_seconds)."
+                        "once: specific time. daily: fixed time each day. "
+                        "weekly: needs day_of_week. monthly: needs day_of_month. "
+                        "interval: every N seconds, needs interval_seconds."
                     ),
                 },
                 "at": {
                     "type": "string",
-                    "description": (
-                        "Required for all types except 'interval'. "
-                        "For 'once': ISO-8601 or natural language ('in 2 hours', 'tomorrow 09:00'). "
-                        "For recurring types: HH:MM (24h)."
-                    ),
+                    "description": "Required except for interval. For once: ISO-8601 or natural language. For recurring: HH:MM.",
                 },
                 "day_of_week": {
                     "type": "string",
                     "enum": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
-                    "description": "Required for 'weekly'.",
+                    "description": "Required for weekly.",
                 },
                 "day_of_month": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 31,
-                    "description": "Required for 'monthly'.",
+                    "description": "Required for monthly.",
                 },
                 "interval_seconds": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Required for 'interval'. Seconds between firings.",
+                    "description": "Required for interval. Seconds between firings.",
                 },
                 "window_start": {
                     "type": "string",
-                    "description": "For 'interval': earliest fire time, HH:MM (24h).",
+                    "description": "For interval: earliest fire time, HH:MM.",
                 },
                 "window_end": {
                     "type": "string",
-                    "description": "For 'interval': latest fire time, HH:MM (24h).",
+                    "description": "For interval: latest fire time, HH:MM.",
                 },
                 "system": {
                     "type": "boolean",
-                    "description": "If true, fires as a system event without chat delivery.",
+                    "description": "Fire as a system event with no chat delivery.",
                 },
             },
             "required": ["message", "schedule_type"],
@@ -219,50 +183,28 @@ TOOL_SCHEMAS = [
     ),
     _fn(
         "append_memory",
-        (
-            "Append a new fact to MEMORIES.txt. Use this for day-to-day memory "
-            "storage. Each call adds one entry — no need to reproduce existing content. "
-            "Nightly consolidation handles deduplication and pruning automatically."
-        ),
+        "Append a fact to MEMORIES.txt. One entry per call; nightly consolidation handles deduplication.",
         {
             "type": "object",
             "properties": {
                 "entry": {
                     "type": "string",
-                    "description": "The fact or note to append (one logical entry).",
+                    "description": "Fact or note to append.",
                 }
             },
             "required": ["entry"],
         },
     ),
     _fn(
-        "update_memories",
-        (
-            "Overwrite MEMORIES.txt with new content. Use ONLY for restructuring "
-            "or removing specific entries. For adding new facts, use append_memory instead. "
-            "Pass the *full* desired content."
-        ),
-        {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string",
-                    "description": "Full replacement text for MEMORIES.txt.",
-                }
-            },
-            "required": ["content"],
-        },
-    ),
-    _fn(
         "pulse",
-        "Manage active pulse items (working memory for ongoing tasks).",
+        "Manage pulse items (working memory for ongoing tasks).",
         {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
                     "enum": ["add", "complete", "list", "update"],
-                    "description": "add: create new item. complete: mark done. list: show items. update: modify existing.",
+                    "description": "add: create item. complete: mark done. list: show items. update: modify existing.",
                 },
                 "content": {"type": "string", "description": "Item text (for add/update)."},
                 "item_id": {"type": "integer", "description": "Item ID (for complete/update)."},
@@ -270,7 +212,7 @@ TOOL_SCHEMAS = [
                 "status": {
                     "type": "string",
                     "enum": ["active", "completed", "all"],
-                    "description": "Filter for list action, default 'active'.",
+                    "description": "Filter for list action (default: active).",
                 },
             },
             "required": ["action"],
@@ -278,16 +220,13 @@ TOOL_SCHEMAS = [
     ),
     _fn(
         "add_skill",
-        (
-            "Create or overwrite a skill documentation file in data/skills/. "
-            "Skills are loaded into every system prompt automatically."
-        ),
+        "Create or overwrite a skill in data/skills/. Skills are auto-loaded into every system prompt.",
         {
             "type": "object",
             "properties": {
                 "skill_name": {
                     "type": "string",
-                    "description": "Filename stem (no extension), e.g. 'calendar'.",
+                    "description": "Filename stem without extension (e.g. 'calendar').",
                 },
                 "documentation": {
                     "type": "string",
@@ -299,21 +238,17 @@ TOOL_SCHEMAS = [
     ),
     _fn(
         "execute_shell",
-        (
-            "Run a shell command. Returns stdout, stderr, and exit code. "
-            "Use for system operations, package management, and tasks "
-            "not covered by read_file/write_file."
-        ),
+        "Run a shell command. Returns stdout, stderr, and exit_code.",
         {
             "type": "object",
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "Shell command to execute.",
+                    "description": "Command to execute.",
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Timeout in seconds. Defaults to 30.",
+                    "description": "Timeout in seconds (default: 30).",
                 },
             },
             "required": ["command"],
@@ -321,7 +256,7 @@ TOOL_SCHEMAS = [
     ),
     _fn(
         "read_file",
-        "Read a file from the filesystem and return its contents.",
+        "Read a file and return its contents.",
         {
             "type": "object",
             "properties": {
@@ -345,7 +280,7 @@ TOOL_SCHEMAS = [
                 },
                 "content": {
                     "type": "string",
-                    "description": "Text content to write.",
+                    "description": "Content to write.",
                 },
             },
             "required": ["path", "content"],
@@ -364,7 +299,7 @@ TOOL_SCHEMAS = [
             "properties": {
                 "job_id": {
                     "type": "string",
-                    "description": "The reminder ID to cancel (e.g. 'reminder_7735fb78').",
+                    "description": "Reminder ID to cancel (e.g. 'reminder_7735fb78').",
                 }
             },
             "required": ["job_id"],
@@ -378,11 +313,11 @@ TOOL_SCHEMAS = [
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "The search query.",
+                    "description": "Search query.",
                 },
                 "max_results": {
                     "type": "integer",
-                    "description": "Maximum number of results to return. Defaults to 5.",
+                    "description": "Max results to return (default: 5).",
                 },
             },
             "required": ["query"],
@@ -396,14 +331,11 @@ TOOL_SCHEMAS = [
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "The URL to fetch.",
+                    "description": "URL to fetch.",
                 },
                 "max_chars": {
                     "type": "integer",
-                    "description": (
-                        "Maximum characters of content to return. "
-                        "Defaults to 20000. Use a lower value for summaries."
-                    ),
+                    "description": "Max characters of content to return (default: 20000).",
                 },
             },
             "required": ["url"],
@@ -425,7 +357,6 @@ TOOL_CATEGORIES: dict[str, str] = {
     "spawn_sub_session":  "orchestration",
     "set_reminder":       "orchestration",
     "append_memory":      "orchestration",
-    "update_memories":    "orchestration",
     "pulse":              "orchestration",
     "add_skill":          "orchestration",
     "list_reminders":     "orchestration",
@@ -561,15 +492,6 @@ def _tool_append_memory(inputs: dict, **_kw) -> str:
         return json.dumps({"status": "ok", "total_chars": total_len})
     except Exception as exc:  # noqa: BLE001
         logger.exception("append_memory failed")
-        return json.dumps({"error": str(exc)})
-
-
-def _tool_update_memories(inputs: dict, **_kw) -> str:
-    try:
-        prompt_assembler.update_memories(inputs["content"])
-        return json.dumps({"status": "ok"})
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("update_memories failed")
         return json.dumps({"error": str(exc)})
 
 
@@ -847,7 +769,6 @@ _DISPATCH: dict[str, Any] = {
     "spawn_sub_session":  _tool_spawn_sub_session,
     "set_reminder":       _tool_set_reminder,
     "append_memory":      _tool_append_memory,
-    "update_memories":    _tool_update_memories,
     "pulse":              _tool_pulse,
     "add_skill":          _tool_add_skill,
     "execute_shell":      _tool_execute_shell,

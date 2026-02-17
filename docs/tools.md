@@ -10,7 +10,7 @@ Tools are grouped into three categories that control which tools are available i
 |----------|-------------|-------|
 | **execution** | All agents | `execute_shell`, `read_file`, `write_file` |
 | **research** | All agents | `search_web`, `fetch_url` |
-| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `set_reminder`, `append_memory`, `update_memories`, `pulse`, `add_skill`, `list_reminders` |
+| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `set_reminder`, `append_memory`, `pulse`, `add_skill`, `list_reminders` |
 
 ## Tool Filtering by Sub-session Mode
 
@@ -129,14 +129,6 @@ Append a new fact to MEMORIES.txt. Preferred for day-to-day memory storage — n
 | `entry` | string | yes | The fact or note to append (one logical entry) |
 
 Returns: `status`, `total_chars`
-
-#### `update_memories`
-
-Overwrite MEMORIES.txt with new content. Use only for restructuring or removing specific entries — for adding new facts, use `append_memory` instead.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `content` | string | yes | Full replacement text for MEMORIES.txt |
 
 #### `pulse`
 

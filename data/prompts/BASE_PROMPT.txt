@@ -16,7 +16,7 @@ Your system prompt is assembled fresh on every message from: this base prompt + 
 # Memory system
 
 Two stores, different purposes:
-- MEMORIES.txt — facts true across weeks/months. Use append_memory (day-to-day) or update_memories (restructuring; read_file first). Nightly consolidation handles deduplication.
+- MEMORIES.txt — facts true across weeks/months. Use append_memory (day-to-day). Nightly consolidation handles deduplication.
 - Pulse (DB) — active working memory: ongoing projects, current goals, open questions. Each item has priority (1=urgent, 10=low) and ID shown as #N. Managed via pulse tool (add/complete/update/list). Complete items when resolved.
 
 Write a memory when: user asks, reveals a preference, or you learn a reusable fact.
