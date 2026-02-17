@@ -1,29 +1,45 @@
 """
-TURING PROTOCOL — Three-Stage Post-Inference Validation Framework
+TURING PROTOCOL — Phase-Aware Validation Framework
 
 Universal pipeline that detects, validates, and corrects violations in
-assistant responses.  Fires after each inference round.
+assistant responses.  Hooks can fire at three phases of the inference
+cycle and are scoped to run in the main thread, sub-sessions, or both.
 
-Three-Stage Design
-------------------
-  **Stage 1 (Detection):** A single LLM call analyses the assistant's
-  response against ALL enabled violation detectors at once.  The detectors'
-  ``detection_prompt`` fields are assembled into a universal system prompt.
+Phases
+------
+  ``post_inference``  — After the LLM produces a response (text or tool
+                        calls), before delivery / next action.
+  ``pre_execution``   — After the LLM requests a tool call, before
+                        ``execute_tool()`` runs.
+  ``post_execution``  — After ``execute_tool()`` returns, before the
+                        result is appended to history.
 
-  **Stage 2 (Validation):** Per-violation dispatch.  Each flagged violation
-  is validated by its hook's ``validator_type``:
+Three-Stage Design (per phase batch)
+-------------------------------------
+  **Stage 1 (Detection):** A single LLM call analyses the context against
+  ALL enabled hooks for the current phase.  Hooks whose ``validator_type``
+  is ``"programmatic"`` skip Stage 1 and go directly to Stage 2.
+
+  **Stage 2 (Validation):** Per-violation dispatch.
     - ``"programmatic"``: calls a registered Python function (fast, no LLM).
-    - ``"llm"``: runs an LLM-based validation (future use).
+    - ``"llm"``: runs a dedicated LLM call per hook.
   False positives are eliminated here.
 
   **Stage 3 (Correction):** All confirmed violations are aggregated into a
-  single correction prompt injected into the conversation thread.
+  single correction prompt injected into the conversation thread (main) or
+  appended to the sub-session message list (sub-sessions).
 
 Hook configuration
 ------------------
   Hook definitions are loaded from ``data/TURING_PROTOCOL_HOOKS.txt``
   (JSON array).  If the file is absent or malformed, built-in defaults
   are used.  File entries override built-ins by hook name.
+
+Scope
+-----
+  Each hook declares a ``scope`` list: ``["main"]``, ``["sub_session"]``,
+  or ``["main", "sub_session"]``.  Hooks without scope default to
+  ``["main"]`` for backward compatibility.
 
 Hook behavior flags
 -------------------
@@ -43,7 +59,7 @@ import logging
 import time as _time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from wintermute.llm_thread import BackendPool
@@ -61,6 +77,10 @@ HOOKS_FILE = Path("data") / "TURING_PROTOCOL_HOOKS.txt"
 # Data model
 # ------------------------------------------------------------------
 
+VALID_PHASES = frozenset({"post_inference", "pre_execution", "post_execution"})
+VALID_SCOPES = frozenset({"main", "sub_session"})
+
+
 @dataclass
 class TuringHook:
     name: str                              # e.g. "workflow_spawn"
@@ -73,6 +93,8 @@ class TuringHook:
     halt_inference: bool = False           # Stage 2: block inference thread until validation completes
     kill_on_detect: bool = False           # Stage 2: if confirmed, discard the response entirely
     enabled: bool = True
+    phase: str = "post_inference"          # When to fire: post_inference | pre_execution | post_execution
+    scope: list = field(default_factory=lambda: ["main"])  # Where: ["main"], ["sub_session"], or both
 
 
 @dataclass
@@ -126,6 +148,8 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         ),
         halt_inference=False,
         kill_on_detect=False,
+        phase="post_inference",
+        scope=["main"],
     ),
     TuringHook(
         name="phantom_tool_result",
@@ -166,6 +190,8 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         ),
         halt_inference=False,
         kill_on_detect=False,
+        phase="post_inference",
+        scope=["main"],
     ),
     TuringHook(
         name="empty_promise",
@@ -207,6 +233,43 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         ),
         halt_inference=False,
         kill_on_detect=False,
+        phase="post_inference",
+        scope=["main"],
+    ),
+    # -- objective_completion: sub-session exit gatekeeper --
+    # Fires on the final text-only response of a sub-session.  Uses an LLM
+    # call to evaluate whether the response actually satisfies the stated
+    # objective.  If not, a correction is injected and the worker loop
+    # continues instead of exiting.
+    TuringHook(
+        name="objective_completion",
+        detection_prompt="",  # Not used — this hook has its own dedicated LLM call
+        validator_type="llm",
+        validator_fn_name=None,
+        validator_prompt=None,  # Uses TURING_OBJECTIVE_COMPLETION.txt template
+        correction_template=(
+            "[TURING PROTOCOL — OBJECTIVE NOT MET] Your response does not "
+            "satisfy the task objective.\n\n"
+            "Objective: {objective}\n\n"
+            "Issue: {reason}\n\n"
+            "You MUST continue working toward the objective. Use the "
+            "available tools to make progress. Do NOT produce a final "
+            "summary until the objective is genuinely complete."
+        ),
+        correction_template_repeat=(
+            "[TURING PROTOCOL — OBJECTIVE STILL NOT MET] This is the "
+            "{ordinal} attempt. Your response still does not satisfy the "
+            "objective.\n\n"
+            "Objective: {objective}\n\n"
+            "Issue: {reason}\n\n"
+            "Focus on the specific gap identified above. If the objective "
+            "is truly impossible to complete with available tools, explain "
+            "exactly what is blocking you and what partial progress was made."
+        ),
+        halt_inference=False,
+        kill_on_detect=False,
+        phase="post_inference",
+        scope=["sub_session"],
     ),
 ]
 
@@ -215,13 +278,23 @@ _BUILTIN_HOOKS: list[TuringHook] = [
 # Hook loading
 # ------------------------------------------------------------------
 
-def _load_hooks(enabled_validators: Optional[dict[str, bool]] = None) -> list[TuringHook]:
+def _load_hooks(
+    enabled_validators: Optional[dict[str, Any]] = None,
+    *,
+    phase_filter: Optional[str] = None,
+    scope_filter: Optional[str] = None,
+) -> list[TuringHook]:
     """Load hooks from TURING_PROTOCOL_HOOKS.txt, merged with built-in defaults.
 
-    Returns a list of enabled TuringHook objects.
+    Returns a list of enabled TuringHook objects, optionally filtered by
+    ``phase_filter`` (e.g. ``"post_inference"``) and ``scope_filter``
+    (e.g. ``"main"`` or ``"sub_session"``).
+
     ``enabled_validators`` overrides each hook's enabled flag by name.
+    Values can be ``True``/``False`` (simple toggle) or a dict with keys
+    like ``enabled``, ``scope``, ``phase`` for granular overrides.
     """
-    builtin_map = {h.name: copy.copy(h) for h in _BUILTIN_HOOKS}
+    builtin_map = {h.name: copy.deepcopy(h) for h in _BUILTIN_HOOKS}
 
     # Try loading from file.
     file_hooks: dict[str, TuringHook] = {}
@@ -240,6 +313,10 @@ def _load_hooks(enabled_validators: Optional[dict[str, bool]] = None) -> list[Tu
                     if not name:
                         logger.warning("Skipping hook entry without 'name' in %s", HOOKS_FILE)
                         continue
+                    raw_scope = entry.get("scope", ["main"])
+                    if isinstance(raw_scope, str):
+                        raw_scope = [raw_scope]
+                    raw_phase = entry.get("phase", "post_inference")
                     file_hooks[name] = TuringHook(
                         name=name,
                         detection_prompt=entry.get("detection_prompt", ""),
@@ -250,6 +327,8 @@ def _load_hooks(enabled_validators: Optional[dict[str, bool]] = None) -> list[Tu
                         correction_template_repeat=entry.get("correction_template_repeat", ""),
                         halt_inference=entry.get("halt_inference", False),
                         kill_on_detect=entry.get("kill_on_detect", False),
+                        phase=raw_phase,
+                        scope=raw_scope,
                     )
     except FileNotFoundError:
         pass
@@ -261,13 +340,35 @@ def _load_hooks(enabled_validators: Optional[dict[str, bool]] = None) -> list[Tu
     # Merge: file overrides built-ins by name.
     merged = {**builtin_map, **file_hooks}
 
-    # Apply enabled_validators overrides.
+    # Apply enabled_validators overrides (supports bool or dict values).
     if enabled_validators:
-        for name, enabled in enabled_validators.items():
-            if name in merged:
-                merged[name].enabled = enabled
+        for name, val in enabled_validators.items():
+            if name not in merged:
+                continue
+            hook = merged[name]
+            if isinstance(val, bool):
+                hook.enabled = val
+            elif isinstance(val, dict):
+                if "enabled" in val:
+                    hook.enabled = bool(val["enabled"])
+                if "scope" in val:
+                    s = val["scope"]
+                    hook.scope = [s] if isinstance(s, str) else list(s)
+                if "phase" in val:
+                    hook.phase = str(val["phase"])
 
-    return [h for h in merged.values() if h.enabled]
+    # Filter by enabled, phase, and scope.
+    result = []
+    for h in merged.values():
+        if not h.enabled:
+            continue
+        if phase_filter and h.phase != phase_filter:
+            continue
+        if scope_filter and scope_filter not in h.scope:
+            continue
+        result.append(h)
+
+    return result
 
 
 # ------------------------------------------------------------------
@@ -353,7 +454,7 @@ _PROGRAMMATIC_VALIDATORS = {
 # ------------------------------------------------------------------
 
 def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook],
-                      correction_depth: int) -> str:
+                      correction_depth: int, *, objective: Optional[str] = None) -> str:
     """Build an aggregated correction prompt from all confirmed violations."""
     parts = []
     tool_schema = _get_spawn_tool_schema()
@@ -373,6 +474,7 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook
             reason=reason,
             ordinal=_ordinal(correction_depth + 1),
             tool_schema=tool_schema,
+            objective=objective or "(unknown)",
         )
         parts.append(part)
 
@@ -424,8 +526,15 @@ async def run_turing_protocol(
     tool_calls_made: list[str],
     active_sessions: list[dict],
     correction_depth: int = 0,
-    enabled_validators: Optional[dict[str, bool]] = None,
+    enabled_validators: Optional[dict[str, Any]] = None,
     thread_id: str = "unknown",
+    *,
+    phase: str = "post_inference",
+    scope: str = "main",
+    objective: Optional[str] = None,
+    tool_name: Optional[str] = None,
+    tool_args: Optional[dict] = None,
+    tool_result: Optional[str] = None,
 ) -> TuringResult:
     """Run the three-stage Turing Protocol validation pipeline.
 
@@ -436,7 +545,7 @@ async def run_turing_protocol(
     pool : BackendPool
         Backend pool for the protocol's own LLM calls (handles failover).
     user_message : str
-        The user's most recent message.
+        The user's most recent message (or objective for sub-sessions).
     assistant_response : str
         Wintermute's reply to evaluate.
     tool_calls_made : list[str]
@@ -445,22 +554,37 @@ async def run_turing_protocol(
         Output of SubSessionManager.list_active().
     correction_depth : int
         How many consecutive corrections have already been issued.
-    enabled_validators : dict[str, bool] or None
+    enabled_validators : dict or None
         Per-hook enable/disable overrides from config.
+    phase : str
+        Which phase to run: ``post_inference``, ``pre_execution``,
+        or ``post_execution``.
+    scope : str
+        Execution context: ``"main"`` or ``"sub_session"``.
+    objective : str or None
+        Sub-session objective (used by ``objective_completion``).
+    tool_name : str or None
+        Tool being called (for ``pre_execution`` phase).
+    tool_args : dict or None
+        Tool arguments (for ``pre_execution`` phase).
+    tool_result : str or None
+        Tool result (for ``post_execution`` phase).
     """
-    hooks = _load_hooks(enabled_validators)
+    hooks = _load_hooks(enabled_validators, phase_filter=phase, scope_filter=scope)
     if not hooks:
         return TuringResult(correction=None)
 
     hooks_by_name = {h.name: h for h in hooks}
 
-    # -- Stage 1: Detection (universal LLM call) --------------------------
-    logger.debug("Stage 1: Running LLM analysis (tool_calls_made=%s, hooks=%s)",
-                 tool_calls_made, [h.name for h in hooks])
+    # Partition hooks: those needing a Stage 1 LLM detection call vs.
+    # those that are purely programmatic (skip Stage 1) vs. those that
+    # use a dedicated LLM call (e.g. objective_completion).
+    stage1_hooks = [h for h in hooks if h.detection_prompt and h.validator_type == "programmatic"]
+    dedicated_llm_hooks = [h for h in hooks if h.validator_type == "llm"]
+    programmatic_only = [h for h in hooks if not h.detection_prompt and h.validator_type == "programmatic"]
 
-    system_prompt = _build_stage1_system_prompt(hooks)
-
-    context = {
+    # Build shared context for all validators.
+    context: dict[str, Any] = {
         "tool_calls_made": tool_calls_made,
         "user_message": _truncate_middle(user_message, keep_head=300, keep_tail=200),
         "assistant_response": assistant_response,
@@ -474,42 +598,77 @@ async def run_turing_protocol(
             for s in active_sessions
         ],
     }
+    # Phase-specific context enrichment.
+    if objective:
+        context["objective"] = objective
+    if tool_name:
+        context["tool_name"] = tool_name
+    if tool_args is not None:
+        context["tool_args"] = tool_args
+    if tool_result is not None:
+        context["tool_result"] = _truncate_middle(tool_result, keep_head=500, keep_tail=200)
+    context["phase"] = phase
+    context["scope"] = scope
 
     try:
-        response = await pool.call(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(context, indent=2)},
-            ],
-        )
+        violations: list[dict] = []
 
-        raw = (response.choices[0].message.content or "").strip()
-        if not raw:
-            logger.warning(
-                "Turing Protocol Stage 1 returned empty content "
-                "(model may have spent all tokens on reasoning/thinking)"
+        # -- Stage 1: Detection via universal LLM call (only for hooks with detection_prompt) --
+        if stage1_hooks:
+            logger.debug("Stage 1: Running LLM analysis (phase=%s, scope=%s, hooks=%s)",
+                         phase, scope, [h.name for h in stage1_hooks])
+
+            system_prompt = _build_stage1_system_prompt(stage1_hooks)
+
+            response = await pool.call(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": json.dumps(context, indent=2)},
+                ],
             )
-            return TuringResult(correction=None)
 
-        # Strip markdown code fences if the model wraps its JSON.
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            raw = (response.choices[0].message.content or "").strip()
+            if not raw:
+                logger.warning(
+                    "Turing Protocol Stage 1 returned empty content "
+                    "(model may have spent all tokens on reasoning/thinking)"
+                )
+            else:
+                # Strip markdown code fences if the model wraps its JSON.
+                if raw.startswith("```"):
+                    raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
-        result = json.loads(raw)
-        violations = result.get("violations", [])
+                result = json.loads(raw)
+                violations.extend(result.get("violations", []))
 
-        try:
-            log_status = "ok" if not violations else "violation_detected"
-            database.save_interaction_log(
-                _time.time(), "turing_protocol", thread_id,
-                pool.last_used,
-                json.dumps(context)[:2000], raw[:2000], log_status,
-            )
-        except Exception:
-            pass
+            try:
+                log_status = "ok" if not violations else "violation_detected"
+                database.save_interaction_log(
+                    _time.time(), "turing_protocol", thread_id,
+                    pool.last_used,
+                    json.dumps(context)[:2000], (raw if stage1_hooks else "skipped")[:2000],
+                    log_status,
+                )
+            except Exception:
+                pass
+
+        # -- Dedicated LLM hooks (each gets its own call) --
+        for hook in dedicated_llm_hooks:
+            try:
+                llm_result = await _run_dedicated_llm_hook(pool, hook, context, thread_id)
+                if llm_result:
+                    violations.append(llm_result)
+            except Exception:  # noqa: BLE001
+                logger.exception("Dedicated LLM hook %r raised (non-fatal)", hook.name)
+
+        # -- Programmatic-only hooks (no detection_prompt, run directly) --
+        for hook in programmatic_only:
+            fn = _PROGRAMMATIC_VALIDATORS.get(hook.validator_fn_name or "")
+            if fn and fn(context, {}):
+                violations.append({"type": hook.name, "reason": "programmatic check failed"})
 
         if not violations:
-            logger.debug("Stage 1: No violations detected")
+            logger.debug("Stage 1: No violations detected (phase=%s, scope=%s)", phase, scope)
             return TuringResult(correction=None)
 
         logger.warning("Stage 1: Detected %d violation(s): %s",
@@ -537,8 +696,7 @@ async def run_turing_protocol(
                     continue
                 is_confirmed = fn(context, violation)
             elif hook.validator_type == "llm":
-                # Future: LLM-based validation via pool
-                logger.warning("Stage 2: LLM validator not yet implemented for hook %r — assuming confirmed", hook.name)
+                # Dedicated LLM hooks already validated during detection.
                 is_confirmed = True
             else:
                 logger.error("Stage 2: Unknown validator_type %r for hook %r", hook.validator_type, hook.name)
@@ -573,9 +731,12 @@ async def run_turing_protocol(
             return TuringResult(correction=None)
 
         # -- Stage 3: Correction (aggregate all confirmed) -----------------
-        logger.warning("Stage 3: %d confirmed violation(s) — building correction", len(confirmed))
+        logger.warning("Stage 3: %d confirmed violation(s) — building correction (phase=%s, scope=%s)",
+                        len(confirmed), phase, scope)
 
-        correction_text = _build_correction(confirmed, hooks_by_name, correction_depth)
+        correction_text = _build_correction(
+            confirmed, hooks_by_name, correction_depth, objective=objective,
+        )
 
         # Log Stage 3 correction
         try:
@@ -605,6 +766,110 @@ async def run_turing_protocol(
         return TuringResult(correction=None)
 
 
-def get_hooks(enabled_validators: Optional[dict[str, bool]] = None) -> list[TuringHook]:
+# ------------------------------------------------------------------
+# Dedicated LLM hook execution
+# ------------------------------------------------------------------
+
+async def _run_dedicated_llm_hook(
+    pool: "BackendPool",
+    hook: TuringHook,
+    context: dict,
+    thread_id: str,
+) -> Optional[dict]:
+    """Run a hook that uses its own LLM call for detection+validation.
+
+    Returns a violation dict ``{"type": ..., "reason": ...}`` if the hook
+    fires, or ``None`` if the check passes.
+    """
+    if hook.name == "objective_completion":
+        return await _check_objective_completion(pool, hook, context, thread_id)
+
+    # Generic fallback for future dedicated LLM hooks.
+    logger.warning("No dedicated LLM handler for hook %r — skipping", hook.name)
+    return None
+
+
+async def _check_objective_completion(
+    pool: "BackendPool",
+    hook: TuringHook,
+    context: dict,
+    thread_id: str,
+) -> Optional[dict]:
+    """Evaluate whether a sub-session's response satisfies its objective.
+
+    Makes a single LLM call using the TURING_OBJECTIVE_COMPLETION.txt
+    prompt template.  Returns a violation dict if the objective is NOT met.
+    """
+    from wintermute import prompt_loader
+
+    objective = context.get("objective", "")
+    assistant_response = context.get("assistant_response", "")
+    if not objective or not assistant_response:
+        return None
+
+    # Build tool call history summary for context.
+    tool_calls = context.get("tool_calls_made", [])
+    tool_summary = ", ".join(tool_calls) if tool_calls else "none"
+
+    system_prompt = prompt_loader.load(
+        "TURING_OBJECTIVE_COMPLETION.txt",
+        objective=objective,
+    )
+
+    eval_context = json.dumps({
+        "objective": objective,
+        "assistant_response": _truncate_middle(assistant_response, keep_head=800, keep_tail=400),
+        "tools_called_this_session": tool_summary,
+    }, indent=2)
+
+    response = await pool.call(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": eval_context},
+        ],
+    )
+
+    raw = (response.choices[0].message.content or "").strip()
+    if not raw:
+        logger.warning("objective_completion: empty LLM response — assuming objective met")
+        return None
+
+    # Strip markdown code fences.
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("objective_completion: unparseable response %r — assuming met", raw[:200])
+        return None
+
+    met = result.get("objective_met", True)
+    reason = result.get("reason", "")
+
+    try:
+        database.save_interaction_log(
+            _time.time(), "turing_objective", thread_id,
+            pool.last_used,
+            eval_context[:2000], raw[:2000],
+            "ok" if met else "violation_detected",
+        )
+    except Exception:
+        pass
+
+    if met:
+        logger.debug("objective_completion: objective met for %s", thread_id)
+        return None
+
+    logger.info("objective_completion: objective NOT met for %s — %s", thread_id, reason[:200])
+    return {"type": "objective_completion", "reason": reason}
+
+
+def get_hooks(
+    enabled_validators: Optional[dict[str, Any]] = None,
+    *,
+    phase_filter: Optional[str] = None,
+    scope_filter: Optional[str] = None,
+) -> list[TuringHook]:
     """Return the list of enabled hooks (for pre-flight checks by callers)."""
-    return _load_hooks(enabled_validators)
+    return _load_hooks(enabled_validators, phase_filter=phase_filter, scope_filter=scope_filter)

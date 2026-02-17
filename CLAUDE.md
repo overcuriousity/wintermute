@@ -35,8 +35,8 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 | `tools.py` | 12 tool definitions (OpenAI function-calling schemas) + `execute_tool()` dispatcher |
 | `sub_session.py` | Background worker DAG: `TaskNode`/`Workflow` with `depends_on` edges, nested workers (depth 2), timeout continuation |
 | `prompt_assembler.py` | Assembles system prompt per-turn: BASE_PROMPT + datetime + MEMORIES + pulse + skills |
-| `prompt_loader.py` | Loads/validates prompt templates from `data/prompts/` (11 required files; missing = startup failure) |
-| `turing_protocol.py` | Post-inference 3-stage pipeline: detect → validate → correct (injected back into LLM queue) |
+| `prompt_loader.py` | Loads/validates prompt templates from `data/prompts/` (required files; missing = startup failure) |
+| `turing_protocol.py` | Phase-aware 3-stage pipeline: detect → validate → correct. Phases: `post_inference`, `pre_execution`, `post_execution`. Scoped to `main` and/or `sub_session`. |
 | `matrix_thread.py` | Matrix client (mautrix) with E2E encryption |
 | `web_interface.py` | aiohttp server: WebSocket chat, debug panel (`/debug`), REST API |
 | `dreaming.py` | Nightly memory consolidation (direct LLM call, no tool loop) |
@@ -63,6 +63,6 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 
 - System prompt is reassembled fresh every turn via `PromptAssembler`
 - Sub-sessions use a DAG with event-driven dependency resolution (`_resolve_dependents()`)
-- Turing Protocol corrections are sequence-numbered; stale corrections are silently dropped; max 2 re-checks per turn
+- Turing Protocol hooks have `phase` (post_inference/pre_execution/post_execution) and `scope` (main/sub_session) fields. Main thread uses async correction injection; sub-sessions use synchronous inline injection. `objective_completion` hook gates sub-session exit with LLM-based evaluation. Max 2 re-checks per main-thread turn; max 3 TP retries per sub-session exit.
 - Database migrations are applied inline at startup via `ALTER TABLE ... ADD COLUMN`
 - Slash commands (`/new`, `/compact`, `/pulse`, `/status`, `/dream`, etc.) are handled at the interface layer before reaching the LLM
