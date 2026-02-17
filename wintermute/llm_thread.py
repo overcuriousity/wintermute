@@ -682,10 +682,10 @@ class LLMThread:
                             })
                             continue
 
-                    tool_calls_made.append(tc.function.name)
                     result = tool_module.execute_tool(tc.function.name, inputs,
                                                      thread_id=thread_id,
                                                      nesting_depth=0)
+                    tool_calls_made.append(tc.function.name)
 
                     # -- Turing Protocol: post_execution phase --
                     if tp_enabled:

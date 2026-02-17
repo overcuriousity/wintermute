@@ -1167,6 +1167,7 @@ class SubSessionManager:
                     state=state,
                     tool_calls_made=tool_calls_made,
                     assistant_response=final_text,
+                    correction_depth=tp_correction_depth,
                 )
                 if pi_result and pi_result.correction:
                     tp_correction_depth += 1
@@ -1202,6 +1203,7 @@ class SubSessionManager:
         tool_name: Optional[str] = None,
         tool_args: Optional[dict] = None,
         tool_result: Optional[str] = None,
+        correction_depth: int = 0,
     ) -> Optional[turing_protocol_module.TuringResult]:
         """Run Turing Protocol hooks for a specific phase in sub-session scope.
 
@@ -1226,6 +1228,7 @@ class SubSessionManager:
                 assistant_response=assistant_response,
                 tool_calls_made=tool_calls_made,
                 active_sessions=[],
+                correction_depth=correction_depth,
                 enabled_validators=self._tp_validators,
                 thread_id=state.session_id,
                 phase=phase,

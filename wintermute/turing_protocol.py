@@ -357,10 +357,24 @@ def _load_hooks(
                 if "phase" in val:
                     hook.phase = str(val["phase"])
 
-    # Filter by enabled, phase, and scope.
+    # Validate phase/scope values and filter.
     result = []
     for h in merged.values():
         if not h.enabled:
+            continue
+        # Warn on invalid phase/scope (typo in config or hook file).
+        if h.phase not in VALID_PHASES:
+            logger.warning(
+                "Hook %r has invalid phase %r (expected one of %s) — skipping",
+                h.name, h.phase, sorted(VALID_PHASES),
+            )
+            continue
+        invalid_scopes = [s for s in h.scope if s not in VALID_SCOPES]
+        if invalid_scopes:
+            logger.warning(
+                "Hook %r has invalid scope values %s (expected %s) — skipping",
+                h.name, invalid_scopes, sorted(VALID_SCOPES),
+            )
             continue
         if phase_filter and h.phase != phase_filter:
             continue
@@ -612,6 +626,7 @@ async def run_turing_protocol(
 
     try:
         violations: list[dict] = []
+        stage1_raw: str = ""
 
         # -- Stage 1: Detection via universal LLM call (only for hooks with detection_prompt) --
         if stage1_hooks:
@@ -627,30 +642,19 @@ async def run_turing_protocol(
                 ],
             )
 
-            raw = (response.choices[0].message.content or "").strip()
-            if not raw:
+            stage1_raw = (response.choices[0].message.content or "").strip()
+            if not stage1_raw:
                 logger.warning(
                     "Turing Protocol Stage 1 returned empty content "
                     "(model may have spent all tokens on reasoning/thinking)"
                 )
             else:
                 # Strip markdown code fences if the model wraps its JSON.
-                if raw.startswith("```"):
-                    raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                if stage1_raw.startswith("```"):
+                    stage1_raw = stage1_raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
-                result = json.loads(raw)
+                result = json.loads(stage1_raw)
                 violations.extend(result.get("violations", []))
-
-            try:
-                log_status = "ok" if not violations else "violation_detected"
-                database.save_interaction_log(
-                    _time.time(), "turing_protocol", thread_id,
-                    pool.last_used,
-                    json.dumps(context)[:2000], (raw if stage1_hooks else "skipped")[:2000],
-                    log_status,
-                )
-            except Exception:
-                pass
 
         # -- Dedicated LLM hooks (each gets its own call) --
         for hook in dedicated_llm_hooks:
@@ -662,10 +666,28 @@ async def run_turing_protocol(
                 logger.exception("Dedicated LLM hook %r raised (non-fatal)", hook.name)
 
         # -- Programmatic-only hooks (no detection_prompt, run directly) --
+        # These are already validated here; mark them to skip Stage 2 re-check.
         for hook in programmatic_only:
             fn = _PROGRAMMATIC_VALIDATORS.get(hook.validator_fn_name or "")
             if fn and fn(context, {}):
-                violations.append({"type": hook.name, "reason": "programmatic check failed"})
+                violations.append({
+                    "type": hook.name,
+                    "reason": "programmatic check failed",
+                    "_pre_validated": True,
+                })
+
+        # Log detection results (after all violation sources have run).
+        try:
+            log_status = "ok" if not violations else "violation_detected"
+            log_raw = stage1_raw if stage1_hooks else "no_stage1"
+            database.save_interaction_log(
+                _time.time(), "turing_protocol", thread_id,
+                pool.last_used,
+                json.dumps(context)[:2000], (log_raw or "")[:2000],
+                log_status,
+            )
+        except Exception:
+            pass
 
         if not violations:
             logger.debug("Stage 1: No violations detected (phase=%s, scope=%s)", phase, scope)
@@ -686,7 +708,11 @@ async def run_turing_protocol(
                 logger.warning("Stage 2: Unknown violation type %r — skipping", vtype)
                 continue
 
-            if hook.validator_type == "programmatic":
+            # Skip re-validation for violations already confirmed in
+            # the direct-run paths (dedicated LLM hooks, programmatic-only).
+            if violation.get("_pre_validated"):
+                is_confirmed = True
+            elif hook.validator_type == "programmatic":
                 fn = _PROGRAMMATIC_VALIDATORS.get(hook.validator_fn_name or "")
                 if not fn:
                     logger.error(
