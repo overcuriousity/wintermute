@@ -488,6 +488,22 @@ async def run_turing_protocol(
                     "kill": hook.kill_on_detect,
                 })
 
+        # Log Stage 2 result
+        try:
+            stage2_status = "ok" if not confirmed else "violation_detected"
+            stage2_output = json.dumps({
+                "confirmed": confirmed,
+                "false_positives": len(violations) - len(confirmed),
+                "total_checked": len(violations),
+            })
+            database.save_interaction_log(
+                _time.time(), "turing_stage2", thread_id,
+                pool.last_used,
+                json.dumps(violations)[:2000], stage2_output[:2000], stage2_status,
+            )
+        except Exception:
+            pass
+
         if not confirmed:
             logger.debug("Stage 2: All violations were false positives")
             return TuringResult(correction=None)
@@ -496,6 +512,16 @@ async def run_turing_protocol(
         logger.warning("Stage 3: %d confirmed violation(s) — building correction", len(confirmed))
 
         correction_text = _build_correction(confirmed, hooks_by_name, correction_depth)
+
+        # Log Stage 3 correction
+        try:
+            database.save_interaction_log(
+                _time.time(), "turing_stage3", thread_id,
+                pool.last_used,
+                json.dumps(confirmed)[:2000], correction_text[:2000], "violation_detected",
+            )
+        except Exception:
+            pass
 
         has_halt = any(v["halt"] for v in confirmed)
         has_kill = any(v["kill"] for v in confirmed)

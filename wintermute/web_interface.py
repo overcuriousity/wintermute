@@ -1487,7 +1487,7 @@ async function loadInteractionLog(append) {
     const outputPreview = (e.output || '').length > 120 ? e.output.slice(0, 117) + '\u2026' : (e.output || '');
     const statusCls = e.status === 'ok' ? 'completed' : (e.status === 'error' ? 'failed' : 'pending');
     const sessionShort = (e.session || '').length > 24 ? e.session.slice(0, 22) + '\u2026' : (e.session || '');
-    const actionStyle = e.action === 'turing_protocol' ? 'turing' : (e.action === 'tool_call' ? 'tool' : (e.action === 'chat' ? 'web' : (e.action === 'error' ? 'failed' : 'system')));
+    const actionStyle = e.action.startsWith('turing') ? 'turing' : (e.action === 'tool_call' ? 'tool' : (e.action === 'chat' ? 'web' : (e.action === 'error' ? 'failed' : 'system')));
     return `<tr style="cursor:pointer${e.action === 'tool_call' ? ';background:#0a0f1a' : ''}" onclick="toggleILDetail(this, ${e.id})">
       <td class="dim" style="white-space:nowrap">${esc(ts)}</td>
       <td>${badge(actionStyle, e.action)}</td>
