@@ -69,6 +69,7 @@ from typing import Callable, Coroutine, Optional
 from wintermute import database
 from wintermute import prompt_assembler
 from wintermute import prompt_loader
+from wintermute import turing_protocol as turing_protocol_module
 from wintermute import tools as tool_module
 from wintermute.llm_thread import BackendPool
 
@@ -153,20 +154,25 @@ class SubSessionManager:
 
     Injected dependencies
     ---------------------
-    client             – shared AsyncOpenAI instance (no extra connections)
-    pool               – BackendPool for the sub_sessions role (handles failover)
-    enqueue_system_event – async callable(text: str, thread_id: str) that injects
-                           a result back into a parent thread's queue
+    pool                       – BackendPool for the sub_sessions role (handles failover)
+    enqueue_system_event       – async callable(text: str, thread_id: str) that injects
+                                 a result back into a parent thread's queue
+    turing_protocol_pool       – BackendPool for the Turing Protocol's own LLM calls
+    turing_protocol_validators – per-hook enable/disable overrides from config
     """
 
     def __init__(
         self,
         pool: BackendPool,
         enqueue_system_event: Callable[..., Coroutine],
+        turing_protocol_pool: Optional[BackendPool] = None,
+        turing_protocol_validators: Optional[dict] = None,
     ) -> None:
         self._pool = pool
         self._cfg = pool.primary
         self._enqueue = enqueue_system_event
+        self._tp_pool = turing_protocol_pool
+        self._tp_validators = turing_protocol_validators
         self._states: dict[str, SubSessionState] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         # DAG workflow tracking
@@ -1007,12 +1013,23 @@ class SubSessionManager:
 
         state.messages is used directly (not a local copy) so that the timeout
         handler always has access to the latest message history for continuation.
+
+        Turing Protocol hooks are fired at three phases:
+          - post_inference:  after the model produces a text-only (final)
+            response — the ``objective_completion`` validator decides whether
+            the sub-session may exit or must keep working.
+          - pre_execution:   before each tool call (can block execution).
+          - post_execution:  after each tool call (can annotate results).
         """
         # Build the tool set for this worker based on its mode.
         categories = _MODE_TOOL_CATEGORIES.get(
             state.system_prompt_mode, {"execution", "research"}
         )
         tool_schemas = tool_module.get_tool_schemas(categories)
+
+        tp_enabled = bool(self._tp_pool and self._tp_pool.enabled)
+        tp_corrected = False  # single-shot: only one objective correction allowed
+        tool_calls_made: list[str] = []  # accumulated across the session
 
         if state.messages:
             # Resuming from a prior timed-out session.  The full prior history
@@ -1072,12 +1089,50 @@ class SubSessionManager:
                     except json.JSONDecodeError:
                         inputs = {}
 
+                    # -- Turing Protocol: pre_execution phase --
+                    if tp_enabled:
+                        pre_result = await self._run_tp_phase(
+                            phase="pre_execution",
+                            state=state,
+                            tool_calls_made=tool_calls_made,
+                            assistant_response=(choice.message.content or ""),
+                            tool_name=tc.function.name,
+                            tool_args=inputs,
+                        )
+                        if pre_result and pre_result.correction:
+                            logger.warning(
+                                "Sub-session %s: pre_execution hook blocked tool %s: %s",
+                                state.session_id, tc.function.name,
+                                pre_result.correction[:200],
+                            )
+                            state.messages.append({
+                                "role":         "tool",
+                                "tool_call_id": tc.id,
+                                "content":      f"[BLOCKED BY TURING PROTOCOL] {pre_result.correction}",
+                            })
+                            continue
+
                     result = tool_module.execute_tool(
                         tc.function.name,
                         inputs,
                         thread_id=state.session_id,
                         nesting_depth=state.nesting_depth,
                     )
+                    tool_calls_made.append(tc.function.name)
+
+                    # -- Turing Protocol: post_execution phase --
+                    if tp_enabled:
+                        post_result = await self._run_tp_phase(
+                            phase="post_execution",
+                            state=state,
+                            tool_calls_made=tool_calls_made,
+                            assistant_response=(choice.message.content or ""),
+                            tool_name=tc.function.name,
+                            tool_result=result,
+                        )
+                        if post_result and post_result.correction:
+                            result += f"\n\n[TURING PROTOCOL WARNING] {post_result.correction}"
+
                     # Log the tool call
                     try:
                         database.save_interaction_log(
@@ -1101,7 +1156,91 @@ class SubSessionManager:
                     })
                 continue
 
-            return (choice.message.content or "").strip()
+            # -- Terminal response: model produced text without tool calls --
+            final_text = (choice.message.content or "").strip()
+
+            # -- Turing Protocol: post_inference phase (objective gatekeeper) --
+            # Single-shot: one correction at most, no re-checking.
+            if tp_enabled and not tp_corrected:
+                pi_result = await self._run_tp_phase(
+                    phase="post_inference",
+                    state=state,
+                    tool_calls_made=tool_calls_made,
+                    assistant_response=final_text,
+                )
+                if pi_result and pi_result.correction:
+                    tp_corrected = True
+                    logger.info(
+                        "Sub-session %s: objective not met — injecting "
+                        "correction and resuming loop",
+                        state.session_id,
+                    )
+                    # Append the model's response and the correction as a
+                    # system message, then re-enter the inference loop.
+                    state.messages.append({
+                        "role": "assistant",
+                        "content": final_text,
+                    })
+                    state.messages.append({
+                        "role": "user",
+                        "content": pi_result.correction,
+                    })
+                    continue  # back to while True → next inference call
+
+            return final_text
+
+    # ------------------------------------------------------------------
+    # Turing Protocol helper for sub-session phases
+    # ------------------------------------------------------------------
+
+    async def _run_tp_phase(
+        self,
+        phase: str,
+        state: SubSessionState,
+        tool_calls_made: list[str],
+        assistant_response: str = "",
+        tool_name: Optional[str] = None,
+        tool_args: Optional[dict] = None,
+        tool_result: Optional[str] = None,
+    ) -> Optional[turing_protocol_module.TuringResult]:
+        """Run Turing Protocol hooks for a specific phase in sub-session scope.
+
+        Returns TuringResult if violations confirmed, None otherwise.
+        """
+        if not self._tp_pool or not self._tp_pool.enabled:
+            return None
+
+        # Quick check: any hooks for this phase+scope?
+        hooks = turing_protocol_module.get_hooks(
+            self._tp_validators,
+            phase_filter=phase,
+            scope_filter="sub_session",
+        )
+        if not hooks:
+            return None
+
+        try:
+            return await turing_protocol_module.run_turing_protocol(
+                pool=self._tp_pool,
+                user_message=state.objective,
+                assistant_response=assistant_response,
+                tool_calls_made=tool_calls_made,
+                active_sessions=[],
+                enabled_validators=self._tp_validators,
+                thread_id=state.session_id,
+                phase=phase,
+                scope="sub_session",
+                objective=state.objective,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                tool_result=tool_result,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Sub-session %s: Turing Protocol %s check raised (non-fatal)",
+                state.session_id, phase,
+            )
+            return None
 
     # ------------------------------------------------------------------
     # System prompt construction

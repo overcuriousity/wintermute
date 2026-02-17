@@ -28,9 +28,6 @@ from wintermute import prompt_loader
 from wintermute import turing_protocol as turing_protocol_module
 from wintermute import tools as tool_module
 
-# Maximum number of consecutive Turing Protocol corrections per turn.
-# After this many corrections the protocol gives up to prevent infinite loops.
-MAX_CORRECTION_DEPTH = 2
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from wintermute.sub_session import SubSessionManager
@@ -179,11 +176,6 @@ class _QueueItem:
     future: Optional[asyncio.Future] = field(default=None, compare=False)
     is_turing_correction: bool = False  # marks items injected by Turing Protocol
     content: Optional[list] = None  # multimodal content parts (OpenAI vision format)
-    # How many consecutive Turing Protocol corrections have been issued for
-    # this turn.  The protocol will re-check responses up to MAX_CORRECTION_DEPTH
-    # times before giving up (prevents infinite loops while still catching
-    # persistent hallucinations).
-    correction_depth: int = 0
     # Sequence number of the user-message turn this correction was issued for.
     # If the thread has advanced past this number by the time the correction is
     # dequeued, the correction is stale and will be dropped.
@@ -397,16 +389,12 @@ class LLMThread:
             # Fire async after the reply is delivered.  Only check
             # user-facing messages (not system events, not sub-session
             # threads, and not the protocol's own corrections).
+            # Each turn gets at most one correction — no re-checking.
             if (
                 not item.thread_id.startswith("sub_")
                 and reply.text
-                and (
-                    # Normal user message — always check
-                    (not item.is_system_event and not item.is_turing_correction)
-                    # Turing correction response — re-check up to depth limit
-                    or (item.is_turing_correction
-                        and item.correction_depth < MAX_CORRECTION_DEPTH)
-                )
+                and not item.is_system_event
+                and not item.is_turing_correction
             ):
                 # Snapshot the current sequence number so the correction can
                 # be dropped if the conversation has moved on before it lands.
@@ -418,7 +406,6 @@ class LLMThread:
                         tool_calls_made=reply.tool_calls_made,
                         thread_id=item.thread_id,
                         issued_for_seq=seq_at_fire,
-                        correction_depth=item.correction_depth,
                     ),
                     name=f"turing_{item.thread_id}",
                 )
@@ -439,15 +426,13 @@ class LLMThread:
         tool_calls_made: list[str],
         thread_id: str,
         issued_for_seq: int = 0,
-        correction_depth: int = 0,
     ) -> None:
         """Fire the Turing Protocol pipeline to detect violations.
 
         Runs asynchronously after the main reply has already been delivered.
-        If violations are confirmed, a corrective system event is enqueued.
-        ``correction_depth`` tracks how many consecutive corrections have been
-        issued for this turn; the gate in the main loop stops re-checking
-        once ``MAX_CORRECTION_DEPTH`` is reached.
+        If violations are confirmed, a single corrective system event is
+        enqueued.  The model's response to the correction is NOT re-checked
+        — each turn gets at most one correction.
 
         ``issued_for_seq`` records the per-thread sequence number at the time
         the check was fired.  If the thread has advanced past this number by
@@ -467,33 +452,25 @@ class LLMThread:
                 assistant_response=assistant_response,
                 tool_calls_made=tool_calls_made,
                 active_sessions=active_sessions,
-                correction_depth=correction_depth,
                 enabled_validators=self._turing_protocol_validators,
                 thread_id=thread_id,
+                phase="post_inference",
+                scope="main",
             )
         except Exception:  # noqa: BLE001
             logger.exception("Turing Protocol check raised (non-fatal)")
             return
 
         if result.correction:
-            new_depth = correction_depth + 1
-            if new_depth >= MAX_CORRECTION_DEPTH:
-                logger.warning(
-                    "Turing Protocol injecting FINAL correction (depth %d/%d) "
-                    "into thread %s — no further re-checks will fire",
-                    new_depth, MAX_CORRECTION_DEPTH, thread_id,
-                )
-            else:
-                logger.info(
-                    "Turing Protocol injecting correction (depth %d/%d) into thread %s",
-                    new_depth, MAX_CORRECTION_DEPTH, thread_id,
-                )
+            logger.info(
+                "Turing Protocol injecting correction into thread %s",
+                thread_id,
+            )
             await self._queue.put(_QueueItem(
                 text=result.correction,
                 thread_id=thread_id,
                 is_system_event=True,
                 is_turing_correction=True,
-                correction_depth=correction_depth + 1,
                 correction_for_seq=issued_for_seq,
             ))
 
@@ -665,6 +642,11 @@ class LLMThread:
         Repeatedly call the API until finish_reason is not 'tool_calls'.
         The system prompt is prepended as a role=system message each call
         (not stored in the DB so it stays fresh on every inference).
+
+        Turing Protocol hooks are fired at three phases:
+          - pre_execution:  before each tool call (can block execution)
+          - post_execution: after each tool call (can flag results)
+          - post_inference:  handled by the caller (_run_turing_check)
         """
         full_messages = [{"role": "system", "content": system_prompt}] + messages
         tools = None if disable_tools else tool_module.TOOL_SCHEMAS
@@ -672,6 +654,8 @@ class LLMThread:
         reasoning_parts: list[str] = []
         tool_calls_made: list[str] = []
         tool_call_details: list[dict] = []
+
+        tp_enabled = self._turing_protocol_pool.enabled
 
         while True:
             # Trim oldest tool results if accumulated context exceeds budget.
@@ -701,14 +685,56 @@ class LLMThread:
 
                 # Execute each tool and collect results.
                 for tc in choice.message.tool_calls:
-                    tool_calls_made.append(tc.function.name)
                     try:
                         inputs = json.loads(tc.function.arguments)
                     except json.JSONDecodeError:
                         inputs = {}
+
+                    # -- Turing Protocol: pre_execution phase --
+                    if tp_enabled:
+                        pre_result = await self._run_phase_check(
+                            phase="pre_execution",
+                            scope="main",
+                            thread_id=thread_id,
+                            tool_calls_made=tool_calls_made,
+                            assistant_response=(choice.message.content or ""),
+                            tool_name=tc.function.name,
+                            tool_args=inputs,
+                        )
+                        if pre_result and pre_result.correction:
+                            logger.warning(
+                                "pre_execution hook blocked tool %s in thread %s: %s",
+                                tc.function.name, thread_id,
+                                pre_result.correction[:200],
+                            )
+                            # Inject the block as a tool result so the LLM knows.
+                            full_messages.append({
+                                "role":         "tool",
+                                "tool_call_id": tc.id,
+                                "content":      f"[BLOCKED BY TURING PROTOCOL] {pre_result.correction}",
+                            })
+                            continue
+
                     result = tool_module.execute_tool(tc.function.name, inputs,
                                                      thread_id=thread_id,
                                                      nesting_depth=0)
+                    tool_calls_made.append(tc.function.name)
+
+                    # -- Turing Protocol: post_execution phase --
+                    if tp_enabled:
+                        post_result = await self._run_phase_check(
+                            phase="post_execution",
+                            scope="main",
+                            thread_id=thread_id,
+                            tool_calls_made=tool_calls_made,
+                            assistant_response=(choice.message.content or ""),
+                            tool_name=tc.function.name,
+                            tool_result=result,
+                        )
+                        if post_result and post_result.correction:
+                            # Append a warning to the tool result visible to the LLM.
+                            result += f"\n\n[TURING PROTOCOL WARNING] {post_result.correction}"
+
                     tool_call_details.append({
                         "name": tc.function.name,
                         "arguments": tc.function.arguments,
@@ -728,6 +754,50 @@ class LLMThread:
             return LLMReply(text=content, reasoning=reasoning,
                             tool_calls_made=tool_calls_made,
                             tool_call_details=tool_call_details)
+
+    async def _run_phase_check(
+        self,
+        phase: str,
+        scope: str,
+        thread_id: str,
+        tool_calls_made: list[str],
+        assistant_response: str = "",
+        tool_name: Optional[str] = None,
+        tool_args: Optional[dict] = None,
+        tool_result: Optional[str] = None,
+    ) -> Optional["turing_protocol_module.TuringResult"]:
+        """Run Turing Protocol hooks for a specific phase/scope.
+
+        Returns the TuringResult if any violations are confirmed, None otherwise.
+        Used by _inference_loop for pre/post_execution hooks.
+        """
+        # Quick check: are there any hooks for this phase+scope?
+        hooks = turing_protocol_module.get_hooks(
+            self._turing_protocol_validators,
+            phase_filter=phase,
+            scope_filter=scope,
+        )
+        if not hooks:
+            return None
+
+        try:
+            return await turing_protocol_module.run_turing_protocol(
+                pool=self._turing_protocol_pool,
+                user_message="",
+                assistant_response=assistant_response,
+                tool_calls_made=tool_calls_made,
+                active_sessions=[],
+                enabled_validators=self._turing_protocol_validators,
+                thread_id=thread_id,
+                phase=phase,
+                scope=scope,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                tool_result=tool_result,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Turing Protocol %s check raised (non-fatal)", phase)
+            return None
 
     # ------------------------------------------------------------------
     # Context compaction

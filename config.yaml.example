@@ -169,9 +169,9 @@ llm:
   # Runs once per night; a smaller model keeps costs low.
   dreaming: ["local_small"]
 
-# -- Turing Protocol (Post-Inference Validation) ---------------------
+# -- Turing Protocol (Phase-Aware Validation) -------------------------
 # Three-stage pipeline that detects, validates, and corrects violations
-# in assistant responses.  Fires after each inference round.
+# in assistant responses.  Hooks fire at configurable phases and scopes.
 #
 # backends:    Ordered list of inference backends for the protocol's own
 #              LLM calls.  Omit or leave empty to default to the base model.
@@ -179,13 +179,26 @@ llm:
 #              compliance (e.g. Qwen 2.5, Phi-3, Gemma 2).
 #
 # validators:  Enable/disable individual violation detectors.
-#              Set a validator to false to suppress it.
+#              Simple form:  validator_name: true/false
+#              Extended form (override scope/phase per hook):
+#                validator_name:
+#                  enabled: true
+#                  scope: ["main", "sub_session"]   # where to run
+#                  phase: "post_inference"           # when to fire
+#
+# Phases:      post_inference  — after LLM response, before delivery
+#              pre_execution   — before tool call executes
+#              post_execution  — after tool call returns
+#
+# Scopes:      main            — main conversation thread
+#              sub_session     — background worker sub-sessions
 turing_protocol:
   backends: ["local_small"]               # small/fast model recommended
   validators:
     workflow_spawn: true                   # detect hallucinated workflow spawn claims
     phantom_tool_result: true              # detect fabricated tool output claims
     empty_promise: true                    # detect unfulfilled action commitments
+    objective_completion: true             # sub-session exit gatekeeper (LLM-based)
 
 # ── Context Compaction ────────────────────────────────────────────
 # Compaction fires automatically when history tokens exceed:

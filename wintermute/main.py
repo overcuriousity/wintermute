@@ -356,9 +356,13 @@ async def main() -> None:
 
     # Build SubSessionManager — shares the LLM backend pool, reports back via
     # enqueue_system_event so results enter the parent thread's queue.
+    # Turing Protocol pool + validators are forwarded so sub-sessions can run
+    # phase-aware validation hooks (objective_completion, pre/post execution).
     sub_sessions = SubSessionManager(
         pool=sub_sessions_pool,
         enqueue_system_event=llm.enqueue_system_event,
+        turing_protocol_pool=turing_protocol_pool,
+        turing_protocol_validators=tp_validators,
     )
     llm.inject_sub_session_manager(sub_sessions)
     tool_module.register_sub_session_manager(sub_sessions.spawn)
