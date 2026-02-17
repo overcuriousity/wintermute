@@ -1910,65 +1910,12 @@ class WebInterface:
     def _json(data) -> web.Response:
         return web.Response(text=json.dumps(data), content_type="application/json")
 
-    @staticmethod
-    def _count_tokens(text: str, model: str = "gpt-4") -> int:
-        try:
-            import tiktoken
-            try:
-                enc = tiktoken.encoding_for_model(model)
-            except KeyError:
-                enc = tiktoken.get_encoding("cl100k_base")
-            return len(enc.encode(text))
-        except Exception:  # noqa: BLE001
-            return len(text) // 4
-
     def _token_budget(self, thread_id: str = "default") -> dict:
-        """
-        Return a dict with accurate token accounting for a thread.
-
-        total_limit   = context_size - max_tokens
-        sp_tokens     = actual assembled system prompt tokens (incl. compaction summary)
-        tools_tokens  = tokens consumed by the tool schema JSON sent with every request
-        hist_tokens   = sum of stored message token counts for thread
-        total_used    = sp_tokens + tools_tokens + hist_tokens
-        pct           = total_used / total_limit * 100
-        """
-        if not self._main_pool or not self._main_pool.enabled:
-            return {"total_limit": 4096, "sp_tokens": 0, "tools_tokens": 0,
-                    "hist_tokens": 0, "total_used": 0, "pct": 0.0}
-
-        from wintermute import database, prompt_assembler
-
-        _cfg = self._main_pool.primary
-        total_limit = max(_cfg.context_size - _cfg.max_tokens, 1)
-        model = _cfg.model
-
-        # System prompt (with per-thread compaction summary if available)
-        summary = self._llm.get_compaction_summary(thread_id) if self._llm else None
-        try:
-            sp_text = prompt_assembler.assemble(extra_summary=summary)
-        except Exception:  # noqa: BLE001
-            sp_text = ""
-        sp_tokens = self._count_tokens(sp_text, model)
-
-        # Tool schemas are sent with every API request and count toward context.
-        tools_tokens = self._count_tokens(json.dumps(tool_module.TOOL_SCHEMAS), model)
-
-        stats = database.get_thread_stats(thread_id)
-        hist_tokens = stats["token_used"]
-
-        total_used = sp_tokens + tools_tokens + hist_tokens
-        pct = round(min(total_used / total_limit * 100, 100), 1)
-
-        return {
-            "total_limit": total_limit,
-            "sp_tokens": sp_tokens,
-            "tools_tokens": tools_tokens,
-            "hist_tokens": hist_tokens,
-            "total_used": total_used,
-            "pct": pct,
-            "msg_count": stats["msg_count"],
-        }
+        """Delegate to LLMThread.get_token_budget() for accurate accounting."""
+        if self._llm:
+            return self._llm.get_token_budget(thread_id)
+        return {"total_limit": 4096, "sp_tokens": 0, "tools_tokens": 0,
+                "hist_tokens": 0, "total_used": 0, "pct": 0.0, "msg_count": 0}
 
     # ------------------------------------------------------------------
     # Debug REST API — sessions
@@ -2101,10 +2048,11 @@ class WebInterface:
             prompt = prompt_assembler.assemble()
         except Exception as exc:  # noqa: BLE001
             return self._json({"error": str(exc)})
+        from wintermute.llm_thread import _count_tokens
         _cfg = self._main_pool.primary if (self._main_pool and self._main_pool.enabled) else None
         model = _cfg.model if _cfg else "gpt-4"
-        sp_tokens = self._count_tokens(prompt, model)
-        tools_tokens = self._count_tokens(json.dumps(tool_module.TOOL_SCHEMAS), model)
+        sp_tokens = _count_tokens(prompt, model)
+        tools_tokens = _count_tokens(json.dumps(tool_module.TOOL_SCHEMAS), model)
         total_limit = max(_cfg.context_size - _cfg.max_tokens, 1) if _cfg else 4096
         combined_tokens = sp_tokens + tools_tokens
         return self._json({

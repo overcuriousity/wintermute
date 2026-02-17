@@ -536,15 +536,19 @@ class LLMThread:
             db_text = item.text
             if item.content is not None:
                 db_text = item.text or "[image attached]"
-            database.save_message("user", db_text, thread_id)
+            database.save_message("user", db_text, thread_id,
+                                  token_count=_count_tokens(db_text, self._cfg.model))
         elif is_sub_session_result:
-            database.save_message("user", f"[SYSTEM EVENT] {item.text}", thread_id)
+            _se_text = f"[SYSTEM EVENT] {item.text}"
+            database.save_message("user", _se_text, thread_id,
+                                  token_count=_count_tokens(_se_text, self._cfg.model))
         elif item.is_turing_correction:
             # Save the correction prompt to the DB so it is visible in the web
             # debug interface, but do NOT broadcast it to Matrix (see broadcast
             # guard below).  The model's reply is saved normally via the
             # assistant save below.
-            database.save_message("user", item.text, thread_id)
+            database.save_message("user", item.text, thread_id,
+                                  token_count=_count_tokens(item.text, self._cfg.model))
 
         reply = await self._inference_loop(
             system_prompt, messages, thread_id,
@@ -585,7 +589,8 @@ class LLMThread:
         except Exception:  # noqa: BLE001
             logger.debug("Failed to save interaction log entry", exc_info=True)
 
-        database.save_message("assistant", reply.text, thread_id)
+        database.save_message("assistant", reply.text, thread_id,
+                              token_count=_count_tokens(reply.text, self._cfg.model))
         await self._maybe_summarise_components(
             thread_id, _from_system_event=item.is_system_event,
         )
@@ -604,6 +609,55 @@ class LLMThread:
             return reasoning.strip()
         return None
 
+    def _trim_tool_results(self, messages: list[dict], token_budget: int) -> None:
+        """Truncate oldest tool-result messages if total tokens exceed budget.
+
+        Modifies *messages* in place.  Only tool-role messages are truncated
+        (replaced with a short notice).  This prevents 400 errors from
+        providers when tool results cause the payload to exceed the context
+        window.
+        """
+        model = self._cfg.model
+        total = sum(
+            _count_tokens(
+                m["content"] if isinstance(m.get("content"), str)
+                else " ".join(
+                    p.get("text", "") for p in m["content"]
+                    if isinstance(p, dict)
+                ) if isinstance(m.get("content"), list)
+                else str(getattr(m, "content", "") or ""),
+                model,
+            )
+            for m in messages
+        )
+        if total <= token_budget:
+            return
+
+        # Collect indices of tool-result messages, oldest first.
+        tool_indices = [
+            i for i, m in enumerate(messages)
+            if (m["role"] if isinstance(m, dict) else getattr(m, "role", "")) == "tool"
+        ]
+        truncation_notice = "[tool output truncated to fit context window]"
+        for idx in tool_indices:
+            if total <= token_budget:
+                break
+            msg = messages[idx]
+            old_content = msg["content"] if isinstance(msg, dict) else msg.content
+            if old_content == truncation_notice:
+                continue
+            old_tokens = _count_tokens(
+                old_content if isinstance(old_content, str) else str(old_content),
+                model,
+            )
+            new_tokens = _count_tokens(truncation_notice, model)
+            if isinstance(msg, dict):
+                msg["content"] = truncation_notice
+            else:
+                msg.content = truncation_notice
+            total -= (old_tokens - new_tokens)
+            logger.info("Trimmed tool result at index %d (saved ~%d tokens)", idx, old_tokens - new_tokens)
+
     async def _inference_loop(self, system_prompt: str, messages: list[dict],
                               thread_id: str = "default",
                               disable_tools: bool = False) -> LLMReply:
@@ -614,11 +668,15 @@ class LLMThread:
         """
         full_messages = [{"role": "system", "content": system_prompt}] + messages
         tools = None if disable_tools else tool_module.TOOL_SCHEMAS
+        token_budget = self._cfg.context_size - self._cfg.max_tokens
         reasoning_parts: list[str] = []
         tool_calls_made: list[str] = []
         tool_call_details: list[dict] = []
 
         while True:
+            # Trim oldest tool results if accumulated context exceeds budget.
+            self._trim_tool_results(full_messages, token_budget)
+
             response = await self._main_pool.call(
                 messages=full_messages,
                 tools=tools,
@@ -654,7 +712,7 @@ class LLMThread:
                     tool_call_details.append({
                         "name": tc.function.name,
                         "arguments": tc.function.arguments,
-                        "result": result[:500],
+                        "result": result,
                     })
                     logger.debug("Tool %s -> %s", tc.function.name, result[:200])
                     full_messages.append({
