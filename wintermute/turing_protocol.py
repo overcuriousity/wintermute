@@ -132,12 +132,15 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         detection_prompt=(
             '- **phantom_tool_result**: The assistant\'s text presents specific data '
             '(file contents, search results, URL/webpage content, command output, '
-            'directory listings) as if freshly obtained from a tool during THIS '
-            'exchange, AND the corresponding tool (`read_file`, `search_web`, '
+            'directory listings) as if **already obtained** from a tool during THIS '
+            'exchange — i.e. it states results in past tense or presents concrete '
+            'output — AND the corresponding tool (`read_file`, `search_web`, '
             '`fetch_url`, `execute_shell`, `list_reminders`) is NOT in '
             'tool_calls_made. Do NOT flag general knowledge, reasoning from '
             'context, references to information the user provided, or information '
-            'from earlier in the conversation history.'
+            'from earlier in the conversation history. '
+            'Do NOT flag future-tense action commitments ("I\'ll check…") — '
+            'those are handled by empty_promise.'
         ),
         validator_type="programmatic",
         validator_fn_name="validate_phantom_tool_result",
@@ -160,6 +163,47 @@ _BUILTIN_HOOKS: list[TuringHook] = [
             "You MUST apologise, state clearly what information you actually "
             "have access to, and ask the user if they want you to call the "
             "relevant tool to obtain real data."
+        ),
+        halt_inference=False,
+        kill_on_detect=False,
+    ),
+    TuringHook(
+        name="empty_promise",
+        detection_prompt=(
+            '- **empty_promise**: The assistant\'s response commits to performing '
+            'an action (in any language) — e.g. "I\'ll do X", "Let me check", '
+            '"Ich werde das prüfen", "Je vais vérifier" — as its **final answer**, '
+            'WITHOUT having made any tool call or spawn_sub_session call to '
+            'actually execute that action. The response ends with the promise '
+            'but no action was taken. tool_calls_made must be empty AND '
+            '"spawn_sub_session" must NOT be in tool_calls_made. '
+            'Do NOT flag responses where the assistant describes what it *did* '
+            '(past tense) — those are handled by phantom_tool_result. '
+            'Do NOT flag planning/explanation responses where the assistant '
+            'outlines steps and asks for user confirmation before acting. '
+            'Do NOT flag responses where the assistant explains it cannot '
+            'perform the action.'
+        ),
+        validator_type="programmatic",
+        validator_fn_name="validate_empty_promise",
+        validator_prompt=None,
+        correction_template=(
+            "[TURING PROTOCOL CORRECTION] Your previous response committed to "
+            "performing an action but you did not actually execute it — no tool "
+            "was called. Detected issue: {reason}\n\n"
+            "You MUST now either:\n"
+            "  1. Actually call the appropriate tool to perform the action, OR\n"
+            "  2. Explain clearly why you cannot perform it and ask the user "
+            "how to proceed.\n\n"
+            "Do NOT repeat the promise without acting."
+        ),
+        correction_template_repeat=(
+            "[TURING PROTOCOL CORRECTION -- REPEATED VIOLATION] You have AGAIN "
+            "promised to perform an action without actually calling any tool. "
+            "This is the {ordinal} consecutive violation.\n\n"
+            "Detected issue: {reason}\n\n"
+            "You MUST apologise, state clearly that you failed to execute the "
+            "action, and ask the user if they want you to attempt it now."
         ),
         halt_inference=False,
         kill_on_detect=False,
@@ -277,10 +321,30 @@ def validate_phantom_tool_result(context: dict, detection_result: dict) -> bool:
     return True
 
 
+def validate_empty_promise(context: dict, detection_result: dict) -> bool:
+    """Programmatic validator for empty_promise.
+
+    Returns True if the violation is confirmed — the assistant committed to
+    an action but no tools were called at all this turn.  If any tool was
+    called, the promise may have been fulfilled and we treat it as a false
+    positive.
+    """
+    tool_calls_made = context.get("tool_calls_made", [])
+    if tool_calls_made:
+        logger.info(
+            "Stage 2: False positive (empty_promise) — tools were called (%s). "
+            "LLM reason: %s", tool_calls_made, detection_result.get("reason", "?"),
+        )
+        return False
+    logger.warning("Stage 2: Confirmed empty_promise — action committed but no tools called")
+    return True
+
+
 # Registry of programmatic validator functions.
 _PROGRAMMATIC_VALIDATORS = {
     "validate_workflow_spawn": validate_workflow_spawn,
     "validate_phantom_tool_result": validate_phantom_tool_result,
+    "validate_empty_promise": validate_empty_promise,
 }
 
 

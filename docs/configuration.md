@@ -98,6 +98,7 @@ turing_protocol:
   validators:
     workflow_spawn: true                   # detect hallucinated workflow spawn claims
     phantom_tool_result: true              # detect fabricated tool output claims
+    empty_promise: true                    # detect unfulfilled action commitments
 
 # ── Context Compaction ────────────────────────────────────────────
 # Compaction fires when history tokens exceed:
@@ -195,6 +196,7 @@ turing_protocollama-server
   validators:
     workflow_spawn: true
     phantom_tool_result: true
+    empty_promise: true
 ```
 
 #### Provider: `gemini-cli`
@@ -278,7 +280,8 @@ Currently available validators:
 | Validator | Description |
 |-----------|-------------|
 | `workflow_spawn` | Detects when the model claims to have spawned a session without calling `spawn_sub_session` |
-| `phantom_tool_result` | Detects when the model presents fabricated tool output (file contents, search results, command output) without having called the tool |
+| `phantom_tool_result` | Detects when the model presents fabricated tool output (past tense — "I checked and found…") without having called the tool |
+| `empty_promise` | Detects when the model commits to an action ("I'll do X", "Let me check") as a final response without calling any tool |
 
 ### `matrix`
 
