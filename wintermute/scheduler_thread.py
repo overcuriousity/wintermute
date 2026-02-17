@@ -111,6 +111,7 @@ class ReminderScheduler:
         # Register tool callables into the tools module.
         tool_module.register_scheduler(self._schedule_reminder)
         tool_module.register_reminder_lister(self.list_reminders)
+        tool_module.register_reminder_deleter(self.delete_reminder)
 
         self._recover_missed()
         self._migrate_legacy_registry()

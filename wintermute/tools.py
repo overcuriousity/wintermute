@@ -357,6 +357,20 @@ TOOL_SCHEMAS = [
         {"type": "object", "properties": {}},
     ),
     _fn(
+        "delete_reminder",
+        "Cancel and remove an active reminder by its ID.",
+        {
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "type": "string",
+                    "description": "The reminder ID to cancel (e.g. 'reminder_7735fb78').",
+                }
+            },
+            "required": ["job_id"],
+        },
+    ),
+    _fn(
         "search_web",
         "Search the web via SearXNG. Returns titles, URLs, and snippets.",
         {
@@ -415,6 +429,7 @@ TOOL_CATEGORIES: dict[str, str] = {
     "pulse":              "orchestration",
     "add_skill":          "orchestration",
     "list_reminders":     "orchestration",
+    "delete_reminder":    "orchestration",
 }
 
 
@@ -438,8 +453,9 @@ def get_tool_schemas(categories: set[str] | None = None) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 # These will be injected by the scheduler thread at startup.
-_scheduler_set_reminder = None  # Callable[[dict], str]
+_scheduler_set_reminder = None    # Callable[[dict], str]
 _scheduler_list_reminders = None  # Callable[[], dict]
+_scheduler_delete_reminder = None # Callable[[str], bool]
 
 # This will be injected by the SubSessionManager at startup.
 _sub_session_spawn = None  # Callable[[dict, str], str]
@@ -455,6 +471,12 @@ def register_reminder_lister(fn) -> None:
     """Called once by the scheduler thread to provide the list_reminders hook."""
     global _scheduler_list_reminders
     _scheduler_list_reminders = fn
+
+
+def register_reminder_deleter(fn) -> None:
+    """Called once by the scheduler thread to provide the delete_reminder hook."""
+    global _scheduler_delete_reminder
+    _scheduler_delete_reminder = fn
 
 
 def register_sub_session_manager(fn) -> None:
@@ -650,6 +672,20 @@ def _tool_list_reminders(_inputs: dict, **_kw) -> str:
     return json.dumps({"active": [], "completed": [], "failed": []})
 
 
+def _tool_delete_reminder(inputs: dict, **_kw) -> str:
+    if _scheduler_delete_reminder is None:
+        return json.dumps({"error": "Scheduler not ready yet."})
+    try:
+        job_id = inputs["job_id"]
+        found = _scheduler_delete_reminder(job_id)
+        if found:
+            return json.dumps({"status": "cancelled", "job_id": job_id})
+        return json.dumps({"error": f"Reminder not found: {job_id}"})
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("delete_reminder failed")
+        return json.dumps({"error": str(exc)})
+
+
 # ---------------------------------------------------------------------------
 # HTML-to-text helper (stdlib only, no extra dependencies)
 # ---------------------------------------------------------------------------
@@ -818,6 +854,7 @@ _DISPATCH: dict[str, Any] = {
     "read_file":          _tool_read_file,
     "write_file":         _tool_write_file,
     "list_reminders":     _tool_list_reminders,
+    "delete_reminder":    _tool_delete_reminder,
     "search_web":         _tool_search_web,
     "fetch_url":          _tool_fetch_url,
 }
