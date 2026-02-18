@@ -57,6 +57,42 @@ def _strip_markdown_fences(text: str) -> str:
     return text.strip()
 
 
+def _fix_unescaped_control_chars(text: str) -> str:
+    """Escape literal control characters inside JSON string values.
+
+    Weak models sometimes emit raw newlines/tabs inside string values, which
+    is invalid per RFC 8259.  This walks the JSON character-by-character and
+    replaces bare control characters found inside strings with their \\x
+    equivalents, leaving the structural JSON (braces, brackets, commas) alone.
+    """
+    result: list[str] = []
+    in_string = False
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if c == "\\" and in_string:
+            # Pass through escape sequence intact.
+            result.append(c)
+            i += 1
+            if i < len(text):
+                result.append(text[i])
+                i += 1
+            continue
+        if c == '"':
+            in_string = not in_string
+            result.append(c)
+        elif in_string and c == "\n":
+            result.append("\\n")
+        elif in_string and c == "\r":
+            result.append("\\r")
+        elif in_string and c == "\t":
+            result.append("\\t")
+        else:
+            result.append(c)
+        i += 1
+    return "".join(result)
+
+
 async def translate_nl_tool_call(
     pool: "BackendPool",
     tool_name: str,
@@ -123,8 +159,14 @@ async def translate_nl_tool_call(
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        logger.warning("NL translator returned invalid JSON for %s: %s", tool_name, raw[:200])
-        return None
+        # Fallback: try to fix literal control chars inside string values.
+        fixed = _fix_unescaped_control_chars(raw)
+        try:
+            parsed = json.loads(fixed)
+            logger.debug("NL translator: fixed unescaped control chars in JSON for %s", tool_name)
+        except json.JSONDecodeError:
+            logger.warning("NL translator returned invalid JSON for %s: %s", tool_name, raw[:200])
+            return None
 
     # Accept dict (single call) or list (multi-call).
     if isinstance(parsed, dict):

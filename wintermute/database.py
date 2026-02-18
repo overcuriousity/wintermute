@@ -346,6 +346,7 @@ def save_interaction_log(timestamp: float, action: str, session: str,
 
 def get_interaction_log(limit: int = 200, offset: int = 0,
                         session_filter: Optional[str] = None,
+                        action_filter: Optional[str] = None,
                         before_id: Optional[int] = None,
                         after_id: Optional[int] = None) -> list[dict]:
     """Return interaction log entries. Newest first unless after_id is set (then ASC)."""
@@ -354,6 +355,9 @@ def get_interaction_log(limit: int = 200, offset: int = 0,
     if session_filter:
         conditions.append("session=?")
         params.append(session_filter)
+    if action_filter:
+        conditions.append("action=?")
+        params.append(action_filter)
     if before_id is not None:
         conditions.append("id < ?")
         params.append(before_id)
@@ -390,14 +394,20 @@ def get_interaction_log_entry(entry_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def count_interaction_log(session_filter: Optional[str] = None) -> int:
+def count_interaction_log(session_filter: Optional[str] = None,
+                          action_filter: Optional[str] = None) -> int:
     """Return total count of interaction log entries."""
+    conditions: list[str] = []
+    params: list = []
+    if session_filter:
+        conditions.append("session=?")
+        params.append(session_filter)
+    if action_filter:
+        conditions.append("action=?")
+        params.append(action_filter)
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     with sqlite3.connect(CONVERSATION_DB) as conn:
-        if session_filter:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM interaction_log WHERE session=?",
-                (session_filter,),
-            ).fetchone()
-        else:
-            row = conn.execute("SELECT COUNT(*) FROM interaction_log").fetchone()
+        row = conn.execute(
+            f"SELECT COUNT(*) FROM interaction_log {where}", params
+        ).fetchone()
     return row[0]

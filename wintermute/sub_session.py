@@ -1088,10 +1088,15 @@ class SubSessionManager:
                     "content": content_text[:500],
                     "tool_calls": [tc.function.name for tc in (choice.message.tool_calls or [])],
                 })
+                if tool_calls_made:
+                    _recent = tool_calls_made[-3:]
+                    _input_summary = f"[round {len(tool_calls_made)+1}, after: {', '.join(_recent)}]"
+                else:
+                    _input_summary = state.objective[:500]
                 database.save_interaction_log(
                     _time.time(), "sub_session", state.session_id,
                     self._pool.last_used,
-                    state.objective[:500], output_summary, "ok",
+                    _input_summary, output_summary, "ok",
                     raw_output=raw_output_data,
                 )
             except Exception:

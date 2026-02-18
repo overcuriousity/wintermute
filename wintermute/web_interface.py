@@ -159,6 +159,7 @@ _DEBUG_HTML = """\
   .badge-matrix   { background: #2d1b4e; color: #c9b0ff; }
   .badge-system   { background: #1a3a1a; color: #90ee90; }
   .badge-turing   { background: #410F5F; color: #e0b3ff; }
+  .badge-tool     { background: #1a1a2e; color: #8888cc; }
   .badge-live     { background: #0a3a0a; color: #6fe06f; }
   .badge-running  { background: #0f3460; color: #a8d8ea; }
   .badge-completed{ background: #1a3a1a; color: #90ee90; }
@@ -418,6 +419,24 @@ _DEBUG_HTML = """\
           <label>Filter by session</label>
           <select id="il-filter-session" onchange="loadInteractionLog()" style="min-width:180px">
             <option value="">All sessions</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Filter by action</label>
+          <select id="il-filter-action" onchange="loadInteractionLog()" style="min-width:160px">
+            <option value="">All actions</option>
+            <option value="chat">chat</option>
+            <option value="inference_round">inference_round</option>
+            <option value="tool_call">tool_call</option>
+            <option value="nl_translation">nl_translation</option>
+            <option value="sub_session">sub_session</option>
+            <option value="turing_protocol">turing_protocol</option>
+            <option value="turing_stage2">turing_stage2</option>
+            <option value="turing_stage3">turing_stage3</option>
+            <option value="turing_objective">turing_objective</option>
+            <option value="compaction">compaction</option>
+            <option value="dreaming">dreaming</option>
+            <option value="system_event">system_event</option>
           </select>
         </div>
       </div>
@@ -1167,22 +1186,27 @@ function _makeILRow(e) {
   const outputPreview = (e.output || '').length > 120 ? e.output.slice(0, 117) + '\u2026' : (e.output || '');
   const statusCls = e.status === 'ok' ? 'completed' : (e.status === 'error' ? 'failed' : 'pending');
   const sessionShort = (e.session || '').length > 24 ? e.session.slice(0, 22) + '\u2026' : (e.session || '');
-  const actionStyle = e.action.startsWith('turing') ? 'turing' : (e.action === 'tool_call' ? 'tool' : (e.action === 'chat' ? 'web' : (e.action === 'error' ? 'failed' : 'system')));
-  return `<tr style="cursor:pointer${e.action === 'tool_call' ? ';background:#0a0f1a' : ''}" onclick="toggleILDetail(this, ${e.id})">
-    <td class="dim" style="white-space:nowrap">${esc(ts)}</td>
-    <td>${badge(actionStyle, e.action)}</td>
-    <td class="mono" style="font-size:.72rem" title="${esc(e.session || '')}">${esc(sessionShort)}</td>
-    <td class="mono" style="font-size:.72rem">${esc(e.llm || '')}</td>
-    <td class="trunc" title="${esc(e.input || '')}">${esc(inputPreview)}</td>
-    <td class="trunc" title="${esc(e.output || '')}">${esc(outputPreview)}</td>
-    <td>${badge(statusCls, e.status)}</td>
-  </tr>`;
+  const actionStyle = e.action.startsWith('turing') ? 'turing' : (e.action === 'tool_call' ? 'tool' : (e.action === 'chat' ? 'web' : (e.action === 'inference_round' ? 'pending' : (e.action === 'error' ? 'failed' : 'system'))));
+  const _rowBg = e.action === 'tool_call' ? ';background:#0a0f1a' : (e.action === 'inference_round' ? ';background:#0a1020' : '');
+  return (
+    '<tr style="cursor:pointer' + _rowBg + '" onclick="toggleILDetail(this, ' + e.id + ')">' +
+    '<td class="dim" style="white-space:nowrap">' + esc(ts) + '</td>' +
+    '<td>' + badge(actionStyle, e.action) + '</td>' +
+    '<td class="mono" style="font-size:.72rem" title="' + esc(e.session || '') + '">' + esc(sessionShort) + '</td>' +
+    '<td class="mono" style="font-size:.72rem">' + esc(e.llm || '') + '</td>' +
+    '<td class="trunc" title="' + esc(e.input || '') + '">' + esc(inputPreview) + '</td>' +
+    '<td class="trunc" title="' + esc(e.output || '') + '">' + esc(outputPreview) + '</td>' +
+    '<td>' + badge(statusCls, e.status) + '</td>' +
+    '</tr>'
+  );
 }
 
 function _fetchIL({limit = 200, before_id, after_id} = {}) {
   const session = document.getElementById('il-filter-session').value;
+  const action  = document.getElementById('il-filter-action').value;
   const params = new URLSearchParams({limit});
   if (session) params.set('session', session);
+  if (action)  params.set('action', action);
   if (before_id != null) params.set('before_id', before_id);
   if (after_id != null)  params.set('after_id', after_id);
   return fetch('/api/debug/interaction-log?' + params)
@@ -1714,15 +1738,18 @@ class WebInterface:
         limit = int(request.query.get("limit", "200"))
         offset = int(request.query.get("offset", "0"))
         session = request.query.get("session") or None
+        action = request.query.get("action") or None
         before_id_s = request.query.get("before_id")
         after_id_s = request.query.get("after_id")
         before_id = int(before_id_s) if before_id_s else None
         after_id = int(after_id_s) if after_id_s else None
         entries = database.get_interaction_log(limit=limit, offset=offset,
                                                session_filter=session,
+                                               action_filter=action,
                                                before_id=before_id,
                                                after_id=after_id)
-        total = database.count_interaction_log(session_filter=session)
+        total = database.count_interaction_log(session_filter=session,
+                                               action_filter=action)
         return self._json({"entries": entries, "total": total})
 
     async def _api_interaction_log_entry(self, request: web.Request) -> web.Response:

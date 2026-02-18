@@ -388,8 +388,12 @@ NL_TOOL_SCHEMAS = [
     _fn(
         "spawn_sub_session",
         (
-            "Spawn an autonomous background worker. Describe the task in plain "
-            "English — the system will translate it into structured arguments."
+            "Spawn one or more autonomous background workers as a DAG pipeline. "
+            "Describe all tasks in plain English, including sequencing and parallel "
+            "branches — the system will translate it into a dependency graph. "
+            "Examples: 'research X then summarise it' (sequential), "
+            "'check weather in Berlin and Tokyo' (parallel), "
+            "'fetch A and B, then combine results' (fan-in)."
         ),
         {
             "type": "object",
@@ -397,8 +401,10 @@ NL_TOOL_SCHEMAS = [
                 "description": {
                     "type": "string",
                     "description": (
-                        "Plain-English description of the background task(s) to "
-                        "perform, including any sequencing or dependencies."
+                        "Plain-English description of the full DAG pipeline: what "
+                        "each worker should do, which tasks must run before others, "
+                        "and which can run in parallel. Be explicit about sequencing "
+                        "(e.g. 'then', 'after that', 'at the same time as')."
                     ),
                 },
             },

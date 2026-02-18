@@ -566,15 +566,6 @@ class LLMThread:
                 item.text, reply.text, "ok",
                 raw_output=json.dumps(raw_output_data),
             )
-            # Log each individual tool call as a separate entry
-            for tc in reply.tool_call_details:
-                database.save_interaction_log(
-                    _time.time(), "tool_call", thread_id,
-                    self._main_pool.last_used,
-                    json.dumps({"tool": tc["name"], "arguments": tc["arguments"]}),
-                    tc.get("result", ""),
-                    "ok",
-                )
         except Exception:  # noqa: BLE001
             logger.debug("Failed to save interaction log entry", exc_info=True)
 
@@ -699,6 +690,26 @@ class LLMThread:
                     choice.finish_reason,
                     [tc.function.name for tc in choice.message.tool_calls],
                 )
+                # Log this inference round (intermediate, tool-use round).
+                try:
+                    _tc_names = [tc.function.name for tc in choice.message.tool_calls]
+                    _round_content = (choice.message.content or "").strip()
+                    database.save_interaction_log(
+                        _time.time(), "inference_round", thread_id,
+                        self._main_pool.last_used,
+                        _round_content[:500] or f"[requesting {len(_tc_names)} tool call(s)]",
+                        f"[tool_calls: {', '.join(_tc_names)}]",
+                        "ok",
+                        raw_output=json.dumps({
+                            "tool_calls": [
+                                {"name": tc.function.name, "arguments": tc.function.arguments}
+                                for tc in choice.message.tool_calls
+                            ],
+                            "content": _round_content,
+                        }),
+                    )
+                except Exception:
+                    pass
                 # Append the assistant's tool-call message.
                 full_messages.append(choice.message)
 
@@ -761,6 +772,15 @@ class LLMThread:
                                     "arguments": json.dumps(item_args),
                                     "result": item_result,
                                 })
+                                try:
+                                    database.save_interaction_log(
+                                        _time.time(), "tool_call", thread_id,
+                                        self._main_pool.last_used,
+                                        json.dumps({"tool": name, "arguments": json.dumps(item_args)}),
+                                        item_result[:500], "ok",
+                                    )
+                                except Exception:
+                                    pass
                             full_messages.append({
                                 "role":         "tool",
                                 "tool_call_id": tc.id,
@@ -823,6 +843,15 @@ class LLMThread:
                         "arguments": tc.function.arguments,
                         "result": result,
                     })
+                    try:
+                        database.save_interaction_log(
+                            _time.time(), "tool_call", thread_id,
+                            self._main_pool.last_used,
+                            json.dumps({"tool": name, "arguments": tc.function.arguments}),
+                            result[:500], "ok",
+                        )
+                    except Exception:
+                        pass
                     logger.debug("Tool %s -> %s", name, result[:200])
                     full_messages.append({
                         "role":         "tool",
