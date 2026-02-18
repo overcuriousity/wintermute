@@ -277,6 +277,9 @@ _DEBUG_HTML = """\
     <button class="tab-btn" data-tab="reminders" onclick="showTab('reminders')">
       Reminders <span class="tab-count" id="cnt-reminders">0</span>
     </button>
+    <button class="tab-btn" data-tab="pulse" onclick="showTab('pulse')">
+      Pulse <span class="tab-count" id="cnt-pulse">0</span>
+    </button>
     <button class="tab-btn" data-tab="interactions" onclick="showTab('interactions')">
       Interactions <span class="tab-count" id="cnt-interactions">0</span>
     </button>
@@ -412,6 +415,22 @@ _DEBUG_HTML = """\
       </div>
     </div>
 
+    <!-- ── Pulse ── -->
+    <div class="tab-panel" id="panel-pulse">
+      <div class="scroll-area">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>ID</th><th>Priority</th><th>Status</th><th>Content</th><th>Thread</th><th>Created</th><th>Updated</th>
+            </tr>
+          </thead>
+          <tbody id="pulse-body">
+            <tr><td colspan="7" class="empty">Loading\u2026</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- ── Interaction Log ── -->
     <div class="tab-panel" id="panel-interactions">
       <div class="form-bar" style="gap:.8rem">
@@ -522,6 +541,7 @@ async function loadTab(name) {
       case 'workflows':   await loadWorkflows(); break;
       case 'jobs':        await loadJobs(); break;
       case 'reminders':   await loadReminders(); break;
+      case 'pulse':       await loadPulse(); break;
       case 'interactions': await loadInteractionLog(); break;
     }
   } catch (e) {
@@ -548,6 +568,7 @@ function connectStream() {
     renderWorkflows(data.workflows || []);
     renderJobs(data.jobs || []);
     renderReminders(data.reminders || {});
+    renderPulse(data.pulse || []);
     updateInteractionsCount(data.interactions_total, data.interactions_max_id);
   };
 }
@@ -1065,6 +1086,35 @@ function reminderRows(reminders, showActions) {
   }).join('');
 }
 
+// ── Pulse ──
+function renderPulse(items) {
+  document.getElementById('cnt-pulse').textContent = items.filter(i => i.status === 'active').length;
+  const tbody = document.getElementById('pulse-body');
+  if (!items.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No pulse items</td></tr>';
+    return;
+  }
+  const priorityLabel = p => p <= 1 ? 'P1 \u2605\u2605\u2605' : p <= 2 ? 'P2 \u2605\u2605' : p <= 3 ? 'P3 \u2605' : 'P' + p;
+  tbody.innerHTML = items.map(it => {
+    const statusColor = it.status === 'active' ? '#4caf8a' : '#888';
+    return `<tr>
+      <td class="mono">${esc(String(it.id))}</td>
+      <td class="dim">${esc(priorityLabel(it.priority))}</td>
+      <td style="color:${statusColor}">${esc(it.status)}</td>
+      <td class="trunc" title="${esc(it.content)}">${esc(it.content.slice(0, 120))}${it.content.length > 120 ? '\u2026' : ''}</td>
+      <td class="mono dim">${esc(it.thread_id || '\u2014')}</td>
+      <td class="dim" style="white-space:nowrap">${it.created ? new Date(it.created * 1000).toLocaleString() : '\u2014'}</td>
+      <td class="dim" style="white-space:nowrap">${it.updated ? new Date(it.updated * 1000).toLocaleString() : '\u2014'}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadPulse() {
+  const r = await fetch('/api/debug/pulse');
+  const d = await r.json();
+  renderPulse(d.items || []);
+}
+
 function toggleSection(hdr) {
   hdr.classList.toggle('open');
   const body = hdr.nextElementSibling;
@@ -1348,13 +1398,19 @@ async function loadConfig() {
     const d = await r.json();
     const el = document.getElementById('cfg-info');
     const parts = [];
-    if (d.main) parts.push('<span style="color:#a8d8ea">' + esc(d.main.model) + '</span> <span style="color:#555">' + fmtTokens(d.main.context_size) + ' ctx</span>');
-    if (d.compaction && d.compaction.model !== d.main.model)
-      parts.push('<span style="color:#666">compact: ' + esc(d.compaction.model) + '</span>');
-    if (d.sub_sessions && (d.sub_sessions.model !== d.main.model || d.sub_sessions.base_url !== d.main.base_url))
-      parts.push('<span style="color:#666">sub: ' + esc(d.sub_sessions.model) + '</span>');
-    if (d.dreaming && d.dreaming.model !== d.main.model)
-      parts.push('<span style="color:#666">dream: ' + esc(d.dreaming.model) + '</span>');
+    // Each role is a list of backends (ordered failover); show the primary (first)
+    const first = arr => Array.isArray(arr) ? arr[0] : arr;
+    const main  = first(d.main);
+    const comp  = first(d.compaction);
+    const sub   = first(d.sub_sessions);
+    const dream = first(d.dreaming);
+    if (main) parts.push('<span style="color:#a8d8ea">' + esc(main.model) + '</span> <span style="color:#555">' + fmtTokens(main.context_size) + ' ctx</span>');
+    if (comp && comp.model !== (main && main.model))
+      parts.push('<span style="color:#666">compact: ' + esc(comp.model) + '</span>');
+    if (sub && (sub.model !== (main && main.model) || sub.base_url !== (main && main.base_url)))
+      parts.push('<span style="color:#666">sub: ' + esc(sub.model) + '</span>');
+    if (dream && dream.model !== (main && main.model))
+      parts.push('<span style="color:#666">dream: ' + esc(dream.model) + '</span>');
     el.innerHTML = parts.join(' <span style="color:#333">\u2502</span> ');
   } catch(e) { console.error('loadConfig:', e); }
 }
@@ -1447,6 +1503,7 @@ class WebInterface:
         app.router.add_get("/api/debug/reminders",                      self._api_reminders)
         app.router.add_post("/api/debug/reminders",                     self._api_reminder_create)
         app.router.add_delete("/api/debug/reminders/{job_id}",          self._api_reminder_delete)
+        app.router.add_get("/api/debug/pulse",                           self._api_pulse)
         app.router.add_get("/api/debug/interaction-log",                 self._api_interaction_log)
         app.router.add_get("/api/debug/interaction-log/{id}",            self._api_interaction_log_entry)
         app.router.add_get("/api/debug/stream",                          self._api_stream)
@@ -1730,6 +1787,15 @@ class WebInterface:
 
 
     # ------------------------------------------------------------------
+    # Pulse
+    # ------------------------------------------------------------------
+
+    async def _api_pulse(self, _request: web.Request) -> web.Response:
+        from wintermute import database
+        items = database.list_pulse_items("all")
+        return self._json({"items": items, "count": len(items)})
+
+    # ------------------------------------------------------------------
     # Interaction Log
     # ------------------------------------------------------------------
 
@@ -1812,6 +1878,9 @@ class WebInterface:
         except json.JSONDecodeError:
             reminders = {"active": [], "completed": [], "failed": []}
 
+        # Pulse items (all statuses for the debug view)
+        pulse_items = database.list_pulse_items("all")
+
         # Interaction log counts
         interactions_total = database.count_interaction_log()
         interactions_max_id = database.get_interaction_log_max_id()
@@ -1822,6 +1891,7 @@ class WebInterface:
             "workflows": workflows,
             "jobs": jobs,
             "reminders": reminders,
+            "pulse": pulse_items,
             "interactions_total": interactions_total,
             "interactions_max_id": interactions_max_id,
         }

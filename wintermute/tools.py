@@ -212,7 +212,7 @@ TOOL_SCHEMAS = [
                 "status": {
                     "type": "string",
                     "enum": ["active", "completed", "all"],
-                    "description": "Filter for list action (default: active).",
+                    "description": "For list: filter (default: active). For update: new status value ('active' or 'completed').",
                 },
             },
             "required": ["action"],
@@ -592,6 +592,8 @@ def _tool_pulse(inputs: dict, thread_id: Optional[str] = None, **_kw) -> str:
                 kwargs["content"] = inputs["content"]
             if "priority" in inputs:
                 kwargs["priority"] = int(inputs["priority"])
+            if "status" in inputs:
+                kwargs["status"] = inputs["status"]
             ok = database.update_pulse_item(int(item_id), **kwargs)
             return json.dumps({"status": "ok" if ok else "not_found"})
         elif action == "list":
