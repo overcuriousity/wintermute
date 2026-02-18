@@ -41,6 +41,7 @@ except ImportError:
     _HAS_OLM = False
 
 from mautrix.client import Client, InternalEventType
+from mautrix.client.dispatcher import MembershipEventDispatcher
 from mautrix.crypto import OlmMachine
 from mautrix.crypto.attachments import decrypt_attachment
 from mautrix.crypto.store import PgCryptoStore
@@ -428,6 +429,9 @@ class MatrixThread:
             token=self._cfg.access_token,
             state_store=state_store,
         )
+
+        # Translate m.room.member events into InternalEventType.* (JOIN, INVITE, LEAVE, …)
+        client.add_dispatcher(MembershipEventDispatcher)
 
         # Event handlers
         client.add_event_handler(EventType.ROOM_MESSAGE, self._on_message)
