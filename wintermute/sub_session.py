@@ -1131,6 +1131,15 @@ class SubSessionManager:
                                 combined_results.append(f"[{i+1}] [Translated to: {summary}] {item_result}")
                                 tool_calls_made.append(name)
                                 state.tool_calls_log.append((name, item_result[:120].replace("\n", " ")))
+                                try:
+                                    database.save_interaction_log(
+                                        _time.time(), "tool_call", state.session_id,
+                                        self._pool.last_used,
+                                        json.dumps({"tool": name, "arguments": json.dumps(item_args)}),
+                                        item_result[:500], "ok",
+                                    )
+                                except Exception:
+                                    pass
                             state.messages.append({
                                 "role":         "tool",
                                 "tool_call_id": tc.id,

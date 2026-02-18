@@ -60,13 +60,13 @@ based on config.
   "type": "function",
   "function": {
     "name": "set_reminder",
-    "description": "Schedule a reminder or recurring task. Describe what you want in natural language — include when, how often, and what action to take or message to send.",
+    "description": "Schedule a reminder or recurring task. Describe what you want in english natural language — include when, how often, and what action to take or message to send.",
     "parameters": {
       "type": "object",
       "properties": {
         "description": {
           "type": "string",
-          "description": "Full natural-language description of the reminder. Examples: 'daily at 09:00 to check email', 'every Monday at 14:00 to review pulse', 'once on 2026-03-15 at 10:00 — dentist appointment', 'every 3600 seconds between 08:00-18:00 to check server status'. Include the ai_prompt if an autonomous action should run instead of just a notification."
+          "description": "Full english natural-language description of the reminder. Examples: 'daily at 09:00 to check email', 'every Monday at 14:00 to review pulse', 'once on 2026-03-15 at 10:00 — dentist appointment', 'every 3600 seconds between 08:00-18:00 to check server status'. Include the ai_prompt if an autonomous action should run instead of just a notification."
         }
       },
       "required": ["description"]
@@ -82,13 +82,13 @@ based on config.
   "type": "function",
   "function": {
     "name": "spawn_sub_session",
-    "description": "Spawn an autonomous background worker. Describe the task in natural language — the worker will have no conversation access, so be specific about what it should do and what the success condition is.",
+    "description": "Spawn an autonomous background worker. Describe the task in english natural language — the worker will have no conversation access, so be specific about what it should do and what the success condition is. The worker supports a DAG (Directed Acyclic Graph) pipeline. Define a task including its execution logic, order, and success criteria for downstream triggers.",
     "parameters": {
       "type": "object",
       "properties": {
         "description": {
           "type": "string",
-          "description": "Full natural-language description of the task. Include: what to do, what to produce, any ordering constraints (e.g. 'after the previous session finishes'), timeout if relevant."
+          "description": "Full english natural-language description of the task. Include: what to do, what to produce, any ordering constraints (e.g. 'after the previous session finishes'), timeout if relevant."
         }
       },
       "required": ["description"]
@@ -337,7 +337,7 @@ The `regen_nl_prompts.py` script is a one-liner.
 
 ## Config Additions
 
-In `config.yaml` (and the config dataclass):
+In `config.yaml.example` (and the config dataclass):
 
 ```yaml
 nl_translation:
@@ -366,7 +366,7 @@ The translator uses the same `BackendPool` mechanism as Turing Protocol. A new r
 `"nl_translation"` is added. If no provider declares `role: nl_translation`, the pool
 falls back to `role: sub_sessions`. The config plumbing:
 
-In `config.yaml` providers section, a provider can declare:
+In `config.yaml.example` providers section, a provider can declare:
 ```yaml
   - name: strong-model
     roles: [nl_translation]
@@ -668,11 +668,20 @@ result = translation_summary + tool_module.execute_tool(tc.function.name, inputs
    code) or create a dedicated `_nl_translation_pool` (allows different model/provider
    per role). Recommendation: dedicated pool with fallback to sub_sessions role.
 
+   -> we create a new instance for it. it should be configurable in the config.yaml in the llm: section as the other providers. by default i would use a lightweight fast local model, specifically the exact same provider as for the turing protocol.
+
 2. **Should `prompt_loader` validate NL translator prompt files at startup?** Currently
    `prompt_loader` only validates files listed in its required set. Add
    `NL_TRANSLATOR_SET_REMINDER.txt` and `NL_TRANSLATOR_SPAWN_SUB_SESSION.txt` to the
    required set only when `nl_translation.enabled: true` — to avoid startup failure for
    users who don't enable the feature.
 
+   -> yes, validate
+
 3. **Multi-session array from translator:** Should this be supported for `set_reminder`
    too (schedule multiple reminders from one description)? Probably yes, same logic.
+
+   -> yes
+
+
+make sure the documentation is explicit about this new feature. config.yaml.example and the docs/ should provide sensible defaults.

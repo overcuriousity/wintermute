@@ -286,7 +286,10 @@ class LLMThread:
             sp_text = ""
         sp_tokens = _count_tokens(sp_text, model)
 
-        tools_tokens = _count_tokens(json.dumps(tool_module.TOOL_SCHEMAS), model)
+        nl_enabled = self._nl_translation_config.get("enabled", False)
+        nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
+        active_schemas = tool_module.get_tool_schemas(nl_tools=nl_tools)
+        tools_tokens = _count_tokens(json.dumps(active_schemas), model)
 
         stats = database.get_thread_stats(thread_id)
         hist_tokens = stats["token_used"]
@@ -491,9 +494,12 @@ class LLMThread:
         # Assemble system prompt first so we can measure its real token cost.
         summary = self._compaction_summaries.get(thread_id)
         system_prompt = prompt_assembler.assemble(extra_summary=summary)
+        nl_enabled = self._nl_translation_config.get("enabled", False)
+        nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
+        active_schemas = tool_module.get_tool_schemas(nl_tools=nl_tools)
         overhead_tokens = (
             _count_tokens(system_prompt, self._cfg.model)
-            + _count_tokens(json.dumps(tool_module.TOOL_SCHEMAS), self._cfg.model)
+            + _count_tokens(json.dumps(active_schemas), self._cfg.model)
         )
 
         history_tokens = sum(

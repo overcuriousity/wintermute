@@ -15,10 +15,12 @@ description.
 import json
 import logging
 import re
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from wintermute import prompt_loader
-from wintermute.llm_thread import BackendPool
+
+if TYPE_CHECKING:
+    from wintermute.llm_thread import BackendPool
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +56,7 @@ def _strip_markdown_fences(text: str) -> str:
 
 
 async def translate_nl_tool_call(
-    pool: BackendPool,
+    pool: "BackendPool",
     tool_name: str,
     description: str,
     thread_id: Optional[str] = None,
