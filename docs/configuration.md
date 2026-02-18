@@ -91,6 +91,7 @@ llm:
   compaction: ["local_small", "local_large"] # strongly recommended to use the same llm, or one with the same context size as the main model
   sub_sessions: ["local_large"]
   dreaming: ["local_small"]
+  turing_protocol: ["local_small"]        # validation pipeline (defaults to base if omitted)
 
 # -- Turing Protocol (Post-Inference Validation) ---------------------
 turing_protocol:
@@ -99,6 +100,9 @@ turing_protocol:
     workflow_spawn: true                   # detect hallucinated workflow spawn claims
     phantom_tool_result: true              # detect fabricated tool output claims
     empty_promise: true                    # detect unfulfilled action commitments
+    objective_completion:                  # gate sub-session exit on genuine completion
+      enabled: true
+      scope: "sub_session"                 # "main", "sub_session", or both
 
 # ── NL Translation (Natural-Language Tool Pipe) ──────────────────
 # Simplifies complex tool schemas for weak models by presenting a
@@ -174,6 +178,7 @@ fails (API error, timeout), the next one is tried automatically.
 | `compaction` | no | first backend | Context history summarisation |
 | `sub_sessions` | no | first backend | Background sub-session workers |
 | `dreaming` | no | first backend | Nightly memory consolidation |
+| `turing_protocol` | no | first backend | Turing Protocol validation pipeline |
 **Failover:** When multiple backends are listed, they are tried in order on
 API errors. The first backend's `context_size` is used for token budget
 calculations.
@@ -187,22 +192,23 @@ inference_backends:
     model: "gemini-2.5-pro"
     context_size: 1048576
     max_tokens: 8192
-llama-server
+
   - name: "ollama_small"
     provider: "openai"
-    base_url: llama-server//localhost:8080/v1"
+    base_url: "http://localhost:8080/v1"
     api_key: "ollama"
     model: "qwen2.5:7b"
     context_size: 32768
     max_tokens: 2048
 
 llm:
-  base: ["geminillama-server
-  compaction: ["ollama_smallllama-server
-  sub_sessionsllama-servermini", "ollama_small"]   # failover
+  base: ["gemini"]
+  compaction: ["ollama_small"]
+  sub_sessions: ["gemini", "ollama_small"]   # failover
   dreaming: ["ollama_small"]
+  turing_protocol: ["ollama_small"]
 
-turing_protocollama-server
+turing_protocol:
   backends: ["ollama_small"]
   validators:
     workflow_spawn: true

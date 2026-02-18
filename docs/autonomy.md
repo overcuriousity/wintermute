@@ -27,9 +27,12 @@ The prompts used for consolidation are stored in `data/DREAM_MEMORIES_PROMPT.txt
 Periodic autonomous reviews of active pulse items.
 
 - Runs at a configurable interval (default: every 60 minutes)
-- Spawns an isolated sub-session in `full` mode (fire-and-forget, no parent thread)
+- Spawns one sub-session per thread that has active pulse items bound to it (via `thread_id`)
+- Each sub-session runs in `full` mode with `parent_thread_id` set to the originating thread, so results are delivered back to that room
 - The sub-session lists pulse items via the `pulse` tool and takes appropriate actions (complete items, add new ones, set reminders, update memories, run commands, etc.)
-- Never pollutes any user-facing conversation history
+- If nothing needs attention the worker responds with `[NO_ACTION]` and the result is suppressed — no message is sent
+- Pulse items without a `thread_id` (legacy/unbound items) are skipped by the review loop
+- New pulse items automatically inherit the `thread_id` of the thread that created them
 
 ## Sub-sessions and Workflow DAG
 

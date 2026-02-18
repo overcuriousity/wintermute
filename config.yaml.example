@@ -80,6 +80,7 @@ llm:
   compaction: ["local_small", "local_large"] # strongly recommended to use the same llm, or one with the same context size as the main model
   sub_sessions: ["local_large"]
   dreaming: ["local_small"]
+  turing_protocol: ["local_small"]        # validation pipeline (defaults to base if omitted)
 
 # -- Turing Protocol (Post-Inference Validation) ---------------------
 turing_protocol:
@@ -88,6 +89,9 @@ turing_protocol:
     workflow_spawn: true                   # detect hallucinated workflow spawn claims
     phantom_tool_result: true              # detect fabricated tool output claims
     empty_promise: true                    # detect unfulfilled action commitments
+    objective_completion:                  # gate sub-session exit on genuine completion
+      enabled: true
+      scope: "sub_session"                 # "main", "sub_session", or both
 
 # ── NL Translation (Natural-Language Tool Pipe) ──────────────────
 # Simplifies complex tool schemas for weak models by presenting a

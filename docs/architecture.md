@@ -51,7 +51,7 @@ User (Matrix / Browser)
                                         +-- result --> enqueue_system_event
                                                         (back to LLMThread)
 
-PulseLoop --------------------------------> fire-and-forget sub-session (full mode)
+PulseLoop --------------------------------> per-thread sub-session (full mode, result → originating room)
 ReminderScheduler ------------------------> LLMThread queue / sub-session
 DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 ```

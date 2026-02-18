@@ -45,12 +45,13 @@ from mautrix.client.dispatcher import MembershipEventDispatcher
 from mautrix.crypto import OlmMachine
 from mautrix.crypto.attachments import decrypt_attachment
 from mautrix.crypto.store import PgCryptoStore
-from mautrix.errors import MUnknownToken
+from mautrix.errors import GroupSessionWithheldError, MUnknownToken
 from mautrix.types import (
     DeviceID,
     EventType,
     MessageType,
     RoomID,
+    SessionID,
     UserID,
 )
 from mautrix.util.async_db import Database
@@ -199,6 +200,7 @@ class MatrixThread:
         self._running = False
         self._send_lock = asyncio.Lock()
         self._verifications: dict[str, _SasState] = {}
+        self._requested_sessions: set[str] = set()  # UTD: session IDs we've already requested
 
     # ------------------------------------------------------------------
     # Public interface
@@ -447,6 +449,8 @@ class MatrixThread:
             client.add_event_handler(_VERIFY_KEY,     self._on_verify_key)
             client.add_event_handler(_VERIFY_MAC,     self._on_verify_mac)
             client.add_event_handler(_VERIFY_CANCEL,  self._on_verify_cancel)
+            # UTD (Unable To Decrypt) recovery — request missing Megolm session keys
+            client.add_event_handler(EventType.ROOM_ENCRYPTED, self._on_utd_event)
 
         logger.info(
             "Running as device_id=%s, homeserver=%s",
@@ -688,6 +692,86 @@ class MatrixThread:
             await self._client.join_room_by_id(RoomID(room_id))
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to join room %s: %s", room_id, exc)
+
+    async def _on_utd_event(self, evt) -> None:
+        """UTD (Unable To Decrypt) recovery: request missing Megolm session keys.
+
+        mautrix silently drops ROOM_ENCRYPTED events it can't decrypt.  This handler
+        intercepts those events, checks whether the session key is absent from the
+        crypto store, and sends an m.room_key_request to the sender's known devices.
+        A brief notification is also posted to the room so the user knows to resend.
+
+        To-device m.room_key events are processed by the OlmMachine before room
+        events within the same sync, so a key shared in the same sync batch will
+        already be present in the store when this handler runs (no false positives).
+        """
+        if str(evt.sender) == self._cfg.user_id:
+            return
+        if not self._is_user_allowed(str(evt.sender)):
+            return
+        if self._cfg.allowed_rooms and str(evt.room_id) not in self._cfg.allowed_rooms:
+            return
+        if self._client is None or self._client.crypto is None:
+            return
+
+        try:
+            session_id = evt.content.session_id
+            sender_key = evt.content.sender_key
+        except AttributeError:
+            return
+
+        if session_id in self._requested_sessions:
+            return
+
+        # Check if the session is already in the crypto store.
+        try:
+            session = await self._client.crypto.crypto_store.get_group_session(
+                evt.room_id, session_id
+            )
+            if session is not None:
+                return  # Session present — decryption will succeed, nothing to do.
+        except GroupSessionWithheldError:
+            pass  # Session was withheld; fall through to notify the user.
+        except Exception:
+            return
+
+        self._requested_sessions.add(session_id)
+        sender = str(evt.sender)
+        room_id = str(evt.room_id)
+
+        # Request the missing key from the sender's known devices.
+        try:
+            devices = await self._client.crypto.crypto_store.get_devices(UserID(sender))
+        except Exception:
+            devices = None
+
+        if devices:
+            device_ids = list(devices.keys())
+            logger.info(
+                "UTD: requesting missing session %.16s for %s from %s (%d device(s))",
+                session_id, room_id, sender, len(device_ids),
+            )
+            asyncio.create_task(
+                self._client.crypto.request_room_key(
+                    room_id=RoomID(room_id),
+                    sender_key=sender_key,
+                    session_id=SessionID(session_id),
+                    from_devices={UserID(sender): device_ids},
+                    timeout=30,
+                ),
+                name=f"key_req_{session_id[:8]}",
+            )
+        else:
+            logger.warning(
+                "UTD: no known devices for %s, cannot request key for session %.16s in %s",
+                sender, session_id, room_id,
+            )
+
+        await self.send_message(
+            "[Unable to decrypt your message — missing session key. "
+            "A key request has been sent. Please resend if this persists.]",
+            room_id,
+        )
 
     async def _on_sync_error(self, error=None, **_kwargs) -> None:
         """Log sync errors.  mautrix handles retry/backoff internally."""
