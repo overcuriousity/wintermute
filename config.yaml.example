@@ -20,9 +20,9 @@ matrix:
 # Omit or set enabled: false to keep the current placeholder behavior.
 whisper:
   enabled: true
-  base_url: "https://llm.mikoshi.de/v1"
+  base_url: "https://openai-compat-endpoint/v1"
   api_key: "your-api-key"
-  model: "gpgpu/whisper"
+  model: "whisper"
   language: ""                          # optional ISO-639-1 code, e.g. "de"
 
 # ── Web Interface ─────────────────────────────────────────────────
