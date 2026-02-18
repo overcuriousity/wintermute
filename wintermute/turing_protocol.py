@@ -226,6 +226,29 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         phase="post_inference",
         scope=["sub_session"],
     ),
+    # -- pulse_complete: sub-session pre-execution guard --
+    # Fires when the model calls pulse(action='complete') without a
+    # substantive reason.  Entirely programmatic — no Stage 1 LLM call.
+    TuringHook(
+        name="pulse_complete",
+        detection_prompt="",
+        validator_type="programmatic",
+        validator_fn_name="validate_pulse_complete",
+        validator_prompt=None,
+        correction_template=(
+            "[TURING PROTOCOL — PULSE COMPLETE BLOCKED] You attempted to "
+            "complete a pulse item without sufficient evidence.\n"
+            "Issue: {reason}\n\n"
+            "Do NOT complete pulse items unless you have concrete, verifiable "
+            "proof the task is finished. If the item describes ongoing work or "
+            "a reminder, leave it active. Provide a detailed 'reason' with "
+            "evidence when completing."
+        ),
+        halt_inference=False,
+        kill_on_detect=False,
+        phase="pre_execution",
+        scope=["sub_session"],
+    ),
     # -- tool_schema_validation: pre-execution argument guard --
     # Fires before every tool call.  Validates the LLM-supplied arguments
     # against the tool's JSON Schema (required fields, types, enums,

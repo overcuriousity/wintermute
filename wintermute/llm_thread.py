@@ -449,10 +449,10 @@ class LLMThread:
         stale (the user has already sent a follow-up and the context has moved
         on).
         """
-        if not self._turing_protocol_pool.enabled or not self._sub_sessions:
+        if not self._turing_protocol_pool.enabled:
             return
 
-        active_sessions = self._sub_sessions.list_active()
+        active_sessions = self._sub_sessions.list_active() if self._sub_sessions else []
 
         try:
             result = await turing_protocol_module.run_turing_protocol(
