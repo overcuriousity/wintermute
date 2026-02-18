@@ -871,7 +871,7 @@ class MatrixThread:
     ) -> None:
         """Send a single to-device message."""
         try:
-            await self._client.api.send_to_device(
+            await self._client.send_to_device(
                 event_type,
                 {UserID(user_id): {DeviceID(device_id): content}},
             )
@@ -917,7 +917,7 @@ class MatrixThread:
                 "transaction_id": txn_id,
             }
             try:
-                await self._client.api.send_to_device(
+                await self._client.send_to_device(
                     _VERIFY_REQUEST,
                     {UserID(user_id): {DeviceID("*"): content}},
                 )
