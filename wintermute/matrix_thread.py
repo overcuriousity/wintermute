@@ -859,8 +859,7 @@ class MatrixThread:
 
         await self.send_message(
             "[Unable to decrypt your message — missing session key. "
-            "A key request has been sent to your devices. "
-            "To fix: close and reopen your Matrix client, then send a new message.]",
+            "To fix: try to send command /verify-session. if that doesnt work, you have to log in as wintermute and fix manually.]",
             room_id,
         )
 

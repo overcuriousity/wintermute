@@ -183,7 +183,7 @@ TOOL_SCHEMAS = [
     ),
     _fn(
         "append_memory",
-        "Append a fact to MEMORIES.txt. One entry per call; nightly consolidation handles deduplication.",
+        "Append a fact to MEMORIES.txt. One entry per call",
         {
             "type": "object",
             "properties": {
