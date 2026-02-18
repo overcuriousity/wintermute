@@ -1169,7 +1169,7 @@ class MatrixThread:
             await self._handle_kimi_auth(thread_id)
             return
 
-        if content is None and text == "/verify":
+        if content is None and text == "/verify-session":
             if not _HAS_OLM or self._client is None or not self._client.crypto:
                 await self.send_message("E2EE not available.", thread_id)
                 return
@@ -1189,7 +1189,7 @@ class MatrixThread:
                 "- `/status` – Show system status\n"
                 "- `/dream` – Trigger a dream cycle\n"
                 "- `/kimi-auth` – Authenticate Kimi-Code backend\n"
-                "- `/verify` – Send E2EE verification request to allowed_users\n"
+                "- `/verify-session` – Send E2EE verification request to allowed_users\n"
                 "- `/commands` – Show this list",
                 thread_id,
             )
