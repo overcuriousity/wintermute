@@ -48,19 +48,40 @@ Copy `access_token` and `device_id` from the response into `config.yaml`. You wi
 
 ## End-to-End Encryption
 
-E2E encryption is handled automatically — the bot's crypto keys are persisted to `data/matrix_crypto.db` and the device is cross-signed at startup. The device fingerprint is logged on every start.
+E2EE is handled automatically. Crypto state is persisted in `data/matrix_crypto.db`; the recovery key that anchors the cross-signing identity is stored in `data/matrix_recovery.key`.
 
-### Cross-signing and Device Verification
+### What happens on a normal restart
 
-On first start, Wintermute calls `generate_recovery_key()` to establish its cross-signing identity and saves the recovery key to `data/matrix_recovery.key`. On every subsequent start — including after the crypto store is wiped — it calls `verify_with_recovery_key()` to re-sign the current device using the stored key, with no browser interaction and no UIA approval required.
+Nothing. Wintermute reloads its crypto store, re-signs its device using the stored recovery key, and is ready within seconds. No user action required.
 
-### SAS Verification (Emoji Handshake)
+### What happens on a fresh install (first run, or `data/` wiped)
 
-Wintermute implements the **m.sas.v1** (emoji) interactive verification protocol. To verify the device:
+Matrix E2EE requires that every new device be verified by the account owner before other clients will trust it. **This is a fundamental Matrix protocol requirement — it cannot be eliminated.** However, it can be reduced to a single tap in your Matrix client:
 
-1. In Element go to **Settings > Security > Sessions**, select Wintermute's session, and tap **Verify Session**.
-2. Element will start an emoji handshake. Wintermute auto-accepts from allowed users, skipping the emoji-comparison step.
-3. After a moment the device shows a green shield (**Verified**) in Element.
+1. Wintermute starts, generates a new device identity, and immediately sends a **verification request** to every user listed in `allowed_users`.
+2. You will see a notification in Element (or your Matrix client): *"Wintermute is requesting verification"* — tap **Accept**.
+3. Wintermute auto-completes the SAS handshake. No emoji comparison is required.
+4. The device shows as **Verified** (green shield). E2EE now works for all your devices.
+
+**No SSH needed. No recovery key copy-paste. One tap.**
+
+The recovery key is saved to `data/matrix_recovery.key` — keep this file across reinstalls and all future starts will be fully automatic (no verification needed again).
+
+> **First-run note for matrix.org:** Generating the cross-signing identity requires a one-time approval at `account.matrix.org`. Wintermute logs the exact URL if this is needed. Approve it in a browser, then restart once.
+
+### What to back up
+
+| File | What it is | If lost |
+|---|---|---|
+| `data/matrix_recovery.key` | Cross-signing anchor | Must re-verify after next install |
+| `config.yaml` | Credentials + config | Must reconfigure |
+
+### SAS Verification (manual alternative)
+
+If for any reason the automatic verification request doesn't arrive, you can trigger it manually:
+
+1. In Element go to **Settings → Security → Sessions**, find Wintermute's session, tap **Verify**.
+2. Wintermute auto-completes the handshake immediately.
 
 ## Troubleshooting
 
@@ -68,32 +89,37 @@ Wintermute implements the **m.sas.v1** (emoji) interactive verification protocol
 
 If `password` is set in `config.yaml`, Wintermute re-authenticates automatically — no action needed. Otherwise, Wintermute logs the exact `curl` command to obtain a new token. Run it, update `config.yaml`, and restart. Alternatively, add `password` to avoid this in the future.
 
-### Cross-signing Requires Approval (first run only)
+### Cross-signing Requires Approval (first run on matrix.org only)
 
-On first start, some homeservers (including matrix.org) require you to approve the cross-signing key upload via your account page. Wintermute logs the exact URL:
+On first start, matrix.org requires you to approve the cross-signing key upload. Wintermute logs the exact URL:
 
-```text
+```
 Cross-signing requires interactive approval from your homeserver.
   1. Open this URL in your browser: https://account.matrix.org/account/?action=org.matrix.cross_signing_reset
   2. Approve the cross-signing reset request.
   3. Restart Wintermute.
 ```
 
-After approval, restart once. The recovery key is saved to `data/matrix_recovery.key` and all future starts are fully automatic.
+After approval, restart once. All future starts (including after crypto-store wipes) are automatic, provided `data/matrix_recovery.key` is preserved.
 
-### Stale Crypto Store
+### Messages fail to decrypt after reinstall
 
-To reset the crypto store cleanly:
+If you wiped `data/` including `matrix_recovery.key`, Wintermute has a new device identity. Accept the verification request that Wintermute sends to your Matrix client. Once verified, send a new message — it will decrypt correctly. Old messages sent before verification are unrecoverable (Matrix E2EE design).
 
-1. In Element: **Settings > Security & Privacy > Sessions** > find the Wintermute session > **Delete / Log out**
-2. Delete the local store (keep `matrix_recovery.key` to reuse the same cross-signing identity):
-   ```bash
+### Stale Crypto Store (keep identity)
+
+To reset only the crypto store while preserving the cross-signing identity (no re-verification needed):
+
+1. In Element: **Settings → Security → Sessions** → find the Wintermute session → **Delete / Sign out**.
+2. ```bash
    rm -f data/matrix_crypto.db data/matrix_crypto.db-wal data/matrix_crypto.db-shm data/matrix_signed.marker
    ```
-3. Restart Wintermute. If `password` is set, it logs in with a fresh device automatically. Otherwise, run the `curl` login command and update `config.yaml` before restarting.
+3. Restart Wintermute.
 
-To also reset the cross-signing identity (forces re-verification in Element):
+### Full Reset (new identity, re-verification required)
 
 ```bash
 rm -f data/matrix_crypto.db* data/matrix_signed.marker data/matrix_recovery.key
 ```
+
+Restart Wintermute, then accept the verification request that appears in your Matrix client.

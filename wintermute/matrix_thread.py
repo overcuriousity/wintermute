@@ -118,6 +118,8 @@ class _SasState:
     their_device_id: str
     txn_id: str
     start_content: dict = field(default_factory=dict)
+    is_initiator: bool = False           # True when wintermute sent the request
+    key_sent: bool = False               # True once we have sent our pubkey
 
 
 def _wipe_crypto_db() -> None:
@@ -359,6 +361,10 @@ class MatrixThread:
                     self._ensure_cross_signed(client.crypto),
                     name="cross-sign",
                 )
+                asyncio.create_task(
+                    self._accept_pending_invites(),
+                    name="accept-pending-invites",
+                )
 
         client.add_event_handler(InternalEventType.SYNC_SUCCESSFUL, _on_first_sync)
 
@@ -445,7 +451,9 @@ class MatrixThread:
         # SAS verification (m.sas.v1) — to-device events
         if _HAS_OLM:
             client.add_event_handler(_VERIFY_REQUEST, self._on_verify_request)
+            client.add_event_handler(_VERIFY_READY,   self._on_verify_ready)
             client.add_event_handler(_VERIFY_START,   self._on_verify_start)
+            client.add_event_handler(_VERIFY_ACCEPT,  self._on_verify_accept)
             client.add_event_handler(_VERIFY_KEY,     self._on_verify_key)
             client.add_event_handler(_VERIFY_MAC,     self._on_verify_mac)
             client.add_event_handler(_VERIFY_CANCEL,  self._on_verify_cancel)
@@ -558,12 +566,15 @@ class MatrixThread:
             logger.info(
                 "Cross-signing complete.  Recovery key saved to %s\n"
                 "  Recovery key: %s\n"
-                "  Verify the bot in Element: Settings → Security → Sessions → Verify Session.\n"
-                "  The bot will complete the SAS handshake automatically.\n"
-                "  All future restarts and DB wipes will reuse this identity automatically.",
+                "  New device identity — sending verification request to allowed_users.\n"
+                "  Check your Matrix client for a verification notification and tap Accept.\n"
+                "  Wintermute will complete the handshake automatically (no emoji check needed).\n"
+                "  All future restarts will reuse this identity automatically.",
                 CRYPTO_RECOVERY_KEY_PATH,
                 CRYPTO_RECOVERY_KEY_PATH.read_text().strip(),
             )
+            # Proactively ask allowed_users to verify — they get an in-app notification.
+            asyncio.create_task(self._send_verification_requests(), name="send-verify-request")
 
         except Exception as exc:  # noqa: BLE001
             approval_url = _extract_uia_url(exc)
@@ -693,6 +704,65 @@ class MatrixThread:
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to join room %s: %s", room_id, exc)
 
+    async def _accept_pending_invites(self) -> None:
+        """Accept room invites that were pending at startup.
+
+        ignore_initial_sync=True causes the first sync's events to be skipped,
+        so invites that arrived while wintermute was offline are never dispatched
+        to _on_invite.  This method does a one-shot snapshot sync (no since-token,
+        zero timeout, minimal filter) to find and accept any pending invites.
+        """
+        if self._client is None:
+            return
+        try:
+            from mautrix.types import FilterID
+            # Inline filter: suppress all joined-room noise.
+            # rooms.invite is always returned in full by Matrix servers.
+            _filter = FilterID(
+                '{"presence":{"not_types":["*"]},'
+                '"account_data":{"not_types":["*"]},'
+                '"room":{"state":{"not_types":["*"]},'
+                '"timeline":{"limit":0},'
+                '"ephemeral":{"not_types":["*"]}}}'
+            )
+            raw = await self._client.api.sync(timeout=0, filter_id=_filter)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Startup invite scan failed: %s", exc)
+            return
+
+        invited: dict = raw.get("rooms", {}).get("invite", {}) if isinstance(raw, dict) else {}
+        if not invited:
+            return
+
+        logger.info("Found %d pending invite(s) at startup", len(invited))
+        for room_id_str, room_data in invited.items():
+            room_id = RoomID(room_id_str)
+            sender: Optional[str] = None
+            for ev in room_data.get("invite_state", {}).get("events", []):
+                if (ev.get("type") == "m.room.member"
+                        and ev.get("state_key") == self._cfg.user_id):
+                    sender = ev.get("sender")
+                    break
+            if sender and not self._is_user_allowed(sender):
+                logger.warning(
+                    "Startup: rejecting invite to %s from non-allowed user %s",
+                    room_id, sender,
+                )
+                continue
+            if self._cfg.allowed_rooms and str(room_id) not in self._cfg.allowed_rooms:
+                logger.warning(
+                    "Startup: rejecting invite to non-allowed room %s", room_id,
+                )
+                continue
+            logger.info(
+                "Startup: accepting pending invite to %s (inviter: %s)",
+                room_id, sender or "unknown",
+            )
+            try:
+                await self._client.join_room_by_id(room_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Startup: failed to join %s: %s", room_id, exc)
+
     async def _on_utd_event(self, evt) -> None:
         """UTD (Unable To Decrypt) recovery: request missing Megolm session keys.
 
@@ -769,7 +839,8 @@ class MatrixThread:
 
         await self.send_message(
             "[Unable to decrypt your message — missing session key. "
-            "A key request has been sent. Please resend if this persists.]",
+            "A key request has been sent to your devices. "
+            "To fix: close and reopen your Matrix client, then send a new message.]",
             room_id,
         )
 
@@ -812,6 +883,80 @@ class MatrixThread:
             "code": code,
             "reason": reason,
         })
+
+    async def _send_verification_requests(self) -> None:
+        """Send m.key.verification.request to all allowed_users.
+
+        Called after a fresh device identity is established so the user gets an
+        in-app notification ("Wintermute is requesting verification") rather than
+        having to discover the unverified-device banner themselves.  The user
+        simply taps Accept; wintermute auto-completes the SAS handshake.
+        """
+        if self._client is None or not self._cfg.allowed_users:
+            return
+        import time as _time, uuid as _uuid
+        for user_id in self._cfg.allowed_users:
+            txn_id = str(_uuid.uuid4())
+            self._verifications[txn_id] = _SasState(
+                sas=None,
+                their_user_id=user_id,
+                their_device_id="*",
+                txn_id=txn_id,
+                is_initiator=True,
+            )
+            content = {
+                "from_device": self._cfg.device_id,
+                "methods": ["m.sas.v1"],
+                "timestamp": int(_time.time() * 1000),
+                "transaction_id": txn_id,
+            }
+            try:
+                await self._client.api.send_to_device(
+                    _VERIFY_REQUEST,
+                    {UserID(user_id): {DeviceID("*"): content}},
+                )
+                logger.info("SAS: sent verification request to %s (txn=%s)", user_id, txn_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("SAS: could not send verification request to %s: %s", user_id, exc)
+                del self._verifications[txn_id]
+
+    async def _on_verify_ready(self, evt) -> None:
+        """m.key.verification.ready — other side accepted our request; send START."""
+        c = evt.content
+        txn_id = _v_field(c, "transaction_id")
+        state = self._verifications.get(txn_id)
+        if state is None or not state.is_initiator:
+            return
+        their_device = _v_field(c, "from_device")
+        state.their_device_id = their_device
+        sas = _olm.Sas()
+        state.sas = sas
+        start_content = {
+            "transaction_id": txn_id,
+            "from_device": self._cfg.device_id,
+            "method": "m.sas.v1",
+            "key_agreement_protocols": ["curve25519-hkdf-sha256"],
+            "hashes": ["sha256"],
+            "message_authentication_codes": ["hkdf-hmac-sha256.v2"],
+            "short_authentication_string": ["decimal", "emoji"],
+        }
+        state.start_content = start_content
+        await self._send_to_device(_VERIFY_START, state.their_user_id, their_device, start_content)
+        logger.info("SAS: sent start to %s/%s (txn=%s)", state.their_user_id, their_device, txn_id)
+
+    async def _on_verify_accept(self, evt) -> None:
+        """m.key.verification.accept — other side accepted our start; send our key."""
+        c = evt.content
+        txn_id = _v_field(c, "transaction_id")
+        state = self._verifications.get(txn_id)
+        if state is None or state.sas is None or not state.is_initiator:
+            return
+        await self._send_to_device(_VERIFY_KEY, state.their_user_id, state.their_device_id, {
+            "transaction_id": txn_id,
+            "key": state.sas.pubkey,
+        })
+        state.key_sent = True
+        logger.info("SAS: sent key to %s/%s (txn=%s)", state.their_user_id, state.their_device_id, txn_id)
 
     async def _on_verify_request(self, evt) -> None:
         """m.key.verification.request — accept with ready."""
@@ -901,10 +1046,13 @@ class MatrixThread:
             )
             del self._verifications[txn_id]
             return
-        await self._send_to_device(_VERIFY_KEY, state.their_user_id, state.their_device_id, {
-            "transaction_id": txn_id,
-            "key": state.sas.pubkey,
-        })
+        # Initiator already sent its key in _on_verify_accept; responder sends it here.
+        if not state.key_sent:
+            await self._send_to_device(_VERIFY_KEY, state.their_user_id, state.their_device_id, {
+                "transaction_id": txn_id,
+                "key": state.sas.pubkey,
+            })
+            state.key_sent = True
         logger.info(
             "SAS: key exchange done with %s (txn=%s) — auto-accepting, awaiting MAC",
             state.their_user_id, txn_id,
