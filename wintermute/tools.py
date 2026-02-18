@@ -173,9 +173,13 @@ TOOL_SCHEMAS = [
                     "type": "string",
                     "description": "For interval: latest fire time, HH:MM.",
                 },
-                "system": {
+                "background": {
                     "type": "boolean",
-                    "description": "Fire as a system event with no chat delivery.",
+                    "description": (
+                        "Only valid with ai_prompt. When true, the AI task runs "
+                        "silently without delivering results to the chat. "
+                        "Use for autonomous maintenance tasks."
+                    ),
                 },
             },
             "required": ["message", "schedule_type"],
@@ -208,6 +212,7 @@ TOOL_SCHEMAS = [
                 },
                 "content": {"type": "string", "description": "Item text (for add/update)."},
                 "item_id": {"type": "integer", "description": "Item ID (for complete/update)."},
+                "reason": {"type": "string", "description": "Required for complete: evidence why this item is truly finished."},
                 "priority": {"type": "integer", "description": "1 (urgent) to 10 (low), default 5."},
                 "status": {
                     "type": "string",
@@ -545,9 +550,16 @@ def _tool_set_reminder(inputs: dict, thread_id: Optional[str] = None, **_kw) -> 
     if _scheduler_set_reminder is None:
         return json.dumps({"error": "Scheduler not ready yet."})
     try:
-        # Pass thread_id through so the scheduler can bind the reminder
-        if thread_id and not inputs.get("system"):
-            inputs["thread_id"] = thread_id
+        # Strip hallucinated legacy field
+        inputs.pop("system", None)
+        # Bind the calling thread for delivery routing.
+        # For sub-sessions, prefer parent_thread_id (the real user thread).
+        effective_thread = _kw.get("parent_thread_id") or thread_id
+        background = inputs.pop("background", False)
+        if effective_thread and not (inputs.get("ai_prompt") and background):
+            # Inject thread_id for delivery unless this is an explicit
+            # background task (ai_prompt + background=true → fire-and-forget).
+            inputs["thread_id"] = effective_thread
         job_id = _scheduler_set_reminder(inputs)
         return json.dumps({"status": "scheduled", "job_id": job_id})
     except Exception as exc:  # noqa: BLE001
@@ -564,25 +576,33 @@ def _tool_append_memory(inputs: dict, **_kw) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _tool_pulse(inputs: dict, thread_id: Optional[str] = None, **_kw) -> str:
+def _tool_pulse(inputs: dict, thread_id: Optional[str] = None,
+                parent_thread_id: Optional[str] = None, **_kw) -> str:
+    # For pulse operations, scope to the real chat thread, not the sub-session id.
+    effective_scope = parent_thread_id or thread_id
+    if not effective_scope:
+        return json.dumps({"error": "pulse operations require a thread context (no thread_id available)"})
     try:
         action = inputs.get("action", "list")
         if action == "add":
             content = inputs.get("content")
             if not content:
                 return json.dumps({"error": "content is required for add action"})
-            effective_thread_id = inputs.get("thread_id") or thread_id
+            add_thread_id = inputs.get("thread_id") or effective_scope
             item_id = database.add_pulse_item(
                 content, priority=int(inputs.get("priority", 5)),
-                thread_id=effective_thread_id,
+                thread_id=add_thread_id,
             )
             return json.dumps({"status": "ok", "item_id": item_id})
         elif action == "complete":
             item_id = inputs.get("item_id")
             if item_id is None:
                 return json.dumps({"error": "item_id is required for complete action"})
-            ok = database.complete_pulse_item(int(item_id))
-            return json.dumps({"status": "ok" if ok else "not_found"})
+            reason = inputs.get("reason", "").strip()
+            if not reason:
+                return json.dumps({"error": "reason is required for complete action — explain why this item is finished"})
+            ok = database.complete_pulse_item(int(item_id), thread_id=effective_scope)
+            return json.dumps({"status": "ok" if ok else "not_found", "reason": reason})
         elif action == "update":
             item_id = inputs.get("item_id")
             if item_id is None:
@@ -594,11 +614,11 @@ def _tool_pulse(inputs: dict, thread_id: Optional[str] = None, **_kw) -> str:
                 kwargs["priority"] = int(inputs["priority"])
             if "status" in inputs:
                 kwargs["status"] = inputs["status"]
-            ok = database.update_pulse_item(int(item_id), **kwargs)
+            ok = database.update_pulse_item(int(item_id), thread_id=effective_scope, **kwargs)
             return json.dumps({"status": "ok" if ok else "not_found"})
         elif action == "list":
             status = inputs.get("status", "active")
-            items = database.list_pulse_items(status)
+            items = database.list_pulse_items(status, thread_id=effective_scope)
             return json.dumps({"items": items, "count": len(items)})
         else:
             return json.dumps({"error": f"Unknown action: {action}"})
@@ -854,7 +874,7 @@ _DISPATCH: dict[str, Any] = {
 
 
 def execute_tool(name: str, inputs: dict, thread_id: Optional[str] = None,
-                 nesting_depth: int = 0) -> str:
+                 nesting_depth: int = 0, parent_thread_id: Optional[str] = None) -> str:
     """Execute a tool by name and return its JSON-string result."""
     fn = _DISPATCH.get(name)
     if fn is None:
@@ -862,7 +882,8 @@ def execute_tool(name: str, inputs: dict, thread_id: Optional[str] = None,
     logger.debug("Executing tool '%s' with inputs: %s", name, inputs)
     t0 = time.monotonic()
     try:
-        result = fn(inputs, thread_id=thread_id, nesting_depth=nesting_depth)
+        result = fn(inputs, thread_id=thread_id, nesting_depth=nesting_depth,
+                    parent_thread_id=parent_thread_id)
         error_flag = None
     except (KeyError, TypeError, ValueError) as exc:
         result = json.dumps({"error": f"Tool '{name}' called with invalid arguments: {exc}"})

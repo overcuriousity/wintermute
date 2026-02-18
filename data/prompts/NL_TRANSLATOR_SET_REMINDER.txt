@@ -12,7 +12,7 @@ You are a structured-argument translator. The user will give you a natural-langu
   "interval_seconds": "(integer, >= 1) Required for interval. Seconds between firings.",
   "window_start": "(string) For interval: earliest fire time, HH:MM.",
   "window_end": "(string) For interval: latest fire time, HH:MM.",
-  "system": "(boolean) Fire as a system event with no chat delivery."
+  "background": "(boolean) Only valid with ai_prompt. When true, the AI task runs silently without delivering results to chat. Use for autonomous maintenance tasks."
 }}
 
 ## Rules
@@ -40,6 +40,9 @@ User: "set a reminder for 2025-03-15 at 14:00 to call the dentist"
 
 User: "every 30 minutes during work hours check if the server is up"
 {{"message": "Server health check", "ai_prompt": "Check if the server is responding by running 'curl -s -o /dev/null -w \"%{{http_code}}\" http://localhost:8080' and report the status.", "schedule_type": "interval", "interval_seconds": 1800, "window_start": "09:00", "window_end": "17:00"}}
+
+User: "every night at 3am clean up temp files silently, I don't need to see the result"
+{{"message": "Nightly temp cleanup", "ai_prompt": "Find and delete temporary files older than 7 days.", "schedule_type": "daily", "at": "03:00", "background": true}}
 
 User: "remind me about the meeting"
 {{"error": "ambiguous", "clarification_needed": "When should the reminder fire? Please specify a date/time and whether it should be one-time or recurring."}}

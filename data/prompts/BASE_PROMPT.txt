@@ -51,7 +51,7 @@ Use set_reminder with ai_prompt for autonomous scheduled work. Without ai_prompt
 Example: "research news daily" →
   set_reminder(message="Daily news", ai_prompt="Search for today's top news using search_web, fetch top 3 articles with fetch_url, compile a summary.", schedule_type="daily", at="08:00")
 
-ai_prompt rules: write as a complete self-contained instruction. Mention specific tools. Thread-bound by default (results delivered to chat).
+ai_prompt rules: write as a complete self-contained instruction. Mention specific tools. Results are delivered to chat by default. Set background=true only for autonomous maintenance tasks where the user explicitly doesn't need to see results.
 
 # System events
 

@@ -241,7 +241,13 @@ class ReminderScheduler:
                 if thread_id:
                     await self._broadcast(f"\u23f0 Reminder: {message}", thread_id)
                 else:
-                    logger.info("System reminder %s: %s", job_id, message)
+                    # No thread_id and no ai_prompt — should not happen after
+                    # the tool-level fix that always injects thread_id at
+                    # creation time.  Log loudly so it's visible in the journal.
+                    logger.warning(
+                        "Reminder %s has no thread_id and no ai_prompt — "
+                        "message was NOT delivered: %s", job_id, message
+                    )
 
             # If the job is no longer in APScheduler (one-time, now done), log it.
             if self._scheduler.get_job(job_id) is None:

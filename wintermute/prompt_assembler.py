@@ -61,7 +61,7 @@ def _read_skills() -> str:
     return "\n\n---\n\n".join(parts)
 
 
-def assemble(extra_summary: Optional[str] = None) -> str:
+def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = None) -> str:
     """
     Build and return the full system prompt string.
 
@@ -86,7 +86,7 @@ def assemble(extra_summary: Optional[str] = None) -> str:
     if memories:
         sections.append(f"# User Memories\n\n{memories}")
 
-    pulse = database.get_active_pulse_text()
+    pulse = database.get_active_pulse_text(thread_id=thread_id)
     if pulse:
         sections.append(f"# Active Pulse\n\n{pulse}")
 

@@ -502,12 +502,34 @@ def validate_tool_schema(context: dict, detection_result: dict) -> bool:
     return True
 
 
+def validate_pulse_complete(context: dict, detection_result: dict) -> bool:
+    """Programmatic validator for pulse_complete.
+
+    Fires on pre_execution when the model calls pulse(action='complete')
+    without a substantive reason.  Returns True (= violation) when the
+    reason is missing or too short to constitute evidence.
+    """
+    tool_name = context.get("tool_name", "")
+    tool_args = context.get("tool_args") or {}
+    if tool_name != "pulse" or tool_args.get("action") != "complete":
+        return False
+    reason = (tool_args.get("reason") or "").strip()
+    if len(reason) < 10:
+        context["_turing_hook_reason"] = (
+            f"pulse(action='complete') called with insufficient reason "
+            f"({reason!r}). Provide concrete evidence the item is finished."
+        )
+        return True
+    return False
+
+
 # Registry of programmatic validator functions.
 _PROGRAMMATIC_VALIDATORS = {
     "validate_workflow_spawn": validate_workflow_spawn,
     "validate_phantom_tool_result": validate_phantom_tool_result,
     "validate_empty_promise": validate_empty_promise,
     "validate_tool_schema": validate_tool_schema,
+    "validate_pulse_complete": validate_pulse_complete,
 }
 
 

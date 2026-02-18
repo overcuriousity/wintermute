@@ -1061,7 +1061,8 @@ class SubSessionManager:
         else:
             # Fresh start — build the initial conversation.
             system_prompt = self._build_system_prompt(
-                state.system_prompt_mode, state.objective, context_blobs
+                state.system_prompt_mode, state.objective, context_blobs,
+                thread_id=state.parent_thread_id,
             )
             state.messages = [
                 {"role": "system", "content": system_prompt},
@@ -1154,6 +1155,7 @@ class SubSessionManager:
                                     name, item_args,
                                     thread_id=state.session_id,
                                     nesting_depth=state.nesting_depth,
+                                    parent_thread_id=state.parent_thread_id,
                                 )
                                 summary = ", ".join(f"{k}={v!r}" for k, v in item_args.items() if k != "description")
                                 combined_results.append(f"[{i+1}] [Translated to: {summary}] {item_result}")
@@ -1205,6 +1207,7 @@ class SubSessionManager:
                         inputs,
                         thread_id=state.session_id,
                         nesting_depth=state.nesting_depth,
+                        parent_thread_id=state.parent_thread_id,
                     )
                     tool_calls_made.append(name)
 
@@ -1344,13 +1347,14 @@ class SubSessionManager:
         mode: str,
         objective: str,
         context_blobs: list[str],
+        thread_id: Optional[str] = None,
     ) -> str:
         if mode == "none":
             base = ""
         elif mode == "minimal":
             base = prompt_loader.load("WORKER_MINIMAL.txt")
         elif mode == "full":
-            base = prompt_assembler.assemble()
+            base = prompt_assembler.assemble(thread_id=thread_id)
         else:  # "base_only"
             raw = prompt_loader.load("BASE_PROMPT.txt")
             base = f"# Core Instructions\n\n{raw}" if raw else ""

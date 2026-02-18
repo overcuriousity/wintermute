@@ -402,7 +402,7 @@ _DEBUG_HTML = """\
         <div class="form-group" style="justify-content:flex-end">
           <label>&nbsp;</label>
           <label style="display:flex;align-items:center;gap:.3rem;cursor:pointer">
-            <input type="checkbox" name="system_reminder" style="width:auto"> System
+            <input type="checkbox" name="background" style="width:auto"> Background
           </label>
         </div>
         <div class="form-group" style="justify-content:flex-end">
@@ -1158,7 +1158,7 @@ function editReminder(rem) {
   form.schedule_type.value    = stype;
   form.message.value          = rem.message   || '';
   form.ai_prompt.value        = rem.ai_prompt || '';
-  form.system_reminder.checked = !rem.thread_id || rem.thread_id === 'system';
+  form.background.checked = !rem.thread_id;
   onScheduleTypeChange(stype);
 
   // Populate type-specific fields from the registry schedule string where possible.
@@ -1209,7 +1209,7 @@ async function createReminder(e) {
   }
   const aiPrompt = form.ai_prompt.value.trim();
   if (aiPrompt) payload.ai_prompt = aiPrompt;
-  if (form.system_reminder.checked) payload.system = true;
+  if (form.background.checked) payload.background = true;
 
   const r = await fetch('/api/debug/reminders', {
     method: 'POST',

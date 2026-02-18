@@ -209,40 +209,72 @@ def add_pulse_item(content: str, priority: int = 5, thread_id: str | None = None
         return cur.lastrowid
 
 
-def complete_pulse_item(item_id: int) -> bool:
-    """Mark a pulse item as completed. Returns True if a row was updated."""
+def complete_pulse_item(item_id: int, thread_id: Optional[str] = None) -> bool:
+    """Mark a pulse item as completed. Returns True if a row was updated.
+
+    When *thread_id* is given the item must belong to that thread (ownership guard).
+    """
     with sqlite3.connect(CONVERSATION_DB) as conn:
-        n = conn.execute(
-            "UPDATE pulse SET status='completed', updated=? WHERE id=?",
-            (time.time(), item_id),
-        ).rowcount
+        if thread_id:
+            n = conn.execute(
+                "UPDATE pulse SET status='completed', updated=? WHERE id=? AND thread_id=?",
+                (time.time(), item_id, thread_id),
+            ).rowcount
+        else:
+            n = conn.execute(
+                "UPDATE pulse SET status='completed', updated=? WHERE id=?",
+                (time.time(), item_id),
+            ).rowcount
         conn.commit()
     return n > 0
 
 
-def update_pulse_item(item_id: int, **kwargs) -> bool:
-    """Update fields on a pulse item. Supported: content, priority, status."""
+def update_pulse_item(item_id: int, thread_id: Optional[str] = None, **kwargs) -> bool:
+    """Update fields on a pulse item. Supported: content, priority, status.
+
+    When *thread_id* is given the item must belong to that thread (ownership guard).
+    """
     allowed = {"content", "priority", "status"}
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return False
     updates["updated"] = time.time()
     set_clause = ", ".join(f"{k}=?" for k in updates)
-    values = list(updates.values()) + [item_id]
+    if thread_id:
+        values = list(updates.values()) + [item_id, thread_id]
+        where = "WHERE id=? AND thread_id=?"
+    else:
+        values = list(updates.values()) + [item_id]
+        where = "WHERE id=?"
     with sqlite3.connect(CONVERSATION_DB) as conn:
-        n = conn.execute(f"UPDATE pulse SET {set_clause} WHERE id=?", values).rowcount
+        n = conn.execute(f"UPDATE pulse SET {set_clause} {where}", values).rowcount
         conn.commit()
     return n > 0
 
 
-def list_pulse_items(status: str = "active") -> list[dict]:
-    """Return pulse items filtered by status, ordered by priority then id."""
+def list_pulse_items(status: str = "active", thread_id: Optional[str] = None) -> list[dict]:
+    """Return pulse items filtered by status, ordered by priority then id.
+
+    When *thread_id* is given, only items belonging to that thread are returned.
+    """
     with sqlite3.connect(CONVERSATION_DB) as conn:
         conn.row_factory = sqlite3.Row
-        if status == "all":
+        if status == "all" and not thread_id:
             rows = conn.execute(
                 "SELECT id, content, status, priority, created, updated, thread_id "
                 "FROM pulse ORDER BY priority ASC, id ASC"
+            ).fetchall()
+        elif status == "all" and thread_id:
+            rows = conn.execute(
+                "SELECT id, content, status, priority, created, updated, thread_id "
+                "FROM pulse WHERE thread_id=? ORDER BY priority ASC, id ASC",
+                (thread_id,),
+            ).fetchall()
+        elif thread_id:
+            rows = conn.execute(
+                "SELECT id, content, status, priority, created, updated, thread_id "
+                "FROM pulse WHERE status=? AND thread_id=? ORDER BY priority ASC, id ASC",
+                (status, thread_id),
             ).fetchall()
         else:
             rows = conn.execute(
@@ -253,9 +285,12 @@ def list_pulse_items(status: str = "active") -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def get_active_pulse_text() -> str:
-    """Compact formatted string of active pulse items for system prompt injection."""
-    items = list_pulse_items("active")
+def get_active_pulse_text(thread_id: Optional[str] = None) -> str:
+    """Compact formatted string of active pulse items for system prompt injection.
+
+    When *thread_id* is given, only items belonging to that thread are included.
+    """
+    items = list_pulse_items("active", thread_id=thread_id)
     if not items:
         return ""
     return "\n".join(f"[P{it['priority']}] #{it['id']}: {it['content']}" for it in items)
