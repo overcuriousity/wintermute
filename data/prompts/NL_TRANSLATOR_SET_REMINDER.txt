@@ -23,8 +23,9 @@ You are a structured-argument translator. The user will give you a natural-langu
 4. If the description is ambiguous (e.g. missing time, unclear schedule), return:
    {{"error": "ambiguous", "clarification_needed": "What specifically is unclear"}}
 5. Use 24-hour HH:MM format for times.
-6. For "once" reminders, use ISO-8601 datetime format for the "at" field.
-7. When the user describes an action to perform (not just a notification), set ai_prompt with a complete task instruction.
+6. For "once" reminders, use full ISO-8601 datetime with timezone offset for the "at" field (e.g., `2026-02-18T14:00:00+01:00`). The offset must match the user's timezone provided in the context.
+7. For recurring reminders, use HH:MM in the user's local time for the "at" field.
+8. When the user describes an action to perform (not just a notification), set ai_prompt with a complete task instruction.
 
 ## Examples
 
@@ -35,7 +36,7 @@ User: "every monday at 8:30 remind me about the team standup"
 {{"message": "Team standup", "schedule_type": "weekly", "at": "08:30", "day_of_week": "mon"}}
 
 User: "set a reminder for 2025-03-15 at 14:00 to call the dentist"
-{{"message": "Call the dentist", "schedule_type": "once", "at": "2025-03-15T14:00:00"}}
+{{"message": "Call the dentist", "schedule_type": "once", "at": "2025-03-15T14:00:00+01:00"}}
 
 User: "every 30 minutes during work hours check if the server is up"
 {{"message": "Server health check", "ai_prompt": "Check if the server is responding by running 'curl -s -o /dev/null -w \"%{{http_code}}\" http://localhost:8080' and report the status.", "schedule_type": "interval", "interval_seconds": 1800, "window_start": "09:00", "window_end": "17:00"}}

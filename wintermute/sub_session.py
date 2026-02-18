@@ -1111,10 +1111,23 @@ class SubSessionManager:
 
                     # -- NL Translation: expand description to structured args --
                     if nl_enabled and nl_translator.is_nl_tool_call(name, inputs):
+                        from wintermute.prompt_assembler import _timezone as _pa_tz
                         translated = await nl_translator.translate_nl_tool_call(
                             self._nl_translation_pool, name, inputs["description"],
                             thread_id=state.session_id,
+                            timezone_str=_pa_tz,
                         )
+                        # Log the NL translation call.
+                        try:
+                            database.save_interaction_log(
+                                _time.time(), "nl_translation", state.session_id,
+                                self._nl_translation_pool.last_used,
+                                inputs["description"],
+                                json.dumps(translated) if translated is not None else "null",
+                                "ok" if translated is not None else "error",
+                            )
+                        except Exception:
+                            pass
                         if translated is None:
                             state.messages.append({
                                 "role":         "tool",

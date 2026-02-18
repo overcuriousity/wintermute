@@ -1601,7 +1601,14 @@ class WebInterface:
         _cfg = self._main_pool.primary if (self._main_pool and self._main_pool.enabled) else None
         model = _cfg.model if _cfg else "gpt-4"
         sp_tokens = _count_tokens(prompt, model)
-        tools_tokens = _count_tokens(json.dumps(tool_module.TOOL_SCHEMAS), model)
+        # Use NL-aware schemas if the LLM thread has NL translation enabled.
+        nl_tools = None
+        if self._llm:
+            nl_cfg = getattr(self._llm, '_nl_translation_config', {})
+            if nl_cfg.get("enabled", False):
+                nl_tools = nl_cfg.get("tools", set())
+        active_schemas = tool_module.get_tool_schemas(nl_tools=nl_tools)
+        tools_tokens = _count_tokens(json.dumps(active_schemas), model)
         total_limit = max(_cfg.context_size - _cfg.max_tokens, 1) if _cfg else 4096
         combined_tokens = sp_tokens + tools_tokens
         return self._json({
@@ -1611,7 +1618,7 @@ class WebInterface:
             "tokens": combined_tokens,
             "total_limit": total_limit,
             "pct": round(min(combined_tokens / total_limit * 100, 100), 1),
-            "tool_schemas": tool_module.TOOL_SCHEMAS,
+            "tool_schemas": active_schemas,
         })
 
     # ------------------------------------------------------------------

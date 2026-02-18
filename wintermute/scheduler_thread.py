@@ -308,8 +308,7 @@ class ReminderScheduler:
     # Time parsing
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _parse_trigger(inputs: dict):
+    def _parse_trigger(self, inputs: dict):
         """Return an APScheduler trigger from structured schedule inputs."""
         schedule_type = inputs.get("schedule_type", "once")
 
@@ -352,7 +351,7 @@ class ReminderScheduler:
             return IntervalTrigger(seconds=interval_seconds)
 
         # Default: once.
-        fire_at = _parse_once_at(inputs.get("at", ""))
+        fire_at = _parse_once_at(inputs.get("at", ""), tz_name=self._cfg.timezone)
         return DateTrigger(run_date=fire_at)
 
 
@@ -368,9 +367,14 @@ def _parse_hhmm(s: str) -> tuple[int, int]:
     return 9, 0
 
 
-def _parse_once_at(spec: str) -> datetime:
+def _parse_once_at(spec: str, tz_name: str = "UTC") -> datetime:
     """Parse a one-time fire datetime from natural language or ISO-8601."""
-    now = datetime.now(timezone.utc)
+    from zoneinfo import ZoneInfo
+    try:
+        local_tz = ZoneInfo(tz_name)
+    except Exception:
+        local_tz = ZoneInfo("UTC")
+    now = datetime.now(local_tz)
     s = spec.strip().lower()
 
     m = re.match(r"in\s+(\d+)\s+(minute|hour|day)s?", s)
@@ -390,7 +394,7 @@ def _parse_once_at(spec: str) -> datetime:
     try:
         dt = dateutil_parser.parse(spec, default=now.replace(tzinfo=None))
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=local_tz)
         return dt
     except Exception:  # noqa: BLE001
         logger.warning("Could not parse once_at '%s', defaulting to +1h", spec)

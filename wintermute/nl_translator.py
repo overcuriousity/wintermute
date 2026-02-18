@@ -15,7 +15,9 @@ description.
 import json
 import logging
 import re
+from datetime import datetime
 from typing import TYPE_CHECKING, Optional
+from zoneinfo import ZoneInfo
 
 from wintermute import prompt_loader
 
@@ -60,6 +62,8 @@ async def translate_nl_tool_call(
     tool_name: str,
     description: str,
     thread_id: Optional[str] = None,
+    timezone_str: str = "UTC",
+    current_datetime: Optional[str] = None,
 ) -> "dict | list | None":
     """Call the translator LLM to expand a natural-language description
     into structured tool arguments.
@@ -83,9 +87,24 @@ async def translate_nl_tool_call(
         logger.error("NL translator prompt file missing: %s", prompt_file)
         return None
 
+    # Build timezone-aware context prefix for the user message.
+    if current_datetime is None:
+        try:
+            tz = ZoneInfo(timezone_str)
+        except Exception:
+            tz = ZoneInfo("UTC")
+        now = datetime.now(tz)
+        current_datetime = now.strftime("%A, %Y-%m-%d %H:%M %Z") + f" ({timezone_str})"
+
+    user_content = (
+        f"[Current time: {current_datetime}. "
+        f"All times without explicit timezone should use this timezone.]\n\n"
+        + description
+    )
+
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": description},
+        {"role": "user", "content": user_content},
     ]
 
     try:

@@ -714,10 +714,23 @@ class LLMThread:
 
                     # -- NL Translation: expand description to structured args --
                     if nl_enabled and nl_translator.is_nl_tool_call(name, inputs):
+                        _nl_tz = prompt_assembler._timezone
                         translated = await nl_translator.translate_nl_tool_call(
                             self._nl_translation_pool, name, inputs["description"],
                             thread_id=thread_id,
+                            timezone_str=_nl_tz,
                         )
+                        # Log the NL translation call.
+                        try:
+                            database.save_interaction_log(
+                                _time.time(), "nl_translation", thread_id,
+                                self._nl_translation_pool.last_used,
+                                inputs["description"],
+                                json.dumps(translated) if translated is not None else "null",
+                                "ok" if translated is not None else "error",
+                            )
+                        except Exception:
+                            pass
                         if translated is None:
                             full_messages.append({
                                 "role":         "tool",
