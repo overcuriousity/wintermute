@@ -697,8 +697,12 @@ class MatrixThread:
                         form_data["language"] = self._whisper_language
                     files = {"file": (filename, data)}
                     url = f"{str(self._whisper_client.base_url).rstrip('/')}/audio/transcriptions"
+                    logger.debug("Whisper request: url=%s model=%s file=%s (%d bytes)",
+                                 url, self._whisper_model, filename, len(data))
                     async with _httpx.AsyncClient(timeout=60.0) as hc:
                         r = await hc.post(url, headers=headers, data=form_data, files=files)
+                    if r.status_code != 200:
+                        logger.error("Whisper HTTP %s — body: %s", r.status_code, r.text[:500])
                     r.raise_for_status()
                     transcript = r.json().get("text", "").strip()
                     logger.info("Whisper transcript (%s): %s", evt.sender, transcript[:120])
