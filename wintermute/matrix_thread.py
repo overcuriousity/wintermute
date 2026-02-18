@@ -280,6 +280,20 @@ class MatrixThread:
             )
             return
 
+        # If we have credentials for an existing device but the crypto DB is gone,
+        # the server still has OTKs registered for that device from a previous run.
+        # A fresh Olm account would generate OTKs with the same IDs → server rejects them.
+        # Force a new login so we get a fresh device_id with no server-side OTK conflicts.
+        if (self._cfg.access_token and self._cfg.device_id
+                and not CRYPTO_DB_PATH.exists() and self._cfg.password):
+            logger.info(
+                "Crypto DB missing for existing device %s — forcing fresh login "
+                "to avoid OTK conflicts with server.",
+                self._cfg.device_id,
+            )
+            _wipe_crypto_db()
+            await self._auto_login()
+
         try:
             await self._connect_and_serve()
         except asyncio.CancelledError:
