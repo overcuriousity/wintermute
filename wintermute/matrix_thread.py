@@ -549,7 +549,13 @@ class MatrixThread:
                     CRYPTO_MARKER_PATH.write_text(current_key)
                     logger.info(
                         "Cross-signing restored from stored recovery key.  "
-                        "Same MSK reused — no re-verification needed."
+                        "Same MSK reused — sending verification request to allowed_users "
+                        "in case this device has not been verified yet."
+                    )
+                    # New device detected — ask allowed_users to verify even on path (a),
+                    # because the user may not have verified this device before.
+                    asyncio.create_task(
+                        self._send_verification_requests(), name="send-verify-request",
                     )
                     return
                 except Exception as restore_exc:  # noqa: BLE001
@@ -725,7 +731,7 @@ class MatrixThread:
                 '"timeline":{"limit":0},'
                 '"ephemeral":{"not_types":["*"]}}}'
             )
-            raw = await self._client.api.sync(timeout=0, filter_id=_filter)
+            raw = await self._client.sync(timeout=0, filter_id=_filter)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Startup invite scan failed: %s", exc)
             return
@@ -1163,6 +1169,16 @@ class MatrixThread:
             await self._handle_kimi_auth(thread_id)
             return
 
+        if content is None and text == "/verify":
+            if not _HAS_OLM or self._client is None or not self._client.crypto:
+                await self.send_message("E2EE not available.", thread_id)
+                return
+            await self.send_message(
+                "Sending verification request to all allowed_users...", thread_id,
+            )
+            await self._send_verification_requests()
+            return
+
         if content is None and text == "/commands":
             await self.send_message(
                 "**Available commands:**\n"
@@ -1173,6 +1189,7 @@ class MatrixThread:
                 "- `/status` – Show system status\n"
                 "- `/dream` – Trigger a dream cycle\n"
                 "- `/kimi-auth` – Authenticate Kimi-Code backend\n"
+                "- `/verify` – Send E2EE verification request to allowed_users\n"
                 "- `/commands` – Show this list",
                 thread_id,
             )
