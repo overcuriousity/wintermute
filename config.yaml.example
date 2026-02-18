@@ -15,6 +15,16 @@ matrix:
     - "@admin:matrix.org"
   allowed_rooms: []                       # Room ID whitelist (empty = any room)
 
+# ── Whisper (Voice Transcription) ───────────────────────────────────
+# OpenAI-compatible /v1/audio/transcriptions endpoint for Matrix voice messages.
+# Omit or set enabled: false to keep the current placeholder behavior.
+whisper:
+  enabled: true
+  base_url: "https://llm.mikoshi.de/v1"
+  api_key: "your-api-key"
+  model: "gpgpu/whisper"
+  language: ""                          # optional ISO-639-1 code, e.g. "de"
+
 # ── Web Interface ─────────────────────────────────────────────────
 # Enabled by default. Open http://127.0.0.1:8080 in your browser.
 web:

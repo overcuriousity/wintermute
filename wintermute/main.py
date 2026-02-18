@@ -408,6 +408,16 @@ async def main() -> None:
         matrix._llm = llm
         matrix._sub_sessions = sub_sessions
         matrix._kimi_client = client_cache.get(("kimi-code",))
+        # Whisper voice transcription.
+        whisper_raw = cfg.get("whisper", {}) or {}
+        if whisper_raw.get("enabled"):
+            matrix._whisper_client = AsyncOpenAI(
+                api_key=whisper_raw.get("api_key", ""),
+                base_url=whisper_raw.get("base_url", ""),
+            )
+            matrix._whisper_model = whisper_raw.get("model", "whisper-1")
+            matrix._whisper_language = whisper_raw.get("language", "") or ""
+            logger.info("Whisper transcription enabled (model=%s)", matrix._whisper_model)
     if web_iface:
         web_iface._llm = llm
         web_iface._kimi_client = client_cache.get(("kimi-code",))

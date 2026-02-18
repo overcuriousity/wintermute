@@ -37,7 +37,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 | `prompt_assembler.py` | Assembles system prompt per-turn: BASE_PROMPT + datetime + MEMORIES + pulse + skills |
 | `prompt_loader.py` | Loads/validates prompt templates from `data/prompts/` (required files; missing = startup failure) |
 | `turing_protocol.py` | Phase-aware 3-stage pipeline: detect → validate → correct. Phases: `post_inference`, `pre_execution`, `post_execution`. Scoped to `main` and/or `sub_session`. |
-| `matrix_thread.py` | Matrix client (mautrix) with E2E encryption |
+| `matrix_thread.py` | Matrix client (mautrix) with E2E encryption; voice messages transcribed via configurable Whisper endpoint |
 | `web_interface.py` | aiohttp server: WebSocket chat, debug panel (`/debug`), REST API |
 | `dreaming.py` | Nightly memory consolidation (direct LLM call, no tool loop) |
 | `pulse.py` | Periodic autonomous pulse reviews via sub-session |

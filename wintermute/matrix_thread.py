@@ -203,6 +203,10 @@ class MatrixThread:
         self._send_lock = asyncio.Lock()
         self._verifications: dict[str, _SasState] = {}
         self._requested_sessions: set[str] = set()  # UTD: session IDs we've already requested
+        # Whisper transcription (injected from main.py if enabled).
+        self._whisper_client = None
+        self._whisper_model: str = ""
+        self._whisper_language: str = ""
 
     # ------------------------------------------------------------------
     # Public interface
@@ -681,8 +685,26 @@ class MatrixThread:
             filename = f"{evt.event_id}{ext}".replace("$", "").replace(":", "_")
             voice_path = VOICE_DIR / filename
             voice_path.write_bytes(data)
-            text = reply_prefix + f"[Voice message received: {voice_path}]"
             logger.info("Saved voice message from %s to %s", evt.sender, voice_path)
+
+            # Transcribe via Whisper if configured.
+            if self._whisper_client is not None:
+                try:
+                    from openai import NOT_GIVEN
+                    resp = await self._whisper_client.audio.transcriptions.create(
+                        file=(filename, data),
+                        model=self._whisper_model,
+                        language=self._whisper_language or NOT_GIVEN,
+                    )
+                    transcript = resp.text.strip()
+                    logger.info("Whisper transcript (%s): %s", evt.sender, transcript[:120])
+                    text = reply_prefix + f"[Transcribed voice message] {transcript}"
+                    await self._dispatch(text, thread_id)
+                    return
+                except Exception:  # noqa: BLE001
+                    logger.exception("Whisper transcription failed for %s — falling back to placeholder", voice_path)
+
+            text = reply_prefix + f"[Voice message received: {voice_path}]"
             await self._dispatch(text, thread_id)
             return
 
