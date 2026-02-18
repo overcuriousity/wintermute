@@ -226,6 +226,31 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         phase="post_inference",
         scope=["sub_session"],
     ),
+    # -- tool_schema_validation: pre-execution argument guard --
+    # Fires before every tool call.  Validates the LLM-supplied arguments
+    # against the tool's JSON Schema (required fields, types, enums,
+    # min/max, unknown properties).  Entirely programmatic — no Stage 1
+    # LLM call needed.  The Stage 3 correction includes the full schema of
+    # the tool that was attempted, loaded dynamically.
+    TuringHook(
+        name="tool_schema_validation",
+        detection_prompt="",  # programmatic-only: skips Stage 1 LLM call
+        validator_type="programmatic",
+        validator_fn_name="validate_tool_schema",
+        validator_prompt=None,
+        correction_template=(
+            "[TURING PROTOCOL — INVALID TOOL ARGUMENTS] Your call to "
+            "`{tool_name}` failed schema validation.\n\n"
+            "Errors:\n{reason}\n\n"
+            "Fix the arguments and retry the call. Full schema for "
+            "`{tool_name}`:\n"
+            "```json\n{tool_schema}\n```"
+        ),
+        halt_inference=False,
+        kill_on_detect=False,
+        phase="pre_execution",
+        scope=["main", "sub_session"],
+    ),
 ]
 
 
@@ -431,11 +456,58 @@ def validate_empty_promise(context: dict, detection_result: dict) -> bool:
     return True
 
 
+def validate_tool_schema(context: dict, detection_result: dict) -> bool:
+    """Programmatic validator for tool_schema_validation.
+
+    Validates tool arguments against the tool's JSON Schema before execution.
+    Full validation: required fields, types, enum values, minimum/maximum
+    constraints, and unknown properties.
+
+    When a violation is found, stores a human-readable bullet list of errors
+    in ``context["_turing_hook_reason"]`` so Stage 3 can embed them in the
+    correction prompt.
+
+    Returns True if validation fails (violation confirmed).
+    """
+    tool_name = context.get("tool_name", "")
+    tool_args = context.get("tool_args")
+
+    if tool_args is None:
+        # Not called in pre_execution context — skip silently.
+        return False
+
+    schema = None
+    for tool in TOOL_SCHEMAS:
+        if tool.get("function", {}).get("name") == tool_name:
+            schema = tool["function"]["parameters"]
+            break
+
+    if schema is None:
+        logger.warning(
+            "tool_schema_validation: no schema found for tool %r — skipping", tool_name
+        )
+        return False
+
+    errors = _validate_against_schema(tool_args, schema)
+    if not errors:
+        logger.debug("tool_schema_validation: %r args are valid", tool_name)
+        return False
+
+    error_text = "\n".join(f"  • {e}" for e in errors)
+    context["_turing_hook_reason"] = error_text
+    logger.warning(
+        "tool_schema_validation: %d error(s) for tool %r:\n%s",
+        len(errors), tool_name, error_text,
+    )
+    return True
+
+
 # Registry of programmatic validator functions.
 _PROGRAMMATIC_VALIDATORS = {
     "validate_workflow_spawn": validate_workflow_spawn,
     "validate_phantom_tool_result": validate_phantom_tool_result,
     "validate_empty_promise": validate_empty_promise,
+    "validate_tool_schema": validate_tool_schema,
 }
 
 
@@ -444,10 +516,20 @@ _PROGRAMMATIC_VALIDATORS = {
 # ------------------------------------------------------------------
 
 def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook],
+                      context: Optional[dict] = None,
                       *, objective: Optional[str] = None) -> str:
-    """Build an aggregated correction prompt from all confirmed violations."""
+    """Build an aggregated correction prompt from all confirmed violations.
+
+    When *context* is provided and contains ``tool_name`` (i.e. in the
+    ``pre_execution`` phase), the tool schema embedded in correction messages
+    is loaded dynamically for the tool that was called.  Otherwise it falls
+    back to the spawn_sub_session schema for backward compatibility with
+    ``post_inference`` hooks such as ``workflow_spawn``.
+    """
     parts = []
-    tool_schema = _get_spawn_tool_schema()
+    ctx = context or {}
+    tool_name = ctx.get("tool_name", "")
+    tool_schema = _get_tool_schema(tool_name) if tool_name else _get_spawn_tool_schema()
 
     for violation in confirmed:
         hook = hooks_by_name.get(violation["type"])
@@ -458,6 +540,7 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook
         part = hook.correction_template.format(
             reason=reason,
             tool_schema=tool_schema,
+            tool_name=tool_name or "(unknown)",
             objective=objective or "(unknown)",
         )
         parts.append(part)
@@ -482,12 +565,102 @@ def _truncate_middle(text: str, keep_head: int, keep_tail: int) -> str:
     return text[:keep_head] + f"\n[… {omitted} chars omitted …]\n" + text[-keep_tail:]
 
 
+def _get_tool_schema(tool_name: str) -> str:
+    """Return a compact JSON string of the named tool's schema.
+
+    Falls back to a descriptive placeholder if the tool is not found.
+    """
+    for tool in TOOL_SCHEMAS:
+        if tool.get("function", {}).get("name") == tool_name:
+            return json.dumps(tool, indent=2)
+    return f"(schema for tool '{tool_name}' not found)"
+
+
 def _get_spawn_tool_schema() -> str:
     """Return a compact JSON string of the spawn_sub_session tool schema."""
-    for tool in TOOL_SCHEMAS:
-        if tool.get("function", {}).get("name") == "spawn_sub_session":
-            return json.dumps(tool, indent=2)
-    return "(spawn_sub_session tool schema not found)"
+    return _get_tool_schema("spawn_sub_session")
+
+
+# ---------------------------------------------------------------------------
+# Schema validation helpers (no external dependency — custom subset impl)
+# ---------------------------------------------------------------------------
+
+def _check_type(value: Any, expected: str) -> bool:
+    """Return True if *value* matches the JSON Schema *expected* type string.
+
+    Note: ``bool`` is a subclass of ``int`` in Python, so we explicitly
+    reject booleans when the expected type is ``"integer"`` or ``"number"``.
+    """
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "object":
+        return isinstance(value, dict)
+    return True  # Unknown type — do not block.
+
+
+def _validate_against_schema(args: dict, schema: dict) -> list[str]:
+    """Validate *args* against a JSON Schema (subset used by TOOL_SCHEMAS).
+
+    Checks:
+    - Arguments is a JSON object (dict)
+    - All ``required`` fields are present
+    - Each provided field is declared in ``properties`` (no unknown keys)
+    - Each provided field matches its declared ``type``
+    - Each provided field satisfies its ``enum`` constraint
+    - Integer / number fields satisfy ``minimum`` / ``maximum`` constraints
+
+    Returns a list of human-readable error strings; empty list means valid.
+    """
+    if not isinstance(args, dict):
+        return [f"Tool arguments must be a JSON object, got {type(args).__name__}"]
+
+    errors: list[str] = []
+    properties: dict = schema.get("properties", {})
+    required: list = schema.get("required", [])
+
+    for field in required:
+        if field not in args:
+            errors.append(f"Missing required field '{field}'")
+
+    for field, value in args.items():
+        if field not in properties:
+            errors.append(f"Unknown field '{field}'")
+            continue
+
+        prop = properties[field]
+        expected_type = prop.get("type")
+
+        if expected_type and not _check_type(value, expected_type):
+            errors.append(
+                f"Field '{field}': expected {expected_type}, "
+                f"got {type(value).__name__} ({value!r})"
+            )
+            continue  # Skip further checks if the type is already wrong.
+
+        if "enum" in prop and value not in prop["enum"]:
+            errors.append(
+                f"Field '{field}': must be one of {prop['enum']}, got {value!r}"
+            )
+
+        if expected_type in ("integer", "number"):
+            if "minimum" in prop and value < prop["minimum"]:
+                errors.append(
+                    f"Field '{field}': must be >= {prop['minimum']}, got {value}"
+                )
+            if "maximum" in prop and value > prop["maximum"]:
+                errors.append(
+                    f"Field '{field}': must be <= {prop['maximum']}, got {value}"
+                )
+
+    return errors
 
 
 # ------------------------------------------------------------------
@@ -626,12 +799,15 @@ async def run_turing_protocol(
 
         # -- Programmatic-only hooks (no detection_prompt, run directly) --
         # These are already validated here; mark them to skip Stage 2 re-check.
+        # Validators may write a detailed reason into context["_turing_hook_reason"];
+        # we pop it so it does not bleed across hooks.
         for hook in programmatic_only:
             fn = _PROGRAMMATIC_VALIDATORS.get(hook.validator_fn_name or "")
             if fn and fn(context, {}):
+                reason = context.pop("_turing_hook_reason", "programmatic check failed")
                 violations.append({
                     "type": hook.name,
-                    "reason": "programmatic check failed",
+                    "reason": reason,
                     "_pre_validated": True,
                 })
 
@@ -720,7 +896,7 @@ async def run_turing_protocol(
                         len(confirmed), phase, scope)
 
         correction_text = _build_correction(
-            confirmed, hooks_by_name, objective=objective,
+            confirmed, hooks_by_name, context, objective=objective,
         )
 
         # Log Stage 3 correction

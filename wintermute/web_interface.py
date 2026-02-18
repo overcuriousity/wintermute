@@ -548,8 +548,10 @@ async function loadSessions() {
 
 function renderSessionList(sessions) {
   const el = document.getElementById('session-list');
+  const scrollTop = el.scrollTop;
   if (!sessions.length) {
     el.innerHTML = '<div class="empty">No active sessions</div>';
+    el.scrollTop = scrollTop;
     return;
   }
   el.innerHTML = sessions.map(s => {
@@ -580,6 +582,7 @@ function renderSessionList(sessions) {
       <div class="ctx-label">${s.context_pct}% &middot; SP&nbsp;${fmtTokens(s.sp_tokens)}&nbsp;+&nbsp;tools&nbsp;${fmtTokens(s.tools_tokens||0)}&nbsp;+&nbsp;hist&nbsp;${fmtTokens(s.hist_tokens)}&nbsp;/&nbsp;${fmtTokens(s.total_limit)}</div>
     </div>`;
   }).join('');
+  el.scrollTop = scrollTop;
 }
 
 function selectSession(id) {
@@ -751,8 +754,25 @@ let _expandedSubSessions = new Set();
 function renderSubSessions(sessions) {
   document.getElementById('cnt-subsessions').textContent = sessions.length;
   const tbody = document.getElementById('subsessions-body');
+  const scrollArea = tbody.closest('.scroll-area');
+  const outerScroll = scrollArea ? scrollArea.scrollTop : 0;
+
+  // Save expanded detail content + inner scroll so SSE updates don't wipe them
+  const savedDetails = {};
+  for (const sid of _expandedSubSessions) {
+    const contentEl = document.getElementById('sscontent-' + sid);
+    if (contentEl) {
+      const innerDiv = contentEl.querySelector('div[style*="overflow-y"]');
+      savedDetails[sid] = {
+        html: contentEl.innerHTML,
+        innerScroll: innerDiv ? innerDiv.scrollTop : 0,
+      };
+    }
+  }
+
   if (!sessions.length) {
     tbody.innerHTML = '<tr><td colspan="12" class="empty">No sub-sessions recorded</td></tr>';
+    if (scrollArea) scrollArea.scrollTop = outerScroll;
     return;
   }
   tbody.innerHTML = sessions.map(s => {
@@ -791,10 +811,21 @@ function renderSubSessions(sessions) {
       </td>
     </tr>`;
   }).join('');
-  // Re-fetch content for expanded rows
+
+  // Restore expanded detail content + inner scroll; only fetch if not yet loaded
   for (const sid of _expandedSubSessions) {
-    fetchSubSessionDetail(sid);
+    const contentEl = document.getElementById('sscontent-' + sid);
+    if (!contentEl) continue;
+    if (savedDetails[sid]) {
+      contentEl.innerHTML = savedDetails[sid].html;
+      const innerDiv = contentEl.querySelector('div[style*="overflow-y"]');
+      if (innerDiv) innerDiv.scrollTop = savedDetails[sid].innerScroll;
+    } else {
+      fetchSubSessionDetail(sid);
+    }
   }
+
+  if (scrollArea) scrollArea.scrollTop = outerScroll;
 }
 
 async function loadSubSessions() {
@@ -864,8 +895,10 @@ async function fetchSubSessionDetail(sid) {
 function renderWorkflows(workflows) {
   document.getElementById('cnt-workflows').textContent = workflows.length;
   const area = document.getElementById('workflows-area');
+  const scrollTop = area.scrollTop;
   if (!workflows.length) {
     area.innerHTML = '<div class="empty">No workflows recorded</div>';
+    area.scrollTop = scrollTop;
     return;
   }
   area.innerHTML = workflows.map(wf => {
@@ -909,6 +942,7 @@ function renderWorkflows(workflows) {
         </table>
       </div>`;
   }).join('');
+  area.scrollTop = scrollTop;
 }
 
 async function loadWorkflows() {
@@ -954,11 +988,13 @@ function renderReminders(data) {
   document.getElementById('cnt-reminders').textContent = active.length;
 
   const area = document.getElementById('reminders-area');
+  const scrollTop = area.scrollTop;
   area.innerHTML =
     renderReminderSection('active-body',    'active',    'Active',    active,    true)  +
     renderReminderSection('completed-body', 'completed', 'Completed', completed, false) +
     renderReminderSection('failed-body',    'failed',    'Failed',    failed,    false) +
     (cancelled.length ? renderReminderSection('cancelled-body', 'cancelled', 'Cancelled', cancelled, false) : '');
+  area.scrollTop = scrollTop;
 }
 
 async function loadReminders() {
