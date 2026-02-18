@@ -364,19 +364,82 @@ TOOL_CATEGORIES: dict[str, str] = {
 }
 
 
-def get_tool_schemas(categories: set[str] | None = None) -> list[dict]:
-    """Return tool schemas filtered by category.
+NL_TOOL_SCHEMAS = [
+    _fn(
+        "set_reminder",
+        (
+            "Schedule a one-time or recurring reminder. Describe what you want "
+            "in plain English — the system will translate it into structured arguments."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": (
+                        "Plain-English description of the reminder: what, when, "
+                        "how often, and any action to perform when it fires."
+                    ),
+                },
+            },
+            "required": ["description"],
+        },
+    ),
+    _fn(
+        "spawn_sub_session",
+        (
+            "Spawn an autonomous background worker. Describe the task in plain "
+            "English — the system will translate it into structured arguments."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": (
+                        "Plain-English description of the background task(s) to "
+                        "perform, including any sequencing or dependencies."
+                    ),
+                },
+            },
+            "required": ["description"],
+        },
+    ),
+]
+
+_NL_SCHEMA_MAP: dict[str, dict] = {
+    schema["function"]["name"]: schema for schema in NL_TOOL_SCHEMAS
+}
+
+
+def get_tool_schemas(categories: set[str] | None = None,
+                     nl_tools: set[str] | None = None) -> list[dict]:
+    """Return tool schemas filtered by category, with optional NL substitution.
 
     If *categories* is None, return all schemas (used by the main agent).
     Otherwise return only schemas whose tool name maps to one of the
     requested categories.
+
+    When *nl_tools* is provided, any tool whose name is in the set gets its
+    schema replaced with the simplified single-field NL variant.
     """
     if categories is None:
-        return TOOL_SCHEMAS
-    return [
-        schema for schema in TOOL_SCHEMAS
-        if TOOL_CATEGORIES.get(schema["function"]["name"]) in categories
-    ]
+        schemas = TOOL_SCHEMAS
+    else:
+        schemas = [
+            schema for schema in TOOL_SCHEMAS
+            if TOOL_CATEGORIES.get(schema["function"]["name"]) in categories
+        ]
+    if not nl_tools:
+        return schemas
+    result = []
+    for schema in schemas:
+        name = schema["function"]["name"]
+        if name in nl_tools and name in _NL_SCHEMA_MAP:
+            result.append(_NL_SCHEMA_MAP[name])
+        else:
+            result.append(schema)
+    return result
 
 
 # ---------------------------------------------------------------------------

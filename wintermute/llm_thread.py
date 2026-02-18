@@ -26,6 +26,7 @@ from wintermute import database
 from wintermute import prompt_assembler
 from wintermute import prompt_loader
 from wintermute import turing_protocol as turing_protocol_module
+from wintermute import nl_translator
 from wintermute import tools as tool_module
 
 from typing import TYPE_CHECKING
@@ -154,6 +155,7 @@ class MultiProviderConfig:
     sub_sessions: list[ProviderConfig]
     dreaming: list[ProviderConfig]
     turing_protocol: list[ProviderConfig]
+    nl_translation: list[ProviderConfig] = field(default_factory=list)
 
 
 @dataclass
@@ -188,11 +190,15 @@ class LLMThread:
     def __init__(self, main_pool: BackendPool, compaction_pool: BackendPool,
                  turing_protocol_pool: BackendPool, broadcast_fn,
                  sub_session_manager: "Optional[SubSessionManager]" = None,
-                 turing_protocol_validators: "Optional[dict[str, bool]]" = None) -> None:
+                 turing_protocol_validators: "Optional[dict[str, bool]]" = None,
+                 nl_translation_pool: "Optional[BackendPool]" = None,
+                 nl_translation_config: "Optional[dict]" = None) -> None:
         self._main_pool = main_pool
         self._compaction_pool = compaction_pool
         self._turing_protocol_pool = turing_protocol_pool
         self._turing_protocol_validators = turing_protocol_validators
+        self._nl_translation_pool = nl_translation_pool
+        self._nl_translation_config = nl_translation_config or {}
         # Convenience: primary config for context_size / model name lookups.
         self._cfg = main_pool.primary
         self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)
@@ -649,7 +655,14 @@ class LLMThread:
           - post_inference:  handled by the caller (_run_turing_check)
         """
         full_messages = [{"role": "system", "content": system_prompt}] + messages
-        tools = None if disable_tools else tool_module.TOOL_SCHEMAS
+        nl_enabled = self._nl_translation_config.get("enabled", False)
+        nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
+        if disable_tools:
+            tools = None
+        elif nl_tools:
+            tools = tool_module.get_tool_schemas(nl_tools=nl_tools)
+        else:
+            tools = tool_module.TOOL_SCHEMAS
         token_budget = self._cfg.context_size - self._cfg.max_tokens
         reasoning_parts: list[str] = []
         tool_calls_made: list[str] = []
@@ -690,6 +703,54 @@ class LLMThread:
                     except json.JSONDecodeError:
                         inputs = {}
 
+                    name = tc.function.name
+                    nl_was_translated = False
+
+                    # -- NL Translation: expand description to structured args --
+                    if nl_enabled and nl_translator.is_nl_tool_call(name, inputs):
+                        translated = await nl_translator.translate_nl_tool_call(
+                            self._nl_translation_pool, name, inputs["description"],
+                            thread_id=thread_id,
+                        )
+                        if translated is None:
+                            full_messages.append({
+                                "role":         "tool",
+                                "tool_call_id": tc.id,
+                                "content":      "[TRANSLATION ERROR] Failed to translate natural-language tool call. Please try rephrasing or use structured arguments.",
+                            })
+                            continue
+                        if isinstance(translated, dict) and "error" in translated:
+                            full_messages.append({
+                                "role":         "tool",
+                                "tool_call_id": tc.id,
+                                "content":      f"[CLARIFICATION NEEDED] {translated.get('clarification_needed', translated['error'])}",
+                            })
+                            continue
+                        if isinstance(translated, list):
+                            # Multi-item: execute each, combine results.
+                            combined_results = []
+                            for i, item_args in enumerate(translated):
+                                item_result = tool_module.execute_tool(
+                                    name, item_args,
+                                    thread_id=thread_id, nesting_depth=0,
+                                )
+                                summary = ", ".join(f"{k}={v!r}" for k, v in item_args.items() if k != "description")
+                                combined_results.append(f"[{i+1}] [Translated to: {summary}] {item_result}")
+                                tool_calls_made.append(name)
+                                tool_call_details.append({
+                                    "name": name,
+                                    "arguments": json.dumps(item_args),
+                                    "result": item_result,
+                                })
+                            full_messages.append({
+                                "role":         "tool",
+                                "tool_call_id": tc.id,
+                                "content":      "\n\n".join(combined_results),
+                            })
+                            continue
+                        inputs = translated
+                        nl_was_translated = True
+
                     # -- Turing Protocol: pre_execution phase --
                     if tp_enabled:
                         pre_result = await self._run_phase_check(
@@ -698,16 +759,15 @@ class LLMThread:
                             thread_id=thread_id,
                             tool_calls_made=tool_calls_made,
                             assistant_response=(choice.message.content or ""),
-                            tool_name=tc.function.name,
+                            tool_name=name,
                             tool_args=inputs,
                         )
                         if pre_result and pre_result.correction:
                             logger.warning(
                                 "pre_execution hook blocked tool %s in thread %s: %s",
-                                tc.function.name, thread_id,
+                                name, thread_id,
                                 pre_result.correction[:200],
                             )
-                            # Inject the block as a tool result so the LLM knows.
                             full_messages.append({
                                 "role":         "tool",
                                 "tool_call_id": tc.id,
@@ -715,10 +775,15 @@ class LLMThread:
                             })
                             continue
 
-                    result = tool_module.execute_tool(tc.function.name, inputs,
+                    result = tool_module.execute_tool(name, inputs,
                                                      thread_id=thread_id,
                                                      nesting_depth=0)
-                    tool_calls_made.append(tc.function.name)
+                    tool_calls_made.append(name)
+
+                    # Prepend translation summary if NL translation was used.
+                    if nl_was_translated:
+                        summary = ", ".join(f"{k}={v!r}" for k, v in inputs.items())
+                        result = f"[Translated to: {summary}] {result}"
 
                     # -- Turing Protocol: post_execution phase --
                     if tp_enabled:
@@ -728,19 +793,18 @@ class LLMThread:
                             thread_id=thread_id,
                             tool_calls_made=tool_calls_made,
                             assistant_response=(choice.message.content or ""),
-                            tool_name=tc.function.name,
+                            tool_name=name,
                             tool_result=result,
                         )
                         if post_result and post_result.correction:
-                            # Append a warning to the tool result visible to the LLM.
                             result += f"\n\n[TURING PROTOCOL WARNING] {post_result.correction}"
 
                     tool_call_details.append({
-                        "name": tc.function.name,
+                        "name": name,
                         "arguments": tc.function.arguments,
                         "result": result,
                     })
-                    logger.debug("Tool %s -> %s", tc.function.name, result[:200])
+                    logger.debug("Tool %s -> %s", name, result[:200])
                     full_messages.append({
                         "role":         "tool",
                         "tool_call_id": tc.id,

@@ -28,6 +28,26 @@ REQUIRED_FILES = [
 ]
 
 
+NL_TRANSLATION_FILES = [
+    "NL_TRANSLATOR_SET_REMINDER.txt",
+    "NL_TRANSLATOR_SPAWN_SUB_SESSION.txt",
+]
+
+
+def validate_nl_translation() -> None:
+    """Check that NL translation prompt files exist.
+
+    Called from main.py only when ``nl_translation.enabled: true``.
+    """
+    missing = [f for f in NL_TRANSLATION_FILES if not (PROMPTS_DIR / f).is_file()]
+    if missing:
+        raise FileNotFoundError(
+            f"Missing NL translation prompt files in {PROMPTS_DIR}/: "
+            + ", ".join(missing)
+        )
+    logger.info("NL translation prompt files validated (%d files)", len(NL_TRANSLATION_FILES))
+
+
 def load(name: str, **kwargs: object) -> str:
     """Read a prompt template from *data/prompts/{name}*.
 
