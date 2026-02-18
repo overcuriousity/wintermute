@@ -690,13 +690,17 @@ class MatrixThread:
             # Transcribe via Whisper if configured.
             if self._whisper_client is not None:
                 try:
-                    from openai import NOT_GIVEN
-                    resp = await self._whisper_client.audio.transcriptions.create(
-                        file=(filename, data),
-                        model=self._whisper_model,
-                        language=self._whisper_language or NOT_GIVEN,
-                    )
-                    transcript = resp.text.strip()
+                    import httpx as _httpx
+                    headers = {"Authorization": f"Bearer {self._whisper_client.api_key}"}
+                    form_data = {"model": self._whisper_model}
+                    if self._whisper_language:
+                        form_data["language"] = self._whisper_language
+                    files = {"file": (filename, data)}
+                    url = f"{str(self._whisper_client.base_url).rstrip('/')}/audio/transcriptions"
+                    async with _httpx.AsyncClient(timeout=60.0) as hc:
+                        r = await hc.post(url, headers=headers, data=form_data, files=files)
+                    r.raise_for_status()
+                    transcript = r.json().get("text", "").strip()
                     logger.info("Whisper transcript (%s): %s", evt.sender, transcript[:120])
                     text = reply_prefix + f"[Transcribed voice message] {transcript}"
                     await self._dispatch(text, thread_id)
