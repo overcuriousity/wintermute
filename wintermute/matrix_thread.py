@@ -826,6 +826,12 @@ class MatrixThread:
             return
 
         self._requested_sessions.add(session_id)
+        # Prevent unbounded growth over long uptimes
+        if len(self._requested_sessions) > 500:
+            # Discard oldest half (sets are unordered, but this is fine —
+            # the worst case is a duplicate key request, which is harmless)
+            to_remove = list(self._requested_sessions)[:250]
+            self._requested_sessions -= set(to_remove)
         sender = str(evt.sender)
         room_id = str(evt.room_id)
 
@@ -858,8 +864,8 @@ class MatrixThread:
             )
 
         await self.send_message(
-            "[Unable to decrypt your message — missing session key. "
-            "To fix: try to send command /verify-session. if that doesnt work, you have to log in as wintermute and fix manually.]",
+            "I couldn't decrypt your last message (missing encryption key). "
+            "Please try sending `/verify-session` to re-establish trust, then resend your message.",
             room_id,
         )
 
@@ -1027,10 +1033,17 @@ class MatrixThread:
 
         sas = _olm.Sas()
         state.sas = sas
-        # Snapshot the start content for commitment (must be canonical JSON)
-        state.start_content = dict(c) if isinstance(c, dict) else {
-            k: v for k, v in vars(c).items() if not k.startswith("_")
-        }
+        # Snapshot the start content for commitment (must be canonical JSON).
+        # mautrix typed objects carry extra parsed attributes — use serialize()
+        # if available, otherwise fall back to dict() / vars().
+        if isinstance(c, dict):
+            state.start_content = dict(c)
+        elif hasattr(c, "serialize"):
+            state.start_content = c.serialize()
+        else:
+            state.start_content = {
+                k: v for k, v in vars(c).items() if not k.startswith("_")
+            }
         # commitment = base64(sha256(our_pubkey_b64_string || canonical_json(start)))
         canonical  = _canonical_json(state.start_content)
         commitment = _base64.b64encode(
@@ -1098,7 +1111,7 @@ class MatrixThread:
             f"|{their_user}|{their_dev}"
             f"|{txn_id}"
         )
-        our_ed25519 = olm_m.account.fingerprint
+        our_ed25519 = olm_m.account.signing_key
         our_key_id  = f"ed25519:{our_device}"
 
         key_mac  = state.sas.calculate_mac_fixed_base64(

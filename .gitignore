@@ -29,7 +29,3 @@ build/
 .vscode/
 *.swp
 data/MEMORIES.txt
-static/*.png
-!static/Gemini_Generated_Image_50dxia50dxia50dx.png
-static/*.jpg
-static/*.webp
