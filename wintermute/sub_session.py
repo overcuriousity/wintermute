@@ -70,6 +70,7 @@ from wintermute import database
 from wintermute import prompt_assembler
 from wintermute import prompt_loader
 from wintermute import turing_protocol as turing_protocol_module
+from wintermute import nl_translator
 from wintermute import tools as tool_module
 from wintermute.llm_thread import BackendPool
 
@@ -167,12 +168,16 @@ class SubSessionManager:
         enqueue_system_event: Callable[..., Coroutine],
         turing_protocol_pool: Optional[BackendPool] = None,
         turing_protocol_validators: Optional[dict] = None,
+        nl_translation_pool: Optional[BackendPool] = None,
+        nl_translation_config: Optional[dict] = None,
     ) -> None:
         self._pool = pool
         self._cfg = pool.primary
         self._enqueue = enqueue_system_event
         self._tp_pool = turing_protocol_pool
         self._tp_validators = turing_protocol_validators
+        self._nl_translation_pool = nl_translation_pool
+        self._nl_translation_config = nl_translation_config or {}
         self._states: dict[str, SubSessionState] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         # DAG workflow tracking
@@ -1025,7 +1030,9 @@ class SubSessionManager:
         categories = _MODE_TOOL_CATEGORIES.get(
             state.system_prompt_mode, {"execution", "research"}
         )
-        tool_schemas = tool_module.get_tool_schemas(categories)
+        nl_enabled = self._nl_translation_config.get("enabled", False)
+        nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
+        tool_schemas = tool_module.get_tool_schemas(categories, nl_tools=nl_tools)
 
         tp_enabled = bool(self._tp_pool and self._tp_pool.enabled)
         tp_corrected = False  # single-shot: only one objective correction allowed
@@ -1089,6 +1096,50 @@ class SubSessionManager:
                     except json.JSONDecodeError:
                         inputs = {}
 
+                    name = tc.function.name
+                    nl_was_translated = False
+
+                    # -- NL Translation: expand description to structured args --
+                    if nl_enabled and nl_translator.is_nl_tool_call(name, inputs):
+                        translated = await nl_translator.translate_nl_tool_call(
+                            self._nl_translation_pool, name, inputs["description"],
+                            thread_id=state.session_id,
+                        )
+                        if translated is None:
+                            state.messages.append({
+                                "role":         "tool",
+                                "tool_call_id": tc.id,
+                                "content":      "[TRANSLATION ERROR] Failed to translate natural-language tool call. Please try rephrasing or use structured arguments.",
+                            })
+                            continue
+                        if isinstance(translated, dict) and "error" in translated:
+                            state.messages.append({
+                                "role":         "tool",
+                                "tool_call_id": tc.id,
+                                "content":      f"[CLARIFICATION NEEDED] {translated.get('clarification_needed', translated['error'])}",
+                            })
+                            continue
+                        if isinstance(translated, list):
+                            combined_results = []
+                            for i, item_args in enumerate(translated):
+                                item_result = tool_module.execute_tool(
+                                    name, item_args,
+                                    thread_id=state.session_id,
+                                    nesting_depth=state.nesting_depth,
+                                )
+                                summary = ", ".join(f"{k}={v!r}" for k, v in item_args.items() if k != "description")
+                                combined_results.append(f"[{i+1}] [Translated to: {summary}] {item_result}")
+                                tool_calls_made.append(name)
+                                state.tool_calls_log.append((name, item_result[:120].replace("\n", " ")))
+                            state.messages.append({
+                                "role":         "tool",
+                                "tool_call_id": tc.id,
+                                "content":      "\n\n".join(combined_results),
+                            })
+                            continue
+                        inputs = translated
+                        nl_was_translated = True
+
                     # -- Turing Protocol: pre_execution phase --
                     if tp_enabled:
                         pre_result = await self._run_tp_phase(
@@ -1096,13 +1147,13 @@ class SubSessionManager:
                             state=state,
                             tool_calls_made=tool_calls_made,
                             assistant_response=(choice.message.content or ""),
-                            tool_name=tc.function.name,
+                            tool_name=name,
                             tool_args=inputs,
                         )
                         if pre_result and pre_result.correction:
                             logger.warning(
                                 "Sub-session %s: pre_execution hook blocked tool %s: %s",
-                                state.session_id, tc.function.name,
+                                state.session_id, name,
                                 pre_result.correction[:200],
                             )
                             state.messages.append({
@@ -1113,12 +1164,17 @@ class SubSessionManager:
                             continue
 
                     result = tool_module.execute_tool(
-                        tc.function.name,
+                        name,
                         inputs,
                         thread_id=state.session_id,
                         nesting_depth=state.nesting_depth,
                     )
-                    tool_calls_made.append(tc.function.name)
+                    tool_calls_made.append(name)
+
+                    # Prepend translation summary if NL translation was used.
+                    if nl_was_translated:
+                        summary = ", ".join(f"{k}={v!r}" for k, v in inputs.items())
+                        result = f"[Translated to: {summary}] {result}"
 
                     # -- Turing Protocol: post_execution phase --
                     if tp_enabled:
@@ -1127,7 +1183,7 @@ class SubSessionManager:
                             state=state,
                             tool_calls_made=tool_calls_made,
                             assistant_response=(choice.message.content or ""),
-                            tool_name=tc.function.name,
+                            tool_name=name,
                             tool_result=result,
                         )
                         if post_result and post_result.correction:
@@ -1138,7 +1194,7 @@ class SubSessionManager:
                         database.save_interaction_log(
                             _time.time(), "tool_call", state.session_id,
                             self._pool.last_used,
-                            json.dumps({"tool": tc.function.name, "arguments": tc.function.arguments}),
+                            json.dumps({"tool": name, "arguments": tc.function.arguments}),
                             result[:500], "ok",
                         )
                     except Exception:
@@ -1146,9 +1202,9 @@ class SubSessionManager:
                     # Track progress on state so the timeout handler can report
                     # and continue from it.
                     result_preview = result[:120].replace("\n", " ")
-                    state.tool_calls_log.append((tc.function.name, result_preview))
+                    state.tool_calls_log.append((name, result_preview))
                     logger.debug("Sub-session %s tool %s -> %s",
-                                 state.session_id, tc.function.name, result[:200])
+                                 state.session_id, name, result[:200])
                     state.messages.append({
                         "role":         "tool",
                         "tool_call_id": tc.id,

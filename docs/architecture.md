@@ -15,6 +15,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **PulseLoop** | `pulse.py` | Periodic autonomous pulse item reviews |
 | **DreamingLoop** | `dreaming.py` | Nightly memory consolidation |
 | **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
+| **NL Translator** | `nl_translator.py` | Expands natural-language tool descriptions into structured arguments via a translator LLM |
 | **PromptAssembler** | `prompt_assembler.py` | Builds system prompts from file components |
 | **Database** | `database.py` | SQLite message persistence, thread management, and pulse storage |
 
@@ -78,7 +79,9 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 4. System prompt is assembled fresh (BASE + MEMORIES + PULSE + SKILLS + compaction summary)
 5. If history tokens exceed the compaction threshold, context is compacted first
 6. Message is saved to the DB, then inference runs
-7. If the model returns tool calls, they are executed and inference continues
+7. If the model returns tool calls:
+   - If NL translation is enabled and the call uses a simplified schema, the translator LLM expands the description into structured arguments
+   - Tools are executed and inference continues
 8. Final response is saved to the DB and broadcast back to the user
 9. Turing Protocol fires asynchronously (if enabled): runs a three-stage
    pipeline (detect → validate → correct) against the response, scoped by

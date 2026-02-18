@@ -214,12 +214,32 @@ def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
         print(f"ERROR: turing_protocol.backends must be a list (got {type(tp_backends_raw).__name__})")
         sys.exit(1)
 
+    # -- NL Translation backends --
+    nl_raw = cfg.get("nl_translation", {}) or {}
+    nl_enabled = nl_raw.get("enabled", False)
+    if nl_enabled:
+        nl_backends_raw = nl_raw.get("backends")
+        if nl_backends_raw is None:
+            # Default to turing_protocol backends if omitted.
+            nl_configs = list(tp_configs) if tp_configs else _resolve_role(
+                "nl_translation", default_list, backends,
+                config_path="nl_translation.backends",
+            )
+        elif isinstance(nl_backends_raw, list) and nl_backends_raw:
+            nl_configs = _resolve_role("nl_translation", nl_backends_raw, backends,
+                                       config_path="nl_translation.backends")
+        else:
+            nl_configs = []
+    else:
+        nl_configs = []
+
     return MultiProviderConfig(
         main=_get_role("base"),
         compaction=_get_role("compaction"),
         sub_sessions=_get_role("sub_sessions"),
         dreaming=_get_role("dreaming"),
         turing_protocol=tp_configs,
+        nl_translation=nl_configs,
     )
 
 
@@ -283,6 +303,18 @@ async def main() -> None:
     sub_sessions_pool = _build_pool(multi_cfg.sub_sessions, client_cache)
     dreaming_pool = _build_pool(multi_cfg.dreaming, client_cache)
     turing_protocol_pool = _build_pool(multi_cfg.turing_protocol, client_cache)
+    nl_translation_pool = _build_pool(multi_cfg.nl_translation, client_cache)
+
+    # Parse NL translation config.
+    nl_raw = cfg.get("nl_translation", {}) or {}
+    nl_translation_config = {
+        "enabled": nl_raw.get("enabled", False) and nl_translation_pool.enabled,
+        "tools": set(nl_raw.get("tools", ["set_reminder", "spawn_sub_session"])),
+    }
+    if nl_translation_config["enabled"]:
+        prompt_loader.validate_nl_translation()
+        logger.info("NL Translation enabled (tools=%s, model=%s)",
+                     nl_translation_config["tools"], nl_translation_pool.primary.model)
 
     dreaming_raw = cfg.get("dreaming", {})
     dreaming_cfg = DreamingConfig(
@@ -352,7 +384,9 @@ async def main() -> None:
     tp_validators = (cfg.get("turing_protocol", {}) or {}).get("validators")
     llm = LLMThread(main_pool=main_pool, compaction_pool=compaction_pool,
                     turing_protocol_pool=turing_protocol_pool, broadcast_fn=broadcast,
-                    turing_protocol_validators=tp_validators)
+                    turing_protocol_validators=tp_validators,
+                    nl_translation_pool=nl_translation_pool,
+                    nl_translation_config=nl_translation_config)
 
     # Build SubSessionManager — shares the LLM backend pool, reports back via
     # enqueue_system_event so results enter the parent thread's queue.
@@ -363,6 +397,8 @@ async def main() -> None:
         enqueue_system_event=llm.enqueue_system_event,
         turing_protocol_pool=turing_protocol_pool,
         turing_protocol_validators=tp_validators,
+        nl_translation_pool=nl_translation_pool,
+        nl_translation_config=nl_translation_config,
     )
     llm.inject_sub_session_manager(sub_sessions)
     tool_module.register_sub_session_manager(sub_sessions.spawn)

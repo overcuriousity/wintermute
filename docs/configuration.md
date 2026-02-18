@@ -100,6 +100,17 @@ turing_protocol:
     phantom_tool_result: true              # detect fabricated tool output claims
     empty_promise: true                    # detect unfulfilled action commitments
 
+# ── NL Translation (Natural-Language Tool Pipe) ──────────────────
+# Simplifies complex tool schemas for weak models by presenting a
+# single "description" field. A translator LLM expands the natural-
+# language description into full structured arguments.
+nl_translation:
+  enabled: false                        # Opt-in; default off
+  backends: ["local_small"]             # Translator LLM (small/fast recommended)
+  tools:                                # Which tools use NL schemas
+    - set_reminder
+    - spawn_sub_session
+
 # ── Context Compaction ────────────────────────────────────────────
 # Compaction fires when history tokens exceed:
 #   context_size - max_tokens - system_prompt_tokens
@@ -310,6 +321,27 @@ turing_protocol:
       enabled: true
       scope: "sub_session"          # "main", "sub_session", or both
 ```
+
+### `nl_translation`
+
+Natural-language tool call translation for weak/small LLMs. When enabled,
+complex tools (`set_reminder`, `spawn_sub_session`) are presented to the
+main LLM as a single "describe in English" field. A dedicated translator
+LLM expands the description into structured arguments.
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `enabled` | no | `false` | Enable NL translation (opt-in) |
+| `backends` | no | turing_protocol backends | Ordered list of backend names for the translator LLM |
+| `tools` | no | `[set_reminder, spawn_sub_session]` | Which tools use simplified NL schemas |
+
+The translator can return JSON arrays to schedule multiple reminders or
+spawn multiple sub-sessions from a single description. Ambiguous input
+triggers a clarification request back to the user.
+
+Complementary to the Turing Protocol's `tool_schema_validation` hook —
+validation runs on the *translated* structured arguments, not the raw
+description.
 
 ### `matrix`
 

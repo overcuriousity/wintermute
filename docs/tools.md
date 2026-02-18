@@ -151,6 +151,32 @@ Create or overwrite a skill documentation file in `data/skills/`.
 | `skill_name` | string | yes | Filename stem (no extension), e.g. `"calendar"` |
 | `documentation` | string | yes | Markdown documentation for the skill |
 
+## NL Translation Mode
+
+When `nl_translation.enabled: true` in config, `set_reminder` and
+`spawn_sub_session` are presented to the main LLM with simplified
+single-field schemas. Instead of filling in all structured parameters,
+the LLM writes a plain-English description:
+
+```json
+{"description": "remind me daily at 9am to check email"}
+```
+
+A dedicated translator LLM then expands this into the full structured
+arguments (`schedule_type`, `at`, `message`, etc.) before execution.
+The tool result includes a `[Translated to: ...]` prefix showing the
+expanded arguments.
+
+The translator can return JSON arrays for multi-item requests (e.g.
+"set three reminders" or "research X then summarize it") — each item
+is executed separately and results are combined.
+
+If the description is ambiguous, the translator returns a clarification
+request that the main LLM relays to the user.
+
+This feature is complementary to the Turing Protocol's validation hooks,
+which validate the *translated* structured arguments.
+
 #### `list_reminders`
 
 Returns active, completed, and failed reminders. No parameters. History is capped at the 200 most recent entries per category.
