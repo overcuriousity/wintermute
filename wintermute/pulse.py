@@ -2,28 +2,31 @@
 Pulse Review Loop
 
 Periodically invokes the LLM to review active pulse items and take autonomous
-actions.  Runs as an isolated sub-session (fire-and-forget, no parent
-thread) so it never pollutes any user-facing conversation history.
+actions.  Each thread with active pulse items gets its own sub-session, with
+results delivered back to the originating room.  Items without a thread_id
+are skipped (legacy / unbound items).
 """
 
 import asyncio
 import logging
 from typing import Optional, TYPE_CHECKING
 
+from wintermute import database
+
 if TYPE_CHECKING:
     from wintermute.sub_session import SubSessionManager
 
 logger = logging.getLogger(__name__)
 
-PULSE_REVIEW_PROMPT = (
-    "This is an automatic pulse review. "
+PULSE_REVIEW_PROMPT_THREAD = (
+    "This is an automatic pulse review for items bound to this thread. "
     "Use the pulse tool with action 'list' to see current items, "
     "then review each item and take any appropriate actions (set reminders, "
     "update memories, complete items, run shell commands, etc.). "
     "Use pulse(action='complete', item_id=...) for finished items, "
     "and pulse(action='add', content='...') for new items discovered. "
     "If you take actions, briefly summarise what you did. "
-    "If nothing needs attention right now, respond with a short status note."
+    "If nothing needs attention right now, respond with exactly [NO_ACTION]."
 )
 
 
@@ -49,19 +52,26 @@ class PulseLoop:
         self._running = False
 
     async def _review_global(self) -> None:
-        """
-        Global pulse review — fire-and-forget isolated sub-session.
+        """Spawn per-thread pulse review sub-sessions.
 
-        Uses 'full' system prompt so the worker has access to MEMORIES,
-        pulse, and SKILLS — the same context it would have in a normal
-        conversation, without polluting any user thread's history.
+        Each thread with active pulse items gets its own sub-session with
+        parent_thread_id set, so results are delivered back to that room.
+        Items without thread_id are skipped entirely.
         """
-        logger.info("Running global pulse review")
-        if self._sub_sessions is not None:
+        if self._sub_sessions is None:
+            logger.warning("Global pulse: SubSessionManager not available, skipping")
+            return
+
+        thread_items = database.get_pulse_thread_ids()
+        if not thread_items:
+            logger.debug("Pulse review: no active thread-bound items, skipping")
+            return
+
+        logger.info("Pulse review: %d thread(s) with active items", len(thread_items))
+        for thread_id, count in thread_items:
+            logger.info("Pulse review: spawning sub-session for thread %s (%d items)", thread_id, count)
             self._sub_sessions.spawn(
-                objective=PULSE_REVIEW_PROMPT,
-                parent_thread_id=None,   # fire-and-forget
+                objective=PULSE_REVIEW_PROMPT_THREAD,
+                parent_thread_id=thread_id,
                 system_prompt_mode="full",
             )
-        else:
-            logger.warning("Global pulse: SubSessionManager not available, skipping")

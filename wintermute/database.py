@@ -261,6 +261,17 @@ def get_active_pulse_text() -> str:
     return "\n".join(f"[P{it['priority']}] #{it['id']}: {it['content']}" for it in items)
 
 
+def get_pulse_thread_ids() -> list[tuple[str, int]]:
+    """Return (thread_id, count) pairs for active pulse items with non-NULL thread_id."""
+    with sqlite3.connect(CONVERSATION_DB) as conn:
+        rows = conn.execute(
+            "SELECT thread_id, COUNT(*) FROM pulse "
+            "WHERE status='active' AND thread_id IS NOT NULL "
+            "GROUP BY thread_id",
+        ).fetchall()
+    return [(r[0], r[1]) for r in rows]
+
+
 def delete_old_completed_pulse(days: int = 30) -> int:
     """Delete completed pulse items older than *days*. Returns count deleted."""
     cutoff = time.time() - days * 86400

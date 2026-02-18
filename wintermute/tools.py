@@ -558,16 +558,17 @@ def _tool_append_memory(inputs: dict, **_kw) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _tool_pulse(inputs: dict, **_kw) -> str:
+def _tool_pulse(inputs: dict, thread_id: Optional[str] = None, **_kw) -> str:
     try:
         action = inputs.get("action", "list")
         if action == "add":
             content = inputs.get("content")
             if not content:
                 return json.dumps({"error": "content is required for add action"})
+            effective_thread_id = inputs.get("thread_id") or thread_id
             item_id = database.add_pulse_item(
                 content, priority=int(inputs.get("priority", 5)),
-                thread_id=inputs.get("thread_id"),
+                thread_id=effective_thread_id,
             )
             return json.dumps({"status": "ok", "item_id": item_id})
         elif action == "complete":
@@ -852,7 +853,13 @@ def execute_tool(name: str, inputs: dict, thread_id: Optional[str] = None,
         return json.dumps({"error": f"Unknown tool: {name}"})
     logger.debug("Executing tool '%s' with inputs: %s", name, inputs)
     t0 = time.monotonic()
-    result = fn(inputs, thread_id=thread_id, nesting_depth=nesting_depth)
+    try:
+        result = fn(inputs, thread_id=thread_id, nesting_depth=nesting_depth)
+        error_flag = None
+    except (KeyError, TypeError, ValueError) as exc:
+        result = json.dumps({"error": f"Tool '{name}' called with invalid arguments: {exc}"})
+        error_flag = str(exc)
+        logger.warning("Tool '%s' raised %s: %s", name, type(exc).__name__, exc)
     duration_ms = round((time.monotonic() - t0) * 1000, 1)
     _TOOL_CALL_LOG.append({
         "ts": time.time(),
@@ -861,6 +868,6 @@ def execute_tool(name: str, inputs: dict, thread_id: Optional[str] = None,
         "thread_id": thread_id or "unknown",
         "result_preview": result[:300] if result else "",
         "duration_ms": duration_ms,
-        "error": None,
+        "error": error_flag,
     })
     return result
