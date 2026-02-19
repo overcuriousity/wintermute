@@ -469,14 +469,21 @@ import asyncio, sys
 from openai import AsyncOpenAI
 async def test():
     c = AsyncOpenAI(api_key='${LLM_API_KEY}', base_url='${LLM_BASE_URL}')
-    r = await c.chat.completions.create(
-        model='${LLM_MODEL}',
-        messages=[{'role':'user','content':'What is 2+2? Use the calculator tool.'}],
-        tools=[{'type':'function','function':{'name':'calculator','description':'Compute arithmetic','parameters':{'type':'object','properties':{'expression':{'type':'string'}},'required':['expression']}}}],
-        max_tokens=100,
-    )
-    if not r.choices[0].message.tool_calls:
-        sys.exit(1)
+    # Try max_completion_tokens first (reasoning models like Qwen3, o1),
+    # fall back to max_tokens for non-reasoning models.
+    for kwargs in [{'max_completion_tokens': 16384}, {'max_tokens': 16384}]:
+        try:
+            r = await c.chat.completions.create(
+                model='${LLM_MODEL}',
+                messages=[{'role':'user','content':'What is 2+2? Use the calculator tool.'}],
+                tools=[{'type':'function','function':{'name':'calculator','description':'Compute arithmetic','parameters':{'type':'object','properties':{'expression':{'type':'string'}},'required':['expression']}}}],
+                **kwargs,
+            )
+            if r.choices[0].message.tool_calls:
+                sys.exit(0)
+        except Exception:
+            continue
+    sys.exit(1)
 asyncio.run(test())
 " 2>/dev/null; then
       ok "Function-calling: supported."
