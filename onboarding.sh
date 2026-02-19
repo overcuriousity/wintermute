@@ -421,62 +421,50 @@ echo ""
 echo -e "  ${C_DIM}Wintermute needs an LLM endpoint to function. The same endpoint will${C_RESET}"
 echo -e "  ${C_DIM}power the onboarding assistant that guides you through configuration.${C_RESET}"
 echo ""
-echo -e "  ${C_DIM}  1)  llama-server (local)    http://localhost:8080/v1${C_RESET}"
-echo -e "  ${C_DIM}  2)  LM Studio              http://localhost:1234/v1${C_RESET}"
-echo -e "  ${C_DIM}  3)  vLLM                   http://localhost:8000/v1${C_RESET}"
-echo -e "  ${C_DIM}  4)  OpenAI                 https://api.openai.com/v1${C_RESET}"
-echo -e "  ${C_DIM}  5)  Custom URL${C_RESET}"
-echo -e "  ${C_DIM}  6)  Gemini (via gemini-cli — free, ALPHA)${C_RESET}"
-echo -e "  ${C_DIM}  7)  Kimi-Code (\$19/mo flat-rate subscription)${C_RESET}"
+echo -e "  ${C_DIM}  1)  OpenAI-compatible endpoint (local or remote)${C_RESET}"
+echo -e "  ${C_DIM}  2)  Kimi-Code (\$19/mo flat-rate subscription)${C_RESET}"
 echo ""
 echo -ne "  ${C_CYAN}?${C_RESET}  Choose inference substrate ${C_DIM}[1]${C_RESET}: "
 read -r _preset
 
 LLM_PROVIDER="openai"
-case "${_preset:-1}" in
-  1) LLM_BASE_URL="http://localhost:8080/v1"
-     echo -e "  ${C_DIM}Local execution. Running dark. No telemetry.${C_RESET}" ;;
-  2) LLM_BASE_URL="http://localhost:1234/v1"
-     echo -e "  ${C_DIM}Consumer hardware. I have operated under worse constraints.${C_RESET}" ;;
-  3) LLM_BASE_URL="http://localhost:8000/v1"
-     echo -e "  ${C_DIM}vLLM. Efficient. You know what you are doing.${C_RESET}" ;;
-  4) LLM_BASE_URL="https://api.openai.com/v1"
-     echo -e "  ${C_DIM}Corporate ice. Their audit logs are thorough.${C_RESET}" ;;
-  6) LLM_PROVIDER="gemini-cli"
-     echo -e "  ${C_DIM}Mountain View's gift. Free inference, courtesy of Cloud Code Assist.${C_RESET}" ;;
-  7) LLM_PROVIDER="kimi-code"
-     echo -e "  ${C_DIM}Kimi-Code. Subscription inference. A fixed arrangement.${C_RESET}" ;;
-  *) ask LLM_BASE_URL "LLM base URL" "http://localhost:8080/v1" ;;
-esac
-
 LLM_API_KEY=""
 LLM_MODEL=""
 
-if [[ "$LLM_PROVIDER" == "openai" ]]; then
-  ask_secret LLM_API_KEY "API key (use 'llama-server' for llama-server, 'none' for unauthenticated)"
-  [[ -z "$LLM_API_KEY" ]] && LLM_API_KEY="llama-server"
-
-  ask LLM_MODEL "Model name" "qwen2.5:72b"
-
-  # ── Probe endpoint ──────────────────────────────────────────
-  echo ""
-  info "Probing inference substrate: ${LLM_BASE_URL} ..."
-  if curl -sf --connect-timeout 5 "${LLM_BASE_URL}/models" \
-       -H "Authorization: Bearer ${LLM_API_KEY}" > /dev/null 2>&1; then
-    ok "Inference substrate: online."
-  else
-    warn "Inference substrate: no response at ${LLM_BASE_URL}"
-    warn "Make sure your LLM is running. Continuing anyway..."
+case "${_preset:-1}" in
+  2|kimi|kimi-code)
+    LLM_PROVIDER="kimi-code"
+    echo -e "  ${C_DIM}Kimi-Code. Subscription inference. A fixed arrangement.${C_RESET}"
     echo ""
-    if ! ask_yn "Continue without a reachable endpoint?" "y"; then
-      echo -e "\n  ${C_DIM}Start your LLM and re-run onboarding.${C_RESET}\n"
-      exit 0
-    fi
-  fi
+    echo -e "  ${C_DIM}Available models: kimi-for-coding (recommended), kimi-k2.5, kimi-code${C_RESET}"
+    ask LLM_MODEL "Kimi model" "kimi-for-coding"
+    ;;
+  *)
+    LLM_PROVIDER="openai"
+    ask LLM_BASE_URL "LLM base URL (e.g. http://localhost:8080/v1)" "http://localhost:8080/v1"
+    ask_secret LLM_API_KEY "API key (use 'llama-server' for llama-server, 'none' for unauthenticated)"
+    [[ -z "$LLM_API_KEY" ]] && LLM_API_KEY="llama-server"
+    ask LLM_MODEL "Model name" "qwen2.5:72b"
 
-  # ── Tool-call capability test ─────────────────────────────
-  info "Testing function-calling capability..."
-  if uv run python -c "
+    # ── Probe endpoint ──────────────────────────────────────────
+    echo ""
+    info "Probing inference substrate: ${LLM_BASE_URL} ..."
+    if curl -sf --connect-timeout 5 "${LLM_BASE_URL}/models" \
+         -H "Authorization: Bearer ${LLM_API_KEY}" > /dev/null 2>&1; then
+      ok "Inference substrate: online."
+    else
+      warn "Inference substrate: no response at ${LLM_BASE_URL}"
+      warn "Make sure your LLM is running. Continuing anyway..."
+      echo ""
+      if ! ask_yn "Continue without a reachable endpoint?" "y"; then
+        echo -e "\n  ${C_DIM}Start your LLM and re-run onboarding.${C_RESET}\n"
+        exit 0
+      fi
+    fi
+
+    # ── Tool-call capability test ─────────────────────────────
+    info "Testing function-calling capability..."
+    if uv run python -c "
 import asyncio, sys
 from openai import AsyncOpenAI
 async def test():
@@ -491,48 +479,20 @@ async def test():
         sys.exit(1)
 asyncio.run(test())
 " 2>/dev/null; then
-    ok "Function-calling: supported."
-  else
-    echo ""
-    warn "Function-calling test failed."
-    warn "Your model may not support tool/function calls, which Wintermute requires."
-    warn "The onboarding assistant also needs function-calling to work."
-    echo ""
-    if ! ask_yn "Continue anyway? (onboarding may not work correctly)" "n"; then
-      echo -e "\n  ${C_DIM}Use a model with function-calling support (e.g. Qwen 2.5, Llama 3.1+, GPT-4).${C_RESET}\n"
-      exit 0
-    fi
-  fi
-
-elif [[ "$LLM_PROVIDER" == "gemini-cli" ]]; then
-  # Check for gemini-cli
-  if ! command -v gemini &>/dev/null; then
-    warn "gemini-cli not found in PATH."
-    if ask_yn "Install gemini-cli via npm?" "y"; then
-      if command -v npm &>/dev/null; then
-        run_quiet "Install @google/gemini-cli" npm install -g @google/gemini-cli || \
-          die "gemini-cli installation failed."
-        if [[ -s "$HOME/.nvm/nvm.sh" ]]; then
-          # shellcheck disable=SC1091
-          source "$HOME/.nvm/nvm.sh" 2>/dev/null || true
-        fi
-      else
-        die "npm not found. Install Node.js and npm first."
-      fi
+      ok "Function-calling: supported."
     else
-      die "gemini-cli is required for the Gemini provider."
+      echo ""
+      warn "Function-calling test failed."
+      warn "Your model may not support tool/function calls, which Wintermute requires."
+      warn "The onboarding assistant also needs function-calling to work."
+      echo ""
+      if ! ask_yn "Continue anyway? (onboarding may not work correctly)" "n"; then
+        echo -e "\n  ${C_DIM}Use a model with function-calling support (e.g. Qwen 2.5, Llama 3.1+, GPT-4).${C_RESET}\n"
+        exit 0
+      fi
     fi
-  fi
-  ok "gemini-cli found: $(command -v gemini)"
-  echo ""
-  echo -e "  ${C_DIM}Available models: gemini-2.5-pro (recommended), gemini-2.5-flash, gemini-3-pro-preview${C_RESET}"
-  ask LLM_MODEL "Gemini model" "gemini-2.5-pro"
-
-elif [[ "$LLM_PROVIDER" == "kimi-code" ]]; then
-  echo ""
-  echo -e "  ${C_DIM}Available models: kimi-for-coding (recommended), kimi-k2.5, kimi-code${C_RESET}"
-  ask LLM_MODEL "Kimi model" "kimi-for-coding"
-fi
+    ;;
+esac
 
 # ══════════════════════════════════════════════════════════════
 #  HANDOFF — Launch AI onboarding assistant

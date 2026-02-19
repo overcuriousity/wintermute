@@ -162,22 +162,18 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "run_auth_flow",
+            "name": "run_kimi_auth",
             "description": (
-                "Run the OAuth authentication flow for gemini-cli or kimi-code providers. "
-                "For gemini-cli: opens a browser for Google OAuth (PKCE flow). "
-                "For kimi-code: prints a device-code verification URL for the user to visit. "
-                "Saves credentials to data/ on success."
+                "Run the Kimi-Code OAuth device-code authentication flow. "
+                "Prints a verification URL for the user to visit in their browser. "
+                "Polls until authorized, then saves credentials to data/kimi_credentials.json. "
+                "Only call this if the user wants to add a NEW kimi-code backend and "
+                "credentials don't exist yet. Do NOT call if kimi-code was the bootstrap provider "
+                "(auth was already completed during bootstrap)."
             ),
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "provider": {
-                        "type": "string",
-                        "enum": ["gemini-cli", "kimi-code"],
-                    },
-                },
-                "required": ["provider"],
+                "properties": {},
             },
         },
     },
@@ -245,8 +241,10 @@ IMPORTANT RULES:
 - Use probe_endpoint to test LLM endpoints and Matrix homeservers.
 - Use test_matrix_login to verify Matrix credentials before saving them.
 - If the user configures Matrix, offer to send_matrix_message as a test.
-- If the user selects gemini-cli or kimi-code as a provider, immediately
-  call run_auth_flow to authenticate before continuing.
+- The bootstrap provider (the one powering this conversation) is already
+  authenticated. Do NOT call run_kimi_auth for it — auth was completed
+  during bootstrap. Only call run_kimi_auth if the user wants to add a
+  NEW kimi-code backend that isn't yet authenticated.
 - After all sections are configured, call install_systemd if the user wants it.
 - Finally, call finish_onboarding to write the config file.
 - Keep the conversation natural. Group related questions when it makes sense.
@@ -500,41 +498,26 @@ async def _tool_send_matrix_message(args: dict, config: dict) -> str:
         return json.dumps({"success": False, "error": str(exc)})
 
 
-async def _tool_run_auth_flow(args: dict, config: dict) -> str:
-    provider = args["provider"]
+async def _tool_run_kimi_auth(args: dict, config: dict) -> str:
+    # Check if already authenticated
+    from wintermute import kimi_auth
 
-    if provider == "gemini-cli":
-        _status("Starting Gemini CLI OAuth flow ...")
-        try:
-            from wintermute import gemini_auth
+    creds = kimi_auth.load_credentials()
+    if creds and not kimi_auth.is_token_expired(creds):
+        _ok("Kimi-Code already authenticated.")
+        return json.dumps({"success": True, "note": "Already authenticated, no action needed."})
 
-            creds = gemini_auth.setup()
-            _ok("Gemini OAuth complete.")
-            return json.dumps({
-                "success": True,
-                "email": creds.get("email", "unknown"),
-                "project_id": creds.get("project_id", "unknown"),
-            })
-        except Exception as exc:
-            _err(f"Gemini auth failed: {exc}")
-            return json.dumps({"success": False, "error": str(exc)})
+    _status("Starting Kimi-Code device-code OAuth flow ...")
+    try:
+        async def _broadcast(msg: str) -> None:
+            print(f"\n  {C_MAGENTA}{msg}{C_RESET}\n")
 
-    elif provider == "kimi-code":
-        _status("Starting Kimi-Code device-code OAuth flow ...")
-        try:
-            from wintermute import kimi_auth
-
-            async def _broadcast(msg: str) -> None:
-                print(f"\n  {C_MAGENTA}{msg}{C_RESET}\n")
-
-            creds = await kimi_auth.run_device_flow(_broadcast)
-            _ok("Kimi-Code OAuth complete.")
-            return json.dumps({"success": True})
-        except Exception as exc:
-            _err(f"Kimi-Code auth failed: {exc}")
-            return json.dumps({"success": False, "error": str(exc)})
-
-    return json.dumps({"success": False, "error": f"Unknown provider: {provider}"})
+        creds = await kimi_auth.run_device_flow(_broadcast)
+        _ok("Kimi-Code OAuth complete.")
+        return json.dumps({"success": True})
+    except Exception as exc:
+        _err(f"Kimi-Code auth failed: {exc}")
+        return json.dumps({"success": False, "error": str(exc)})
 
 
 async def _tool_install_systemd(args: dict, config: dict) -> str:
@@ -654,7 +637,7 @@ _TOOL_DISPATCH = {
     "probe_endpoint": _tool_probe_endpoint,
     "test_matrix_login": _tool_test_matrix_login,
     "send_matrix_message": _tool_send_matrix_message,
-    "run_auth_flow": _tool_run_auth_flow,
+    "run_kimi_auth": _tool_run_kimi_auth,
     "install_systemd": _tool_install_systemd,
     "finish_onboarding": _tool_finish_onboarding,
 }
@@ -692,16 +675,6 @@ async def run_onboarding(
     # Build bootstrap client
     if provider == "openai":
         client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-    elif provider == "gemini-cli":
-        # For gemini, we need credentials first — do auth then use gemini client
-        # But gemini doesn't speak OpenAI protocol, so we need the wrapper
-        from wintermute import gemini_auth, gemini_client
-
-        creds = gemini_auth.load_credentials()
-        if not creds:
-            _status("No Gemini credentials found. Running OAuth setup first...")
-            creds = gemini_auth.setup()
-        client = gemini_client.GeminiCloudClient(creds)
     elif provider == "kimi-code":
         from wintermute import kimi_auth, kimi_client
 
@@ -737,16 +710,6 @@ async def run_onboarding(
             "max_tokens": 4096,
             "reasoning": False,
         }
-        bootstrap_info = bootstrap_backend.copy()
-    elif provider == "gemini-cli":
-        bootstrap_backend = {
-            "name": "main",
-            "provider": "gemini-cli",
-            "model": model or "gemini-2.5-pro",
-            "context_size": 1048576,
-            "max_tokens": 8192,
-        }
-        bootstrap_info = bootstrap_backend.copy()
     elif provider == "kimi-code":
         bootstrap_backend = {
             "name": "main",
@@ -755,10 +718,9 @@ async def run_onboarding(
             "context_size": 131072,
             "max_tokens": 8192,
         }
-        bootstrap_info = bootstrap_backend.copy()
     else:
         bootstrap_backend = {}
-        bootstrap_info = {}
+    bootstrap_info = bootstrap_backend.copy()
 
     config["inference_backends"] = [bootstrap_backend]
 
@@ -775,7 +737,9 @@ async def run_onboarding(
         {
             "role": "user",
             "content": (
-                f"My primary LLM endpoint is already configured: {json.dumps(bootstrap_info)}. "
+                f"My primary LLM endpoint is already configured and authenticated: "
+                f"{json.dumps(bootstrap_info)}. Authentication is complete — do not "
+                f"run auth flows for this provider again. "
                 f"I'd like to configure the rest of Wintermute now. "
                 f"Let's go through the settings.{existing_note}"
             ),
@@ -787,6 +751,7 @@ async def run_onboarding(
     print(f"  {C_DIM}Type your responses below. The AI will guide you through configuration.{C_RESET}")
     print()
 
+    consecutive_errors = 0
     while True:
         try:
             response = await client.chat.completions.create(
@@ -796,9 +761,15 @@ async def run_onboarding(
                 tool_choice="auto",
                 max_tokens=2048,
             )
+            consecutive_errors = 0
         except Exception as exc:
+            consecutive_errors += 1
             _err(f"LLM call failed: {exc}")
-            _warn("Retrying... (press Ctrl+C to abort)")
+            if consecutive_errors >= 3:
+                _err("Too many consecutive errors. Aborting.")
+                _warn(f"Last error: {exc}")
+                break
+            _warn(f"Retrying ({consecutive_errors}/3)... (press Ctrl+C to abort)")
             try:
                 await asyncio.sleep(2)
                 continue
@@ -808,10 +779,9 @@ async def run_onboarding(
 
         msg = response.choices[0].message
 
-        # Serialize the message for history
-        msg_dict: dict[str, Any] = {"role": "assistant"}
-        if msg.content:
-            msg_dict["content"] = msg.content
+        # Serialize the message for history, preserving all provider-specific
+        # fields (e.g. reasoning_content for Kimi thinking models).
+        msg_dict: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
         if msg.tool_calls:
             msg_dict["tool_calls"] = [
                 {
@@ -821,6 +791,10 @@ async def run_onboarding(
                 }
                 for tc in msg.tool_calls
             ]
+        # Preserve reasoning_content if the model returns it (Kimi thinking models)
+        reasoning = getattr(msg, "reasoning_content", None)
+        if reasoning is not None:
+            msg_dict["reasoning_content"] = reasoning
         messages.append(msg_dict)
 
         # Handle tool calls
@@ -893,7 +867,7 @@ async def run_onboarding(
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Wintermute AI-driven onboarding")
-    p.add_argument("--provider", required=True, choices=["openai", "gemini-cli", "kimi-code"])
+    p.add_argument("--provider", required=True, choices=["openai", "kimi-code"])
     p.add_argument("--base-url", default="")
     p.add_argument("--model", default="")
     p.add_argument("--api-key", default="")
