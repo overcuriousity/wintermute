@@ -101,7 +101,7 @@ Run it in a dedicated LXC container or VM — something you can reset without re
 
 ## License
 
-MIT
+GPL
 
 ---
 
