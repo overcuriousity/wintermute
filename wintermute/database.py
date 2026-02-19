@@ -331,8 +331,8 @@ def delete_old_completed_agenda(days: int = 30) -> int:
 
 
 def _migrate_agenda_from_file() -> None:
-    """One-time migration: import PULSE.txt content into the DB."""
-    agenda_file = Path("data/PULSE.txt")
+    """One-time migration: import AGENDA.txt content into the DB."""
+    agenda_file = Path("data/AGENDA.txt")
     if not agenda_file.exists():
         return
     try:
@@ -345,7 +345,7 @@ def _migrate_agenda_from_file() -> None:
     # Skip if it's just the default placeholder
     if "no active agenda" in text.lower():
         agenda_file.rename(agenda_file.with_suffix(".txt.migrated"))
-        logger.info("PULSE.txt was empty placeholder, renamed to .migrated")
+        logger.info("AGENDA.txt was empty placeholder, renamed to .migrated")
         return
     # Parse line by line — each non-empty, non-header line becomes an item
     now = time.time()
@@ -366,7 +366,7 @@ def _migrate_agenda_from_file() -> None:
             )
         conn.commit()
     agenda_file.rename(agenda_file.with_suffix(".txt.migrated"))
-    logger.info("Migrated %d agenda items from PULSE.txt to DB", len(items))
+    logger.info("Migrated %d agenda items from AGENDA.txt to DB", len(items))
 
 
 # ---------------------------------------------------------------------------

@@ -27,7 +27,7 @@ SKILLS_DIR        = DATA_DIR / "skills"
 
 # Size thresholds (characters) that trigger AI summarisation
 MEMORIES_LIMIT = 10_000
-PULSE_LIMIT    = 5_000
+AGENDA_LIMIT    = 5_000
 SKILLS_LIMIT   = 20_000
 
 # Configured timezone — set by main.py at startup via set_timezone().
@@ -115,7 +115,7 @@ def check_component_sizes() -> dict[str, bool]:
 
     return {
         "memories": memories_len > MEMORIES_LIMIT,
-        "agenda":    agenda_len    > PULSE_LIMIT,
+        "agenda":    agenda_len    > AGENDA_LIMIT,
         "skills":   skills_len   > SKILLS_LIMIT,
     }
 

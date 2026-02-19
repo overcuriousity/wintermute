@@ -13,7 +13,7 @@ The foundation of every prompt. Shipped with the repository and editable by the 
 Content covers:
 
 - Role definition (personal AI assistant via Matrix chat)
-- Memory system: clear boundary between MEMORIES (long-term facts) and PULSE (active working memory)
+- Memory system: clear boundary between MEMORIES (long-term facts) and AGENDA (active working memory)
 - Background process awareness (agenda reviews, nightly dreaming, context compaction)
 - Tool usage patterns and categories
 - Sub-session delegation and workflow DAGs with `depends_on`
@@ -86,7 +86,7 @@ When spawning sub-sessions, the system prompt varies by mode:
 | Mode | System Prompt Content |
 |------|----------------------|
 | `minimal` | Lightweight execution agent instructions (default) |
-| `full` | Full assembled prompt (BASE + MEMORIES + PULSE + SKILLS) |
+| `full` | Full assembled prompt (BASE + MEMORIES + AGENDA + SKILLS) |
 | `base_only` | BASE_PROMPT.txt only |
 | `none` | No system prompt (bare tool-use loop) |
 
@@ -113,7 +113,7 @@ The following prompt templates are stored as editable files in `data/` and shipp
 | File | Used By | Placeholder | Purpose |
 |------|---------|-------------|---------|
 | `DREAM_MEMORIES_PROMPT.txt` | Dreaming loop | `{content}` | Instructions for consolidating MEMORIES.txt overnight |
-| `DREAM_PULSE_PROMPT.txt` | Dreaming loop | `{content}` | Instructions for consolidating agenda items overnight (LLM returns JSON actions) |
+| `DREAM_AGENDA_PROMPT.txt` | Dreaming loop | `{content}` | Instructions for consolidating agenda items overnight (LLM returns JSON actions) |
 | `COMPACTION_PROMPT.txt` | Context compaction | `{history}` | Instructions for summarising old conversation history |
 
 Templates support an optional placeholder (`{content}` or `{history}`). If present, the relevant text is substituted in. If absent, it is appended to the end of the prompt. This means you can write free-form instructions without worrying about placeholder syntax.

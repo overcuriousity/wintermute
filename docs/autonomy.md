@@ -18,7 +18,7 @@ A nightly consolidation pass that reviews and prunes MEMORIES.txt and agenda DB 
 - MEMORIES.txt: removes duplicates, merges related facts, preserves distinct useful facts
 - Agenda items: LLM returns JSON actions (complete, update, keep) applied via DB; completed items older than 30 days are purged
 
-The prompts used for consolidation are stored in `data/DREAM_MEMORIES_PROMPT.txt` and `data/DREAM_PULSE_PROMPT.txt` and can be customised. See [system-prompts.md](system-prompts.md#customisable-prompt-templates).
+The prompts used for consolidation are stored in `data/DREAM_MEMORIES_PROMPT.txt` and `data/DREAM_AGENDA_PROMPT.txt` and can be customised. See [system-prompts.md](system-prompts.md#customisable-prompt-templates).
 
 ## Memory Harvest
 
@@ -79,7 +79,7 @@ Background workers for complex, multi-step tasks.
 | Mode | System Prompt | Tools | Use Case |
 |------|--------------|-------|----------|
 | `minimal` | Lightweight execution instructions | execution + research | Default, fast and cheap |
-| `full` | Full prompt (BASE + MEMORIES + PULSE + SKILLS) | all including orchestration | When worker needs full context or must spawn further workers |
+| `full` | Full prompt (BASE + MEMORIES + AGENDA + SKILLS) | all including orchestration | When worker needs full context or must spawn further workers |
 | `base_only` | BASE_PROMPT.txt only | execution + research | Core instructions without memory overhead |
 | `none` | Empty | execution + research | Purely mechanical tasks |
 

@@ -25,7 +25,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 User (Matrix / Browser)
         |
         v
-  LLMThread  <--- system prompt (BASE + MEMORIES + PULSE + SKILLS)
+  LLMThread  <--- system prompt (BASE + MEMORIES + AGENDA + SKILLS)
   (asyncio)        assembled fresh each turn
         |
         |-- tool calls --> execute_shell / read_file / write_file
@@ -76,7 +76,7 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 1. User sends a message via Matrix or WebSocket
 2. Message enters the LLMThread queue
 3. LLMThread builds the message list from the SQLite DB
-4. System prompt is assembled fresh (BASE + MEMORIES + PULSE + SKILLS + compaction summary)
+4. System prompt is assembled fresh (BASE + MEMORIES + AGENDA + SKILLS + compaction summary)
 5. If history tokens exceed the compaction threshold, context is compacted first
 6. Message is saved to the DB, then inference runs
 7. If the model returns tool calls:
@@ -143,7 +143,7 @@ data/
   conversation.db (agenda)    -- Active goals / working memory (managed via agenda tool, stored in SQLite)
   skills/                    -- Learned procedures as *.md files (updated via add_skill tool)
   DREAM_MEMORIES_PROMPT.txt  -- Customisable dreaming prompt for MEMORIES consolidation
-  DREAM_PULSE_PROMPT.txt     -- Customisable dreaming prompt for agenda consolidation
+  DREAM_AGENDA_PROMPT.txt     -- Customisable dreaming prompt for agenda consolidation
   COMPACTION_PROMPT.txt      -- Customisable prompt for context compaction summarisation
   matrix_crypto.db           -- Matrix E2E encryption keys
   matrix_recovery.key        -- Cross-signing recovery key

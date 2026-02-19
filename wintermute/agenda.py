@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-PULSE_REVIEW_PROMPT_THREAD = (
+AGENDA_REVIEW_PROMPT_THREAD = (
     "This is an automatic agenda review for items bound to this thread. "
     "Use the agenda tool with action 'list' to see current items, "
     "then review each item and take any appropriate actions (set reminders, "
@@ -78,7 +78,7 @@ class AgendaLoop:
         for thread_id, count in thread_items:
             logger.info("Agenda review: spawning sub-session for thread %s (%d items)", thread_id, count)
             self._sub_sessions.spawn(
-                objective=PULSE_REVIEW_PROMPT_THREAD,
+                objective=AGENDA_REVIEW_PROMPT_THREAD,
                 parent_thread_id=thread_id,
                 system_prompt_mode="full",
             )

@@ -238,7 +238,7 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         validator_fn_name="validate_agenda_complete",
         validator_prompt=None,
         correction_template=(
-            "[TURING PROTOCOL — PULSE COMPLETE BLOCKED] You attempted to "
+            "[TURING PROTOCOL — AGENDA COMPLETE BLOCKED] You attempted to "
             "complete a agenda item without sufficient evidence.\n"
             "Issue: {reason}\n\n"
             "Do NOT complete agenda items unless you have concrete, verifiable "

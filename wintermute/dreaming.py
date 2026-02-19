@@ -157,7 +157,7 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
     agenda_items = database.list_agenda_items("active")
     if agenda_items:
         try:
-            agenda_prompt = prompt_loader.load("DREAM_PULSE_PROMPT.txt")
+            agenda_prompt = prompt_loader.load("DREAM_AGENDA_PROMPT.txt")
             formatted = "\n".join(
                 f"[P{it['priority']}] #{it['id']}: {it['content']}"
                 for it in agenda_items
