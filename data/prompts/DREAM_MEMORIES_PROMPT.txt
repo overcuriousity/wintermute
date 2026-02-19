@@ -3,7 +3,7 @@ Below is the current content of MEMORIES.txt — the long-term memory store for 
 Your task is to consolidate it:
 - Merge duplicate and near-duplicate entries into single concise statements.
 - Remove entries that are clearly outdated or contradicted by newer entries.
-- Preserve all distinct, useful facts exactly.
+- Preserve all useful facts about the user preferences exactly.
 - Keep the result as short as possible without losing information.
 - Maintain a flat, scannable structure (one fact per line or short paragraph).
 
