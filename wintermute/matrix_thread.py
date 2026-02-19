@@ -702,8 +702,27 @@ class MatrixThread:
             if self._whisper_client is not None:
                 try:
                     from openai import NOT_GIVEN
+                    # Convert to WAV via ffmpeg if the audio is not already WAV.
+                    # Many backends (including llama.cpp whisper) reject OGG/Opus.
+                    audio_data = data
+                    audio_filename = filename
+                    if not filename.lower().endswith(".wav"):
+                        proc = await asyncio.create_subprocess_exec(
+                            "ffmpeg", "-i", "pipe:0",
+                            "-ar", "16000", "-ac", "1", "-f", "wav",
+                            "-loglevel", "error", "pipe:1",
+                            stdin=asyncio.subprocess.PIPE,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        wav_bytes, ffmpeg_err = await proc.communicate(input=data)
+                        if proc.returncode != 0 or not wav_bytes:
+                            logger.error("ffmpeg conversion failed for %s: %s", voice_path, ffmpeg_err.decode())
+                        else:
+                            audio_data = wav_bytes
+                            audio_filename = Path(filename).stem + ".wav"
                     resp = await self._whisper_client.audio.transcriptions.create(
-                        file=(filename, data),
+                        file=(audio_filename, audio_data),
                         model=self._whisper_model,
                         language=self._whisper_language or NOT_GIVEN,
                         timeout=60.0,

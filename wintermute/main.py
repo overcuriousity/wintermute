@@ -419,6 +419,13 @@ async def main() -> None:
             matrix._whisper_model = whisper_raw.get("model", "whisper-1")
             matrix._whisper_language = whisper_raw.get("language", "") or ""
             logger.info("Whisper transcription enabled (model=%s)", matrix._whisper_model)
+            import shutil as _shutil
+            if not _shutil.which("ffmpeg"):
+                logger.warning(
+                    "Whisper transcription is enabled but ffmpeg is not in PATH. "
+                    "Voice messages from Matrix (OGG/Opus) cannot be transcribed without ffmpeg. "
+                    "Install it with: sudo apt install ffmpeg  OR  sudo dnf install ffmpeg"
+                )
     if web_iface:
         web_iface._llm = llm
         web_iface._kimi_client = client_cache.get(("kimi-code",))

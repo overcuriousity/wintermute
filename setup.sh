@@ -220,7 +220,7 @@ if $DRY_RUN; then
   echo -e "  ${C_DIM}Matrix:${C_RESET}          $( $SKIP_MATRIX && echo 'skipped' || echo 'interactive' )"
   echo -e "  ${C_DIM}Systemd:${C_RESET}         $( $SKIP_SYSTEMD && echo 'skipped' || echo 'interactive' )"
   echo ""
-  echo -e "  ${C_DIM}Would install: Python 3.12+, curl, uv, build tools, libolm-dev${C_RESET}"
+  echo -e "  ${C_DIM}Would install: Python 3.12+, curl, uv, build tools, libolm-dev, ffmpeg${C_RESET}"
   echo -e "  ${C_DIM}Would run: uv sync${C_RESET}"
   echo -e "  ${C_DIM}Would write: config.yaml${C_RESET}"
   echo ""
@@ -354,6 +354,12 @@ if ! need_pkg curl; then
   run_quiet "Install curl" install_pkg curl || die "curl install failed."
 fi
 ok "curl available."
+
+info "Checking ffmpeg (required for Matrix voice message transcription)..."
+if ! need_pkg ffmpeg; then
+  run_quiet "Install ffmpeg" install_pkg ffmpeg || warn "ffmpeg installation failed — voice message transcription will not work."
+fi
+if need_pkg ffmpeg; then ok "ffmpeg available."; fi
 
 info "Checking uv..."
 if ! need_pkg uv; then
@@ -990,6 +996,7 @@ run_check "Configuration present" test -f "$CONFIG"
 run_check "Package importable" uv run python -c "import wintermute"
 run_check "E2E encryption (olm)" uv run python -c "import olm"
 run_check "Data directory" test -d "$SCRIPT_DIR/data"
+run_check "ffmpeg (voice transcription)" command -v ffmpeg
 
 # LLM endpoint reachability
 if [[ -f "$CONFIG" ]]; then
