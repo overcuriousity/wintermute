@@ -83,7 +83,8 @@ TOOLS = [
                         "description": "Dot-path to the config field",
                     },
                     "value": {
-                        "description": "Value to set (any JSON type)",
+                        "type": "string",
+                        "description": "Value to set. Use JSON encoding for non-string types: numbers, booleans, arrays, objects. Examples: '8080' for int, 'true' for bool, '[\"a\",\"b\"]' for list.",
                     },
                 },
                 "required": ["path", "value"],
@@ -340,7 +341,12 @@ def _set_nested(d: dict, path: str, value: Any) -> None:
 
 async def _tool_set_config(args: dict, config: dict) -> str:
     path = args["path"]
-    value = args["value"]
+    raw_value = args["value"]
+    # Try to parse JSON-encoded values (numbers, bools, lists, objects)
+    try:
+        value = json.loads(raw_value)
+    except (json.JSONDecodeError, TypeError):
+        value = raw_value
     _set_nested(config, path, value)
     _status(f"Set {C_BOLD}{path}{C_RESET} = {json.dumps(value)[:80]}")
     return json.dumps({"ok": True, "path": path})
