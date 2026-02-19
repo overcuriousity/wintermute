@@ -246,6 +246,19 @@ nl_translation:
     - spawn_sub_session                   # Background worker spawning (DAG dependencies)
 
 
+# ── Seed (Conversation Starter) ──────────────────────────────────────
+# When a new conversation starts (first message or /new), Wintermute
+# injects a seed system event that prompts the LLM to introduce itself,
+# surface relevant memories/agendas, and explain its capabilities.
+#
+# Seed prompts are stored as data/prompts/SEED_{language}.txt.
+# Shipped languages: en, de, fr, es, it, zh, ja. Add your own by creating SEED_{code}.txt.
+# Falls back to English if the configured language file is missing.
+#
+seed:
+  language: "en"                        # ISO-639-1 language code: "en", "de", etc.
+
+
 # ── Context Compaction ───────────────────────────────────────────────
 # When conversation history exceeds the token budget (context_size minus
 # max_tokens minus system prompt), older messages are summarised into a

@@ -14,6 +14,19 @@ logger = logging.getLogger(__name__)
 CONVERSATION_DB = Path("data/conversation.db")
 
 
+def thread_has_messages(thread_id: str = "default") -> bool:
+    """Return True if the thread has any non-archived messages."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM messages WHERE thread_id=? AND archived=0 LIMIT 1",
+            (thread_id,),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
 def _connect() -> sqlite3.Connection:
     """Open a WAL-mode connection with a 5-second busy timeout."""
     conn = sqlite3.connect(CONVERSATION_DB)

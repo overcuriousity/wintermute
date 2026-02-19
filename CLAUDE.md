@@ -54,7 +54,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 
 ## Data Layout
 
-- `data/prompts/*.txt` — All prompt templates (externalized, not hardcoded)
+- `data/prompts/*.txt` — All prompt templates (externalized, not hardcoded); seed prompts are per-language (`SEED_en.txt`, `SEED_de.txt`, ...)
 - `data/MEMORIES.txt` — Long-term memory (append-based, consolidated nightly)
 - `data/conversation.db` — SQLite: messages, summaries, agenda, interaction_log
 - `data/skills/*.md` — Learned procedures

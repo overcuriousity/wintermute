@@ -192,13 +192,15 @@ class LLMThread:
                  sub_session_manager: "Optional[SubSessionManager]" = None,
                  turing_protocol_validators: "Optional[dict[str, bool]]" = None,
                  nl_translation_pool: "Optional[BackendPool]" = None,
-                 nl_translation_config: "Optional[dict]" = None) -> None:
+                 nl_translation_config: "Optional[dict]" = None,
+                 seed_language: str = "en") -> None:
         self._main_pool = main_pool
         self._compaction_pool = compaction_pool
         self._turing_protocol_pool = turing_protocol_pool
         self._turing_protocol_validators = turing_protocol_validators
         self._nl_translation_pool = nl_translation_pool
         self._nl_translation_config = nl_translation_config or {}
+        self._seed_language = seed_language
         # Convenience: primary config for context_size / model name lookups.
         self._cfg = main_pool.primary
         self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)
@@ -349,6 +351,27 @@ class LLMThread:
                 self._thread_seq[item.thread_id] = (
                     self._thread_seq.get(item.thread_id, 0) + 1
                 )
+
+            # Seed empty threads on first real user message
+            if not item.is_system_event and not database.thread_has_messages(item.thread_id):
+                try:
+                    seed_prompt = prompt_loader.load_seed(self._seed_language)
+                    seed_item = _QueueItem(
+                        text=seed_prompt,
+                        thread_id=item.thread_id,
+                        is_system_event=True,
+                    )
+                    seed_reply = await self._process(seed_item)
+                    if seed_reply.text:
+                        try:
+                            await self._broadcast(
+                                seed_reply.text, item.thread_id,
+                                reasoning=seed_reply.reasoning,
+                            )
+                        except Exception:  # noqa: BLE001
+                            logger.exception("Failed to broadcast seed reply")
+                except Exception:  # noqa: BLE001
+                    logger.exception("Seed injection failed (non-fatal)")
 
             try:
                 reply = await self._process(item)

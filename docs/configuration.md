@@ -273,6 +273,16 @@ See [matrix-setup.md](matrix-setup.md) for full setup instructions.
 |-----|----------|---------|-------------|
 | `timezone` | no | `"UTC"` | Timezone for routine scheduling |
 
+### `seed`
+
+Controls the conversation seed — an automatic system event injected when a new conversation starts (first message in an empty thread or after `/new`). The seed prompts the LLM to introduce itself, mention relevant memories/agendas, and explain its capabilities.
+
+Seed prompts are language-specific files in `data/prompts/SEED_{language}.txt`. Shipped languages: `en`, `de`, `fr`, `es`, `it`, `zh`, `ja`. Add your own by creating a `SEED_{code}.txt` file. Falls back to English if the configured language file is missing.
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `language` | no | `"en"` | ISO-639-1 language code for the seed prompt (`"en"`, `"de"`, etc.) |
+
 ### `context.component_size_limits`
 
 | Key | Default | Description |

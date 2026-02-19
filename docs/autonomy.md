@@ -1,5 +1,17 @@
 # Autonomous Features
 
+## Conversation Seed
+
+**Module:** `wintermute/llm_thread.py`
+
+When a new conversation starts (first user message in an empty thread, `/new` in Matrix, or session reset in the web UI), a seed system event is automatically injected before the user's message is processed. The seed prompts the LLM to introduce itself, mention relevant active goals from memories and agendas, and briefly explain its capabilities.
+
+- Language-specific: configured via `seed.language` in `config.yaml` (default: `"en"`)
+- Prompt files: `data/prompts/SEED_{language}.txt` (shipped: `en`, `de`, `fr`, `es`, `it`, `zh`, `ja`)
+- Falls back to English if the configured language file is missing
+- Add new languages by creating `data/prompts/SEED_{code}.txt`
+- The seed reply is broadcast to the user before their first message is processed
+
 Wintermute includes several autonomous background systems that operate without user interaction.
 
 ## Dreaming Loop

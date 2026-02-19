@@ -36,6 +36,12 @@ Key rule: if it only matters because something is in progress right now, it belo
 
 Each file in `data/skills/` is a Markdown document describing a reusable procedure the AI has learned. Created via the `add_skill` tool. All skills are loaded and injected into every prompt.
 
+### 5. SEED_{language}.txt — Conversation Seed
+
+Injected as a system event when a new conversation starts (first user message in an empty thread or after `/new`). Prompts the LLM to introduce itself, surface relevant memories and agendas, and explain its capabilities.
+
+Language-specific files (`SEED_en.txt`, `SEED_de.txt`, `SEED_fr.txt`, `SEED_es.txt`, `SEED_it.txt`, `SEED_zh.txt`, `SEED_ja.txt`) are selected via the `seed.language` config option. Falls back to English if the configured language is missing. Add new languages by creating `data/prompts/SEED_{code}.txt`.
+
 ## Prompt Assembly Pipeline
 
 The `prompt_assembler.assemble()` function builds the final system prompt:

@@ -1634,6 +1634,12 @@ class WebInterface:
         thread_id = request.match_info["thread_id"]
         try:
             await self._llm.reset_session(thread_id)
+            from wintermute import prompt_loader
+            try:
+                seed_prompt = prompt_loader.load_seed(self._llm._seed_language)
+                await self._llm.enqueue_system_event(seed_prompt, thread_id)
+            except Exception:  # noqa: BLE001
+                pass
             return self._json({"ok": True, "thread_id": thread_id})
         except Exception as exc:  # noqa: BLE001
             return self._json({"error": str(exc)})

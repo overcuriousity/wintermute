@@ -100,7 +100,7 @@ def setup_logging(cfg: dict) -> None:
 
 DATA_DIR = Path("data")
 
-def bootstrap_data_files() -> None:
+def ensure_data_dirs() -> None:
     """Ensure required data directories exist.
 
     Prompt files live in data/prompts/ and are validated separately
@@ -287,7 +287,7 @@ async def main() -> None:
     logger = logging.getLogger("main")
     logger.info("Wintermute starting up")
 
-    bootstrap_data_files()
+    ensure_data_dirs()
     prompt_loader.validate_all()
     database.init_db()
 
@@ -391,12 +391,14 @@ async def main() -> None:
             await web_iface.broadcast(text, thread_id, reasoning=reasoning)
 
     # Build LLM thread with the shared broadcast function.
+    seed_language = cfg.get("seed", {}).get("language", "en") if cfg.get("seed") else "en"
     tp_validators = (cfg.get("turing_protocol", {}) or {}).get("validators")
     llm = LLMThread(main_pool=main_pool, compaction_pool=compaction_pool,
                     turing_protocol_pool=turing_protocol_pool, broadcast_fn=broadcast,
                     turing_protocol_validators=tp_validators,
                     nl_translation_pool=nl_translation_pool,
-                    nl_translation_config=nl_translation_config)
+                    nl_translation_config=nl_translation_config,
+                    seed_language=seed_language)
 
     # Build SubSessionManager — shares the LLM backend pool, reports back via
     # enqueue_system_event so results enter the parent thread's queue.

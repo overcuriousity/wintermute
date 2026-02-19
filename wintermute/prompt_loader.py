@@ -48,6 +48,19 @@ def validate_nl_translation() -> None:
     logger.info("NL translation prompt files validated (%d files)", len(NL_TRANSLATION_FILES))
 
 
+def load_seed(language: str = "en") -> str:
+    """Load the seed prompt for the given language code (e.g. 'en', 'de').
+
+    Falls back to English if the requested language file does not exist.
+    """
+    name = f"SEED_{language}.txt"
+    path = PROMPTS_DIR / name
+    if not path.is_file():
+        logger.warning("Seed prompt %s not found, falling back to SEED_en.txt", name)
+        path = PROMPTS_DIR / "SEED_en.txt"
+    return path.read_text(encoding="utf-8").strip()
+
+
 def load(name: str, **kwargs: object) -> str:
     """Read a prompt template from *data/prompts/{name}*.
 

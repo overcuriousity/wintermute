@@ -1231,6 +1231,12 @@ class MatrixThread:
         if content is None and text == "/new":
             await self._llm.reset_session(thread_id)
             await self.send_message("Session reset. Starting fresh conversation.", thread_id)
+            from wintermute import prompt_loader
+            try:
+                seed_prompt = prompt_loader.load_seed(self._llm._seed_language)
+                await self._llm.enqueue_system_event(seed_prompt, thread_id)
+            except Exception:  # noqa: BLE001
+                logger.exception("Seed after /new failed (non-fatal)")
             return
 
         if content is None and text == "/compact":
