@@ -234,7 +234,7 @@ class LLMThread:
         payload sent to the API instead of *text*.  *text* is always used
         for DB storage and logging.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         fut: asyncio.Future = loop.create_future()
         await self._queue.put(_QueueItem(
             text=text, thread_id=thread_id, future=fut, content=content,
@@ -252,7 +252,7 @@ class LLMThread:
         Like enqueue_system_event but returns the reply text. The prompt is
         NOT saved to the DB as a user message; only the assistant response is.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         fut: asyncio.Future = loop.create_future()
         await self._queue.put(_QueueItem(text=text, thread_id=thread_id,
                                          is_system_event=True, future=fut))
@@ -760,9 +760,10 @@ class LLMThread:
                             # Multi-item: execute each, combine results.
                             combined_results = []
                             for i, item_args in enumerate(translated):
-                                item_result = tool_module.execute_tool(
-                                    name, item_args,
-                                    thread_id=thread_id, nesting_depth=0,
+                                item_result = await asyncio.get_running_loop().run_in_executor(
+                                    None, lambda _n=name, _a=item_args: tool_module.execute_tool(
+                                        _n, _a, thread_id=thread_id, nesting_depth=0,
+                                    )
                                 )
                                 summary = ", ".join(f"{k}={v!r}" for k, v in item_args.items() if k != "description")
                                 combined_results.append(f"[{i+1}] [Translated to: {summary}] {item_result}")
@@ -814,9 +815,11 @@ class LLMThread:
                             })
                             continue
 
-                    result = tool_module.execute_tool(name, inputs,
-                                                     thread_id=thread_id,
-                                                     nesting_depth=0)
+                    result = await asyncio.get_running_loop().run_in_executor(
+                        None, lambda _n=name, _i=inputs: tool_module.execute_tool(
+                            _n, _i, thread_id=thread_id, nesting_depth=0,
+                        )
+                    )
                     tool_calls_made.append(name)
 
                     # Prepend translation summary if NL translation was used.

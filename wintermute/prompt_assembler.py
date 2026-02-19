@@ -10,6 +10,7 @@ Order:
 """
 
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -31,6 +32,9 @@ SKILLS_LIMIT   = 20_000
 
 # Configured timezone — set by main.py at startup via set_timezone().
 _timezone: str = "UTC"
+
+# Lock guarding read-modify-write operations on MEMORIES.txt.
+_memories_lock = threading.Lock()
 
 
 def set_timezone(tz: str) -> None:
@@ -118,19 +122,21 @@ def check_component_sizes() -> dict[str, bool]:
 
 def update_memories(content: str) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    MEMORIES_FILE.write_text(content, encoding="utf-8")
+    with _memories_lock:
+        MEMORIES_FILE.write_text(content, encoding="utf-8")
     logger.info("MEMORIES.txt updated (%d chars)", len(content))
 
 
 def append_memory(entry: str) -> int:
     """Append a memory entry to MEMORIES.txt. Returns the new total length."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    existing = _read(MEMORIES_FILE)
-    if existing:
-        new_content = existing + "\n" + entry.strip()
-    else:
-        new_content = entry.strip()
-    MEMORIES_FILE.write_text(new_content, encoding="utf-8")
+    with _memories_lock:
+        existing = _read(MEMORIES_FILE)
+        if existing:
+            new_content = existing + "\n" + entry.strip()
+        else:
+            new_content = entry.strip()
+        MEMORIES_FILE.write_text(new_content, encoding="utf-8")
     logger.info("MEMORIES.txt appended (%d chars total)", len(new_content))
     return len(new_content)
 

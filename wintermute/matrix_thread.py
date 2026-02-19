@@ -69,21 +69,38 @@ CONFIG_PATH = Path("config.yaml")
 def _update_config_yaml(access_token: str, device_id: str) -> None:
     """Write new access_token and device_id back into config.yaml (in-place).
 
-    Replaces just those two lines, preserving all other content and formatting.
+    Replaces just those two lines under the matrix: section, preserving all
+    other content and formatting.
     """
     if not CONFIG_PATH.exists():
         return
     text = CONFIG_PATH.read_text()
-    text = _re.sub(
-        r"(^\s*access_token:\s*).*$",
-        rf'\g<1>"{access_token}"',
-        text, count=1, flags=_re.MULTILINE,
-    )
-    text = _re.sub(
-        r"(^\s*device_id:\s*).*$",
-        rf'\g<1>"{device_id}"',
-        text, count=1, flags=_re.MULTILINE,
-    )
+
+    # Match access_token / device_id only when preceded by "matrix:" on a
+    # prior line (within the same YAML block, indented by 2+ spaces).
+    # This prevents accidentally replacing keys with the same name in other
+    # sections (e.g. a hypothetical api.access_token).
+    def _replace_in_matrix_block(key: str, value: str, src: str) -> str:
+        # Find the matrix: section and replace only the first occurrence of
+        # `key:` within it (indented, so it belongs to the matrix block).
+        pattern = _re.compile(
+            r"(^matrix\s*:.*?)(^\s{2,}" + key + r":\s*).*?$",
+            _re.MULTILINE | _re.DOTALL,
+        )
+        def _replacer(m: _re.Match) -> str:
+            return m.group(1) + m.group(2) + f'"{value}"'
+        result, n = pattern.subn(_replacer, src, count=1)
+        if n == 0:
+            # Fallback: replace first occurrence anywhere (original behaviour).
+            result = _re.sub(
+                r"(^\s*" + key + r":\s*).*$",
+                rf'\g<1>"{value}"',
+                src, count=1, flags=_re.MULTILINE,
+            )
+        return result
+
+    text = _replace_in_matrix_block("access_token", access_token, text)
+    text = _replace_in_matrix_block("device_id", device_id, text)
     CONFIG_PATH.write_text(text)
 
 

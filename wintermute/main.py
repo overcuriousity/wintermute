@@ -320,6 +320,7 @@ async def main() -> None:
     dreaming_cfg = DreamingConfig(
         hour=dreaming_raw.get("hour", 1),
         minute=dreaming_raw.get("minute", 0),
+        timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
     )
     scheduler_cfg = SchedulerConfig(
         timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
@@ -470,7 +471,7 @@ async def main() -> None:
 
     scheduler.start()
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, shutdown.request_shutdown)
 

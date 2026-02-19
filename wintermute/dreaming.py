@@ -15,6 +15,7 @@ import logging
 import time as _time
 from dataclasses import dataclass
 from datetime import datetime, time as dt_time, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 class DreamingConfig:
     hour: int = 1
     minute: int = 0
+    timezone: str = "UTC"
 
 
 async def _consolidate(pool: "BackendPool",
@@ -212,10 +214,11 @@ class DreamingLoop:
     async def run(self) -> None:
         self._running = True
         target = dt_time(self._cfg.hour, self._cfg.minute)
-        logger.info("Dreaming loop started (target=%02d:%02d, model=%s)",
-                     target.hour, target.minute, self._pool.primary.model)
+        logger.info("Dreaming loop started (target=%02d:%02d %s, model=%s)",
+                     target.hour, target.minute, self._cfg.timezone,
+                     self._pool.primary.model)
         while self._running:
-            delay = self._seconds_until(target)
+            delay = self._seconds_until(target, self._cfg.timezone)
             logger.debug("Dreaming: next run in %.0f s", delay)
             await asyncio.sleep(delay)
             if not self._running:
@@ -238,9 +241,13 @@ class DreamingLoop:
             logger.exception("Dreaming: nightly consolidation failed: %s", exc)
 
     @staticmethod
-    def _seconds_until(target: dt_time) -> float:
-        """Return seconds from now until the next occurrence of *target* time (UTC)."""
-        now = datetime.now(timezone.utc)
+    def _seconds_until(target: dt_time, tz_name: str = "UTC") -> float:
+        """Return seconds from now until the next occurrence of *target* time in *tz_name*."""
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = timezone.utc
+        now = datetime.now(tz)
         candidate = now.replace(hour=target.hour, minute=target.minute,
                                 second=0, microsecond=0)
         if candidate <= now:

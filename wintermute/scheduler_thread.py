@@ -19,6 +19,7 @@ For production use you might replace this with a dedicated NLP parser.
 import json
 import logging
 import re
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -367,7 +368,7 @@ class ReminderScheduler:
 
 def _parse_hhmm(s: str) -> tuple[int, int]:
     """Parse 'HH:MM' → (hour, minute). Defaults to (9, 0) on failure."""
-    m = re.match(r"(\d{1,2}):(\d{2})", s.strip())
+    m = re.search(r"(\d{1,2}):(\d{2})", s.strip())
     if m:
         return int(m.group(1)), int(m.group(2))
     return 9, 0
@@ -448,6 +449,8 @@ def _save_history(history: dict) -> None:
 
 MAX_HISTORY_PER_BUCKET = 200
 
+_history_lock = threading.Lock()
+
 
 def _append_history(bucket: str, entry: dict) -> None:
     """Append an entry to the history log under the given bucket.
@@ -455,9 +458,10 @@ def _append_history(bucket: str, entry: dict) -> None:
     Keeps only the most recent MAX_HISTORY_PER_BUCKET entries per bucket
     to prevent unbounded growth over long-running deployments.
     """
-    history = _load_history()
-    items = history.setdefault(bucket, [])
-    items.append(entry)
-    if len(items) > MAX_HISTORY_PER_BUCKET:
-        history[bucket] = items[-MAX_HISTORY_PER_BUCKET:]
-    _save_history(history)
+    with _history_lock:
+        history = _load_history()
+        items = history.setdefault(bucket, [])
+        items.append(entry)
+        if len(items) > MAX_HISTORY_PER_BUCKET:
+            history[bucket] = items[-MAX_HISTORY_PER_BUCKET:]
+        _save_history(history)

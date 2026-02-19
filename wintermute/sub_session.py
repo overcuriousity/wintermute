@@ -398,7 +398,7 @@ class SubSessionManager:
                     error=node.error,
                 )
                 self._states[session_id] = state
-                asyncio.get_event_loop().create_task(
+                asyncio.get_running_loop().create_task(
                     self._report(state, f"[SUB-SESSION {session_id} FAILED] dependency failed")
                 )
                 return session_id
@@ -488,7 +488,7 @@ class SubSessionManager:
             "Scheduling time-gate wakeup for %s in %.0fs",
             session_id, delay,
         )
-        asyncio.get_event_loop().call_later(
+        asyncio.get_running_loop().call_later(
             delay,
             lambda: asyncio.ensure_future(self._time_gate_wakeup(session_id)),
         )
@@ -655,6 +655,7 @@ class SubSessionManager:
             any_fail = any(n.status == "failed" for n in wf.nodes.values())
             wf.status = "failed" if any_fail else "completed"
             logger.info("Workflow %s %s (%d nodes)", workflow_id, wf.status, total)
+            self._cleanup_workflow(workflow_id)
 
     def cancel_for_thread(self, thread_id: str) -> int:
         """
@@ -669,6 +670,12 @@ class SubSessionManager:
             if state.status == "running":
                 task = self._tasks.get(sid)
                 if task and not task.done():
+                    # Mark failed before cancelling so _resolve_dependents sees
+                    # the correct state immediately (CancelledError handler would
+                    # otherwise race with ensure_future(_resolve_dependents)).
+                    state.status = "failed"
+                    state.error = "Cancelled"
+                    state.completed_at = datetime.now(timezone.utc).isoformat()
                     task.cancel()
                     logger.info("Cancelled sub-session %s (thread reset)", sid)
                     cancelled += 1
@@ -684,6 +691,36 @@ class SubSessionManager:
         for sid in needs_resolve:
             asyncio.ensure_future(self._resolve_dependents(sid))
         return cancelled
+
+    def _cleanup_workflow(self, workflow_id: str) -> None:
+        """Remove a completed/failed workflow and its sessions from tracking dicts.
+
+        Keeps the last 50 completed workflows for the debug UI (list_workflows /
+        list_all) and purges the rest to prevent unbounded memory growth.
+        """
+        _MAX_COMPLETED = 50
+        wf = self._workflows.get(workflow_id)
+        if wf is None:
+            return
+
+        # Count how many completed workflows already exist (excluding this one).
+        completed_wfs = [
+            wid for wid, w in self._workflows.items()
+            if w.status in ("completed", "failed") and wid != workflow_id
+        ]
+        if len(completed_wfs) >= _MAX_COMPLETED:
+            # Remove the oldest completed workflows to stay within budget.
+            to_purge = completed_wfs[:len(completed_wfs) - _MAX_COMPLETED + 1]
+            for old_wid in to_purge:
+                old_wf = self._workflows.pop(old_wid, None)
+                if old_wf:
+                    for nid in old_wf.nodes:
+                        self._states.pop(nid, None)
+                        self._tasks.pop(nid, None)
+                        self._session_to_workflow.pop(nid, None)
+                        self._worker_spawned.pop(nid, None)
+                        self._aggregated_parents.discard(nid)
+                    logger.debug("Purged completed workflow %s from memory", old_wid)
 
     def list_active(self) -> list[dict]:
         """Return serialisable state dicts for all non-completed sub-sessions."""
@@ -1151,11 +1188,13 @@ class SubSessionManager:
                         if isinstance(translated, list):
                             combined_results = []
                             for i, item_args in enumerate(translated):
-                                item_result = tool_module.execute_tool(
-                                    name, item_args,
-                                    thread_id=state.session_id,
-                                    nesting_depth=state.nesting_depth,
-                                    parent_thread_id=state.parent_thread_id,
+                                item_result = await asyncio.get_running_loop().run_in_executor(
+                                    None, lambda _n=name, _a=item_args: tool_module.execute_tool(
+                                        _n, _a,
+                                        thread_id=state.session_id,
+                                        nesting_depth=state.nesting_depth,
+                                        parent_thread_id=state.parent_thread_id,
+                                    )
                                 )
                                 summary = ", ".join(f"{k}={v!r}" for k, v in item_args.items() if k != "description")
                                 combined_results.append(f"[{i+1}] [Translated to: {summary}] {item_result}")
@@ -1202,12 +1241,13 @@ class SubSessionManager:
                             })
                             continue
 
-                    result = tool_module.execute_tool(
-                        name,
-                        inputs,
-                        thread_id=state.session_id,
-                        nesting_depth=state.nesting_depth,
-                        parent_thread_id=state.parent_thread_id,
+                    result = await asyncio.get_running_loop().run_in_executor(
+                        None, lambda _n=name, _i=inputs: tool_module.execute_tool(
+                            _n, _i,
+                            thread_id=state.session_id,
+                            nesting_depth=state.nesting_depth,
+                            parent_thread_id=state.parent_thread_id,
+                        )
                     )
                     tool_calls_made.append(name)
 
