@@ -173,10 +173,10 @@ Hooks are **scoped** to run in `main` (user-facing thread), `sub_session`
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `backends` | no | first backend | Ordered list of backend names for the protocol's own LLM calls |
+| `backends` | no | — | **Deprecated** — use `llm.turing_protocol` instead. Still supported for backwards compatibility |
 | `validators` | no | all enabled | Per-hook enable/disable overrides (see below) |
 
-**Disabling:** Set `backends: []` to disable entirely, or set individual
+**Disabling:** Set `llm.turing_protocol: []` to disable entirely, or set individual
 validators to `false` to suppress specific checks.
 
 **Default behavior:** If the `turing_protocol:` section is omitted entirely,
@@ -245,6 +245,18 @@ See [matrix-setup.md](matrix-setup.md) for full setup instructions.
 | `allowed_users` | yes | `[]` | User IDs allowed to interact |
 | `allowed_rooms` | no | `[]` | Room ID whitelist (empty = all rooms) |
 
+### `whisper`
+
+Transcribes Matrix voice messages using an OpenAI-compatible `/v1/audio/transcriptions` endpoint. Only relevant if Matrix is enabled. Without this, voice messages show a placeholder.
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `enabled` | no | `false` | Enable voice transcription |
+| `base_url` | yes (if enabled) | — | Whisper-compatible API base URL |
+| `api_key` | yes (if enabled) | — | API key (`"none"` for unauthenticated local) |
+| `model` | no | — | Model name (e.g. `"whisper-large-v3"`) |
+| `language` | no | `""` | ISO-639-1 language hint (e.g. `"de"`). Empty = auto-detect |
+
 ### `web`
 
 | Key | Required | Default | Description |
@@ -267,11 +279,33 @@ See [matrix-setup.md](matrix-setup.md) for full setup instructions.
 | `hour` | no | `1` | Hour (UTC, 0-23) for nightly consolidation |
 | `minute` | no | `0` | Minute (0-59) |
 
+### `memory_harvest`
+
+Periodically mines recent conversation history for personal facts and preferences, extracting them into `MEMORIES.txt` via background sub-sessions. Complements the `append_memory` tool (which the AI uses in real-time during conversation).
+
+Triggers when **either** condition is met:
+- `message_threshold` new user messages have accumulated since last harvest
+- `inactivity_timeout_minutes` of silence (requires at least 5 new messages)
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `enabled` | no | `true` | Set `false` to disable entirely |
+| `message_threshold` | no | `20` | Harvest after N new user messages |
+| `inactivity_timeout_minutes` | no | `15` | Or after N idle minutes (needs ≥ 5 msgs) |
+| `max_message_chars` | no | `2000` | Truncate long messages before sending to the worker |
+
 ### `scheduler`
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `timezone` | no | `"UTC"` | Timezone for routine scheduling |
+| `timezone` | no | `"UTC"` | IANA timezone for all routine scheduling (also affects `dreaming` schedule). Examples: `Europe/Berlin`, `America/New_York` |
+
+### `logging`
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `level` | no | `"INFO"` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR`. `DEBUG` is very verbose (includes all LLM calls) |
+| `directory` | no | `"logs"` | Log directory relative to working directory. Logs rotate daily, 7-day retention |
 
 ### `seed`
 
