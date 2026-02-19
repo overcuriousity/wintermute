@@ -1080,6 +1080,8 @@ class SubSessionManager:
           - post_execution:  after each tool call (can annotate results).
         """
         # Build the tool set for this worker based on its mode.
+        nl_enabled = self._nl_translation_config.get("enabled", False)
+        nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
         if state.tool_names:
             # Explicit tool whitelist — bypass category system entirely.
             allowed = set(state.tool_names)
@@ -1091,8 +1093,6 @@ class SubSessionManager:
             categories = _MODE_TOOL_CATEGORIES.get(
                 state.system_prompt_mode, {"execution", "research"}
             )
-            nl_enabled = self._nl_translation_config.get("enabled", False)
-            nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
             tool_schemas = tool_module.get_tool_schemas(categories, nl_tools=nl_tools)
 
         tp_enabled = bool(self._tp_pool and self._tp_pool.enabled)
