@@ -17,7 +17,7 @@ CONVERSATION_DB = Path("data/conversation.db")
 
 def _connect() -> sqlite3.Connection:
     """Open a WAL-mode connection with a 5-second busy timeout."""
-    conn = _connect()
+    conn = sqlite3.connect(CONVERSATION_DB)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     return conn
