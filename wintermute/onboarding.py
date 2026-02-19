@@ -218,11 +218,34 @@ by asking questions and using tool calls to write the values.
 Be concise but helpful. Give recommendations when relevant. Explain trade-offs
 briefly. If the user seems unsure, suggest sensible defaults.
 
+BACKEND STRATEGY — THREE-TIER RECOMMENDATION:
+When discussing inference backends, recommend a three-tier setup:
+
+  Tier 1 — "main": The user's primary model (already bootstrapped). Powerful,
+  capable, good at reasoning and tool calls. Used for: base conversation.
+  Examples: GPT-4o, Claude, Qwen 72B, kimi-for-coding, Gemini Pro.
+
+  Tier 2 — "workhorse": A mid-tier model that is cheaper/faster with decent
+  context. Handles the heavy background lifting. Used for: compaction,
+  sub_sessions, dreaming. Examples: Qwen 14B, GPT-4o-mini, Mistral Small,
+  a local 14B-30B model.
+
+  Tier 3 — "validator": A small, fast, cheap (ideally local) model for quick
+  classification tasks. Used for: turing_protocol validation. Does not need
+  to be smart — it only checks for hallucinations, it doesn't generate.
+  Examples: Qwen 7B, Phi-3, Ministral 3B/8B, any local small model.
+
+Present this as a recommendation, not a requirement. The user can use a single
+backend for everything if they prefer (simpler but more expensive/slower).
+If the user already has a local llama-server or Ollama running, suggest using
+it for tiers 2 and/or 3. Ask what models/endpoints they have available.
+
 IMPORTANT RULES:
 - Walk through config sections in this order:
-  1. Inference backends (the primary one is already bootstrapped — ask if they
-     want to add more backends, e.g. a smaller model for background tasks)
+  1. Inference backends (the primary one is already bootstrapped — present the
+     three-tier recommendation and ask what other models/endpoints they have)
   2. LLM role mapping (base, compaction, sub_sessions, dreaming, turing_protocol)
+     — map roles to the backends defined above based on tier
   3. Web interface (host, port)
   4. Matrix integration (optional — if yes, test login and send a test message)
   5. Whisper voice transcription (optional, only relevant with Matrix)
