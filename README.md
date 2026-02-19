@@ -11,7 +11,7 @@
 
 ## Concept
 
-Wintermute accumulates knowledge about you over time, maintains an active working memory (*Pulse*), and learns reusable procedures as *skills*. Conversations across restarts are summarised and retained. A nightly *dreaming* pass consolidates memories autonomously while you sleep — no human required.
+Wintermute accumulates knowledge about you over time, maintains an active working memory (*Pulse*), and learns reusable procedures as *skills*. A nightly *dreaming* pass consolidates memories autonomously.
 
 For long-running or complex tasks, Wintermute spawns isolated background workers (*sub-sessions*) so the main conversation stays responsive. Multi-step requests are expressed as workflow DAGs: the orchestrator defines all stages upfront with `depends_on` dependencies, and downstream tasks auto-start when their prerequisites complete — no human nudging required. Workers can themselves spawn further workers up to a configurable nesting depth.
 
@@ -27,18 +27,17 @@ Two architectural choices make this concrete:
 ## Features
 
 - **Persistent memory** — `MEMORIES.txt` (long-term facts, append-based), pulse items in SQLite (active goals / working memory with priorities), and `skills/*.md` (reusable procedures) survive restarts and are injected into every prompt
-- **Multi-interface** — Matrix chat (with E2E encryption) and a browser-based web UI run simultaneously; each room / tab has independent conversation history
-- **Sub-session workers** — long-running tasks are delegated to autonomous background agents that report back when done; the main agent stays responsive during execution; workers auto-resume after timeouts (up to 3 hops)
-- **Workflow DAG** — multi-step tasks are expressed as dependency graphs via `depends_on`; downstream tasks auto-start when their dependencies complete, with results passed as context — no LLM decision-making needed after the initial plan; tasks can include `not_before` time gates for scheduled execution ("research now, upload after 20:00")
+- **Sub-session workers** — long-running tasks are delegated to autonomous background agents that report back when done; the main agent stays responsive during execution; workers auto-resume after timeouts (nesting possible)
+- **Workflow DAG** — multi-step tasks are expressed as dependency graphs via `depends_on`; downstream tasks auto-start when their dependencies complete, with results passed as context
 - **Tool-filtered workers** — minimal workers receive only execution + research tools; `full`-mode workers get orchestration tools too, keeping context lean
-- **Web search** — `search_web` queries a local SearXNG instance and falls back to DuckDuckGo via `curl` when SearXNG is unavailable; `fetch_url` fetches and strips any web page
+- **Web search** — `search_web` queries a local SearXNG instance and falls back to DuckDuckGo when SearXNG is unavailable
 - **Reminders & scheduler** — one-time and recurring reminders with optional AI inference on trigger; per-timezone scheduling
 - **Nightly dreaming** — automatic overnight consolidation of MEMORIES.txt and pulse items via a direct LLM call (no tool loop, no conversation side effects)
 - **Pulse reviews** — periodic autonomous reviews of active pulse items via an isolated sub-session (no conversation pollution)
 - **Context compaction** — when conversation history approaches the model's context window, older messages are summarised and chained into a rolling summary that preserves context across compaction cycles
-- **Turing Protocol** — three-stage validation pipeline (detect → validate → correct) that automatically corrects hallucinations and unfulfilled commitments; custom hooks configurable via `data/TURING_PROTOCOL_HOOKS.txt`; runs on a dedicated small/fast backend to minimise latency impact
-- **Audit trail** — every inference call, tool execution, and Turing Protocol decision is logged to SQLite; `http://localhost:8080/debug` provides a live inspection panel for sessions, sub-sessions, jobs, reminders, pulse items, and assembled system prompts
-- **Any OpenAI-compatible backend** — llama-server, vLLM, LM Studio, OpenAI, Kimi-Code, or any compatible endpoint
+- **Turing Protocol** — three-stage validation pipeline (detect → validate → correct) that automatically corrects hallucinations and unfulfilled commitments
+- **Audit trail** — every inference call, tool execution, and Turing Protocol decision is logged to SQLite. A web interface provides a live inspection panel for sessions, sub-sessions, jobs, reminders, pulse items, and assembled system prompts
+- **Any OpenAI-compatible backend** — llama-server, vLLM, LM Studio, OpenAI or any compatible endpoint. Working towards integrating subscription-based providers, kimi-code currently functional
 
 ---
 
@@ -62,7 +61,7 @@ bash setup.sh
 
 The setup script installs all dependencies, walks you through configuration (LLM endpoint, Matrix, timezone), installs a systemd user service, runs pre-flight checks, and offers to start the daemon immediately. One command, working service.
 
-See [docs/installation.md](docs/installation.md) for manual installation, setup script options (`--dry-run`, `--no-matrix`, etc.), and more.
+See [docs/installation.md](docs/installation.md) for manual installation
 
 ---
 
@@ -101,3 +100,9 @@ Run it in a dedicated LXC container or VM — something you can reset without re
 ## License
 
 MIT
+
+---
+
+## Contributions
+
+All contributions welcome. Inclusive to AI agents.
