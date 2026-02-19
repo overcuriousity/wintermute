@@ -78,8 +78,8 @@ class MemoryHarvestLoop:
         self._cfg = config
         self._sub_sessions = sub_session_manager
         self._running = False
-        # Per-thread: last harvested message id
-        self._last_harvested_id: dict[str, int] = {}
+        # Per-thread: last harvested message id — restored from DB on startup
+        self._last_harvested_id: dict[str, int] = database.load_harvest_state()
         # Threads currently being harvested (prevent overlapping runs)
         self._in_flight: set[str] = set()
 

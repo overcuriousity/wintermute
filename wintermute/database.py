@@ -362,6 +362,23 @@ def _migrate_agenda_from_file() -> None:
 # Interaction Log CRUD
 # ---------------------------------------------------------------------------
 
+def load_harvest_state() -> dict[str, int]:
+    """Return {thread_id: max_message_id} from the last harvest run per thread."""
+    import re
+    result: dict[str, int] = {}
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT session, input FROM interaction_log WHERE action = 'memory_harvest'"
+        ).fetchall()
+    for session, input_text in rows:
+        # session = "harvest:<thread_id>", input = "thread=<id> msgs=<n> max_id=<N>"
+        thread_id = session.removeprefix("harvest:")
+        m = re.search(r"max_id=(\d+)", input_text or "")
+        if m:
+            result[thread_id] = max(result.get(thread_id, 0), int(m.group(1)))
+    return result
+
+
 def save_interaction_log(timestamp: float, action: str, session: str,
                          llm: str, input_text: str, output_text: str,
                          status: str = "ok",
