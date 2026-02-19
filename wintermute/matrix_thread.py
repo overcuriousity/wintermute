@@ -269,7 +269,10 @@ class MatrixThread:
         if self._client is None:
             return set()
         try:
-            return {str(r) for r in self._client.state_store.members}
+            # Access rooms through the state store's internal storage
+            if isinstance(self._client.state_store, _CryptoMemoryStateStore):
+                return {str(r) for r in self._client.state_store.members.keys()}
+            return set()
         except Exception:  # noqa: BLE001
             return set()
 
