@@ -10,7 +10,7 @@ Tools are grouped into three categories that control which tools are available i
 |----------|-------------|-------|
 | **execution** | All agents | `execute_shell`, `read_file`, `write_file` |
 | **research** | All agents | `search_web`, `fetch_url` |
-| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `set_reminder`, `append_memory`, `pulse`, `add_skill`, `list_reminders` |
+| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `set_reminder`, `append_memory`, `pulse`, `add_skill`, `list_reminders`, `delete_reminder` |
 
 ## Tool Filtering by Sub-session Mode
 
@@ -116,7 +116,7 @@ Schedule a reminder with optional AI inference on trigger.
 | `interval_seconds` | integer | no | Required for `interval` |
 | `window_start` | string | no | For `interval`: earliest fire time (HH:MM) |
 | `window_end` | string | no | For `interval`: latest fire time (HH:MM) |
-| `system` | boolean | no | If true, fires as a system event (no chat) |
+| `background` | boolean | no | Only valid with `ai_prompt`. When true, the AI task runs silently without delivering results to chat. Use for autonomous maintenance tasks. |
 
 Returns: `status`, `job_id`
 
@@ -141,6 +141,7 @@ Manage active pulse items (working memory for ongoing tasks). Pulse items are st
 | `item_id` | integer | no | Item ID (for complete/update) |
 | `priority` | integer | no | 1 (urgent) to 10 (low), default 5 |
 | `status` | enum | no | Filter for list: `"active"` (default), `"completed"`, `"all"` |
+| `reason` | string | no | Required for `complete`: evidence that the item is genuinely finished |
 
 #### `add_skill`
 
@@ -182,3 +183,13 @@ which validate the *translated* structured arguments.
 Returns active, completed, and failed reminders. No parameters. History is capped at the 200 most recent entries per category.
 
 Returns: `active[]`, `completed[]`, `failed[]`
+
+#### `delete_reminder`
+
+Cancel and remove a scheduled reminder by its job ID.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `job_id` | string | yes | The job ID returned by `set_reminder` or `list_reminders` |
+
+Returns: `status`, `job_id`

@@ -307,12 +307,16 @@ enabled.
 
 Currently available validators:
 
-| Validator | Phase | Scope | Description |
-|-----------|-------|-------|-------------|
-| `workflow_spawn` | post_inference | main | Detects when the model claims to have spawned a session without calling `spawn_sub_session` |
-| `phantom_tool_result` | post_inference | main | Detects when the model presents fabricated tool output ("I checked and found…") without having called the tool |
-| `empty_promise` | post_inference | main | Detects when the model commits to an action ("I'll do X") as a final response without calling any tool. Excludes responses that end with a question (seeking confirmation) |
-| `objective_completion` | post_inference | sub_session | Gates sub-session exit: uses a dedicated LLM call to evaluate whether the worker's response genuinely satisfies its objective before allowing it to finish |
+| Validator | Phase | Scope | Type | Description |
+|-----------|-------|-------|------|-------------|
+| `workflow_spawn` | post_inference | main | programmatic | Detects when the model claims to have spawned a session without calling `spawn_sub_session` |
+| `phantom_tool_result` | post_inference | main | programmatic | Detects when the model presents fabricated tool output ("I checked and found…") without having called the tool |
+| `empty_promise` | post_inference | main | programmatic | Detects when the model commits to an action ("I'll do X") as a final response without calling any tool. Excludes responses that end with a question (seeking confirmation) |
+| `objective_completion` | post_inference | sub_session | LLM | Gates sub-session exit: uses a dedicated LLM call to evaluate whether the worker's response genuinely satisfies its objective before allowing it to finish |
+| `pulse_complete` | pre_execution | sub_session | programmatic | Blocks `pulse(action='complete')` calls that lack a substantive `reason`. Always-on; not configurable via the `validators` map |
+| `tool_schema_validation` | pre_execution | main + sub_session | programmatic | Validates tool arguments against the tool's JSON Schema before execution (required fields, types, enums, constraints). Always-on; not configurable via the `validators` map |
+
+For a detailed explanation of each hook, phases, scopes, and how to write custom hooks, see [turing-protocol.md](turing-protocol.md).
 
 **Validator overrides** support simple booleans or granular dicts:
 

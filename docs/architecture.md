@@ -7,7 +7,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | Component | Module | Role |
 |-----------|--------|------|
 | **LLMThread** | `llm_thread.py` | Owns conversation history, runs inference + tool-use loops |
-| **WebInterface** | `web_interface.py` | aiohttp HTTP + WebSocket server for chat and debug panel |
+| **WebInterface** | `web_interface.py` | aiohttp HTTP server; debug/admin panel at `/debug`, REST API at `/api/debug/*` |
 | **MatrixThread** | `matrix_thread.py` | Matrix client with E2E encryption (optional) |
 | **SubSessionManager** | `sub_session.py` | Manages background worker sub-sessions and workflow DAGs |
 | **Turing Protocol** | `turing_protocol.py` | Three-stage post-inference validation framework (detect, validate, correct) |
@@ -117,6 +117,22 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 - Workflows spanning multiple prior workflows are automatically merged
 - `depends_on_previous`: workers can automatically depend on all sessions they've previously spawned, eliminating the need to track session IDs manually
 - Unknown dependency IDs are stripped at spawn time to prevent deadlocks from hallucinated IDs
+
+## Design for Small LLMs
+
+Wintermute is explicitly designed to work with small, quantised models (3B–8B parameters) as the primary backend. Several architectural choices serve this goal:
+
+**No framework abstraction layer.** Tool calls use the OpenAI function-calling wire format directly. There is no LangChain, LlamaIndex, or other intermediary that rewrites prompts, adds hidden tokens, or applies transformations the model can't see. What the model receives is exactly what you configure. This makes behaviour predictable and debuggable even with weak models.
+
+**Turing Protocol.** A three-stage (detect → validate → correct) post-inference validation pipeline that catches the hallucination patterns small models are most prone to — claiming to have done things they didn't, fabricating tool output, or making promises without acting. Rather than requiring a stronger model, corrections are injected automatically so the model can self-correct. See [turing-protocol.md](turing-protocol.md) for the full reference.
+
+**NL Translation (optional).** For models that struggle with multi-field structured JSON schemas, complex tool calls (`set_reminder`, `spawn_sub_session`) can be exposed as a single plain-English `description` field. A dedicated small translator LLM expands the description into structured arguments. See [tools.md — NL Translation Mode](tools.md#nl-translation-mode).
+
+**Lean system prompt.** The system prompt is assembled from independent file-based components (`BASE_PROMPT.txt`, `MEMORIES.txt`, pulse, skills). Components have configurable character caps with auto-summarisation when exceeded. No framework boilerplate is injected — the prompt contains only what you wrote and what the model genuinely needs.
+
+**Context compaction.** When conversation history approaches the context window, older messages are summarised via a chained rolling summary rather than truncated. This keeps the model oriented without requiring a large context window.
+
+**Role-segregated backends.** Heavy tasks (compaction, dreaming, Turing Protocol detection) can be routed to different, purpose-sized backends. A small 3B model can serve as the Turing Protocol validator while a 7B model handles the main conversation.
 
 ## Memory Structure
 
