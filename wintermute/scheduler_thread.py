@@ -65,6 +65,12 @@ async def _fire_routine_job(job_id: str, message: str, ai_prompt: Optional[str],
         await _instance._fire_routine(job_id, message, ai_prompt, thread_id)
 
 
+# Backward-compat alias: jobs persisted in scheduler.db before the
+# reminder→routine rename reference this name. APScheduler resolves
+# callables by dotted name at load time, so the alias must exist.
+_fire_reminder_job = _fire_routine_job
+
+
 @dataclass
 class SchedulerConfig:
     timezone: str = "UTC"
