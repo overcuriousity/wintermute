@@ -17,6 +17,7 @@ RULES:
 - SKIP information already present in MEMORIES.txt.
 - SKIP transient information (one-off tasks, debugging sessions, weather queries).
 - SKIP tool outputs and system metadata.
+- SKIP turing protocol, system events, testing patterns
 - Each append_memory call = exactly ONE fact.
 - If nothing is worth remembering, do not call any tools.
 
