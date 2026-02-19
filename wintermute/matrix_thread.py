@@ -679,12 +679,23 @@ class MatrixThread:
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to download audio from %s", evt.sender)
                 return
-            VOICE_DIR.mkdir(parents=True, exist_ok=True)
-            body = evt.content.body or str(evt.event_id)
-            ext = Path(body).suffix or ".ogg"
+            # Derive extension: prefer explicit mimetype, fall back to body suffix, then .ogg.
+            mimetype = getattr(getattr(evt.content, "info", None), "mimetype", None) or ""
+            _MIME_TO_EXT = {"audio/ogg": ".ogg", "audio/mpeg": ".mp3", "audio/mp4": ".m4a",
+                            "audio/webm": ".webm", "audio/wav": ".wav", "audio/x-wav": ".wav"}
+            ext = _MIME_TO_EXT.get(mimetype.split(";")[0].strip())
+            if not ext:
+                body = evt.content.body or str(evt.event_id)
+                ext = Path(body).suffix or ".ogg"
             filename = f"{evt.event_id}{ext}".replace("$", "").replace(":", "_")
             voice_path = VOICE_DIR / filename
-            voice_path.write_bytes(data)
+            try:
+                VOICE_DIR.mkdir(parents=True, exist_ok=True)
+                voice_path.write_bytes(data)
+            except OSError:
+                logger.exception("Failed to save voice message to %s", voice_path)
+                await self._dispatch(reply_prefix + "[Voice message received but could not be saved to disk]", thread_id)
+                return
             logger.info("Saved voice message from %s to %s", evt.sender, voice_path)
 
             # Transcribe via Whisper if configured.
@@ -695,10 +706,15 @@ class MatrixThread:
                         file=(filename, data),
                         model=self._whisper_model,
                         language=self._whisper_language or NOT_GIVEN,
+                        timeout=60.0,
                     )
                     transcript = resp.text.strip()
-                    logger.info("Whisper transcript (%s): %s", evt.sender, transcript[:120])
-                    text = reply_prefix + f"[Transcribed voice message] {transcript}"
+                    if not transcript:
+                        logger.warning("Whisper returned empty transcript for %s", voice_path)
+                        text = reply_prefix + "[Voice message received — transcription was empty (silence?)]"
+                    else:
+                        logger.info("Whisper transcript (%s): %s", evt.sender, transcript[:120])
+                        text = reply_prefix + f"[Transcribed voice message] {transcript}"
                     await self._dispatch(text, thread_id)
                     return
                 except Exception:  # noqa: BLE001

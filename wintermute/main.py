@@ -414,6 +414,7 @@ async def main() -> None:
             matrix._whisper_client = AsyncOpenAI(
                 api_key=whisper_raw.get("api_key", ""),
                 base_url=whisper_raw.get("base_url", ""),
+                timeout=60.0,
             )
             matrix._whisper_model = whisper_raw.get("model", "whisper-1")
             matrix._whisper_language = whisper_raw.get("language", "") or ""
