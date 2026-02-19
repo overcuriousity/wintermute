@@ -41,12 +41,13 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 | `web_interface.py` | aiohttp server: WebSocket chat, debug panel (`/debug`), REST API |
 | `dreaming.py` | Nightly memory consolidation (direct LLM call, no tool loop) |
 | `pulse.py` | Periodic autonomous pulse reviews via sub-session |
+| `memory_harvest.py` | Periodic conversation mining → MEMORIES.txt extraction via sub-sessions |
 | `scheduler_thread.py` | APScheduler-based reminders; `ai_prompt` triggers sub-sessions |
 | `database.py` | SQLite ops: messages, pulse, summaries, interaction_log |
 
 **LLM provider abstraction:** `BackendPool` wraps `AsyncOpenAI` with ordered failover. Three provider types: `"openai"` (any compatible endpoint), `"gemini-cli"`, `"kimi-code"`. Role-based routing (`base`, `compaction`, `sub_sessions`, `dreaming`, `turing_protocol`).
 
-**Tool categories:** Tools are filtered for sub-sessions — `execution`+`research` always available; `orchestration` only for `full`-mode workers.
+**Tool categories:** Tools are filtered for sub-sessions — `execution`+`research` always available; `orchestration` only for `full`-mode workers. `spawn()` also accepts an explicit `tool_names` list to bypass categories (used by memory harvest).
 
 **Context compaction:** When history exceeds token budget, older messages are summarized into a rolling summary (chained across cycles), archived in DB (30-day retention).
 

@@ -20,6 +20,40 @@ A nightly consolidation pass that reviews and prunes MEMORIES.txt and pulse DB i
 
 The prompts used for consolidation are stored in `data/DREAM_MEMORIES_PROMPT.txt` and `data/DREAM_PULSE_PROMPT.txt` and can be customised. See [system-prompts.md](system-prompts.md#customisable-prompt-templates).
 
+## Memory Harvest
+
+**Module:** `wintermute/memory_harvest.py`
+
+Periodic background extraction of personal facts and preferences from conversation history into MEMORIES.txt.
+
+**Problem:** The `append_memory` tool exists but weak/small models rarely call it proactively. Conversations contain valuable personal details that are lost when history is compacted or archived.
+
+**Solution:** A polling loop spawns sub-session workers that mine recent conversation history and call `append_memory` for each new fact discovered. Workers first read MEMORIES.txt to avoid duplicating existing entries.
+
+**Trigger conditions (per thread, OR logic):**
+- **Message threshold:** N or more new user messages since the last harvest (default: 20)
+- **Inactivity timeout:** M minutes without activity AND at least 5 new user messages (default: 15 minutes)
+
+**Scope:**
+- Harvests from user-facing threads only (Matrix rooms, web sessions, "default")
+- Sub-session threads (`sub_*`) are excluded
+- Memories are written to the unified MEMORIES.txt (shared across all threads)
+- Results are fire-and-forget (no messages delivered to chat)
+- Visibility via logs and the debug panel (`/debug` → interaction_log, action=`memory_harvest`)
+
+**Message filtering:**
+- Only user + assistant messages are included in the transcript
+- System events, tool call results, and sub-session notifications are excluded
+- Individual messages exceeding `max_message_chars` are mid-truncated (beginning and end preserved, middle cut)
+- Total transcript capped at ~60k characters (~15k tokens)
+
+**Relationship to other memory systems:**
+- Complements (does not replace) the `append_memory` tool — explicit user requests ("remember that I prefer X") still use the tool directly
+- Nightly dreaming consolidation deduplicates any near-duplicate entries the harvest may create
+- The harvest worker uses the `sub_sessions` backend pool — no separate LLM role needed
+
+**Configuration:** See `memory_harvest:` section in `config.yaml`.
+
 ## Pulse Reviews
 
 **Module:** `wintermute/pulse.py`

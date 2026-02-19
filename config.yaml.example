@@ -137,6 +137,16 @@ dreaming:
   hour: 1                                 # Hour (0-23, UTC) to run consolidation
   minute: 0                               # Minute (0-59)
 
+# ── Memory Harvest (Automatic Memory Extraction) ─────────────────
+# Periodically mines conversation history for personal facts and preferences,
+# extracting them into MEMORIES.txt via background sub-sessions.
+# Complements the append_memory tool (which remains available for direct use).
+memory_harvest:
+  enabled: true                           # Set to false to disable entirely
+  message_threshold: 20                   # Harvest after this many new user messages
+  inactivity_timeout_minutes: 15          # Or after this many idle minutes (needs ≥5 msgs)
+  max_message_chars: 2000                 # Mid-truncate individual messages beyond this
+
 # ── Scheduler ─────────────────────────────────────────────────────
 scheduler:
   timezone: "UTC"                         # Timezone for reminder scheduling (e.g. Europe/Berlin)

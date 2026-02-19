@@ -38,6 +38,7 @@ from openai import AsyncOpenAI
 from wintermute.llm_thread import BackendPool, LLMThread, MultiProviderConfig, ProviderConfig
 from wintermute.matrix_thread import MatrixConfig, MatrixThread
 from wintermute.dreaming import DreamingConfig, DreamingLoop
+from wintermute.memory_harvest import MemoryHarvestConfig, MemoryHarvestLoop
 from wintermute.scheduler_thread import ReminderScheduler, SchedulerConfig
 from wintermute.sub_session import SubSessionManager
 from wintermute.web_interface import WebInterface
@@ -329,6 +330,14 @@ async def main() -> None:
     pulse_enabled = pulse_cfg.get("enabled", True)
     pulse_interval = pulse_cfg.get("review_interval_minutes", 60)
 
+    harvest_cfg_raw = cfg.get("memory_harvest", {})
+    harvest_config = MemoryHarvestConfig(
+        enabled=harvest_cfg_raw.get("enabled", True),
+        message_threshold=harvest_cfg_raw.get("message_threshold", 20),
+        inactivity_timeout_minutes=harvest_cfg_raw.get("inactivity_timeout_minutes", 15),
+        max_message_chars=harvest_cfg_raw.get("max_message_chars", 2000),
+    )
+
     # --- Optional interfaces ---
     matrix_cfg_raw: Optional[dict] = cfg.get("matrix")
     web_cfg: dict = cfg.get("web", {"enabled": True, "host": "127.0.0.1", "port": 8080})
@@ -455,6 +464,15 @@ async def main() -> None:
     else:
         logger.info("Pulse loop disabled by config")
 
+    harvest_loop: Optional[MemoryHarvestLoop] = None
+    if harvest_config.enabled:
+        harvest_loop = MemoryHarvestLoop(
+            config=harvest_config,
+            sub_session_manager=sub_sessions,
+        )
+    else:
+        logger.info("Memory harvest disabled by config")
+
     dreaming_loop = DreamingLoop(
         config=dreaming_cfg,
         pool=dreaming_pool,
@@ -481,6 +499,8 @@ async def main() -> None:
     ]
     if pulse_loop:
         tasks.append(asyncio.create_task(pulse_loop.run(), name="pulse"))
+    if harvest_loop:
+        tasks.append(asyncio.create_task(harvest_loop.run(), name="memory_harvest"))
     if matrix:
         tasks.append(asyncio.create_task(matrix.run(), name="matrix"))
     if web_iface:
@@ -538,6 +558,8 @@ async def main() -> None:
 
     if pulse_loop:
         pulse_loop.stop()
+    if harvest_loop:
+        harvest_loop.stop()
     dreaming_loop.stop()
     if matrix:
         matrix.stop()

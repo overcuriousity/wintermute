@@ -111,6 +111,7 @@ class SubSessionState:
     messages: list = field(default_factory=list)
     continuation_depth: int = 0          # how many hops deep this session is
     continued_from: Optional[str] = None # session_id of predecessor, if any
+    tool_names: Optional[list[str]] = None  # explicit tool whitelist (bypasses category filter)
 
 
 @dataclass
@@ -129,6 +130,7 @@ class TaskNode:
     result: Optional[str] = None
     error: Optional[str] = None
     not_before: Optional[datetime] = None # time gate: don't start before this
+    tool_names: Optional[list[str]] = None  # explicit tool whitelist (bypasses category filter)
 
 
 @dataclass
@@ -208,6 +210,7 @@ class SubSessionManager:
         depends_on: Optional[list[str]] = None,
         depends_on_previous: bool = False,
         not_before: Optional[str] = None,
+        tool_names: Optional[list[str]] = None,
     ) -> str:
         """
         Register a sub-session and start it immediately (or defer if deps pending).
@@ -288,6 +291,7 @@ class SubSessionManager:
             parent_thread_id=parent_thread_id,
             root_thread_id=root_thread_id,
             not_before=not_before_dt,
+            tool_names=tool_names,
         )
 
         if deps:
@@ -560,6 +564,7 @@ class SubSessionManager:
             messages=list(prior_messages) if prior_messages else [],
             continuation_depth=continuation_depth,
             continued_from=continued_from,
+            tool_names=node.tool_names,
         )
         self._states[session_id] = state
 
@@ -839,6 +844,7 @@ class SubSessionManager:
                     prior_messages=state.messages,
                     continuation_depth=state.continuation_depth + 1,
                     continued_from=state.session_id,
+                    tool_names=state.tool_names,
                 )
                 # Move the continuation into the original workflow so it
                 # doesn't create an orphaned single-node workflow.
@@ -1074,12 +1080,20 @@ class SubSessionManager:
           - post_execution:  after each tool call (can annotate results).
         """
         # Build the tool set for this worker based on its mode.
-        categories = _MODE_TOOL_CATEGORIES.get(
-            state.system_prompt_mode, {"execution", "research"}
-        )
-        nl_enabled = self._nl_translation_config.get("enabled", False)
-        nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
-        tool_schemas = tool_module.get_tool_schemas(categories, nl_tools=nl_tools)
+        if state.tool_names:
+            # Explicit tool whitelist — bypass category system entirely.
+            allowed = set(state.tool_names)
+            tool_schemas = [
+                s for s in tool_module.TOOL_SCHEMAS
+                if s["function"]["name"] in allowed
+            ]
+        else:
+            categories = _MODE_TOOL_CATEGORIES.get(
+                state.system_prompt_mode, {"execution", "research"}
+            )
+            nl_enabled = self._nl_translation_config.get("enabled", False)
+            nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
+            tool_schemas = tool_module.get_tool_schemas(categories, nl_tools=nl_tools)
 
         tp_enabled = bool(self._tp_pool and self._tp_pool.enabled)
         tp_corrected = False  # single-shot: only one objective correction allowed

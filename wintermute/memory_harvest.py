@@ -1,0 +1,253 @@
+"""
+Memory Harvest – Periodic Conversation Mining
+
+Periodically scans user-facing threads for unharvested messages and spawns
+sub-session workers to extract personal facts, preferences, and interaction
+patterns into MEMORIES.txt.
+
+Trigger logic: a thread is eligible for harvest when EITHER:
+  - It has accumulated >= message_threshold new user messages since last harvest
+  - It has been inactive for >= inactivity_timeout_minutes after at least
+    _INACTIVITY_MIN_MESSAGES new user messages
+
+Only user-facing threads are harvested (Matrix room_ids, web_* IDs, "default").
+Sub-session threads (sub_*) are excluded.  Results are fire-and-forget — no
+messages are delivered to chat.  Visibility is through logs and interaction_log
+(debug panel).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time as _time
+from dataclasses import dataclass
+from typing import Optional, TYPE_CHECKING
+
+from wintermute import database
+from wintermute import prompt_loader
+
+if TYPE_CHECKING:
+    from wintermute.sub_session import SubSessionManager
+
+logger = logging.getLogger(__name__)
+
+# Minimum new user messages required before the inactivity timer can trigger.
+_INACTIVITY_MIN_MESSAGES = 5
+
+# Maximum total characters in the conversation blob sent to the worker.
+# ~15k tokens — leaves headroom for the prompt and tool schemas.
+_MAX_BLOB_CHARS = 60_000
+
+# Fallback prompt used when MEMORY_HARVEST_PROMPT.txt is missing.
+_FALLBACK_PROMPT = (
+    "You are a memory extraction worker. Analyze the conversation transcript "
+    "below and extract personal facts worth remembering long-term.\n\n"
+    "PROCEDURE:\n"
+    "1. Use read_file(path=\"data/MEMORIES.txt\") to review existing memories.\n"
+    "2. Read the conversation transcript carefully.\n"
+    "3. For each NEW fact not already in MEMORIES.txt, call "
+    "append_memory(entry=\"...\") once per fact.\n"
+    "4. Write each memory as a concise, standalone statement.\n\n"
+    "RULES:\n"
+    "- SKIP information already present in MEMORIES.txt.\n"
+    "- SKIP transient information (one-off tasks, debugging sessions).\n"
+    "- Each append_memory call = exactly ONE fact.\n"
+    "- If nothing is worth remembering, do not call any tools.\n\n"
+    "CONVERSATION TRANSCRIPT:\n{transcript}"
+)
+
+
+@dataclass
+class MemoryHarvestConfig:
+    enabled: bool = True
+    message_threshold: int = 20
+    inactivity_timeout_minutes: int = 15
+    max_message_chars: int = 2000
+    poll_interval_seconds: int = 60
+
+
+class MemoryHarvestLoop:
+    """Asyncio task that periodically mines conversations for memories."""
+
+    def __init__(
+        self,
+        config: MemoryHarvestConfig,
+        sub_session_manager: Optional[SubSessionManager] = None,
+    ) -> None:
+        self._cfg = config
+        self._sub_sessions = sub_session_manager
+        self._running = False
+        # Per-thread: last harvested message id
+        self._last_harvested_id: dict[str, int] = {}
+        # Threads currently being harvested (prevent overlapping runs)
+        self._in_flight: set[str] = set()
+
+    async def run(self) -> None:
+        self._running = True
+        logger.info(
+            "Memory harvest loop started (threshold=%d msgs, inactivity=%d min, poll=%ds)",
+            self._cfg.message_threshold,
+            self._cfg.inactivity_timeout_minutes,
+            self._cfg.poll_interval_seconds,
+        )
+        while self._running:
+            await asyncio.sleep(self._cfg.poll_interval_seconds)
+            if not self._running:
+                break
+            try:
+                await self._check_threads()
+            except Exception:  # noqa: BLE001
+                logger.exception("Memory harvest: error during thread check")
+
+    def stop(self) -> None:
+        self._running = False
+
+    # ------------------------------------------------------------------
+    # Core logic
+    # ------------------------------------------------------------------
+
+    async def _check_threads(self) -> None:
+        """Enumerate active threads and spawn harvests where eligible."""
+        if self._sub_sessions is None:
+            return
+
+        thread_ids = database.get_active_thread_ids()
+        for thread_id in thread_ids:
+            # Skip sub-session threads (in-memory only, defensive check).
+            if thread_id.startswith("sub_"):
+                continue
+            # Skip threads already being harvested.
+            if thread_id in self._in_flight:
+                continue
+
+            messages = database.load_active_messages(thread_id)
+            if self._should_harvest(thread_id, messages):
+                await self._spawn_harvest(thread_id, messages)
+
+    def _should_harvest(self, thread_id: str, messages: list[dict]) -> bool:
+        """Decide whether a thread is ready for memory extraction."""
+        last_id = self._last_harvested_id.get(thread_id, 0)
+        new_user_msgs = [
+            m for m in messages
+            if m["id"] > last_id and m["role"] == "user"
+        ]
+
+        if not new_user_msgs:
+            return False
+
+        # Condition 1: message count threshold reached.
+        if len(new_user_msgs) >= self._cfg.message_threshold:
+            return True
+
+        # Condition 2: inactivity timeout (with minimum message floor).
+        if len(new_user_msgs) >= _INACTIVITY_MIN_MESSAGES:
+            # Use latest message of any role (not just user) as activity marker.
+            new_msgs = [m for m in messages if m["id"] > last_id]
+            latest_ts = max(m["timestamp"] for m in new_msgs)
+            idle_seconds = _time.time() - latest_ts
+            if idle_seconds >= self._cfg.inactivity_timeout_minutes * 60:
+                return True
+
+        return False
+
+    # ------------------------------------------------------------------
+    # Conversation preparation
+    # ------------------------------------------------------------------
+
+    def _prepare_conversation_blob(self, messages: list[dict],
+                                    since_id: int) -> str:
+        """Build a formatted transcript from messages newer than since_id."""
+        lines: list[str] = []
+        for msg in messages:
+            if msg["id"] <= since_id:
+                continue
+            role = msg["role"]
+            content = (msg.get("content") or "").strip()
+            if not content:
+                continue
+            # Only user and assistant messages.
+            if role not in ("user", "assistant"):
+                continue
+            # Exclude system events and sub-session results.
+            if content.startswith("[SYSTEM EVENT]") or content.startswith("[SUB-SESSION"):
+                continue
+            # Mid-truncate very long messages (e.g. pasted log files).
+            content = self._mid_truncate(content, self._cfg.max_message_chars)
+            label = "USER" if role == "user" else "ASSISTANT"
+            lines.append(f"{label}: {content}")
+
+        blob = "\n".join(lines)
+        if len(blob) > _MAX_BLOB_CHARS:
+            blob = blob[:_MAX_BLOB_CHARS] + "\n[... transcript truncated ...]"
+        return blob
+
+    @staticmethod
+    def _mid_truncate(text: str, max_chars: int) -> str:
+        """Truncate from the middle, preserving beginning and end."""
+        if len(text) <= max_chars:
+            return text
+        keep = max_chars // 2
+        return text[:keep] + "\n[... truncated ...]\n" + text[-keep:]
+
+    # ------------------------------------------------------------------
+    # Harvest spawning
+    # ------------------------------------------------------------------
+
+    async def _spawn_harvest(self, thread_id: str,
+                              messages: list[dict]) -> None:
+        """Spawn a fire-and-forget sub-session to extract memories."""
+        last_id = self._last_harvested_id.get(thread_id, 0)
+        blob = self._prepare_conversation_blob(messages, last_id)
+        if not blob.strip():
+            return
+
+        # Load prompt template (with embedded fallback).
+        try:
+            prompt = prompt_loader.load("MEMORY_HARVEST_PROMPT.txt",
+                                        transcript=blob)
+        except (FileNotFoundError, KeyError):
+            prompt = _FALLBACK_PROMPT.format(transcript=blob)
+
+        max_id = max(m["id"] for m in messages)
+        new_count = sum(
+            1 for m in messages
+            if m["id"] > last_id and m["role"] == "user"
+        )
+
+        self._in_flight.add(thread_id)
+
+        session_id = self._sub_sessions.spawn(
+            objective=prompt,
+            parent_thread_id=None,      # fire-and-forget: no chat delivery
+            system_prompt_mode="none",   # all instructions in the objective
+            tool_names=["append_memory", "read_file"],
+            timeout=180,
+        )
+
+        # Update tracking optimistically.
+        self._last_harvested_id[thread_id] = max_id
+
+        logger.info(
+            "Memory harvest spawned %s for thread %s (%d new user msgs, up to id=%d)",
+            session_id, thread_id, new_count, max_id,
+        )
+
+        # Log to interaction_log for debug panel visibility.
+        try:
+            database.save_interaction_log(
+                _time.time(),
+                "memory_harvest",
+                f"harvest:{thread_id}",
+                "sub_sessions",
+                f"thread={thread_id} msgs={new_count} max_id={max_id}",
+                f"spawned {session_id}",
+                "ok",
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Clear in_flight guard after a generous timeout.
+        asyncio.get_running_loop().call_later(
+            300, lambda: self._in_flight.discard(thread_id)
+        )
