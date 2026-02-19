@@ -5,7 +5,7 @@
 > *"Wintermute was hive mind, decision maker, effecting change in the world outside."*
 > — William Gibson, *Neuromancer* (1984)
 
-**Wintermute** is a self-hosted personal AI assistant with persistent memory, autonomous background workers, and multi-interface support. It connects to any OpenAI-compatible LLM endpoint and reaches you via Matrix chat or a built-in web UI.
+**Wintermute** is a self-hosted personal AI assistant with persistent memory, autonomous background workers, and multi-interface support. It connects to any OpenAI-compatible LLM endpoint and reaches you via Matrix chat. A built-in debug panel (`/debug`) provides live inspection and administration.
 
 ---
 
@@ -15,7 +15,12 @@ Wintermute accumulates knowledge about you over time, maintains an active workin
 
 For long-running or complex tasks, Wintermute spawns isolated background workers (*sub-sessions*) so the main conversation stays responsive. Multi-step requests are expressed as workflow DAGs: the orchestrator defines all stages upfront with `depends_on` dependencies, and downstream tasks auto-start when their prerequisites complete — no human nudging required. Workers can themselves spawn further workers up to a configurable nesting depth.
 
-The philosophy differs from similar projects by treating small LLMs and digital independence not as an afterthought, but as a first principle. No cloud services. No telemetry. It runs on your hardware, speaks to your endpoints, and answers to you.
+The design philosophy treats small LLMs and digital independence not as afterthoughts, but as first principles. No cloud services. No telemetry. It runs on your hardware, speaks to your endpoints, and answers to you.
+
+Two architectural choices make this concrete:
+
+- **No framework abstraction layer.** Tool calls use the OpenAI function-calling wire format directly — no LangChain, no LlamaIndex, no hidden prompt rewriting. What the model receives is exactly what you configure.
+- **Turing Protocol.** A three-stage (detect → validate → correct) post-inference validation pipeline that automatically catches and self-corrects the hallucination patterns small models are most prone to: claiming to have done things they didn't, fabricating tool output, or making promises without acting. No human in the loop required.
 
 ---
 
@@ -31,8 +36,8 @@ The philosophy differs from similar projects by treating small LLMs and digital 
 - **Nightly dreaming** — automatic overnight consolidation of MEMORIES.txt and pulse items via a direct LLM call (no tool loop, no conversation side effects)
 - **Pulse reviews** — periodic autonomous reviews of active pulse items via an isolated sub-session (no conversation pollution)
 - **Context compaction** — when conversation history approaches the model's context window, older messages are summarised and chained into a rolling summary that preserves context across compaction cycles
-- **Turing Protocol** — three-stage post-inference validation framework (detect, validate, correct) that catches hallucinated claims and injects corrective prompts automatically
-- **Debug panel** — `http://localhost:8080/debug` provides a live view of sessions, sub-sessions, scheduled jobs, reminders, and the current system prompt
+- **Turing Protocol** — three-stage validation pipeline (detect → validate → correct) that automatically corrects hallucinations and unfulfilled commitments; custom hooks configurable via `data/TURING_PROTOCOL_HOOKS.txt`; runs on a dedicated small/fast backend to minimise latency impact
+- **Debug panel** — `http://localhost:8080/debug` provides a live view of sessions, sub-sessions, scheduled jobs, reminders, pulse items, Turing Protocol logs, and the current system prompt
 - **Any OpenAI-compatible backend** — llama-server, vLLM, LM Studio, OpenAI, Kimi-Code, or any compatible endpoint
 
 ---
@@ -82,12 +87,14 @@ Run it in a dedicated LXC container or VM — something you can reset without re
 | [Installation](docs/installation.md) | Quickstart, manual setup, systemd service |
 | [Configuration](docs/configuration.md) | Full `config.yaml` reference |
 | [Matrix Setup](docs/matrix-setup.md) | Account creation, credentials, E2E encryption, troubleshooting |
-| [Architecture](docs/architecture.md) | Component overview, diagrams, data flow |
+| [Architecture](docs/architecture.md) | Component overview, diagrams, data flow, small-LLM design |
+| [Turing Protocol](docs/turing-protocol.md) | Validation pipeline: hooks, phases, scopes, configuration |
 | [System Prompts](docs/system-prompts.md) | Prompt assembly, components, size limits |
 | [Tools](docs/tools.md) | All 12 tools with parameters and categories |
 | [Commands](docs/commands.md) | Slash commands (`/new`, `/compact`, `/pulse`, etc.) |
-| [Web Interface](docs/web-interface.md) | Chat UI, debug panel, REST API |
+| [Web Interface](docs/web-interface.md) | Debug panel, REST API |
 | [Autonomy](docs/autonomy.md) | Dreaming, pulse reviews, sub-sessions, workflows |
+| [Best Practices](docs/best-practices.md) | Deployment, model selection, security |
 
 ---
 

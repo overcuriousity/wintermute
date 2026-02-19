@@ -11,4 +11,5 @@ All commands are available in both Matrix and the web UI.
 | `/status` | Show detailed system status: running asyncio tasks, active sub-sessions, workflow state, pulse/dreaming loop status, and reminder count. |
 | `/dream` | Manually trigger the nightly dreaming consolidation of MEMORIES.txt and pulse items. Shows before/after counts. |
 | `/kimi-auth` | Start Kimi-Code OAuth device-code flow. Broadcasts the verification URL to the current chat. Only relevant when a `kimi-code` backend is configured. |
+| `/verify-session` | Send an E2EE SAS verification request to all `allowed_users`. Matrix-only. Useful after key changes or to establish cross-signing trust. Has no effect if E2EE is not available. |
 | `/commands` | List all available slash commands with short descriptions. |
