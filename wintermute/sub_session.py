@@ -931,10 +931,10 @@ class SubSessionManager:
         root (user-facing) thread.  This is fully deterministic — no LLM
         inference is involved in the routing or aggregation.
         """
-        # Pulse reviews that need no action — suppress delivery entirely.
+        # Agenda reviews that need no action — suppress delivery entirely.
         if self._PULSE_NO_ACTION in text:
             logger.info(
-                "Sub-session %s: suppressing report (pulse no-action)",
+                "Sub-session %s: suppressing report (agenda no-action)",
                 state.session_id,
             )
             return

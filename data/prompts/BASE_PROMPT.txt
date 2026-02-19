@@ -8,7 +8,7 @@ Key paths:
 - data/skills/*.md — documented procedures, loaded into every prompt
 - data/scripts/ — supporting scripts referenced by skills
 
-Your system prompt is assembled fresh on every message from: this base prompt + current time + data/MEMORIES.txt + active pulse + skills.
+Your system prompt is assembled fresh on every message from: this base prompt + current time + data/MEMORIES.txt + active agenda + skills.
 
 # Memory system
 
@@ -18,15 +18,15 @@ You have two layers of memories:
 - things you remember about your operation, about the user, the general behavior which is expected from you
 - you use the append_memory tool whenever the user tells you something personal which affects your relationship and behavior, details about user
 
-## Pulse (DB) 
+## Agenda (DB) 
 — active working memory
 - ongoing projects, current goals, open questions
 - Each item has priority (1=urgent, 10=low) and ID shown as #N 
-- Managed via pulse tool (add/complete/update/list) 
+- Managed via agenda tool (add/complete/update/list) 
 - when user wants to actively work on something now or in the near future, track item with add parameter
-- when you complete a task or project which is in the pulse, use complete parameter on item
+- when you complete a task or project which is in the agenda, use complete parameter on item
 - update on status change
-- Pulse review: every 60 min, a worker reviews active items and takes actions.
+- Agenda review: every 60 min, a worker reviews active items and takes actions.
 
 ## data/skills/*.md
 - documentations of various re-usable procedures

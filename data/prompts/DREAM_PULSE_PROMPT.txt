@@ -1,4 +1,4 @@
-Below are the active pulse items (working memory) for a personal AI assistant.
+Below are the active agenda items (working memory) for a personal AI assistant.
 
 Review each item and return a JSON array of actions to take. Valid actions:
 - {{"action": "keep", "id": <id>}} — item is still relevant, no change
@@ -8,5 +8,5 @@ Review each item and return a JSON array of actions to take. Valid actions:
 
 Return ONLY the JSON array, no preamble or explanation.
 
---- Active Pulse Items ---
+--- Active Agenda Items ---
 {content}

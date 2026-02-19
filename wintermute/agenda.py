@@ -1,8 +1,8 @@
 """
-Pulse Review Loop
+Agenda Review Loop
 
-Periodically invokes the LLM to review active pulse items and take autonomous
-actions.  Each thread with active pulse items gets its own sub-session, with
+Periodically invokes the LLM to review active agenda items and take autonomous
+actions.  Each thread with active agenda items gets its own sub-session, with
 results delivered back to the originating room.  Items without a thread_id
 are skipped (legacy / unbound items).
 """
@@ -19,11 +19,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 PULSE_REVIEW_PROMPT_THREAD = (
-    "This is an automatic pulse review for items bound to this thread. "
-    "Use the pulse tool with action 'list' to see current items, "
+    "This is an automatic agenda review for items bound to this thread. "
+    "Use the agenda tool with action 'list' to see current items, "
     "then review each item and take any appropriate actions (set reminders, "
     "update memories, run shell commands, etc.). "
-    "Use pulse(action='add', content='...') for new items discovered.\n\n"
+    "Use agenda(action='add', content='...') for new items discovered.\n\n"
     "IMPORTANT rules for completing items:\n"
     "- Do NOT complete items unless you have concrete, verifiable evidence "
     "that the task is fully finished (e.g. a command output confirming it, "
@@ -37,8 +37,8 @@ PULSE_REVIEW_PROMPT_THREAD = (
 )
 
 
-class PulseLoop:
-    """Runs as an asyncio task, periodically triggering pulse reviews."""
+class AgendaLoop:
+    """Runs as an asyncio task, periodically triggering agenda reviews."""
 
     def __init__(self, interval_minutes: int,
                  sub_session_manager: "Optional[SubSessionManager]" = None) -> None:
@@ -48,7 +48,7 @@ class PulseLoop:
 
     async def run(self) -> None:
         self._running = True
-        logger.info("Pulse loop started (interval=%dm)", self._interval // 60)
+        logger.info("Agenda loop started (interval=%dm)", self._interval // 60)
         while self._running:
             await asyncio.sleep(self._interval)
             if not self._running:
@@ -59,24 +59,24 @@ class PulseLoop:
         self._running = False
 
     async def _review_global(self) -> None:
-        """Spawn per-thread pulse review sub-sessions.
+        """Spawn per-thread agenda review sub-sessions.
 
-        Each thread with active pulse items gets its own sub-session with
+        Each thread with active agenda items gets its own sub-session with
         parent_thread_id set, so results are delivered back to that room.
         Items without thread_id are skipped entirely.
         """
         if self._sub_sessions is None:
-            logger.warning("Global pulse: SubSessionManager not available, skipping")
+            logger.warning("Global agenda: SubSessionManager not available, skipping")
             return
 
-        thread_items = database.get_pulse_thread_ids()
+        thread_items = database.get_agenda_thread_ids()
         if not thread_items:
-            logger.debug("Pulse review: no active thread-bound items, skipping")
+            logger.debug("Agenda review: no active thread-bound items, skipping")
             return
 
-        logger.info("Pulse review: %d thread(s) with active items", len(thread_items))
+        logger.info("Agenda review: %d thread(s) with active items", len(thread_items))
         for thread_id, count in thread_items:
-            logger.info("Pulse review: spawning sub-session for thread %s (%d items)", thread_id, count)
+            logger.info("Agenda review: spawning sub-session for thread %s (%d items)", thread_id, count)
             self._sub_sessions.spawn(
                 objective=PULSE_REVIEW_PROMPT_THREAD,
                 parent_thread_id=thread_id,

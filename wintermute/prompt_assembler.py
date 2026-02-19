@@ -5,7 +5,7 @@ Order:
   1. BASE_PROMPT.txt   – immutable core
   2. Current datetime   – local time + timezone
   3. MEMORIES.txt      – long-term user facts
-  4. Pulse (from DB)   – active goals / working memory
+  4. Agenda (from DB)   – active goals / working memory
   5. skills/*.md       – capability documentation
 """
 
@@ -70,7 +70,7 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     Build and return the full system prompt string.
 
     ``extra_summary`` is an optional compaction summary injected between
-    Pulse and SKILLS when context has been compacted.
+    Agenda and SKILLS when context has been compacted.
     """
     sections: list[str] = []
 
@@ -90,9 +90,9 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     if memories:
         sections.append(f"# User Memories\n\n{memories}")
 
-    pulse = database.get_active_pulse_text(thread_id=thread_id)
-    if pulse:
-        sections.append(f"# Active Pulse\n\n{pulse}")
+    agenda = database.get_active_agenda_text(thread_id=thread_id)
+    if agenda:
+        sections.append(f"# Active Agenda\n\n{agenda}")
 
     if extra_summary:
         sections.append(f"# Conversation Summary\n\n{extra_summary}")
@@ -107,15 +107,15 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
 def check_component_sizes() -> dict[str, bool]:
     """
     Return a dict indicating which components exceed their size thresholds.
-    Keys: 'memories', 'pulse', 'skills'
+    Keys: 'memories', 'agenda', 'skills'
     """
     memories_len = len(_read(MEMORIES_FILE))
-    pulse_len    = len(database.get_active_pulse_text())
+    agenda_len    = len(database.get_active_agenda_text())
     skills_len   = len(_read_skills())
 
     return {
         "memories": memories_len > MEMORIES_LIMIT,
-        "pulse":    pulse_len    > PULSE_LIMIT,
+        "agenda":    agenda_len    > PULSE_LIMIT,
         "skills":   skills_len   > SKILLS_LIMIT,
     }
 

@@ -1,5 +1,5 @@
 """
-SQLite database operations for conversation history and pulse.
+SQLite database operations for conversation history and agenda.
 The APScheduler job store uses its own SQLite file (scheduler.db).
 """
 
@@ -26,7 +26,7 @@ def _connect() -> sqlite3.Connection:
 # All migration files in order.  Add new entries at the end.
 _MIGRATIONS = [
     "001_initial_schema.sql",
-    "002_add_pulse.sql",
+    "002_add_agenda.sql",
     "003_add_interaction_log.sql",
     "004_add_thread_id.sql",
     "005_add_raw_output.sql",
@@ -80,7 +80,7 @@ def init_db() -> None:
     CONVERSATION_DB.parent.mkdir(parents=True, exist_ok=True)
     with _connect() as conn:
         run_migrations(conn)
-    _migrate_pulse_from_file()
+    _migrate_agenda_from_file()
     logger.debug("Database initialised at %s", CONVERSATION_DB)
 
 
@@ -203,14 +203,14 @@ def get_thread_stats(thread_id: str = "default") -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Pulse CRUD
+# Agenda CRUD
 # ---------------------------------------------------------------------------
 
-def add_pulse_item(content: str, priority: int = 5, thread_id: str | None = None) -> int:
-    """Insert a new active pulse item. Returns the row id."""
+def add_agenda_item(content: str, priority: int = 5, thread_id: str | None = None) -> int:
+    """Insert a new active agenda item. Returns the row id."""
     with _connect() as conn:
         cur = conn.execute(
-            "INSERT INTO pulse (content, status, priority, created, thread_id) "
+            "INSERT INTO agenda (content, status, priority, created, thread_id) "
             "VALUES (?, 'active', ?, ?, ?)",
             (content, priority, time.time(), thread_id),
         )
@@ -218,28 +218,28 @@ def add_pulse_item(content: str, priority: int = 5, thread_id: str | None = None
         return cur.lastrowid
 
 
-def complete_pulse_item(item_id: int, thread_id: Optional[str] = None) -> bool:
-    """Mark a pulse item as completed. Returns True if a row was updated.
+def complete_agenda_item(item_id: int, thread_id: Optional[str] = None) -> bool:
+    """Mark a agenda item as completed. Returns True if a row was updated.
 
     When *thread_id* is given the item must belong to that thread (ownership guard).
     """
     with _connect() as conn:
         if thread_id:
             n = conn.execute(
-                "UPDATE pulse SET status='completed', updated=? WHERE id=? AND thread_id=?",
+                "UPDATE agenda SET status='completed', updated=? WHERE id=? AND thread_id=?",
                 (time.time(), item_id, thread_id),
             ).rowcount
         else:
             n = conn.execute(
-                "UPDATE pulse SET status='completed', updated=? WHERE id=?",
+                "UPDATE agenda SET status='completed', updated=? WHERE id=?",
                 (time.time(), item_id),
             ).rowcount
         conn.commit()
     return n > 0
 
 
-def update_pulse_item(item_id: int, thread_id: Optional[str] = None, **kwargs) -> bool:
-    """Update fields on a pulse item. Supported: content, priority, status.
+def update_agenda_item(item_id: int, thread_id: Optional[str] = None, **kwargs) -> bool:
+    """Update fields on a agenda item. Supported: content, priority, status.
 
     When *thread_id* is given the item must belong to that thread (ownership guard).
     """
@@ -256,13 +256,13 @@ def update_pulse_item(item_id: int, thread_id: Optional[str] = None, **kwargs) -
         values = list(updates.values()) + [item_id]
         where = "WHERE id=?"
     with _connect() as conn:
-        n = conn.execute(f"UPDATE pulse SET {set_clause} {where}", values).rowcount
+        n = conn.execute(f"UPDATE agenda SET {set_clause} {where}", values).rowcount
         conn.commit()
     return n > 0
 
 
-def list_pulse_items(status: str = "active", thread_id: Optional[str] = None) -> list[dict]:
-    """Return pulse items filtered by status, ordered by priority then id.
+def list_agenda_items(status: str = "active", thread_id: Optional[str] = None) -> list[dict]:
+    """Return agenda items filtered by status, ordered by priority then id.
 
     When *thread_id* is given, only items belonging to that thread are returned.
     """
@@ -271,80 +271,80 @@ def list_pulse_items(status: str = "active", thread_id: Optional[str] = None) ->
         if status == "all" and not thread_id:
             rows = conn.execute(
                 "SELECT id, content, status, priority, created, updated, thread_id "
-                "FROM pulse ORDER BY priority ASC, id ASC"
+                "FROM agenda ORDER BY priority ASC, id ASC"
             ).fetchall()
         elif status == "all" and thread_id:
             rows = conn.execute(
                 "SELECT id, content, status, priority, created, updated, thread_id "
-                "FROM pulse WHERE thread_id=? ORDER BY priority ASC, id ASC",
+                "FROM agenda WHERE thread_id=? ORDER BY priority ASC, id ASC",
                 (thread_id,),
             ).fetchall()
         elif thread_id:
             rows = conn.execute(
                 "SELECT id, content, status, priority, created, updated, thread_id "
-                "FROM pulse WHERE status=? AND thread_id=? ORDER BY priority ASC, id ASC",
+                "FROM agenda WHERE status=? AND thread_id=? ORDER BY priority ASC, id ASC",
                 (status, thread_id),
             ).fetchall()
         else:
             rows = conn.execute(
                 "SELECT id, content, status, priority, created, updated, thread_id "
-                "FROM pulse WHERE status=? ORDER BY priority ASC, id ASC",
+                "FROM agenda WHERE status=? ORDER BY priority ASC, id ASC",
                 (status,),
             ).fetchall()
     return [dict(r) for r in rows]
 
 
-def get_active_pulse_text(thread_id: Optional[str] = None) -> str:
-    """Compact formatted string of active pulse items for system prompt injection.
+def get_active_agenda_text(thread_id: Optional[str] = None) -> str:
+    """Compact formatted string of active agenda items for system prompt injection.
 
     When *thread_id* is given, only items belonging to that thread are included.
     """
-    items = list_pulse_items("active", thread_id=thread_id)
+    items = list_agenda_items("active", thread_id=thread_id)
     if not items:
         return ""
     return "\n".join(f"[P{it['priority']}] #{it['id']}: {it['content']}" for it in items)
 
 
-def get_pulse_thread_ids() -> list[tuple[str, int]]:
-    """Return (thread_id, count) pairs for active pulse items with non-NULL thread_id."""
+def get_agenda_thread_ids() -> list[tuple[str, int]]:
+    """Return (thread_id, count) pairs for active agenda items with non-NULL thread_id."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT thread_id, COUNT(*) FROM pulse "
+            "SELECT thread_id, COUNT(*) FROM agenda "
             "WHERE status='active' AND thread_id IS NOT NULL "
             "GROUP BY thread_id",
         ).fetchall()
     return [(r[0], r[1]) for r in rows]
 
 
-def delete_old_completed_pulse(days: int = 30) -> int:
-    """Delete completed pulse items older than *days*. Returns count deleted."""
+def delete_old_completed_agenda(days: int = 30) -> int:
+    """Delete completed agenda items older than *days*. Returns count deleted."""
     cutoff = time.time() - days * 86400
     with _connect() as conn:
         n = conn.execute(
-            "DELETE FROM pulse WHERE status='completed' AND created < ?",
+            "DELETE FROM agenda WHERE status='completed' AND created < ?",
             (cutoff,),
         ).rowcount
         conn.commit()
     if n:
-        logger.info("Purged %d completed pulse items older than %d days", n, days)
+        logger.info("Purged %d completed agenda items older than %d days", n, days)
     return n
 
 
-def _migrate_pulse_from_file() -> None:
+def _migrate_agenda_from_file() -> None:
     """One-time migration: import PULSE.txt content into the DB."""
-    pulse_file = Path("data/PULSE.txt")
-    if not pulse_file.exists():
+    agenda_file = Path("data/PULSE.txt")
+    if not agenda_file.exists():
         return
     try:
-        text = pulse_file.read_text(encoding="utf-8").strip()
+        text = agenda_file.read_text(encoding="utf-8").strip()
     except OSError:
         return
     if not text:
-        pulse_file.rename(pulse_file.with_suffix(".txt.migrated"))
+        agenda_file.rename(agenda_file.with_suffix(".txt.migrated"))
         return
     # Skip if it's just the default placeholder
-    if "no active pulse" in text.lower():
-        pulse_file.rename(pulse_file.with_suffix(".txt.migrated"))
+    if "no active agenda" in text.lower():
+        agenda_file.rename(agenda_file.with_suffix(".txt.migrated"))
         logger.info("PULSE.txt was empty placeholder, renamed to .migrated")
         return
     # Parse line by line — each non-empty, non-header line becomes an item
@@ -361,12 +361,12 @@ def _migrate_pulse_from_file() -> None:
     with _connect() as conn:
         for item in items:
             conn.execute(
-                "INSERT INTO pulse (content, status, priority, created) VALUES (?, 'active', 5, ?)",
+                "INSERT INTO agenda (content, status, priority, created) VALUES (?, 'active', 5, ?)",
                 (item, now),
             )
         conn.commit()
-    pulse_file.rename(pulse_file.with_suffix(".txt.migrated"))
-    logger.info("Migrated %d pulse items from PULSE.txt to DB", len(items))
+    agenda_file.rename(agenda_file.with_suffix(".txt.migrated"))
+    logger.info("Migrated %d agenda items from PULSE.txt to DB", len(items))
 
 
 # ---------------------------------------------------------------------------

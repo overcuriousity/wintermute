@@ -89,7 +89,7 @@ TOOL_SCHEMAS = [
                     "enum": ["minimal", "full", "base_only", "none"],
                     "description": (
                         "'minimal' (default): lightweight agent, no memories/skills. "
-                        "'full': complete context (memories + pulse + skills). "
+                        "'full': complete context (memories + agenda + skills). "
                         "'base_only': core instructions only. "
                         "'none': no system prompt."
                     ),
@@ -200,8 +200,8 @@ TOOL_SCHEMAS = [
         },
     ),
     _fn(
-        "pulse",
-        "Manage pulse items (working memory for ongoing tasks).",
+        "agenda",
+        "Manage agenda items (working memory for ongoing tasks).",
         {
             "type": "object",
             "properties": {
@@ -362,7 +362,7 @@ TOOL_CATEGORIES: dict[str, str] = {
     "spawn_sub_session":  "orchestration",
     "set_reminder":       "orchestration",
     "append_memory":      "orchestration",
-    "pulse":              "orchestration",
+    "agenda":              "orchestration",
     "add_skill":          "orchestration",
     "list_reminders":     "orchestration",
     "delete_reminder":    "orchestration",
@@ -576,12 +576,12 @@ def _tool_append_memory(inputs: dict, **_kw) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _tool_pulse(inputs: dict, thread_id: Optional[str] = None,
+def _tool_agenda(inputs: dict, thread_id: Optional[str] = None,
                 parent_thread_id: Optional[str] = None, **_kw) -> str:
-    # For pulse operations, scope to the real chat thread, not the sub-session id.
+    # For agenda operations, scope to the real chat thread, not the sub-session id.
     effective_scope = parent_thread_id or thread_id
     if not effective_scope:
-        return json.dumps({"error": "pulse operations require a thread context (no thread_id available)"})
+        return json.dumps({"error": "agenda operations require a thread context (no thread_id available)"})
     try:
         action = inputs.get("action", "list")
         if action == "add":
@@ -589,7 +589,7 @@ def _tool_pulse(inputs: dict, thread_id: Optional[str] = None,
             if not content:
                 return json.dumps({"error": "content is required for add action"})
             add_thread_id = inputs.get("thread_id") or effective_scope
-            item_id = database.add_pulse_item(
+            item_id = database.add_agenda_item(
                 content, priority=int(inputs.get("priority", 5)),
                 thread_id=add_thread_id,
             )
@@ -601,7 +601,7 @@ def _tool_pulse(inputs: dict, thread_id: Optional[str] = None,
             reason = inputs.get("reason", "").strip()
             if not reason:
                 return json.dumps({"error": "reason is required for complete action — explain why this item is finished"})
-            ok = database.complete_pulse_item(int(item_id), thread_id=effective_scope)
+            ok = database.complete_agenda_item(int(item_id), thread_id=effective_scope)
             return json.dumps({"status": "ok" if ok else "not_found", "reason": reason})
         elif action == "update":
             item_id = inputs.get("item_id")
@@ -614,16 +614,16 @@ def _tool_pulse(inputs: dict, thread_id: Optional[str] = None,
                 kwargs["priority"] = int(inputs["priority"])
             if "status" in inputs:
                 kwargs["status"] = inputs["status"]
-            ok = database.update_pulse_item(int(item_id), thread_id=effective_scope, **kwargs)
+            ok = database.update_agenda_item(int(item_id), thread_id=effective_scope, **kwargs)
             return json.dumps({"status": "ok" if ok else "not_found"})
         elif action == "list":
             status = inputs.get("status", "active")
-            items = database.list_pulse_items(status, thread_id=effective_scope)
+            items = database.list_agenda_items(status, thread_id=effective_scope)
             return json.dumps({"items": items, "count": len(items)})
         else:
             return json.dumps({"error": f"Unknown action: {action}"})
     except Exception as exc:  # noqa: BLE001
-        logger.exception("pulse tool failed")
+        logger.exception("agenda tool failed")
         return json.dumps({"error": str(exc)})
 
 
@@ -861,7 +861,7 @@ _DISPATCH: dict[str, Any] = {
     "spawn_sub_session":  _tool_spawn_sub_session,
     "set_reminder":       _tool_set_reminder,
     "append_memory":      _tool_append_memory,
-    "pulse":              _tool_pulse,
+    "agenda":              _tool_agenda,
     "add_skill":          _tool_add_skill,
     "execute_shell":      _tool_execute_shell,
     "read_file":          _tool_read_file,

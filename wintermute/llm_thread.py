@@ -376,7 +376,7 @@ class LLMThread:
                 item.future.set_result(reply)
             elif item.is_system_event and not item.future and not item.is_turing_correction:
                 # System events without a future (sub-session results,
-                # reminders, /pulse commands) have no caller waiting for
+                # reminders, /agenda commands) have no caller waiting for
                 # the reply.  Broadcast the LLM's response directly so
                 # it reaches the user.
                 # Turing Protocol corrections are excluded: both the correction

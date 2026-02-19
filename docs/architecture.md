@@ -12,12 +12,12 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **SubSessionManager** | `sub_session.py` | Manages background worker sub-sessions and workflow DAGs |
 | **Turing Protocol** | `turing_protocol.py` | Three-stage post-inference validation framework (detect, validate, correct) |
 | **ReminderScheduler** | `scheduler_thread.py` | APScheduler-based reminder system |
-| **PulseLoop** | `pulse.py` | Periodic autonomous pulse item reviews |
+| **AgendaLoop** | `agenda.py` | Periodic autonomous agenda item reviews |
 | **DreamingLoop** | `dreaming.py` | Nightly memory consolidation |
 | **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
 | **NL Translator** | `nl_translator.py` | Expands natural-language tool descriptions into structured arguments via a translator LLM |
 | **PromptAssembler** | `prompt_assembler.py` | Builds system prompts from file components |
-| **Database** | `database.py` | SQLite message persistence, thread management, and pulse storage |
+| **Database** | `database.py` | SQLite message persistence, thread management, and agenda storage |
 
 ## System Diagram
 
@@ -30,7 +30,7 @@ User (Matrix / Browser)
         |
         |-- tool calls --> execute_shell / read_file / write_file
         |                  search_web / fetch_url
-        |                  append_memory / pulse / add_skill
+        |                  append_memory / agenda / add_skill
         |                  set_reminder / list_reminders
         |
         +-- spawn_sub_session --> SubSessionManager
@@ -51,7 +51,7 @@ User (Matrix / Browser)
                                         +-- result --> enqueue_system_event
                                                         (back to LLMThread)
 
-PulseLoop --------------------------------> per-thread sub-session (full mode, result → originating room)
+AgendaLoop --------------------------------> per-thread sub-session (full mode, result → originating room)
 ReminderScheduler ------------------------> LLMThread queue / sub-session
 DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 ```
@@ -67,7 +67,7 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 7. Start LLM inference task
 8. Start web interface task (if enabled)
 9. Start Matrix task (if configured)
-10. Start pulse review loop
+10. Start agenda review loop
 11. Start dreaming loop
 12. Await shutdown signals (SIGTERM / SIGINT)
 
@@ -128,7 +128,7 @@ Wintermute is explicitly designed to work with small, quantised models (3B–8B 
 
 **NL Translation (optional).** For models that struggle with multi-field structured JSON schemas, complex tool calls (`set_reminder`, `spawn_sub_session`) can be exposed as a single plain-English `description` field. A dedicated small translator LLM expands the description into structured arguments. See [tools.md — NL Translation Mode](tools.md#nl-translation-mode).
 
-**Lean system prompt.** The system prompt is assembled from independent file-based components (`BASE_PROMPT.txt`, `MEMORIES.txt`, pulse, skills). Components have configurable character caps with auto-summarisation when exceeded. No framework boilerplate is injected — the prompt contains only what you wrote and what the model genuinely needs.
+**Lean system prompt.** The system prompt is assembled from independent file-based components (`BASE_PROMPT.txt`, `MEMORIES.txt`, agenda, skills). Components have configurable character caps with auto-summarisation when exceeded. No framework boilerplate is injected — the prompt contains only what you wrote and what the model genuinely needs.
 
 **Context compaction.** When conversation history approaches the context window, older messages are summarised via a chained rolling summary rather than truncated. This keeps the model oriented without requiring a large context window.
 
@@ -140,10 +140,10 @@ Wintermute is explicitly designed to work with small, quantised models (3B–8B 
 data/
   BASE_PROMPT.txt            -- Immutable core instructions
   MEMORIES.txt               -- Long-term user facts (updated via append_memory)
-  conversation.db (pulse)    -- Active goals / working memory (managed via pulse tool, stored in SQLite)
+  conversation.db (agenda)    -- Active goals / working memory (managed via agenda tool, stored in SQLite)
   skills/                    -- Learned procedures as *.md files (updated via add_skill tool)
   DREAM_MEMORIES_PROMPT.txt  -- Customisable dreaming prompt for MEMORIES consolidation
-  DREAM_PULSE_PROMPT.txt     -- Customisable dreaming prompt for pulse consolidation
+  DREAM_PULSE_PROMPT.txt     -- Customisable dreaming prompt for agenda consolidation
   COMPACTION_PROMPT.txt      -- Customisable prompt for context compaction summarisation
   matrix_crypto.db           -- Matrix E2E encryption keys
   matrix_recovery.key        -- Cross-signing recovery key

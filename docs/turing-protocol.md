@@ -120,11 +120,11 @@ turing_protocol:
 
 ---
 
-### `pulse_complete` — Pulse item completion guard
+### `agenda_complete` — Agenda item completion guard
 
 **Phase:** `pre_execution` | **Scope:** `sub_session` | **Type:** programmatic
 
-Always-on. Fires when the model calls `pulse(action='complete')` without a substantive `reason` field (missing or fewer than 10 characters). Prevents the model from blindly marking tasks as done without evidence.
+Always-on. Fires when the model calls `agenda(action='complete')` without a substantive `reason` field (missing or fewer than 10 characters). Prevents the model from blindly marking tasks as done without evidence.
 
 Correction: instructs the model to provide concrete, verifiable proof the task is finished before completing the item.
 

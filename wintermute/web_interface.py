@@ -277,8 +277,8 @@ _DEBUG_HTML = """\
     <button class="tab-btn" data-tab="reminders" onclick="showTab('reminders')">
       Reminders <span class="tab-count" id="cnt-reminders">0</span>
     </button>
-    <button class="tab-btn" data-tab="pulse" onclick="showTab('pulse')">
-      Pulse <span class="tab-count" id="cnt-pulse">0</span>
+    <button class="tab-btn" data-tab="agenda" onclick="showTab('agenda')">
+      Agenda <span class="tab-count" id="cnt-agenda">0</span>
     </button>
     <button class="tab-btn" data-tab="interactions" onclick="showTab('interactions')">
       Interactions <span class="tab-count" id="cnt-interactions">0</span>
@@ -415,8 +415,8 @@ _DEBUG_HTML = """\
       </div>
     </div>
 
-    <!-- ── Pulse ── -->
-    <div class="tab-panel" id="panel-pulse">
+    <!-- ── Agenda ── -->
+    <div class="tab-panel" id="panel-agenda">
       <div class="scroll-area">
         <table class="data-table">
           <thead>
@@ -424,7 +424,7 @@ _DEBUG_HTML = """\
               <th>ID</th><th>Priority</th><th>Status</th><th>Content</th><th>Thread</th><th>Created</th><th>Updated</th>
             </tr>
           </thead>
-          <tbody id="pulse-body">
+          <tbody id="agenda-body">
             <tr><td colspan="7" class="empty">Loading\u2026</td></tr>
           </tbody>
         </table>
@@ -541,7 +541,7 @@ async function loadTab(name) {
       case 'workflows':   await loadWorkflows(); break;
       case 'jobs':        await loadJobs(); break;
       case 'reminders':   await loadReminders(); break;
-      case 'pulse':       await loadPulse(); break;
+      case 'agenda':       await loadAgenda(); break;
       case 'interactions': await loadInteractionLog(); break;
     }
   } catch (e) {
@@ -568,7 +568,7 @@ function connectStream() {
     renderWorkflows(data.workflows || []);
     renderJobs(data.jobs || []);
     renderReminders(data.reminders || {});
-    renderPulse(data.pulse || []);
+    renderAgenda(data.agenda || []);
     updateInteractionsCount(data.interactions_total, data.interactions_max_id);
   };
 }
@@ -1086,12 +1086,12 @@ function reminderRows(reminders, showActions) {
   }).join('');
 }
 
-// ── Pulse ──
-function renderPulse(items) {
-  document.getElementById('cnt-pulse').textContent = items.filter(i => i.status === 'active').length;
-  const tbody = document.getElementById('pulse-body');
+// ── Agenda ──
+function renderAgenda(items) {
+  document.getElementById('cnt-agenda').textContent = items.filter(i => i.status === 'active').length;
+  const tbody = document.getElementById('agenda-body');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty">No pulse items</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No agenda items</td></tr>';
     return;
   }
   const priorityLabel = p => p <= 1 ? 'P1 \u2605\u2605\u2605' : p <= 2 ? 'P2 \u2605\u2605' : p <= 3 ? 'P3 \u2605' : 'P' + p;
@@ -1109,10 +1109,10 @@ function renderPulse(items) {
   }).join('');
 }
 
-async function loadPulse() {
-  const r = await fetch('/api/debug/pulse');
+async function loadAgenda() {
+  const r = await fetch('/api/debug/agenda');
   const d = await r.json();
-  renderPulse(d.items || []);
+  renderAgenda(d.items || []);
 }
 
 function toggleSection(hdr) {
@@ -1503,7 +1503,7 @@ class WebInterface:
         app.router.add_get("/api/debug/reminders",                      self._api_reminders)
         app.router.add_post("/api/debug/reminders",                     self._api_reminder_create)
         app.router.add_delete("/api/debug/reminders/{job_id}",          self._api_reminder_delete)
-        app.router.add_get("/api/debug/pulse",                           self._api_pulse)
+        app.router.add_get("/api/debug/agenda",                           self._api_agenda)
         app.router.add_get("/api/debug/interaction-log",                 self._api_interaction_log)
         app.router.add_get("/api/debug/interaction-log/{id}",            self._api_interaction_log_entry)
         app.router.add_get("/api/debug/stream",                          self._api_stream)
@@ -1787,12 +1787,12 @@ class WebInterface:
 
 
     # ------------------------------------------------------------------
-    # Pulse
+    # Agenda
     # ------------------------------------------------------------------
 
-    async def _api_pulse(self, _request: web.Request) -> web.Response:
+    async def _api_agenda(self, _request: web.Request) -> web.Response:
         from wintermute import database
-        items = database.list_pulse_items("all")
+        items = database.list_agenda_items("all")
         return self._json({"items": items, "count": len(items)})
 
     # ------------------------------------------------------------------
@@ -1878,8 +1878,8 @@ class WebInterface:
         except json.JSONDecodeError:
             reminders = {"active": [], "completed": [], "failed": []}
 
-        # Pulse items (all statuses for the debug view)
-        pulse_items = database.list_pulse_items("all")
+        # Agenda items (all statuses for the debug view)
+        agenda_items = database.list_agenda_items("all")
 
         # Interaction log counts
         interactions_total = database.count_interaction_log()
@@ -1891,7 +1891,7 @@ class WebInterface:
             "workflows": workflows,
             "jobs": jobs,
             "reminders": reminders,
-            "pulse": pulse_items,
+            "agenda": agenda_items,
             "interactions_total": interactions_total,
             "interactions_max_id": interactions_max_id,
         }

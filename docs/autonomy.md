@@ -6,7 +6,7 @@ Wintermute includes several autonomous background systems that operate without u
 
 **Module:** `wintermute/dreaming.py`
 
-A nightly consolidation pass that reviews and prunes MEMORIES.txt and pulse DB items.
+A nightly consolidation pass that reviews and prunes MEMORIES.txt and agenda DB items.
 
 - Fires at a configurable hour (default: 01:00 UTC)
 - Uses a direct LLM API call — no tool loop, no conversation side effects
@@ -16,7 +16,7 @@ A nightly consolidation pass that reviews and prunes MEMORIES.txt and pulse DB i
 
 **Consolidation logic:**
 - MEMORIES.txt: removes duplicates, merges related facts, preserves distinct useful facts
-- Pulse items: LLM returns JSON actions (complete, update, keep) applied via DB; completed items older than 30 days are purged
+- Agenda items: LLM returns JSON actions (complete, update, keep) applied via DB; completed items older than 30 days are purged
 
 The prompts used for consolidation are stored in `data/DREAM_MEMORIES_PROMPT.txt` and `data/DREAM_PULSE_PROMPT.txt` and can be customised. See [system-prompts.md](system-prompts.md#customisable-prompt-templates).
 
@@ -54,19 +54,19 @@ Periodic background extraction of personal facts and preferences from conversati
 
 **Configuration:** See `memory_harvest:` section in `config.yaml`.
 
-## Pulse Reviews
+## Agenda Reviews
 
-**Module:** `wintermute/pulse.py`
+**Module:** `wintermute/agenda.py`
 
-Periodic autonomous reviews of active pulse items.
+Periodic autonomous reviews of active agenda items.
 
 - Runs at a configurable interval (default: every 60 minutes)
-- Spawns one sub-session per thread that has active pulse items bound to it (via `thread_id`)
+- Spawns one sub-session per thread that has active agenda items bound to it (via `thread_id`)
 - Each sub-session runs in `full` mode with `parent_thread_id` set to the originating thread, so results are delivered back to that room
-- The sub-session lists pulse items via the `pulse` tool and takes appropriate actions (complete items, add new ones, set reminders, update memories, run commands, etc.)
+- The sub-session lists agenda items via the `agenda` tool and takes appropriate actions (complete items, add new ones, set reminders, update memories, run commands, etc.)
 - If nothing needs attention the worker responds with `[NO_ACTION]` and the result is suppressed — no message is sent
-- Pulse items without a `thread_id` (legacy/unbound items) are skipped by the review loop
-- New pulse items automatically inherit the `thread_id` of the thread that created them
+- Agenda items without a `thread_id` (legacy/unbound items) are skipped by the review loop
+- New agenda items automatically inherit the `thread_id` of the thread that created them
 
 ## Sub-sessions and Workflow DAG
 
@@ -177,7 +177,7 @@ After every inference, Wintermute checks if any memory component exceeds its siz
 | Component | Default Limit |
 |-----------|---------------|
 | MEMORIES.txt | 10,000 chars |
-| Pulse (DB) | 5,000 chars |
+| Agenda (DB) | 5,000 chars |
 | skills/ (total) | 20,000 chars |
 
 When exceeded, a system event is enqueued asking the AI to read, condense, and update the component.

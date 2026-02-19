@@ -14,7 +14,7 @@ Startup sequence:
   7. Start LLM inference task
   8. Start web interface task (if enabled)
   9. Start Matrix task (if configured)
-  10. Start pulse review task
+  10. Start agenda review task
   11. Await shutdown signals
 """
 
@@ -32,7 +32,7 @@ from wintermute import database
 from wintermute import prompt_assembler
 from wintermute import prompt_loader
 from wintermute import tools as tool_module
-from wintermute.pulse import PulseLoop
+from wintermute.agenda import AgendaLoop
 from openai import AsyncOpenAI
 
 from wintermute.llm_thread import BackendPool, LLMThread, MultiProviderConfig, ProviderConfig
@@ -326,9 +326,9 @@ async def main() -> None:
     scheduler_cfg = SchedulerConfig(
         timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
     )
-    pulse_cfg = cfg.get("pulse", {})
-    pulse_enabled = pulse_cfg.get("enabled", True)
-    pulse_interval = pulse_cfg.get("review_interval_minutes", 60)
+    agenda_cfg = cfg.get("agenda", {})
+    agenda_enabled = agenda_cfg.get("enabled", True)
+    agenda_interval = agenda_cfg.get("review_interval_minutes", 60)
 
     harvest_cfg_raw = cfg.get("memory_harvest", {})
     harvest_config = MemoryHarvestConfig(
@@ -455,14 +455,14 @@ async def main() -> None:
         web_iface._main_pool = main_pool
         web_iface._multi_cfg = multi_cfg
 
-    pulse_loop: Optional[PulseLoop] = None
-    if pulse_enabled:
-        pulse_loop = PulseLoop(
-            interval_minutes=pulse_interval,
+    agenda_loop: Optional[AgendaLoop] = None
+    if agenda_enabled:
+        agenda_loop = AgendaLoop(
+            interval_minutes=agenda_interval,
             sub_session_manager=sub_sessions,
         )
     else:
-        logger.info("Pulse loop disabled by config")
+        logger.info("Agenda loop disabled by config")
 
     harvest_loop: Optional[MemoryHarvestLoop] = None
     if harvest_config.enabled:
@@ -481,10 +481,10 @@ async def main() -> None:
     # Inject remaining references for /status and /dream commands.
     if matrix:
         matrix._scheduler = scheduler
-        matrix._pulse_loop = pulse_loop
+        matrix._agenda_loop = agenda_loop
         matrix._dreaming_loop = dreaming_loop
     if web_iface:
-        web_iface._pulse_loop = pulse_loop
+        web_iface._agenda_loop = agenda_loop
         web_iface._dreaming_loop = dreaming_loop
 
     scheduler.start()
@@ -497,8 +497,8 @@ async def main() -> None:
         asyncio.create_task(llm.run(),              name="llm"),
         asyncio.create_task(dreaming_loop.run(),     name="dreaming"),
     ]
-    if pulse_loop:
-        tasks.append(asyncio.create_task(pulse_loop.run(), name="pulse"))
+    if agenda_loop:
+        tasks.append(asyncio.create_task(agenda_loop.run(), name="agenda"))
     if harvest_loop:
         tasks.append(asyncio.create_task(harvest_loop.run(), name="memory_harvest"))
     if matrix:
@@ -556,8 +556,8 @@ async def main() -> None:
     await shutdown.wait()
     logger.info("Shutdown requested - stopping components gracefully")
 
-    if pulse_loop:
-        pulse_loop.stop()
+    if agenda_loop:
+        agenda_loop.stop()
     if harvest_loop:
         harvest_loop.stop()
     dreaming_loop.stop()

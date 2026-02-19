@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS pulse (
+CREATE TABLE IF NOT EXISTS agenda (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     content   TEXT    NOT NULL,
     status    TEXT    NOT NULL DEFAULT 'active',

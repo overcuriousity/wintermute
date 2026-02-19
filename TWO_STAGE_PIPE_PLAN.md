@@ -66,7 +66,7 @@ based on config.
       "properties": {
         "description": {
           "type": "string",
-          "description": "Full english natural-language description of the reminder. Examples: 'daily at 09:00 to check email', 'every Monday at 14:00 to review pulse', 'once on 2026-03-15 at 10:00 — dentist appointment', 'every 3600 seconds between 08:00-18:00 to check server status'. Include the ai_prompt if an autonomous action should run instead of just a notification."
+          "description": "Full english natural-language description of the reminder. Examples: 'daily at 09:00 to check email', 'every Monday at 14:00 to review agenda', 'once on 2026-03-15 at 10:00 — dentist appointment', 'every 3600 seconds between 08:00-18:00 to check server status'. Include the ai_prompt if an autonomous action should run instead of just a notification."
         }
       },
       "required": ["description"]
@@ -254,8 +254,8 @@ Output: {"message": "Check email", "schedule_type": "daily", "at": "09:00"}
 User: once on 2026-03-15 at 10:00 — dentist appointment
 Output: {"message": "Dentist appointment", "schedule_type": "once", "at": "2026-03-15T10:00:00"}
 
-User: every Monday at 14:00 to review pulse
-Output: {"message": "Review pulse", "schedule_type": "weekly", "at": "14:00", "day_of_week": "mon"}
+User: every Monday at 14:00 to review agenda
+Output: {"message": "Review agenda", "schedule_type": "weekly", "at": "14:00", "day_of_week": "mon"}
 
 User: 1st of every month at 09:00 send monthly report
 Output: {"message": "Send monthly report", "schedule_type": "monthly", "at": "09:00", "day_of_month": 1}
@@ -398,7 +398,7 @@ NL_TOOL_SCHEMAS: list[dict] = [
                     "description": (
                         "Natural-language description. Examples: "
                         "'daily at 09:00 to check email', "
-                        "'every Monday at 14:00 to review pulse', "
+                        "'every Monday at 14:00 to review agenda', "
                         "'once on 2026-03-15 at 10:00 — dentist', "
                         "'every 3600 seconds 08:00-18:00 to check servers'."
                     ),

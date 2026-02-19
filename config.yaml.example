@@ -119,17 +119,17 @@ nl_translation:
 #   context_size - max_tokens - system_prompt_tokens
 # No separate threshold setting is needed; adjust in the backend definition.
 
-# ── Pulse Reviews ─────────────────────────────────────────────────
-pulse:
-  enabled: true                           # Set to false to disable pulse reviews
-  review_interval_minutes: 60             # How often to auto-review pulse items
+# ── Agenda Reviews ─────────────────────────────────────────────────
+agenda:
+  enabled: true                           # Set to false to disable agenda reviews
+  review_interval_minutes: 60             # How often to auto-review agenda items
 
 # ── Component Size Limits ─────────────────────────────────────────
 # Characters before a component triggers AI auto-summarisation.
 context:
   component_size_limits:
     memories: 10000                       # MEMORIES.txt
-    pulse: 5000                           # Pulse items (DB)
+    agenda: 5000                           # Agenda items (DB)
     skills_total: 20000                   # Total across all skills/*.md
 
 # ── Dreaming (Nightly Consolidation) ─────────────────────────────

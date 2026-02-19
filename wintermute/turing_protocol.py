@@ -149,7 +149,7 @@ _BUILTIN_HOOKS: list[TuringHook] = [
             'as if **already done** during THIS exchange, AND the corresponding tool '
             '(`read_file`, `search_web`, `fetch_url`, `execute_shell`, '
             '`list_reminders`, `set_reminder`, `delete_reminder`, `append_memory`, '
-            '`pulse`, `add_skill`) is NOT in tool_calls_made. '
+            '`agenda`, `add_skill`) is NOT in tool_calls_made. '
             'Do NOT flag general knowledge, reasoning from context, references to '
             'information the user provided, or information from earlier in the '
             'conversation history. '
@@ -228,20 +228,20 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         phase="post_inference",
         scope=["sub_session"],
     ),
-    # -- pulse_complete: sub-session pre-execution guard --
-    # Fires when the model calls pulse(action='complete') without a
+    # -- agenda_complete: sub-session pre-execution guard --
+    # Fires when the model calls agenda(action='complete') without a
     # substantive reason.  Entirely programmatic — no Stage 1 LLM call.
     TuringHook(
-        name="pulse_complete",
+        name="agenda_complete",
         detection_prompt="",
         validator_type="programmatic",
-        validator_fn_name="validate_pulse_complete",
+        validator_fn_name="validate_agenda_complete",
         validator_prompt=None,
         correction_template=(
             "[TURING PROTOCOL — PULSE COMPLETE BLOCKED] You attempted to "
-            "complete a pulse item without sufficient evidence.\n"
+            "complete a agenda item without sufficient evidence.\n"
             "Issue: {reason}\n\n"
-            "Do NOT complete pulse items unless you have concrete, verifiable "
+            "Do NOT complete agenda items unless you have concrete, verifiable "
             "proof the task is finished. If the item describes ongoing work or "
             "a reminder, leave it active. Provide a detailed 'reason' with "
             "evidence when completing."
@@ -527,21 +527,21 @@ def validate_tool_schema(context: dict, detection_result: dict) -> bool:
     return True
 
 
-def validate_pulse_complete(context: dict, detection_result: dict) -> bool:
-    """Programmatic validator for pulse_complete.
+def validate_agenda_complete(context: dict, detection_result: dict) -> bool:
+    """Programmatic validator for agenda_complete.
 
-    Fires on pre_execution when the model calls pulse(action='complete')
+    Fires on pre_execution when the model calls agenda(action='complete')
     without a substantive reason.  Returns True (= violation) when the
     reason is missing or too short to constitute evidence.
     """
     tool_name = context.get("tool_name", "")
     tool_args = context.get("tool_args") or {}
-    if tool_name != "pulse" or tool_args.get("action") != "complete":
+    if tool_name != "agenda" or tool_args.get("action") != "complete":
         return False
     reason = (tool_args.get("reason") or "").strip()
     if len(reason) < 10:
         context["_turing_hook_reason"] = (
-            f"pulse(action='complete') called with insufficient reason "
+            f"agenda(action='complete') called with insufficient reason "
             f"({reason!r}). Provide concrete evidence the item is finished."
         )
         return True
@@ -554,7 +554,7 @@ _PROGRAMMATIC_VALIDATORS = {
     "validate_phantom_tool_result": validate_phantom_tool_result,
     "validate_empty_promise": validate_empty_promise,
     "validate_tool_schema": validate_tool_schema,
-    "validate_pulse_complete": validate_pulse_complete,
+    "validate_agenda_complete": validate_agenda_complete,
 }
 
 

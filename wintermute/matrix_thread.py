@@ -19,7 +19,7 @@ Special commands handled directly (before reaching the LLM):
   /new         - reset the conversation for the current room
   /compact     - force context compaction for the current room
   /reminders   - list active reminders
-  /pulse       - manually trigger pulse review
+  /agenda       - manually trigger agenda review
   /fingerprint - print the Ed25519 device fingerprint
 """
 
@@ -1248,13 +1248,13 @@ class MatrixThread:
             await self.send_message(f"Reminders:\n```json\n{result}\n```", thread_id)
             return
 
-        if content is None and text == "/pulse":
+        if content is None and text == "/agenda":
             await self._llm.enqueue_system_event(
-                "The user manually triggered a pulse review. "
-                "Review your active pulse items using the pulse tool and report what actions, if any, you take.",
+                "The user manually triggered a agenda review. "
+                "Review your active agenda items using the agenda tool and report what actions, if any, you take.",
                 thread_id,
             )
-            await self.send_message("Pulse review triggered.", thread_id)
+            await self.send_message("Agenda review triggered.", thread_id)
             return
 
         if content is None and text == "/status":
@@ -1285,7 +1285,7 @@ class MatrixThread:
                 "- `/new` – Reset conversation history\n"
                 "- `/compact` – Compact context (summarise old messages)\n"
                 "- `/reminders` – List active reminders\n"
-                "- `/pulse` – Trigger a pulse review\n"
+                "- `/agenda` – Trigger a agenda review\n"
                 "- `/status` – Show system status\n"
                 "- `/dream` – Trigger a dream cycle\n"
                 "- `/kimi-auth` – Authenticate Kimi-Code backend\n"
@@ -1345,10 +1345,10 @@ class MatrixThread:
         else:
             lines.append("**Sub-sessions:** not available")
 
-        # Pulse loop
-        if hasattr(self, "_pulse_loop") and self._pulse_loop:
-            state = "running" if self._pulse_loop._running else "stopped"
-            lines.append(f"\n**Pulse loop:** {state} (interval: {self._pulse_loop._interval // 60}m)")
+        # Agenda loop
+        if hasattr(self, "_agenda_loop") and self._agenda_loop:
+            state = "running" if self._agenda_loop._running else "stopped"
+            lines.append(f"\n**Agenda loop:** {state} (interval: {self._agenda_loop._interval // 60}m)")
 
         # Dreaming loop
         if hasattr(self, "_dreaming_loop") and self._dreaming_loop:
@@ -1372,7 +1372,7 @@ class MatrixThread:
         dl = self._dreaming_loop
         from wintermute import database as db
         mem_before = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
-        pulse_before = len(db.list_pulse_items("active"))
+        agenda_before = len(db.list_agenda_items("active"))
         skills_before = sorted(prompt_assembler.SKILLS_DIR.glob("*.md")) if prompt_assembler.SKILLS_DIR.exists() else []
         skills_size_before = sum(f.stat().st_size for f in skills_before)
 
@@ -1384,14 +1384,14 @@ class MatrixThread:
             return
 
         mem_after = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
-        pulse_after = len(db.list_pulse_items("active"))
+        agenda_after = len(db.list_agenda_items("active"))
         skills_after = sorted(prompt_assembler.SKILLS_DIR.glob("*.md")) if prompt_assembler.SKILLS_DIR.exists() else []
         skills_size_after = sum(f.stat().st_size for f in skills_after)
 
         await self.send_message(
             f"Dream cycle complete.\n"
             f"MEMORIES.txt: {mem_before} -> {mem_after} chars\n"
-            f"Pulse items: {pulse_before} -> {pulse_after} active\n"
+            f"Agenda items: {agenda_before} -> {agenda_after} active\n"
             f"Skills: {len(skills_before)} -> {len(skills_after)} files, "
             f"{skills_size_before} -> {skills_size_after} bytes",
             thread_id,

@@ -881,14 +881,14 @@ YAML
 
     cat <<YAML
 
-pulse:
+agenda:
   enabled: true
   review_interval_minutes: 60
 
 context:
   component_size_limits:
     memories: 10000
-    pulse: 5000
+    agenda: 5000
     skills_total: 20000
 
 dreaming:

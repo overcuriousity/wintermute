@@ -120,17 +120,17 @@ nl_translation:
 #   context_size - max_tokens - system_prompt_tokens
 # No separate threshold setting is needed; adjust in the backend definition.
 
-# ── Pulse Reviews ─────────────────────────────────────────────────
-pulse:
-  enabled: true                           # Set to false to disable pulse reviews
-  review_interval_minutes: 60             # How often to auto-review pulse items
+# ── Agenda Reviews ─────────────────────────────────────────────────
+agenda:
+  enabled: true                           # Set to false to disable agenda reviews
+  review_interval_minutes: 60             # How often to auto-review agenda items
 
 # ── Component Size Limits ─────────────────────────────────────────
 # Characters before a component triggers AI auto-summarisation.
 context:
   component_size_limits:
     memories: 10000                       # MEMORIES.txt
-    pulse: 5000                           # Pulse items (DB)
+    agenda: 5000                           # Agenda items (DB)
     skills_total: 20000                   # Total across all skills/*.md
 
 # ── Dreaming (Nightly Consolidation) ─────────────────────────────
@@ -313,7 +313,7 @@ Currently available validators:
 | `phantom_tool_result` | post_inference | main | programmatic | Detects when the model presents fabricated tool output ("I checked and found…") without having called the tool |
 | `empty_promise` | post_inference | main | programmatic | Detects when the model commits to an action ("I'll do X") as a final response without calling any tool. Excludes responses that end with a question (seeking confirmation) |
 | `objective_completion` | post_inference | sub_session | LLM | Gates sub-session exit: uses a dedicated LLM call to evaluate whether the worker's response genuinely satisfies its objective before allowing it to finish |
-| `pulse_complete` | pre_execution | sub_session | programmatic | Blocks `pulse(action='complete')` calls that lack a substantive `reason`. Always-on; not configurable via the `validators` map |
+| `agenda_complete` | pre_execution | sub_session | programmatic | Blocks `agenda(action='complete')` calls that lack a substantive `reason`. Always-on; not configurable via the `validators` map |
 | `tool_schema_validation` | pre_execution | main + sub_session | programmatic | Validates tool arguments against the tool's JSON Schema before execution (required fields, types, enums, constraints). Always-on; not configurable via the `validators` map |
 
 For a detailed explanation of each hook, phases, scopes, and how to write custom hooks, see [turing-protocol.md](turing-protocol.md).
@@ -375,12 +375,12 @@ See [matrix-setup.md](matrix-setup.md) for full setup instructions.
 | `host` | no | `"127.0.0.1"` | Bind address |
 | `port` | no | `8080` | Listen port |
 
-### `pulse`
+### `agenda`
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `enabled` | no | `true` | Enable/disable periodic pulse reviews |
-| `review_interval_minutes` | no | `60` | Minutes between automatic pulse reviews |
+| `enabled` | no | `true` | Enable/disable periodic agenda reviews |
+| `review_interval_minutes` | no | `60` | Minutes between automatic agenda reviews |
 
 ### `dreaming`
 
@@ -400,5 +400,5 @@ See [matrix-setup.md](matrix-setup.md) for full setup instructions.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `memories` | `10000` | Char limit before MEMORIES.txt auto-summarisation |
-| `pulse` | `5000` | Char limit before pulse auto-summarisation |
+| `agenda` | `5000` | Char limit before agenda auto-summarisation |
 | `skills_total` | `20000` | Total char limit across all skills |

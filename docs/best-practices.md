@@ -53,7 +53,7 @@ turing_protocol:
       scope: "sub_session"
 ```
 
-`tool_schema_validation` and `pulse_complete` are always-on and require no configuration.
+`tool_schema_validation` and `agenda_complete` are always-on and require no configuration.
 
 ---
 
@@ -73,8 +73,8 @@ SearXNG can run in a separate container on the same host and is reachable via `h
 
 The system auto-summarises memory components when they exceed their size limits, but deliberate maintenance keeps the model better oriented:
 
-- **MEMORIES.txt**: Keep entries factual and specific. Avoid storing transient state here — use Pulse for that. The nightly dreaming pass deduplicates and merges, but only as well as the model can reason about your entries.
-- **Pulse**: Complete items promptly when done. Stale pulse items consume prompt tokens on every turn and confuse the model about what is still active.
+- **MEMORIES.txt**: Keep entries factual and specific. Avoid storing transient state here — use Agenda for that. The nightly dreaming pass deduplicates and merges, but only as well as the model can reason about your entries.
+- **Agenda**: Complete items promptly when done. Stale agenda items consume prompt tokens on every turn and confuse the model about what is still active.
 - **Skills**: Keep skill files focused on one procedure. Large or overly broad skill files are harder for small models to apply correctly.
 
 ---

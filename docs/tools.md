@@ -10,7 +10,7 @@ Tools are grouped into three categories that control which tools are available i
 |----------|-------------|-------|
 | **execution** | All agents | `execute_shell`, `read_file`, `write_file` |
 | **research** | All agents | `search_web`, `fetch_url` |
-| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `set_reminder`, `append_memory`, `pulse`, `add_skill`, `list_reminders`, `delete_reminder` |
+| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `set_reminder`, `append_memory`, `agenda`, `add_skill`, `list_reminders`, `delete_reminder` |
 
 ## Tool Filtering by Sub-session Mode
 
@@ -130,9 +130,9 @@ Append a new fact to MEMORIES.txt. Preferred for day-to-day memory storage — n
 
 Returns: `status`, `total_chars`
 
-#### `pulse`
+#### `agenda`
 
-Manage active pulse items (working memory for ongoing tasks). Pulse items are stored in SQLite — no file rewrites needed.
+Manage active agenda items (working memory for ongoing tasks). Agenda items are stored in SQLite — no file rewrites needed.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

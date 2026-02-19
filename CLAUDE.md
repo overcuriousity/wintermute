@@ -34,16 +34,16 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 | `llm_thread.py` | Inference engine, conversation history, context compaction, tool dispatch, Turing Protocol dispatch |
 | `tools.py` | 12 tool definitions (OpenAI function-calling schemas) + `execute_tool()` dispatcher |
 | `sub_session.py` | Background worker DAG: `TaskNode`/`Workflow` with `depends_on` edges, nested workers (depth 2), timeout continuation |
-| `prompt_assembler.py` | Assembles system prompt per-turn: BASE_PROMPT + datetime + MEMORIES + pulse + skills |
+| `prompt_assembler.py` | Assembles system prompt per-turn: BASE_PROMPT + datetime + MEMORIES + agenda + skills |
 | `prompt_loader.py` | Loads/validates prompt templates from `data/prompts/` (required files; missing = startup failure) |
 | `turing_protocol.py` | Phase-aware 3-stage pipeline: detect → validate → correct. Phases: `post_inference`, `pre_execution`, `post_execution`. Scoped to `main` and/or `sub_session`. |
 | `matrix_thread.py` | Matrix client (mautrix) with E2E encryption; voice messages transcribed via configurable Whisper endpoint |
 | `web_interface.py` | aiohttp server: WebSocket chat, debug panel (`/debug`), REST API |
 | `dreaming.py` | Nightly memory consolidation (direct LLM call, no tool loop) |
-| `pulse.py` | Periodic autonomous pulse reviews via sub-session |
+| `agenda.py` | Periodic autonomous agenda reviews via sub-session |
 | `memory_harvest.py` | Periodic conversation mining → MEMORIES.txt extraction via sub-sessions |
 | `scheduler_thread.py` | APScheduler-based reminders; `ai_prompt` triggers sub-sessions |
-| `database.py` | SQLite ops: messages, pulse, summaries, interaction_log |
+| `database.py` | SQLite ops: messages, agenda, summaries, interaction_log |
 
 **LLM provider abstraction:** `BackendPool` wraps `AsyncOpenAI` with ordered failover. Three provider types: `"openai"` (any compatible endpoint), `"gemini-cli"`, `"kimi-code"`. Role-based routing (`base`, `compaction`, `sub_sessions`, `dreaming`, `turing_protocol`).
 
@@ -55,7 +55,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 
 - `data/prompts/*.txt` — All prompt templates (externalized, not hardcoded)
 - `data/MEMORIES.txt` — Long-term memory (append-based, consolidated nightly)
-- `data/conversation.db` — SQLite: messages, summaries, pulse, interaction_log
+- `data/conversation.db` — SQLite: messages, summaries, agenda, interaction_log
 - `data/skills/*.md` — Learned procedures
 - `data/TURING_PROTOCOL_HOOKS.txt` — Hook definitions (JSON)
 - `config.yaml` — Runtime config (gitignored)
@@ -66,5 +66,5 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 - Sub-sessions use a DAG with event-driven dependency resolution (`_resolve_dependents()`)
 - Turing Protocol hooks have `phase` (post_inference/pre_execution/post_execution) and `scope` (main/sub_session) fields. Main thread uses async correction injection; sub-sessions use synchronous inline injection. `objective_completion` hook gates sub-session exit with LLM-based evaluation. Each hook fires at most once per turn (single-shot, no escalation). Stage 2 programmatic validators catch false positives (e.g. responses ending with `?` are not empty promises).
 - Database migrations are applied inline at startup via `ALTER TABLE ... ADD COLUMN`
-- Slash commands (`/new`, `/compact`, `/pulse`, `/status`, `/dream`, etc.) are handled at the interface layer before reaching the LLM
+- Slash commands (`/new`, `/compact`, `/agenda`, `/status`, `/dream`, etc.) are handled at the interface layer before reaching the LLM
 - all of the application architecture is aimed to optimize it to work even with weak/small models like ministral-3:8b in the backend.

@@ -36,7 +36,7 @@ The debug panel is backed by a REST API:
 | GET | `/api/debug/reminders` | List all reminders |
 | POST | `/api/debug/reminders` | Create a new reminder |
 | DELETE | `/api/debug/reminders/{job_id}` | Delete a reminder |
-| GET | `/api/debug/pulse` | List current pulse items |
+| GET | `/api/debug/agenda` | List current agenda items |
 | GET | `/api/debug/interaction-log` | List Turing Protocol interaction log entries |
 | GET | `/api/debug/interaction-log/{id}` | Get a specific interaction log entry |
 | GET | `/api/debug/stream` | Server-sent events stream for live panel updates |

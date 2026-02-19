@@ -3,7 +3,7 @@ Dreaming – Nightly Memory Consolidation
 
 Runs as an autonomous asyncio task that fires at a configurable hour each
 night to review and prune the persistent memory components (MEMORIES.txt,
-pulse DB items) without user interaction.  Uses a direct API call (no tool
+agenda DB items) without user interaction.  Uses a direct API call (no tool
 loop, no thread history) so it never interferes with ongoing conversations.
 """
 
@@ -134,7 +134,7 @@ async def _consolidate_skills(pool: "BackendPool") -> None:
 
 async def run_dream_cycle(pool: "BackendPool") -> None:
     """
-    Run a full nightly consolidation pass over MEMORIES.txt and pulse DB items.
+    Run a full nightly consolidation pass over MEMORIES.txt and agenda DB items.
 
     Skips any component that is empty or missing.  Each component is
     consolidated independently so a failure in one does not abort the other.
@@ -154,27 +154,27 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
     else:
         logger.debug("Dreaming: MEMORIES.txt empty or missing, skipping")
 
-    pulse_items = database.list_pulse_items("active")
-    if pulse_items:
+    agenda_items = database.list_agenda_items("active")
+    if agenda_items:
         try:
-            pulse_prompt = prompt_loader.load("DREAM_PULSE_PROMPT.txt")
+            agenda_prompt = prompt_loader.load("DREAM_PULSE_PROMPT.txt")
             formatted = "\n".join(
                 f"[P{it['priority']}] #{it['id']}: {it['content']}"
-                for it in pulse_items
+                for it in agenda_items
             )
-            raw = await _consolidate(pool, "pulse", pulse_prompt, formatted)
+            raw = await _consolidate(pool, "agenda", agenda_prompt, formatted)
             if raw:
                 try:
                     actions = _json.loads(raw)
                 except _json.JSONDecodeError:
-                    logger.warning("Dreaming: pulse LLM returned non-JSON, skipping")
+                    logger.warning("Dreaming: agenda LLM returned non-JSON, skipping")
                     actions = []
                 applied = 0
                 for act in actions:
                     a = act.get("action")
                     aid = act.get("id")
                     if a == "complete" and aid is not None:
-                        database.complete_pulse_item(int(aid))
+                        database.complete_agenda_item(int(aid))
                         applied += 1
                     elif a == "update" and aid is not None:
                         kwargs = {}
@@ -183,14 +183,14 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
                         if "priority" in act:
                             kwargs["priority"] = int(act["priority"])
                         if kwargs:
-                            database.update_pulse_item(int(aid), **kwargs)
+                            database.update_agenda_item(int(aid), **kwargs)
                             applied += 1
-                logger.info("Dreaming: applied %d pulse actions", applied)
-            database.delete_old_completed_pulse(30)
+                logger.info("Dreaming: applied %d agenda actions", applied)
+            database.delete_old_completed_agenda(30)
         except Exception:  # noqa: BLE001
-            logger.exception("Dreaming: failed to consolidate pulse")
+            logger.exception("Dreaming: failed to consolidate agenda")
     else:
-        logger.debug("Dreaming: no active pulse items, skipping")
+        logger.debug("Dreaming: no active agenda items, skipping")
 
     try:
         await _consolidate_skills(pool)
