@@ -5,7 +5,7 @@
 > *"Wintermute was hive mind, decision maker, effecting change in the world outside."*
 > — William Gibson, *Neuromancer* (1984)
 
-**Wintermute** is a self-hosted personal AI assistant with persistent memory, autonomous background workers, and multi-interface support. It connects to any OpenAI-compatible LLM endpoint and reaches you via Matrix chat. A built-in debug panel (`/debug`) provides live inspection and administration.
+**Wintermute** is a self-hosted personal AI assistant with persistent memory, autonomous background workers, and multi-interface support. It connects to any OpenAI-compatible LLM endpoint or Kimi-Code, and reaches you via Matrix chat. All inference, tool calls, and validation decisions are logged with the goal of forensic-grade auditability.
 
 ---
 
@@ -37,7 +37,7 @@ Two architectural choices make this concrete:
 - **Pulse reviews** — periodic autonomous reviews of active pulse items via an isolated sub-session (no conversation pollution)
 - **Context compaction** — when conversation history approaches the model's context window, older messages are summarised and chained into a rolling summary that preserves context across compaction cycles
 - **Turing Protocol** — three-stage validation pipeline (detect → validate → correct) that automatically corrects hallucinations and unfulfilled commitments; custom hooks configurable via `data/TURING_PROTOCOL_HOOKS.txt`; runs on a dedicated small/fast backend to minimise latency impact
-- **Debug panel** — `http://localhost:8080/debug` provides a live view of sessions, sub-sessions, scheduled jobs, reminders, pulse items, Turing Protocol logs, and the current system prompt
+- **Audit trail** — every inference call, tool execution, and Turing Protocol decision is logged to SQLite; `http://localhost:8080/debug` provides a live inspection panel for sessions, sub-sessions, jobs, reminders, pulse items, and assembled system prompts
 - **Any OpenAI-compatible backend** — llama-server, vLLM, LM Studio, OpenAI, Kimi-Code, or any compatible endpoint
 
 ---
