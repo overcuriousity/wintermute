@@ -1,43 +1,130 @@
-# ── Matrix (recommended) ─────────────────────────────────────────────
-# Remove or leave empty to disable Matrix. The web UI works standalone.
+# ═══════════════════════════════════════════════════════════════════════
+#  Wintermute — Configuration Reference
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Copy this file to config.yaml and fill in your settings.
+# All sections are documented below. Required fields are marked [REQUIRED].
+#
+# The onboarding script (bash onboarding.sh) can walk you through this
+# interactively with AI assistance.
+
+
+# ── Matrix (optional) ────────────────────────────────────────────────
+# Matrix gives Wintermute a persistent chat interface accessible from
+# any Matrix client (Element, FluffyChat, etc.) with end-to-end encryption.
+# Remove the entire section or leave user_id empty to disable.
+# The web UI works standalone without Matrix.
+#
+# SETUP:
+#   1. Register a DEDICATED bot account on your homeserver (do NOT reuse
+#      your personal account). E.g. @wintermute:matrix.org
+#   2. Fill in homeserver URL, bot user_id, and password below.
+#   3. On first start, Wintermute logs in, creates a device, and sets up
+#      E2E encryption automatically. A recovery key is saved to
+#      data/matrix_recovery.key.
+#
+# AFTER FIRST START:
+#   - Log into the bot account in a browser (Element) and accept the
+#     cross-signing verification request that appears.
+#   - Invite the bot to a Matrix room from your personal account.
+#   - Optionally verify Wintermute's session from your client
+#     (Element > Settings > Sessions > Verify) for trusted E2E.
+#
 matrix:
-  homeserver: https://matrix.org          # Your Matrix homeserver URL
-  user_id: "@bot:matrix.org"              # Full Matrix user ID of the bot account
+  homeserver: https://matrix.org          # [REQUIRED] Matrix homeserver URL
+  user_id: "@bot:matrix.org"              # [REQUIRED] Full Matrix user ID of the bot
 
-  # Option A (recommended): supply password — Wintermute logs in automatically,
-  # fills in access_token/device_id below, and refreshes them on expiry.
+  # Authentication — choose ONE of the two options:
+  #
+  # Option A (recommended): supply password — Wintermute logs in
+  # automatically, fills in access_token/device_id, and refreshes on expiry.
   password: ""
-  # Option B: supply token + device_id from a manual login (leave password empty).
+
+  # Option B: supply a pre-existing access token + device ID from a manual
+  # login (leave password empty). Useful if your homeserver disables
+  # password login or you want manual control.
   access_token: ""
-  device_id: ""                           # Auto-filled when using password login.
+  device_id: ""                           # Auto-filled when using password login
 
-  allowed_users:                          # Matrix user IDs allowed to interact
-    - "@admin:matrix.org"
-  allowed_rooms: []                       # Room ID whitelist (empty = any room)
+  # Access control
+  allowed_users:                          # [REQUIRED] Matrix user IDs allowed to talk to the bot
+    - "@admin:matrix.org"                 # Your personal Matrix ID
+  allowed_rooms: []                       # Room ID whitelist. Empty = bot responds in any room
+                                          # it's invited to. Example: ["!abc123:matrix.org"]
 
-# ── Whisper (Voice Transcription) ───────────────────────────────────
-# OpenAI-compatible /v1/audio/transcriptions endpoint for Matrix voice messages.
-# Omit or set enabled: false to keep the current placeholder behavior.
+
+# ── Whisper (Voice Transcription) ────────────────────────────────────
+# Transcribes Matrix voice messages using an OpenAI-compatible
+# /v1/audio/transcriptions endpoint (e.g. faster-whisper-server, OpenAI).
+# Only relevant if Matrix is enabled. Without this, voice messages show
+# a placeholder "[voice message received]".
+#
+# Local options:
+#   - faster-whisper-server: https://github.com/fedirz/faster-whisper-server
+#   - Whisper.cpp server mode
+# Cloud: OpenAI's whisper-1 model at https://api.openai.com/v1
+#
 whisper:
-  enabled: true
-  base_url: "https://openai-compat-endpoint/v1"
-  api_key: "your-api-key"
-  model: "whisper"
-  language: ""                          # optional ISO-639-1 code, e.g. "de"
+  enabled: false                          # Set true to enable voice transcription
+  base_url: "http://localhost:8000/v1"    # Whisper-compatible API base URL
+  api_key: ""                             # API key (use "none" for local unauthenticated)
+  model: "whisper-large-v3"               # Model name (depends on your endpoint)
+  language: ""                            # Optional ISO-639-1 hint, e.g. "de", "en"
+                                          # Empty = auto-detect language
 
-# ── Web Interface ─────────────────────────────────────────────────
-# Enabled by default. Open http://127.0.0.1:8080 in your browser.
+
+# ── Web Interface ────────────────────────────────────────────────────
+# Browser-based chat UI with WebSocket streaming and a debug panel.
+# Always enabled unless you set enabled: false.
+#
+# The debug panel at /debug shows real-time tool calls, sub-sessions,
+# token usage, and system prompt components.
+#
+# SECURITY: The web UI has NO authentication. If you expose it beyond
+# localhost (host: 0.0.0.0), anyone who can reach the port can chat
+# with Wintermute. Use a reverse proxy with auth if needed.
+#
 web:
-  enabled: true
-  host: "127.0.0.1"                       # Use 0.0.0.0 to listen on all interfaces
-  port: 8080
+  enabled: true                           # Set false to disable entirely
+  host: "127.0.0.1"                       # Bind address. 0.0.0.0 = all interfaces
+  port: 8080                              # Listen port. Avoid conflicts with SearXNG etc.
 
-# ── Inference Backends ─────────────────────────────────────────────
-# Named backend definitions. Each describes one endpoint+model combination.
-# Referenced by name in the llm: role mapping.
+
+# ── Inference Backends ───────────────────────────────────────────────
+# Named backend definitions. Each describes one LLM endpoint+model.
+# You can define as many as you want and reference them by name in the
+# llm: role mapping below.
+#
+# Fields per backend:
+#   name          [REQUIRED] Unique identifier (referenced in llm: mapping)
+#   provider      [REQUIRED] "openai" | "gemini-cli" | "kimi-code"
+#   model         [REQUIRED] Model identifier (e.g. "qwen2.5:72b", "gpt-4o")
+#   context_size  Token window size. Default: 32768. Match your model's actual
+#                 context length — this controls when compaction triggers.
+#   max_tokens    Max tokens per response. Default: 4096.
+#   reasoning     Set true for reasoning models (o1, o3, DeepSeek R1, QwQ).
+#                 Uses max_completion_tokens instead of max_tokens.
+#
+# Provider-specific fields:
+#   "openai":     base_url [REQUIRED], api_key [REQUIRED]
+#                 Any OpenAI-compatible endpoint: vLLM, llama-server,
+#                 LM Studio, text-generation-inference, OpenAI, etc.
+#                 Use api_key: "llama-server" or "none" for unauthenticated local.
+#   "gemini-cli": No base_url/api_key needed. Uses OAuth credentials in
+#                 data/gemini_credentials.json. Run: uv run python -m wintermute.gemini_auth
+#                 WARNING: ALPHA — piggybacks on Google Cloud Code Assist OAuth.
+#                 Credentials may expire unpredictably. Not recommended as sole backend.
+#   "kimi-code":  No base_url/api_key needed. Uses OAuth credentials in
+#                 data/kimi_credentials.json. $19/mo flat-rate subscription.
+#                 Auth: uv run python -m wintermute.kimi_auth (or /kimi-auth in chat)
+#
+# TIP: Define at least two backends — a large one for main conversation and
+# a small/fast one for background tasks (compaction, dreaming, validation).
+# This reduces latency and cost for auxiliary workloads.
+#
 inference_backends:
   - name: "local_large"
-    provider: "openai"                    # "openai", "gemini-cli", or "kimi-code"
+    provider: "openai"
     base_url: "http://localhost:8080/v1"
     api_key: "llama-server"
     model: "qwen2.5:72b"
@@ -54,104 +141,199 @@ inference_backends:
     max_tokens: 2048
     reasoning: false
 
-  # UNSTABLE/ALPHA — gemini-cli piggybacks on Google's Cloud Code Assist
-  # OAuth flow.  Credentials may expire unpredictably.  Not recommended
-  # as your only backend.
+  # Gemini example (uncomment to enable):
   # - name: "gemini_pro"
   #   provider: "gemini-cli"
-  #   model: "gemini-2.5-pro"
+  #   model: "gemini-2.5-pro"              # Also: gemini-2.5-flash, gemini-3-pro-preview
   #   context_size: 1048576
   #   max_tokens: 8192
 
-  # Kimi-Code — flat-rate subscription with device-code OAuth.
-  # Auth: uv run python -m wintermute.kimi_auth  (or /kimi-auth in chat)
-  # Credentials: data/kimi_credentials.json
+  # Kimi-Code example (uncomment to enable):
   # - name: "kimi"
   #   provider: "kimi-code"
-  #   model: "kimi-for-coding"
+  #   model: "kimi-for-coding"             # Also: kimi-k2.5, kimi-code
   #   context_size: 131072
   #   max_tokens: 8192
 
-  # - name: "turing_backend"
-  #   provider: "openai"
-  #   base_url: "http://localhost:8080/v1"
-  #   api_key: "llama-server"
-  #   model: "qwen2.5:7b"
-  #   context_size: 32768
-  #   max_tokens: 150
 
-# ── LLM Role Mapping ──────────────────────────────────────────────
-# Maps roles to ordered lists of backend names.
-# Multiple backends = automatic failover on API errors.
-# Empty list [] = disabled.
-# Omitted roles default to the first defined backend.
+# ── LLM Role Mapping ────────────────────────────────────────────────
+# Maps functional roles to ordered lists of backend names.
+# Each role can have multiple backends for automatic failover — if the
+# first backend fails (API error, timeout), the next one is tried.
+#
+# Roles:
+#   base           Main conversation inference. [REQUIRED — at least one backend]
+#   compaction     Summarises old messages when context fills up. Ideally use
+#                  the same model (or same context_size) as base to preserve
+#                  quality. A smaller model works but may lose nuance.
+#   sub_sessions   Background workers (agenda reviews, memory harvest, user-spawned
+#                  tasks). Can use a smaller model to save resources.
+#   dreaming       Nightly memory consolidation. Runs once per day, not latency-
+#                  sensitive. A small model works well here.
+#   turing_protocol  Post-inference validation pipeline. A small/fast model is
+#                    recommended — it only checks for hallucinations, not generates.
+#
+# Omitted roles default to the "base" backends.
+# Set a role to [] (empty list) to disable that feature entirely.
+#
 llm:
   base: ["local_large"]
-  compaction: ["local_small", "local_large"] # strongly recommended to use the same llm, or one with the same context size as the main model
+  compaction: ["local_small", "local_large"]
   sub_sessions: ["local_large"]
   dreaming: ["local_small"]
-  turing_protocol: ["local_small"]        # validation pipeline (defaults to base if omitted)
+  turing_protocol: ["local_small"]
 
-# -- Turing Protocol (Post-Inference Validation) ---------------------
+
+# ── Turing Protocol (Post-Inference Validation) ─────────────────────
+# A 3-stage pipeline that catches LLM hallucinations and bad behavior
+# AFTER inference, BEFORE the response reaches the user.
+#
+# Stages: detect → validate → correct
+# Each validator targets a specific failure mode. A small/fast model is
+# recommended since validators only classify — they don't generate content.
+#
+# RECOMMENDATION: Enable all validators if you use small/weak models
+# (< 30B parameters). For strong models (GPT-4, Claude, 70B+), you can
+# disable some validators to reduce latency.
+#
+# The "backends" field here is DEPRECATED — use llm.turing_protocol instead.
+# It remains supported for backwards compatibility.
+#
 turing_protocol:
-  backends: ["local_small"]               # small/fast model recommended
+  backends: ["local_small"]               # DEPRECATED: use llm.turing_protocol
   validators:
-    workflow_spawn: true                   # detect hallucinated workflow spawn claims
-    phantom_tool_result: true              # detect fabricated tool output claims
-    empty_promise: true                    # detect unfulfilled action commitments
-    objective_completion:                  # gate sub-session exit on genuine completion
+    workflow_spawn: true                   # Detects when the LLM claims it spawned a
+                                           # background worker but didn't actually call
+                                           # the spawn_sub_session tool.
+
+    phantom_tool_result: true              # Detects when the LLM fabricates tool output
+                                           # (e.g. "I searched the web and found...")
+                                           # without actually calling a tool.
+
+    empty_promise: true                    # Detects when the LLM promises to do something
+                                           # ("I'll set a reminder") but doesn't follow
+                                           # through with a tool call. Stage 2 validators
+                                           # filter false positives (e.g. questions).
+
+    objective_completion:                  # Gates sub-session exit: before a background
+                                           # worker finishes, an LLM evaluates whether the
+                                           # objective was genuinely completed.
       enabled: true
-      scope: "sub_session"                 # "main", "sub_session", or both
+      scope: "sub_session"                 # "main" | "sub_session" | "both"
+                                           # "sub_session" = only validate background workers
+                                           # "main" = only validate main conversation
+                                           # "both" = validate everywhere
 
-# ── NL Translation (Natural-Language Tool Pipe) ──────────────────
-# Simplifies complex tool schemas for weak models by presenting a
-# single "description" field. A translator LLM expands the natural-
-# language description into full structured arguments.
+
+# ── NL Translation (Natural-Language Tool Pipe) ─────────────────────
+# For weak models that struggle with complex tool-call schemas, NL
+# translation presents a simplified single-field "description" parameter.
+# A translator LLM then expands the plain-English description into the
+# full structured arguments the tool actually needs.
+#
+# Example: Instead of filling spawn_sub_session's 7 fields, the model
+# just writes: "search the web for Python asyncio tutorials and summarise"
+# and the translator expands it into proper objective, timeout, etc.
+#
+# RECOMMENDATION: Only enable if your primary model is small (< 14B).
+# Larger models handle structured tool calls fine on their own.
+#
 nl_translation:
-  enabled: false                        # Opt-in; default off
-  backends: ["local_small"]             # Translator LLM (small/fast recommended)
-  tools:                                # Which tools use NL schemas
-    - set_routine
-    - spawn_sub_session
+  enabled: false                          # Opt-in; default off
+  backends: ["local_small"]               # Translator LLM (small/fast recommended)
+  tools:                                  # Which tools get NL-simplified schemas
+    - set_routine                         # Routine scheduling (complex cron + params)
+    - spawn_sub_session                   # Background worker spawning (DAG dependencies)
 
-# ── Context Compaction ────────────────────────────────────────────
-# Compaction fires when history tokens exceed:
-#   context_size - max_tokens - system_prompt_tokens
-# No separate threshold setting is needed; adjust in the backend definition.
 
-# ── Agenda Reviews ─────────────────────────────────────────────────
+# ── Context Compaction ───────────────────────────────────────────────
+# When conversation history exceeds the token budget (context_size minus
+# max_tokens minus system prompt), older messages are summarised into a
+# rolling summary and archived in the database (30-day retention).
+#
+# No separate threshold setting exists — compaction is controlled entirely
+# by context_size and max_tokens in your backend definitions.
+# The compaction model (llm.compaction) generates the summaries.
+
+
+# ── Agenda (Working Memory) ─────────────────────────────────────────
+# The agenda is Wintermute's short-term working memory: tasks, reminders,
+# and items that need periodic attention. Wintermute reviews the agenda
+# autonomously at the configured interval using a background sub-session.
+#
+# Agenda items are stored in SQLite and included in every system prompt.
+#
 agenda:
-  enabled: true                           # Set to false to disable agenda reviews
-  review_interval_minutes: 60             # How often to auto-review agenda items
+  enabled: true                           # Set false to disable autonomous reviews
+  review_interval_minutes: 60             # Minutes between automatic agenda reviews
+                                          # Lower = more responsive but more API calls
+                                          # Recommended: 30-120
 
-# ── Component Size Limits ─────────────────────────────────────────
-# Characters before a component triggers AI auto-summarisation.
+
+# ── Component Size Limits ───────────────────────────────────────────
+# Maximum characters for system prompt components before auto-summarisation
+# kicks in. When a component exceeds its limit, the AI summarises it to
+# fit. This prevents the system prompt from consuming too much of the
+# context window.
+#
+# Increase these if you have a large context model (e.g. 128K+).
+# Decrease if you use a small context model (e.g. 8K).
+#
 context:
   component_size_limits:
-    memories: 10000                       # MEMORIES.txt
-    agenda: 5000                           # Agenda items (DB)
-    skills_total: 20000                   # Total across all skills/*.md
+    memories: 10000                       # MEMORIES.txt — long-term personal facts
+    agenda: 5000                          # Active agenda items from database
+    skills_total: 20000                   # Total across all data/skills/*.md files
 
-# ── Dreaming (Nightly Consolidation) ─────────────────────────────
+
+# ── Dreaming (Nightly Consolidation) ────────────────────────────────
+# Once per day, Wintermute reviews its memories (MEMORIES.txt) and
+# consolidates them: removing duplicates, merging related facts, and
+# improving organisation. Uses a direct LLM call (no tool loop).
+#
+# The time is in the SCHEDULER TIMEZONE (see scheduler.timezone below).
+#
 dreaming:
-  hour: 1                                 # Hour (0-23, UTC) to run consolidation
+  hour: 1                                 # Hour (0-23) to run consolidation
   minute: 0                               # Minute (0-59)
 
-# ── Memory Harvest (Automatic Memory Extraction) ─────────────────
-# Periodically mines conversation history for personal facts and preferences,
-# extracting them into MEMORIES.txt via background sub-sessions.
-# Complements the append_memory tool (which remains available for direct use).
+
+# ── Memory Harvest (Automatic Memory Extraction) ────────────────────
+# Periodically mines recent conversation history for personal facts,
+# preferences, and important information, extracting them into
+# MEMORIES.txt via background sub-sessions.
+#
+# This complements the append_memory tool (which the AI can use directly
+# during conversation). Harvest catches facts the AI didn't explicitly
+# save in real-time.
+#
+# Triggers when EITHER condition is met:
+#   - message_threshold new user messages accumulated
+#   - inactivity_timeout_minutes of silence (if at least 5 messages exist)
+#
 memory_harvest:
-  enabled: true                           # Set to false to disable entirely
-  message_threshold: 20                   # Harvest after this many new user messages
-  inactivity_timeout_minutes: 15          # Or after this many idle minutes (needs ≥5 msgs)
-  max_message_chars: 2000                 # Mid-truncate individual messages beyond this
+  enabled: true                           # Set false to disable entirely
+  message_threshold: 20                   # Harvest after N new user messages
+  inactivity_timeout_minutes: 15          # Or after N idle minutes (needs >= 5 msgs)
+  max_message_chars: 2000                 # Truncate long messages before analysis
 
-# ── Scheduler ─────────────────────────────────────────────────────
+
+# ── Scheduler ────────────────────────────────────────────────────────
+# APScheduler-based routine execution. Routines can be one-shot or
+# recurring (cron-style). Routines with an ai_prompt field trigger
+# autonomous sub-sessions at the scheduled time.
+#
 scheduler:
-  timezone: "UTC"                         # Timezone for routine scheduling (e.g. Europe/Berlin)
+  timezone: "UTC"                         # IANA timezone for all scheduling
+                                          # Examples: Europe/Berlin, America/New_York, Asia/Tokyo
+                                          # Also affects dreaming schedule above
 
-# ── Logging ───────────────────────────────────────────────────────
+
+# ── Logging ──────────────────────────────────────────────────────────
 logging:
-  level: "INFO"                           # DEBUG | INFO | WARN | ERROR
-  directory: "logs"
+  level: "INFO"                           # DEBUG | INFO | WARNING | ERROR
+                                          # DEBUG: very verbose, includes all LLM calls
+                                          # INFO: normal operation (recommended)
+                                          # WARNING: only problems
+  directory: "logs"                       # Relative to working directory
+                                          # Logs rotate daily, 7-day retention

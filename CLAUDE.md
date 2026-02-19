@@ -14,7 +14,8 @@ uv run wintermute                    # Run the application
 uv build                             # Build package
 
 # Production (systemd user service)
-bash setup.sh                        # Interactive installer
+bash onboarding.sh                   # AI-driven installer (experimental)
+bash setup.sh                        # Classic programmatic installer
 systemctl --user start wintermute
 journalctl --user -u wintermute -f
 ```

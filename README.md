@@ -56,12 +56,14 @@ Two architectural choices make this concrete:
 ```bash
 git clone https://github.com/overcuriousity/wintermute.git wintermute
 cd wintermute
-bash setup.sh
+bash onboarding.sh
 ```
 
-The setup script installs all dependencies, walks you through configuration (LLM endpoint, Matrix, timezone), installs a systemd user service, runs pre-flight checks, and offers to start the daemon immediately. One command, working service.
+The onboarding script installs all system dependencies, then hands off to an **AI-powered configuration assistant** that uses your own LLM endpoint to walk you through every `config.yaml` option interactively. It tests your endpoints, validates Matrix credentials, runs OAuth flows, and installs the systemd service — all through a conversational interface.
 
-See [docs/installation.md](docs/installation.md) for manual installation
+> **Experimental:** The AI-driven onboarding (`onboarding.sh`) is new and requires a model with function-calling support. The previous programmatic setup script (`setup.sh`) is retained as a fallback.
+
+See [docs/installation.md](docs/installation.md) for manual installation and the classic setup script
 
 ---
 

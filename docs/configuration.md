@@ -1,151 +1,29 @@
 # Configuration Reference
 
-All configuration lives in `config.yaml`. Copy `config.yaml.example` to get started:
+All configuration lives in `config.yaml`. You can generate it in three ways:
 
-```bash
-cp config.yaml.example config.yaml
-```
+1. **AI-driven onboarding (recommended):** `bash onboarding.sh` — walks you through every option conversationally using your own LLM (experimental, requires function-calling support)
+2. **Classic setup script:** `bash setup.sh` — programmatic menu-driven prompts
+3. **Manual:** `cp config.yaml.example config.yaml` and edit by hand
+
+The `config.yaml.example` file contains detailed documentation for every field.
 
 ## Full Annotated Example
 
+See `config.yaml.example` in the repository root for the complete reference with inline documentation. A minimal working config looks like:
+
 ```yaml
-# ── Matrix (recommended) ─────────────────────────────────────────────
-# Remove or leave empty to disable Matrix. The web UI works standalone.
-matrix:
-  homeserver: https://matrix.org          # Your Matrix homeserver URL
-  user_id: "@bot:matrix.org"              # Full Matrix user ID of the bot account
-
-  # Option A (recommended): supply password — Wintermute logs in automatically,
-  # fills in access_token/device_id below, and refreshes them on expiry.
-  password: ""
-  # Option B: supply token + device_id from a manual login (leave password empty).
-  access_token: ""
-  device_id: ""                           # Auto-filled when using password login.
-
-  allowed_users:                          # Matrix user IDs allowed to interact
-    - "@admin:matrix.org"
-  allowed_rooms: []                       # Room ID whitelist (empty = any room)
-
-# ── Web Interface ─────────────────────────────────────────────────
-# Enabled by default. Open http://127.0.0.1:8080 in your browser.
-web:
-  enabled: true
-  host: "127.0.0.1"                       # Use 0.0.0.0 to listen on all interfaces
-  port: 8080
-
-# ── Inference Backends ─────────────────────────────────────────────
-# Named backend definitions. Each describes one endpoint+model combination.
-# Referenced by name in the llm: role mapping.
 inference_backends:
-  - name: "local_large"
-    provider: "openai"                    # "openai", "gemini-cli", or "kimi-code"
+  - name: "main"
+    provider: "openai"
     base_url: "http://localhost:8080/v1"
     api_key: "llama-server"
     model: "qwen2.5:72b"
     context_size: 32768
     max_tokens: 4096
-    reasoning: false
 
-  - name: "local_small"
-    provider: "openai"
-    base_url: "http://localhost:8080/v1"
-    api_key: "llama-server"
-    model: "qwen2.5:7b"
-    context_size: 32768
-    max_tokens: 2048
-    reasoning: false
-
-  # UNSTABLE/ALPHA — gemini-cli piggybacks on Google's Cloud Code Assist
-  # OAuth flow.  Credentials may expire unpredictably.  Not recommended
-  # as your only backend.
-  # - name: "gemini_pro"
-  #   provider: "gemini-cli"
-  #   model: "gemini-2.5-pro"
-  #   context_size: 1048576
-  #   max_tokens: 8192
-
-  # Kimi-Code — flat-rate subscription with device-code OAuth.
-  # Auth: uv run python -m wintermute.kimi_auth  (or /kimi-auth in chat)
-  # Credentials: data/kimi_credentials.json
-  # - name: "kimi"
-  #   provider: "kimi-code"
-  #   model: "kimi-for-coding"
-  #   context_size: 131072
-  #   max_tokens: 8192
-
-  # - name: "turing_backend"
-  #   provider: "openai"
-  #   base_url: "http://localhost:8080/v1"
-  #   api_key: "llama-server"
-  #   model: "qwen2.5:7b"
-  #   context_size: 32768
-  #   max_tokens: 150
-
-# ── LLM Role Mapping ──────────────────────────────────────────────
-# Maps roles to ordered lists of backend names.
-# Multiple backends = automatic failover on API errors.
-# Empty list [] = disabled.
-# Omitted roles default to the first defined backend.
 llm:
-  base: ["local_large"]
-  compaction: ["local_small", "local_large"] # strongly recommended to use the same llm, or one with the same context size as the main model
-  sub_sessions: ["local_large"]
-  dreaming: ["local_small"]
-  turing_protocol: ["local_small"]        # validation pipeline (defaults to base if omitted)
-
-# -- Turing Protocol (Post-Inference Validation) ---------------------
-turing_protocol:
-  backends: ["local_small"]               # small/fast model recommended
-  validators:
-    workflow_spawn: true                   # detect hallucinated workflow spawn claims
-    phantom_tool_result: true              # detect fabricated tool output claims
-    empty_promise: true                    # detect unfulfilled action commitments
-    objective_completion:                  # gate sub-session exit on genuine completion
-      enabled: true
-      scope: "sub_session"                 # "main", "sub_session", or both
-
-# ── NL Translation (Natural-Language Tool Pipe) ──────────────────
-# Simplifies complex tool schemas for weak models by presenting a
-# single "description" field. A translator LLM expands the natural-
-# language description into full structured arguments.
-nl_translation:
-  enabled: false                        # Opt-in; default off
-  backends: ["local_small"]             # Translator LLM (small/fast recommended)
-  tools:                                # Which tools use NL schemas
-    - set_routine
-    - spawn_sub_session
-
-# ── Context Compaction ────────────────────────────────────────────
-# Compaction fires when history tokens exceed:
-#   context_size - max_tokens - system_prompt_tokens
-# No separate threshold setting is needed; adjust in the backend definition.
-
-# ── Agenda Reviews ─────────────────────────────────────────────────
-agenda:
-  enabled: true                           # Set to false to disable agenda reviews
-  review_interval_minutes: 60             # How often to auto-review agenda items
-
-# ── Component Size Limits ─────────────────────────────────────────
-# Characters before a component triggers AI auto-summarisation.
-context:
-  component_size_limits:
-    memories: 10000                       # MEMORIES.txt
-    agenda: 5000                           # Agenda items (DB)
-    skills_total: 20000                   # Total across all skills/*.md
-
-# ── Dreaming (Nightly Consolidation) ─────────────────────────────
-dreaming:
-  hour: 1                                 # Hour (0-23, UTC) to run consolidation
-  minute: 0                               # Minute (0-59)
-
-# ── Scheduler ─────────────────────────────────────────────────────
-scheduler:
-  timezone: "UTC"                         # Timezone for routine scheduling (e.g. Europe/Berlin)
-
-# ── Logging ───────────────────────────────────────────────────────
-logging:
-  level: "INFO"                           # DEBUG | INFO | WARN | ERROR
-  directory: "logs"
+  base: ["main"]
 ```
 
 ## Section Details
@@ -229,7 +107,7 @@ This provides free access to Gemini models (2.5 Flash/Pro, 3 Flash/Pro).
 
 When `provider: "gemini-cli"` is set, `base_url` and `api_key` are not needed.
 Authentication is handled via OAuth — run `uv run python -m wintermute.gemini_auth`
-to set up credentials, or select the Gemini option during `setup.sh`.
+to set up credentials, or select the Gemini option during `onboarding.sh` / `setup.sh`.
 
 Available models: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-3-pro-preview`, `gemini-3-flash-preview`.
 
@@ -248,7 +126,7 @@ When `provider: "kimi-code"` is set, `base_url` and `api_key` are not needed.
 Credentials are stored in `data/kimi_credentials.json` and persist across restarts.
 
 **Authentication:**
-- During `setup.sh`: option 7 runs interactive device-code auth
+- During `onboarding.sh` / `setup.sh`: option 7 runs interactive device-code auth
 - CLI: `uv run python -m wintermute.kimi_auth`
 - In chat: `/kimi-auth` command (Matrix or web UI)
 - Auto-trigger: if kimi-code is configured but not authenticated, Wintermute

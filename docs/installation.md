@@ -8,42 +8,67 @@
 - *(Strongly recommended)* A local [SearXNG](https://docs.searxng.org/) instance — Wintermute's `search_web` tool queries SearXNG for web search. Without it, searches fall back to DuckDuckGo's limited Instant Answer API. SearXNG is lightweight, privacy-respecting, and easy to deploy via Docker.
 - *(Recommended)* A dedicated Matrix account for the bot
 
-## Quickstart (recommended)
+## Quickstart — AI-Driven Onboarding (experimental)
 
-Clone the repository and run the interactive setup script — it handles everything from system dependencies to a running daemon:
+Clone the repository and run the AI-driven onboarding script:
 
 ```bash
 git clone https://git.mikoshi.de/overcuriousity/wintermute.git wintermute
 cd wintermute
+bash onboarding.sh
+```
+
+The script works in two phases:
+
+**Phase 1 (bash):** Installs system dependencies (Python 3.12+, curl, uv, build tools, libolm, ffmpeg), runs `uv sync`, and asks for your primary LLM endpoint (URL, model, API key). It validates that the endpoint is reachable and supports function calling.
+
+**Phase 2 (AI-driven):** Hands off to an AI configuration assistant powered by your own LLM. The assistant walks you through every `config.yaml` section conversationally:
+
+- Inference backends and LLM role mapping
+- Web interface settings
+- Matrix integration (with live credential testing and test message delivery)
+- Whisper voice transcription
+- Turing Protocol validators
+- NL Translation
+- Agenda, dreaming, memory harvest, scheduler, logging
+- Systemd service installation
+
+The AI gives recommendations, explains trade-offs, and runs in-flight validation (probing endpoints, testing Matrix login, triggering OAuth flows for Gemini/Kimi). Config values are written incrementally, so partial progress is preserved if you abort.
+
+> **Experimental:** The AI-driven onboarding requires a model with function-calling support (e.g. Qwen 2.5, Llama 3.1+, GPT-4, Gemini). The script tests this before handoff and warns if unsupported.
+
+### Onboarding script options
+
+```
+bash onboarding.sh --help        # Show all options
+bash onboarding.sh --dry-run     # Show install plan without making changes
+```
+
+### What the AI tests during onboarding
+
+| Test | When |
+|------|------|
+| LLM endpoint reachability | After you provide the URL |
+| Function-calling capability | Before handoff to AI assistant |
+| Matrix homeserver reachability | When configuring Matrix |
+| Matrix credential validation | Login test + immediate logout |
+| Matrix message delivery | Optional test message to a room |
+| Gemini OAuth | If gemini-cli provider is selected |
+| Kimi-Code device-code auth | If kimi-code provider is selected |
+
+## Classic Setup Script (fallback)
+
+The previous programmatic setup script is retained as `setup.sh`. Use it if your model doesn't support function calling or you prefer a non-AI workflow:
+
+```bash
 bash setup.sh
 ```
 
-The script walks through 5 stages:
-
-| Stage | What it does |
-|-------|-------------|
-| **[1/5] System dependencies** | Installs Python 3.12+, curl, uv, build tools, and libolm headers |
-| **[2/5] Python environment** | Runs `uv sync`, verifies E2E encryption imports |
-| **[3/5] Configuration** | Interactive config: LLM endpoint, web UI, timezone, SearXNG check, Matrix (optional) |
-| **[4/5] Systemd service** | Installs a systemd user service with lingering enabled (no sudo needed) |
-| **[5/5] Pre-flight diagnostics** | Checks imports, endpoint reachability, Matrix connectivity, E2E deps |
-
-After diagnostics, the script offers to start the daemon immediately. If all checks pass, Wintermute is running as a persistent service.
-
-> **Note:** The script only runs on Fedora/RHEL or Debian/Ubuntu. It will exit on unsupported systems.
-
-### Setup script options
-
-```
-bash setup.sh --help        # Show all options
-bash setup.sh --dry-run     # Show install plan without making changes
-bash setup.sh --no-matrix   # Skip Matrix configuration
-bash setup.sh --no-systemd  # Skip systemd service installation
-```
+It walks through 5 stages (dependencies, Python environment, configuration, systemd, diagnostics) with traditional menu-driven prompts. See `bash setup.sh --help` for options (`--no-matrix`, `--no-systemd`, `--dry-run`).
 
 ### Matrix setup during onboarding
 
-When you choose to enable Matrix, the script collects the bot's **password** — not a token. On first start, Wintermute logs in automatically, creates a device, sets up E2E encryption, cross-signs the device, and saves a recovery key to `data/matrix_recovery.key`. No manual `curl` commands or token pasting required.
+When you choose to enable Matrix (via either script), the bot's **password** is collected — not a token. On first start, Wintermute logs in automatically, creates a device, sets up E2E encryption, cross-signs the device, and saves a recovery key to `data/matrix_recovery.key`. No manual `curl` commands or token pasting required.
 
 Some homeservers (e.g. matrix.org) require a one-time browser approval for cross-signing on first start — Wintermute logs the exact URL. After that, everything is fully automatic, including token refresh on expiry.
 
@@ -144,9 +169,9 @@ using credentials from a locally-installed `gemini-cli`.
 
 - **Node.js** and **npm** (for installing gemini-cli)
 
-### Setup via setup.sh (recommended)
+### Setup via onboarding script (recommended)
 
-Run `bash setup.sh` and select option **6) Gemini (via gemini-cli)** when prompted
+Run `bash onboarding.sh` and select option **6) Gemini (via gemini-cli)** when prompted
 for the inference substrate. The script will:
 
 1. Check for (or install) gemini-cli
@@ -218,9 +243,9 @@ Wintermute supports [Kimi-Code](https://kimi.com) as an inference backend. Kimi-
 provides an OpenAI-compatible endpoint via a flat-rate subscription, authenticated with
 OAuth device-code flow.
 
-### Setup via setup.sh
+### Setup via onboarding script
 
-Run `bash setup.sh` and select option **7) Kimi-Code** when prompted. The script will:
+Run `bash onboarding.sh` and select option **7) Kimi-Code** when prompted. The script will:
 
 1. Prompt for a model (default: `kimi-for-coding`)
 2. Run the device-code auth flow (prints a URL — open it in any browser)
@@ -272,7 +297,7 @@ If running in a container, ensure the container's system clock is accurate (e.g.
 
 ## Systemd User Service
 
-The `setup.sh` script installs a systemd **user** service automatically (no sudo required). It also enables lingering via `loginctl enable-linger` so the service starts at boot, not just at login.
+Both `onboarding.sh` and `setup.sh` install a systemd **user** service automatically (no sudo required). It also enables lingering via `loginctl enable-linger` so the service starts at boot, not just at login.
 
 If you prefer to set it up manually, create `~/.config/systemd/user/wintermute.service`:
 
