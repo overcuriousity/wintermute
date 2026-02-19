@@ -569,8 +569,9 @@ class LLMThread:
         except Exception:  # noqa: BLE001
             logger.debug("Failed to save interaction log entry", exc_info=True)
 
-        database.save_message("assistant", reply.text, thread_id,
-                              token_count=_count_tokens(reply.text, self._cfg.model))
+        _assistant_text = reply.text or "..."
+        database.save_message("assistant", _assistant_text, thread_id,
+                              token_count=_count_tokens(_assistant_text, self._cfg.model))
         await self._maybe_summarise_components(
             thread_id, _from_system_event=item.is_system_event,
         )
@@ -999,7 +1000,10 @@ class LLMThread:
                         thread_id: str = "default",
                         content: Optional[list] = None) -> list[dict]:
         rows = database.load_active_messages(thread_id)
-        messages = [{"role": r["role"], "content": r["content"]} for r in rows]
+        messages = [
+            {"role": r["role"], "content": r["content"] or "..."}
+            for r in rows
+        ]
         prefix = "[SYSTEM EVENT] " if is_system_event else ""
         if content is not None and not is_system_event:
             messages.append({"role": "user", "content": content})
