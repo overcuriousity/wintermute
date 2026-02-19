@@ -2,7 +2,7 @@
 Natural-Language Tool Call Translator.
 
 Small/weak LLMs frequently produce malformed arguments for complex tools
-like ``set_reminder`` (11 properties) and ``spawn_sub_session`` (DAG
+like ``set_routine`` (11 properties) and ``spawn_sub_session`` (DAG
 semantics).  This module presents those tools as single-field "describe
 in English" schemas to the main LLM, then uses a dedicated translator
 LLM to expand the description into structured arguments.
@@ -27,11 +27,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Tools that have NL translation variants.
-NL_TOOLS: frozenset[str] = frozenset({"set_reminder", "spawn_sub_session"})
+NL_TOOLS: frozenset[str] = frozenset({"set_routine", "spawn_sub_session"})
 
 # Maps tool name -> prompt template filename.
 _PROMPT_MAP: dict[str, str] = {
-    "set_reminder": "NL_TRANSLATOR_SET_REMINDER.txt",
+    "set_routine": "NL_TRANSLATOR_SET_ROUTINE.txt",
     "spawn_sub_session": "NL_TRANSLATOR_SPAWN_SUB_SESSION.txt",
 }
 
@@ -106,7 +106,7 @@ async def translate_nl_tool_call(
 
     Returns:
       - ``dict``  — single tool call arguments
-      - ``list[dict]`` — multiple calls (multi-reminder / multi-spawn)
+      - ``list[dict]`` — multiple calls (multi-routine / multi-spawn)
       - ``None`` — translation failed (LLM error, unparseable output)
 
     A dict with an ``"error"`` key signals ambiguity that needs user

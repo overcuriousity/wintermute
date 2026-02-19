@@ -2,7 +2,7 @@
 Web Interface
 
 Debug panel available at /debug.  Provides a read/write inspection view of all
-running sessions, sub-sessions, scheduled jobs, and reminders.
+running sessions, sub-sessions, scheduled jobs, and routines.
 REST API under /api/debug/* is consumed by the embedded SPA.
 """
 
@@ -224,7 +224,7 @@ _DEBUG_HTML = """\
   .form-group select:focus,
   .form-group textarea:focus { border-color: #a8d8ea; }
   .form-group textarea { resize: vertical; min-height: 48px; }
-  /* Section headers for reminders */
+  /* Section headers for routines */
   .section-hdr {
     padding: .4rem .6rem;
     background: #0d1526;
@@ -274,8 +274,8 @@ _DEBUG_HTML = """\
     <button class="tab-btn" data-tab="jobs" onclick="showTab('jobs')">
       Jobs <span class="tab-count" id="cnt-jobs">0</span>
     </button>
-    <button class="tab-btn" data-tab="reminders" onclick="showTab('reminders')">
-      Reminders <span class="tab-count" id="cnt-reminders">0</span>
+    <button class="tab-btn" data-tab="routines" onclick="showTab('routines')">
+      Routines <span class="tab-count" id="cnt-routines">0</span>
     </button>
     <button class="tab-btn" data-tab="agenda" onclick="showTab('agenda')">
       Agenda <span class="tab-count" id="cnt-agenda">0</span>
@@ -349,9 +349,9 @@ _DEBUG_HTML = """\
       </div>
     </div>
 
-    <!-- ── Reminders ── -->
-    <div class="tab-panel" id="panel-reminders">
-      <form id="reminder-form" class="form-bar" onsubmit="createReminder(event)">
+    <!-- ── Routines ── -->
+    <div class="tab-panel" id="panel-routines">
+      <form id="routine-form" class="form-bar" onsubmit="createRoutine(event)">
         <div class="form-group">
           <label>Type</label>
           <select name="schedule_type" onchange="onScheduleTypeChange(this.value)" required>
@@ -393,7 +393,7 @@ _DEBUG_HTML = """\
         </div>
         <div class="form-group">
           <label>Message</label>
-          <input name="message" placeholder="Reminder text" style="width:180px" required>
+          <input name="message" placeholder="Routine text" style="width:180px" required>
         </div>
         <div class="form-group">
           <label>AI prompt (optional)</label>
@@ -410,7 +410,7 @@ _DEBUG_HTML = """\
           <button type="submit" class="btn btn-primary">+ Create</button>
         </div>
       </form>
-      <div class="scroll-area" id="reminders-area">
+      <div class="scroll-area" id="routines-area">
         <div class="empty">Loading\u2026</div>
       </div>
     </div>
@@ -481,7 +481,7 @@ _DEBUG_HTML = """\
 let currentTab = 'sessions';
 let selectedSession = null;
 const _closedWorkflows = new Set();
-const _closedReminders = new Set();
+const _closedRoutines = new Set();
 let ilMaxId = 0;
 let ilMinId = null;
 let ilAllLoaded = false;
@@ -540,7 +540,7 @@ async function loadTab(name) {
       case 'subsessions': await loadSubSessions(); break;
       case 'workflows':   await loadWorkflows(); break;
       case 'jobs':        await loadJobs(); break;
-      case 'reminders':   await loadReminders(); break;
+      case 'routines':   await loadRoutines(); break;
       case 'agenda':       await loadAgenda(); break;
       case 'interactions': await loadInteractionLog(); break;
     }
@@ -567,7 +567,7 @@ function connectStream() {
     renderSubSessions(data.subsessions || []);
     renderWorkflows(data.workflows || []);
     renderJobs(data.jobs || []);
-    renderReminders(data.reminders || {});
+    renderRoutines(data.routines || {});
     renderAgenda(data.agenda || []);
     updateInteractionsCount(data.interactions_total, data.interactions_max_id);
   };
@@ -1019,37 +1019,37 @@ async function loadJobs() {
   renderJobs(d.jobs || []);
 }
 
-// ── Reminders ──
-function renderReminders(data) {
+// ── Routines ──
+function renderRoutines(data) {
   const active = data.active || [];
   const completed = data.completed || [];
   const failed = data.failed || [];
   const cancelled = data.cancelled || [];
-  document.getElementById('cnt-reminders').textContent = active.length;
+  document.getElementById('cnt-routines').textContent = active.length;
 
-  const area = document.getElementById('reminders-area');
+  const area = document.getElementById('routines-area');
   const scrollTop = area.scrollTop;
   area.innerHTML =
-    renderReminderSection('active-body',    'active',    'Active',    active,    true)  +
-    renderReminderSection('completed-body', 'completed', 'Completed', completed, false) +
-    renderReminderSection('failed-body',    'failed',    'Failed',    failed,    false) +
-    (cancelled.length ? renderReminderSection('cancelled-body', 'cancelled', 'Cancelled', cancelled, false) : '');
+    renderRoutineSection('active-body',    'active',    'Active',    active,    true)  +
+    renderRoutineSection('completed-body', 'completed', 'Completed', completed, false) +
+    renderRoutineSection('failed-body',    'failed',    'Failed',    failed,    false) +
+    (cancelled.length ? renderRoutineSection('cancelled-body', 'cancelled', 'Cancelled', cancelled, false) : '');
   area.scrollTop = scrollTop;
 }
 
-async function loadReminders() {
-  const r = await fetch('/api/debug/reminders');
+async function loadRoutines() {
+  const r = await fetch('/api/debug/routines');
   const d = await r.json();
-  renderReminders(d);
+  renderRoutines(d);
 }
 
-function renderReminderSection(id, sectionKey, label, reminders, showActions) {
-  const isClosed = _closedReminders.has(sectionKey);
+function renderRoutineSection(id, sectionKey, label, routines, showActions) {
+  const isClosed = _closedRoutines.has(sectionKey);
   return `
     <div class="section-hdr${isClosed ? '' : ' open'}"
-         data-section-id="${esc(sectionKey)}" data-section-type="reminder"
+         data-section-id="${esc(sectionKey)}" data-section-type="routine"
          onclick="toggleSection(this)">
-      <span>${label} <small>(${reminders.length})</small></span>
+      <span>${label} <small>(${routines.length})</small></span>
       <span>&#9660;</span>
     </div>
     <div class="section-body" style="${isClosed ? 'display:none' : ''}">
@@ -1060,16 +1060,16 @@ function renderReminderSection(id, sectionKey, label, reminders, showActions) {
           ${showActions ? '<th colspan="2"></th>' : ''}
         </tr></thead>
         <tbody id="${id}">
-          ${reminderRows(reminders, showActions)}
+          ${routineRows(routines, showActions)}
         </tbody>
       </table>
     </div>`;
 }
 
-function reminderRows(reminders, showActions) {
-  if (!reminders.length) return `<tr><td colspan="${showActions ? 8 : 6}" class="empty">None</td></tr>`;
-  return reminders.map(rem => {
-    // Store serialised reminder on a data attribute to avoid inline JS quoting issues.
+function routineRows(routines, showActions) {
+  if (!routines.length) return `<tr><td colspan="${showActions ? 8 : 6}" class="empty">None</td></tr>`;
+  return routines.map(rem => {
+    // Store serialised routine on a data attribute to avoid inline JS quoting issues.
     const dataRem = esc(JSON.stringify(rem));
     return `<tr>
     <td class="mono">${esc(rem.id)}</td>
@@ -1079,8 +1079,8 @@ function reminderRows(reminders, showActions) {
     <td class="mono dim">${esc(rem.thread_id || 'system')}</td>
     <td class="trunc dim" title="${esc(rem.ai_prompt || '')}">${esc((rem.ai_prompt || '\u2014').slice(0, 40))}</td>
     ${showActions ? `
-    <td><button class="btn btn-sm" data-rem="${dataRem}" onclick="editReminder(JSON.parse(this.dataset.rem))">Edit</button></td>
-    <td><button class="btn btn-danger btn-sm" data-id="${esc(rem.id)}" onclick="deleteReminder(this.dataset.id)">Delete</button></td>
+    <td><button class="btn btn-sm" data-rem="${dataRem}" onclick="editRoutine(JSON.parse(this.dataset.rem))">Edit</button></td>
+    <td><button class="btn btn-danger btn-sm" data-id="${esc(rem.id)}" onclick="deleteRoutine(this.dataset.id)">Delete</button></td>
     ` : ''}
   </tr>`;
   }).join('');
@@ -1122,15 +1122,15 @@ function toggleSection(hdr) {
   const id   = hdr.dataset.sectionId;
   const type = hdr.dataset.sectionType;
   if (!id) return;
-  const set = type === 'workflow' ? _closedWorkflows : _closedReminders;
+  const set = type === 'workflow' ? _closedWorkflows : _closedRoutines;
   hdr.classList.contains('open') ? set.delete(id) : set.add(id);
 }
 
-async function deleteReminder(jobId) {
-  if (!confirm('Delete reminder ' + jobId + '?')) return;
-  const r = await fetch('/api/debug/reminders/' + encodeURIComponent(jobId), {method: 'DELETE'});
+async function deleteRoutine(jobId) {
+  if (!confirm('Delete routine ' + jobId + '?')) return;
+  const r = await fetch('/api/debug/routines/' + encodeURIComponent(jobId), {method: 'DELETE'});
   const data = await r.json();
-  if (data.ok) await loadReminders();
+  if (data.ok) await loadRoutines();
   else alert('Error: ' + (data.error || JSON.stringify(data)));
 }
 
@@ -1149,11 +1149,11 @@ function onScheduleTypeChange(val) {
 }
 
 // Fill the create form with existing values so the user can edit and re-submit.
-// Stores the old job_id; on submit the old reminder is deleted after creating the new one.
+// Stores the old job_id; on submit the old routine is deleted after creating the new one.
 let _editReplaceId = null;
 
-function editReminder(rem) {
-  const form = document.getElementById('reminder-form');
+function editRoutine(rem) {
+  const form = document.getElementById('routine-form');
   const stype = rem.type || 'once';
   form.schedule_type.value    = stype;
   form.message.value          = rem.message   || '';
@@ -1188,7 +1188,7 @@ function editReminder(rem) {
   form.scrollIntoView({behavior: 'smooth'});
 }
 
-async function createReminder(e) {
+async function createRoutine(e) {
   e.preventDefault();
   const form = e.target;
   const stype = form.schedule_type.value;
@@ -1211,7 +1211,7 @@ async function createReminder(e) {
   if (aiPrompt) payload.ai_prompt = aiPrompt;
   if (form.background.checked) payload.background = true;
 
-  const r = await fetch('/api/debug/reminders', {
+  const r = await fetch('/api/debug/routines', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(payload),
@@ -1219,15 +1219,15 @@ async function createReminder(e) {
   const data = await r.json();
   if (data.error) { alert('Error: ' + data.error); return; }
 
-  // If editing an existing reminder, delete the old one now.
+  // If editing an existing routine, delete the old one now.
   if (_editReplaceId) {
-    await fetch('/api/debug/reminders/' + encodeURIComponent(_editReplaceId), {method: 'DELETE'});
+    await fetch('/api/debug/routines/' + encodeURIComponent(_editReplaceId), {method: 'DELETE'});
     _editReplaceId = null;
     form.querySelector('[type=submit]').textContent = '+ Create';
   }
   form.reset();
   onScheduleTypeChange('once');
-  await loadReminders();
+  await loadRoutines();
 }
 // ── Interaction Log ──
 function _makeILRow(e) {
@@ -1437,7 +1437,7 @@ class WebInterface:
 
     Optional debug dependencies (injected post-construction in main.py):
       _sub_sessions  – SubSessionManager
-      _scheduler     – ReminderScheduler
+      _scheduler     – RoutineScheduler
       _matrix        – MatrixThread
       _main_pool     – BackendPool (for context_size / max_tokens)
     """
@@ -1500,9 +1500,9 @@ class WebInterface:
         app.router.add_get("/api/debug/jobs",                           self._api_jobs)
         app.router.add_get("/api/debug/config",                          self._api_config)
         app.router.add_get("/api/debug/system-prompt",                  self._api_system_prompt)
-        app.router.add_get("/api/debug/reminders",                      self._api_reminders)
-        app.router.add_post("/api/debug/reminders",                     self._api_reminder_create)
-        app.router.add_delete("/api/debug/reminders/{job_id}",          self._api_reminder_delete)
+        app.router.add_get("/api/debug/routines",                      self._api_routines)
+        app.router.add_post("/api/debug/routines",                     self._api_routine_create)
+        app.router.add_delete("/api/debug/routines/{job_id}",          self._api_routine_delete)
         app.router.add_get("/api/debug/agenda",                           self._api_agenda)
         app.router.add_get("/api/debug/interaction-log",                 self._api_interaction_log)
         app.router.add_get("/api/debug/interaction-log/{id}",            self._api_interaction_log_entry)
@@ -1755,34 +1755,34 @@ class WebInterface:
         return self._json({"jobs": self._scheduler.list_jobs()})
 
     # ------------------------------------------------------------------
-    # Debug REST API — reminders
+    # Debug REST API — routines
     # ------------------------------------------------------------------
 
-    async def _api_reminders(self, _request: web.Request) -> web.Response:
-        raw = tool_module.execute_tool("list_reminders", {})
+    async def _api_routines(self, _request: web.Request) -> web.Response:
+        raw = tool_module.execute_tool("list_routines", {})
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
             data = {"active": [], "completed": [], "failed": []}
         return self._json(data)
 
-    async def _api_reminder_create(self, request: web.Request) -> web.Response:
+    async def _api_routine_create(self, request: web.Request) -> web.Response:
         try:
             payload = await request.json()
         except Exception as exc:  # noqa: BLE001
             return self._json({"error": f"Invalid JSON: {exc}"})
-        raw = tool_module.execute_tool("set_reminder", payload)
+        raw = tool_module.execute_tool("set_routine", payload)
         try:
             result = json.loads(raw)
         except json.JSONDecodeError:
             result = {"raw": raw}
         return self._json(result)
 
-    async def _api_reminder_delete(self, request: web.Request) -> web.Response:
+    async def _api_routine_delete(self, request: web.Request) -> web.Response:
         job_id = request.match_info["job_id"]
         if self._scheduler is None:
             return self._json({"error": "Scheduler not available"})
-        ok = self._scheduler.delete_reminder(job_id)
+        ok = self._scheduler.delete_routine(job_id)
         return self._json({"ok": ok, "job_id": job_id})
 
 
@@ -1871,12 +1871,12 @@ class WebInterface:
         # Scheduled jobs
         jobs = self._scheduler.list_jobs() if self._scheduler else []
 
-        # Reminders
-        raw = tool_module.execute_tool("list_reminders", {})
+        # Routines
+        raw = tool_module.execute_tool("list_routines", {})
         try:
-            reminders = json.loads(raw)
+            routines = json.loads(raw)
         except json.JSONDecodeError:
-            reminders = {"active": [], "completed": [], "failed": []}
+            routines = {"active": [], "completed": [], "failed": []}
 
         # Agenda items (all statuses for the debug view)
         agenda_items = database.list_agenda_items("all")
@@ -1890,7 +1890,7 @@ class WebInterface:
             "subsessions": subsessions,
             "workflows": workflows,
             "jobs": jobs,
-            "reminders": reminders,
+            "routines": routines,
             "agenda": agenda_items,
             "interactions_total": interactions_total,
             "interactions_max_id": interactions_max_id,

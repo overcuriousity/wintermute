@@ -63,7 +63,7 @@ Periodic autonomous reviews of active agenda items.
 - Runs at a configurable interval (default: every 60 minutes)
 - Spawns one sub-session per thread that has active agenda items bound to it (via `thread_id`)
 - Each sub-session runs in `full` mode with `parent_thread_id` set to the originating thread, so results are delivered back to that room
-- The sub-session lists agenda items via the `agenda` tool and takes appropriate actions (complete items, add new ones, set reminders, update memories, run commands, etc.)
+- The sub-session lists agenda items via the `agenda` tool and takes appropriate actions (complete items, add new ones, set routines, update memories, run commands, etc.)
 - If nothing needs attention the worker responds with `[NO_ACTION]` and the result is suppressed — no message is sent
 - Agenda items without a `thread_id` (legacy/unbound items) are skipped by the review loop
 - New agenda items automatically inherit the `thread_id` of the thread that created them
@@ -142,17 +142,17 @@ When a `full`-mode sub-session (depth 1) spawns children (depth 2), individual c
 
 This is fully deterministic — no LLM inference is involved in the routing or aggregation logic. A deduplication set prevents duplicate delivery when multiple children complete near-simultaneously.
 
-## Reminder-triggered Inference
+## Routine-triggered Inference
 
 **Module:** `wintermute/scheduler_thread.py`
 
-Reminders can optionally trigger AI inference when they fire:
+Routines can optionally trigger AI inference when they fire:
 
-- If `ai_prompt` is set on a reminder, an isolated AI inference runs with that prompt
-- Thread-bound reminders deliver the response to the originating chat thread
-- System reminders (no thread) fire as system events
+- If `ai_prompt` is set on a routine, an isolated AI inference runs with that prompt
+- Thread-bound routines deliver the response to the originating chat thread
+- System routines (no thread) fire as system events
 - Supports one-time, daily, weekly, monthly, and interval schedules
-- Interval reminders can be restricted to time windows (e.g. 08:00-20:00)
+- Interval routines can be restricted to time windows (e.g. 08:00-20:00)
 
 ## Context Compaction
 

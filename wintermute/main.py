@@ -9,7 +9,7 @@ Startup sequence:
   2. Configure logging
   3. Initialise SQLite databases
   4. Ensure data/ files exist
-  5. Restore APScheduler jobs (and execute missed reminders)
+  5. Restore APScheduler jobs (and execute missed routines)
   6. Build shared broadcast function (Matrix + web)
   7. Start LLM inference task
   8. Start web interface task (if enabled)
@@ -39,7 +39,7 @@ from wintermute.llm_thread import BackendPool, LLMThread, MultiProviderConfig, P
 from wintermute.matrix_thread import MatrixConfig, MatrixThread
 from wintermute.dreaming import DreamingConfig, DreamingLoop
 from wintermute.memory_harvest import MemoryHarvestConfig, MemoryHarvestLoop
-from wintermute.scheduler_thread import ReminderScheduler, SchedulerConfig
+from wintermute.scheduler_thread import RoutineScheduler, SchedulerConfig
 from wintermute.sub_session import SubSessionManager
 from wintermute.web_interface import WebInterface
 
@@ -310,7 +310,7 @@ async def main() -> None:
     nl_raw = cfg.get("nl_translation", {}) or {}
     nl_translation_config = {
         "enabled": nl_raw.get("enabled", False) and nl_translation_pool.enabled,
-        "tools": set(nl_raw.get("tools", ["set_reminder", "spawn_sub_session"])),
+        "tools": set(nl_raw.get("tools", ["set_routine", "spawn_sub_session"])),
     }
     if nl_translation_config["enabled"]:
         prompt_loader.validate_nl_translation()
@@ -440,7 +440,7 @@ async def main() -> None:
         web_iface._llm = llm
         web_iface._kimi_client = client_cache.get(("kimi-code",))
 
-    scheduler = ReminderScheduler(
+    scheduler = RoutineScheduler(
         config=scheduler_cfg,
         broadcast_fn=broadcast,
         llm_enqueue_fn=llm.enqueue_system_event,

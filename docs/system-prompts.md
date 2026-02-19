@@ -17,7 +17,7 @@ Content covers:
 - Background process awareness (agenda reviews, nightly dreaming, context compaction)
 - Tool usage patterns and categories
 - Sub-session delegation and workflow DAGs with `depends_on`
-- System event handling (sub-session results, reminders, errors, timeouts)
+- System event handling (sub-session results, routines, errors, timeouts)
 - Behavioural guidelines (concise responses, credential policy, confidence)
 
 ### 2. MEMORIES.txt — Long-Term Facts

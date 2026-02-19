@@ -1,16 +1,16 @@
 """
-Reminder Scheduler
+Routine Scheduler
 
-Uses APScheduler with a persistent SQLite job store so reminders survive
+Uses APScheduler with a persistent SQLite job store so routines survive
 restarts.  At startup it detects missed executions and runs them immediately.
 
-The ``set_reminder`` and ``list_reminders`` functions are injected into the
+The ``set_routine`` and ``list_routines`` functions are injected into the
 tools module so the LLM can schedule and query jobs through the normal tool
 interface.
 
 APScheduler's SQLite store is the single source of truth for active jobs.
-A separate JSON file (data/reminder_history.json) keeps an append-only log
-of completed and failed reminders for display purposes only.
+A separate JSON file (data/routine_history.json) keeps an append-only log
+of completed and failed routines for display purposes only.
 
 Natural-language time parsing is handled by a simple heuristic + dateutil.
 For production use you might replace this with a dedicated NLP parser.
@@ -42,15 +42,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data")
-HISTORY_FILE = DATA_DIR / "reminder_history.json"
+HISTORY_FILE = DATA_DIR / "routine_history.json"
 SCHEDULER_DB = "data/scheduler.db"
 
 # Module-level reference so the job function below can be pickled by APScheduler.
-# Set by ReminderScheduler.start().
-_instance: Optional["ReminderScheduler"] = None
+# Set by RoutineScheduler.start().
+_instance: Optional["RoutineScheduler"] = None
 
 
-async def _fire_reminder_job(job_id: str, message: str, ai_prompt: Optional[str],
+async def _fire_routine_job(job_id: str, message: str, ai_prompt: Optional[str],
                              thread_id: Optional[str] = None,
                              **_extra) -> None:
     """
@@ -62,7 +62,7 @@ async def _fire_reminder_job(job_id: str, message: str, ai_prompt: Optional[str]
     stored alongside the job for query purposes.
     """
     if _instance is not None:
-        await _instance._fire_reminder(job_id, message, ai_prompt, thread_id)
+        await _instance._fire_routine(job_id, message, ai_prompt, thread_id)
 
 
 @dataclass
@@ -70,11 +70,11 @@ class SchedulerConfig:
     timezone: str = "UTC"
 
 
-class ReminderScheduler:
-    """Wraps APScheduler and manages reminders.
+class RoutineScheduler:
+    """Wraps APScheduler and manages routines.
 
     APScheduler's persistent SQLite store is the single source of truth for
-    active reminders.  Metadata (schedule description, creation time) is
+    active routines.  Metadata (schedule description, creation time) is
     stored in the job's kwargs so it can be retrieved without a second store.
 
     Completed/failed history is appended to a JSON log for display only.
@@ -110,24 +110,24 @@ class ReminderScheduler:
         _instance = self
 
         # Register tool callables into the tools module.
-        tool_module.register_scheduler(self._schedule_reminder)
-        tool_module.register_reminder_lister(self.list_reminders)
-        tool_module.register_reminder_deleter(self.delete_reminder)
+        tool_module.register_scheduler(self._schedule_routine)
+        tool_module.register_routine_lister(self.list_routines)
+        tool_module.register_routine_deleter(self.delete_routine)
 
         self._recover_missed()
         self._migrate_legacy_registry()
-        logger.info("Reminder scheduler started (timezone=%s)", self._cfg.timezone)
+        logger.info("Routine scheduler started (timezone=%s)", self._cfg.timezone)
 
     def stop(self) -> None:
         if self._scheduler and self._scheduler.running:
             self._scheduler.shutdown(wait=False)
-            logger.info("Reminder scheduler stopped")
+            logger.info("Routine scheduler stopped")
 
     # ------------------------------------------------------------------
     # Querying
     # ------------------------------------------------------------------
 
-    def list_reminders(self) -> dict:
+    def list_routines(self) -> dict:
         """Return a combined view: active from APScheduler + history from JSON."""
         active = []
         for job in self._scheduler.get_jobs():
@@ -162,8 +162,8 @@ class ReminderScheduler:
             })
         return result
 
-    def delete_reminder(self, job_id: str) -> bool:
-        """Remove a reminder by job_id.  Returns True if found and removed."""
+    def delete_routine(self, job_id: str) -> bool:
+        """Remove a routine by job_id.  Returns True if found and removed."""
         if self._scheduler.get_job(job_id) is None:
             return False
         self._scheduler.remove_job(job_id)
@@ -177,18 +177,18 @@ class ReminderScheduler:
     # Scheduling
     # ------------------------------------------------------------------
 
-    def _schedule_reminder(self, inputs: dict) -> str:
+    def _schedule_routine(self, inputs: dict) -> str:
         """Called by the tools module. Parses inputs and creates the job."""
         message       = inputs["message"]
         ai_prompt     = inputs.get("ai_prompt")
         schedule_type = inputs.get("schedule_type", "once")
-        thread_id     = inputs.get("thread_id")  # None for system reminders
+        thread_id     = inputs.get("thread_id")  # None for system routines
 
-        job_id = f"reminder_{uuid.uuid4().hex[:8]}"
+        job_id = f"routine_{uuid.uuid4().hex[:8]}"
         trigger = self._parse_trigger(inputs)
 
         self._scheduler.add_job(
-            _fire_reminder_job,
+            _fire_routine_job,
             trigger=trigger,
             id=job_id,
             kwargs={
@@ -205,48 +205,48 @@ class ReminderScheduler:
         )
 
         next_run = self._scheduler.get_job(job_id).next_run_time
-        logger.info("Reminder scheduled: %s at %s (thread=%s)", job_id, next_run, thread_id)
+        logger.info("Routine scheduled: %s at %s (thread=%s)", job_id, next_run, thread_id)
         return job_id
 
     # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
 
-    async def _fire_reminder(self, job_id: str, message: str, ai_prompt: Optional[str],
+    async def _fire_routine(self, job_id: str, message: str, ai_prompt: Optional[str],
                              thread_id: Optional[str] = None) -> None:
-        logger.info("Firing reminder %s (thread=%s)", job_id, thread_id)
+        logger.info("Firing routine %s (thread=%s)", job_id, thread_id)
         try:
             if ai_prompt:
                 if thread_id:
                     await self._llm_enqueue(
-                        f"[REMINDER {job_id}] {ai_prompt}\n\n"
-                        f"(Original reminder message: {message})",
+                        f"[ROUTINE {job_id}] {ai_prompt}\n\n"
+                        f"(Original routine message: {message})",
                         thread_id,
                     )
                 else:
                     if self._sub_sessions is not None:
                         self._sub_sessions.spawn(
                             objective=(
-                                f"[REMINDER {job_id}] {ai_prompt}\n\n"
-                                f"(Original reminder message: {message})"
+                                f"[ROUTINE {job_id}] {ai_prompt}\n\n"
+                                f"(Original routine message: {message})"
                             ),
                             parent_thread_id=None,
                             system_prompt_mode="base_only",
                         )
                     else:
                         logger.warning(
-                            "System reminder %s has ai_prompt but SubSessionManager "
+                            "System routine %s has ai_prompt but SubSessionManager "
                             "is not available — skipping AI execution", job_id
                         )
             else:
                 if thread_id:
-                    await self._broadcast(f"\u23f0 Reminder: {message}", thread_id)
+                    await self._broadcast(f"\u23f0 Routine: {message}", thread_id)
                 else:
                     # No thread_id and no ai_prompt — should not happen after
                     # the tool-level fix that always injects thread_id at
                     # creation time.  Log loudly so it's visible in the journal.
                     logger.warning(
-                        "Reminder %s has no thread_id and no ai_prompt — "
+                        "Routine %s has no thread_id and no ai_prompt — "
                         "message was NOT delivered: %s", job_id, message
                     )
 
@@ -258,7 +258,7 @@ class ReminderScheduler:
                     "completed_at": datetime.now(timezone.utc).isoformat(),
                 })
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Reminder %s failed", job_id)
+            logger.exception("Routine %s failed", job_id)
             _append_history("failed", {
                 "id": job_id,
                 "message": message,
@@ -267,7 +267,7 @@ class ReminderScheduler:
             })
             try:
                 if thread_id:
-                    await self._broadcast(f"\u274c Reminder {job_id} failed: {exc}", thread_id)
+                    await self._broadcast(f"\u274c Routine {job_id} failed: {exc}", thread_id)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -287,12 +287,12 @@ class ReminderScheduler:
     # ------------------------------------------------------------------
 
     def _migrate_legacy_registry(self) -> None:
-        """One-time migration from the old dual-write reminders.json.
+        """One-time migration from the old dual-write routines.json.
 
         Moves completed/failed entries to the new history file and removes
         the legacy file.
         """
-        legacy = DATA_DIR / "reminders.json"
+        legacy = DATA_DIR / "routines.json"
         if not legacy.exists():
             return
         try:
@@ -309,7 +309,7 @@ class ReminderScheduler:
                 migrated = True
         if migrated:
             legacy.unlink(missing_ok=True)
-            logger.info("Migrated legacy reminders.json to reminder_history.json")
+            logger.info("Migrated legacy routines.json to routine_history.json")
 
     # ------------------------------------------------------------------
     # Time parsing

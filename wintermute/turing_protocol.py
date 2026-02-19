@@ -144,11 +144,11 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         detection_prompt=(
             '- **phantom_tool_result**: The assistant\'s text presents specific data '
             'or claims a concrete action was completed — e.g. file contents, search '
-            'results, command output, a reminder being set/scheduled, a reminder '
+            'results, command output, a routine being set/scheduled, a routine '
             'being cancelled/deleted, memory being saved, a skill being created — '
             'as if **already done** during THIS exchange, AND the corresponding tool '
             '(`read_file`, `search_web`, `fetch_url`, `execute_shell`, '
-            '`list_reminders`, `set_reminder`, `delete_reminder`, `append_memory`, '
+            '`list_routines`, `set_routine`, `delete_routine`, `append_memory`, '
             '`agenda`, `add_skill`) is NOT in tool_calls_made. '
             'Do NOT flag general knowledge, reasoning from context, references to '
             'information the user provided, or information from earlier in the '
@@ -243,7 +243,7 @@ _BUILTIN_HOOKS: list[TuringHook] = [
             "Issue: {reason}\n\n"
             "Do NOT complete agenda items unless you have concrete, verifiable "
             "proof the task is finished. If the item describes ongoing work or "
-            "a reminder, leave it active. Provide a detailed 'reason' with "
+            "a routine, leave it active. Provide a detailed 'reason' with "
             "evidence when completing."
         ),
         halt_inference=False,

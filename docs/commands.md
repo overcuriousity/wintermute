@@ -6,9 +6,9 @@ All commands are available in both Matrix and the web UI.
 |---------|-------------|
 | `/new` | Reset conversation history for the current thread. Archives all messages and clears the compaction summary. Also cancels any running sub-sessions bound to this thread. |
 | `/compact` | Force context compaction. Summarises older messages and archives them, keeping the last 10 messages intact. Shows before/after token counts. |
-| `/reminders` | List all scheduled reminders (active, completed, and failed). |
+| `/routines` | List all scheduled routines (active, completed, and failed). |
 | `/agenda` | Manually trigger a agenda review. Enqueues a system event asking the AI to review active agenda items and report any actions taken. |
-| `/status` | Show detailed system status: running asyncio tasks, active sub-sessions, workflow state, agenda/dreaming loop status, and reminder count. |
+| `/status` | Show detailed system status: running asyncio tasks, active sub-sessions, workflow state, agenda/dreaming loop status, and routine count. |
 | `/dream` | Manually trigger the nightly dreaming consolidation of MEMORIES.txt and agenda items. Shows before/after counts. |
 | `/kimi-auth` | Start Kimi-Code OAuth device-code flow. Broadcasts the verification URL to the current chat. Only relevant when a `kimi-code` backend is configured. |
 | `/verify-session` | Send an E2EE SAS verification request to all `allowed_users`. Matrix-only. Useful after key changes or to establish cross-signing trust. Has no effect if E2EE is not available. |

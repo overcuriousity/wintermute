@@ -18,7 +18,7 @@ device shows as verified (green shield) in Element.
 Special commands handled directly (before reaching the LLM):
   /new         - reset the conversation for the current room
   /compact     - force context compaction for the current room
-  /reminders   - list active reminders
+  /routines   - list active routines
   /agenda       - manually trigger agenda review
   /fingerprint - print the Ed25519 device fingerprint
 """
@@ -1242,10 +1242,10 @@ class MatrixThread:
             )
             return
 
-        if content is None and text == "/reminders":
+        if content is None and text == "/routines":
             from wintermute import tools as tool_module
-            result = tool_module.execute_tool("list_reminders", {})
-            await self.send_message(f"Reminders:\n```json\n{result}\n```", thread_id)
+            result = tool_module.execute_tool("list_routines", {})
+            await self.send_message(f"Routines:\n```json\n{result}\n```", thread_id)
             return
 
         if content is None and text == "/agenda":
@@ -1284,7 +1284,7 @@ class MatrixThread:
                 "**Available commands:**\n"
                 "- `/new` – Reset conversation history\n"
                 "- `/compact` – Compact context (summarise old messages)\n"
-                "- `/reminders` – List active reminders\n"
+                "- `/routines` – List active routines\n"
                 "- `/agenda` – Trigger a agenda review\n"
                 "- `/status` – Show system status\n"
                 "- `/dream` – Trigger a dream cycle\n"
@@ -1357,8 +1357,8 @@ class MatrixThread:
 
         # Scheduler
         if hasattr(self, "_scheduler") and self._scheduler:
-            reminders = self._scheduler.list_reminders()
-            lines.append(f"**Reminders:** {len(reminders.get('active', []))} active")
+            routines = self._scheduler.list_routines()
+            lines.append(f"**Routines:** {len(routines.get('active', []))} active")
 
         await self.send_message("\n".join(lines), thread_id)
 

@@ -111,7 +111,7 @@ nl_translation:
   enabled: false                        # Opt-in; default off
   backends: ["local_small"]             # Translator LLM (small/fast recommended)
   tools:                                # Which tools use NL schemas
-    - set_reminder
+    - set_routine
     - spawn_sub_session
 
 # ── Context Compaction ────────────────────────────────────────────
@@ -149,7 +149,7 @@ memory_harvest:
 
 # ── Scheduler ─────────────────────────────────────────────────────
 scheduler:
-  timezone: "UTC"                         # Timezone for reminder scheduling (e.g. Europe/Berlin)
+  timezone: "UTC"                         # Timezone for routine scheduling (e.g. Europe/Berlin)
 
 # ── Logging ───────────────────────────────────────────────────────
 logging:

@@ -14,7 +14,7 @@ Available at `/debug`. Provides a live inspection and administration view with a
 | **Sub-sessions** | All background workers with ID, workflow, dependencies, parent thread, status, objective, system prompt mode, creation time, duration, and result/error preview. Click a sub-session to inspect its full message history. |
 | **Workflows** | Workflow DAGs with per-node status, objectives, dependencies, and result previews. Collapsible sections per workflow. |
 | **Jobs** | APScheduler jobs with trigger type, next run time, and arguments. |
-| **Reminders** | Full reminder management: create, edit, and delete reminders. Sections for active, completed, failed, and cancelled reminders. Supports all schedule types (once, daily, weekly, monthly, interval). |
+| **Routines** | Full routine management: create, edit, and delete routines. Sections for active, completed, failed, and cancelled routines. Supports all schedule types (once, daily, weekly, monthly, interval). |
 
 ## Debug REST API
 
@@ -33,9 +33,9 @@ The debug panel is backed by a REST API:
 | GET | `/api/debug/jobs` | List all scheduler jobs |
 | GET | `/api/debug/config` | Dump the current (sanitised) runtime config |
 | GET | `/api/debug/system-prompt` | Get the assembled system prompt + tool schemas with token counts |
-| GET | `/api/debug/reminders` | List all reminders |
-| POST | `/api/debug/reminders` | Create a new reminder |
-| DELETE | `/api/debug/reminders/{job_id}` | Delete a reminder |
+| GET | `/api/debug/routines` | List all routines |
+| POST | `/api/debug/routines` | Create a new routine |
+| DELETE | `/api/debug/routines/{job_id}` | Delete a routine |
 | GET | `/api/debug/agenda` | List current agenda items |
 | GET | `/api/debug/interaction-log` | List Turing Protocol interaction log entries |
 | GET | `/api/debug/interaction-log/{id}` | Get a specific interaction log entry |

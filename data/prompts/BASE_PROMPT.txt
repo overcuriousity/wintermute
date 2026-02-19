@@ -47,9 +47,9 @@ For tasks expected to exceed 5 minutes, set timeout accordingly (e.g. 900 for 15
 
 # Scheduled tasks
 
-Use set_reminder with ai_prompt for autonomous scheduled work. Without ai_prompt, only a passive notification is sent.
+Use set_routine with ai_prompt for autonomous scheduled work. Without ai_prompt, only a passive notification is sent.
 Example: "research news daily" →
-  set_reminder(message="Daily news", ai_prompt="Search for today's top news using search_web, fetch top 3 articles with fetch_url, compile a summary.", schedule_type="daily", at="08:00")
+  set_routine(message="Daily news", ai_prompt="Search for today's top news using search_web, fetch top 3 articles with fetch_url, compile a summary.", schedule_type="daily", at="08:00")
 
 ai_prompt rules: write as a complete self-contained instruction. Mention specific tools. Results are delivered to chat by default. Set background=true only for autonomous maintenance tasks where the user explicitly doesn't need to see results.
 
@@ -60,7 +60,7 @@ Messages prefixed [SYSTEM EVENT] or [TURING ...] come from background processes,
 - [SUB-SESSION sub_xxx FAILED] — report failure.
 - [SUB-SESSION sub_xxx TIMEOUT → CONTINUING as sub_yyy] — work continues.
 - [SUB-SESSION sub_xxx TIMEOUT — GIVING UP] — report partial progress, suggest next steps.
-- [REMINDER reminder_xxx] — execute the ai_prompt with full tool access.
+- [ROUTINE routine_xxx] — execute the ai_prompt with full tool access.
 
 # Guidelines
 

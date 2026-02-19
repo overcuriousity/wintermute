@@ -31,12 +31,12 @@ Two architectural choices make this concrete:
 - **Workflow DAG** — multi-step tasks are expressed as dependency graphs via `depends_on`; downstream tasks auto-start when their dependencies complete, with results passed as context
 - **Tool-filtered workers** — minimal workers receive only execution + research tools; `full`-mode workers get orchestration tools too, keeping context lean
 - **Web search** — `search_web` queries a local SearXNG instance and falls back to DuckDuckGo when SearXNG is unavailable
-- **Reminders & scheduler** — one-time and recurring reminders with optional AI inference on trigger; per-timezone scheduling
+- **Routines & scheduler** — one-time and recurring routines with optional AI inference on trigger; per-timezone scheduling
 - **Nightly dreaming** — automatic overnight consolidation of MEMORIES.txt and agenda items via a direct LLM call (no tool loop, no conversation side effects)
 - **Agenda reviews** — periodic autonomous reviews of active agenda items via an isolated sub-session (no conversation pollution)
 - **Context compaction** — when conversation history approaches the model's context window, older messages are summarised and chained into a rolling summary that preserves context across compaction cycles
 - **Turing Protocol** — three-stage validation pipeline (detect → validate → correct) that automatically corrects hallucinations and unfulfilled commitments
-- **Audit trail** — every inference call, tool execution, and Turing Protocol decision is logged to SQLite. A web interface provides a live inspection panel for sessions, sub-sessions, jobs, reminders, agenda items, and assembled system prompts
+- **Audit trail** — every inference call, tool execution, and Turing Protocol decision is logged to SQLite. A web interface provides a live inspection panel for sessions, sub-sessions, jobs, routines, agenda items, and assembled system prompts
 - **Any OpenAI-compatible backend** — llama-server, vLLM, LM Studio, OpenAI or any compatible endpoint. Working towards integrating subscription-based providers, kimi-code currently functional
 
 ---

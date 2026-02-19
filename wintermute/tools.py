@@ -9,7 +9,7 @@ Tool categories
 ---------------
   "execution"     – shell, file I/O (available to all sub-session modes)
   "research"      – web search, URL fetching (available to all sub-session modes)
-  "orchestration" – memory, reminders, skills, sub-session spawning (main agent
+  "orchestration" – memory, routines, skills, sub-session spawning (main agent
                     and "full"-mode sub-sessions only)
 """
 
@@ -116,9 +116,9 @@ TOOL_SCHEMAS = [
         },
     ),
     _fn(
-        "set_reminder",
+        "set_routine",
         (
-            "Schedule a one-time or recurring reminder. With ai_prompt, an autonomous AI "
+            "Schedule a one-time or recurring routine. With ai_prompt, an autonomous AI "
             "inference runs when it fires; without, only a text notification is sent."
         ),
         {
@@ -126,12 +126,12 @@ TOOL_SCHEMAS = [
             "properties": {
                 "message": {
                     "type": "string",
-                    "description": "Reminder text delivered to chat when it fires.",
+                    "description": "Routine text delivered to chat when it fires.",
                 },
                 "ai_prompt": {
                     "type": "string",
                     "description": (
-                        "AI prompt to run when the reminder fires (full tool access). "
+                        "AI prompt to run when the routine fires (full tool access). "
                         "Set whenever the user wants an action performed, not just a notification. "
                         "Write as a complete task instruction."
                     ),
@@ -292,19 +292,19 @@ TOOL_SCHEMAS = [
         },
     ),
     _fn(
-        "list_reminders",
-        "Returns active, completed, and failed reminders.",
+        "list_routines",
+        "Returns active, completed, and failed routines.",
         {"type": "object", "properties": {}},
     ),
     _fn(
-        "delete_reminder",
-        "Cancel and remove an active reminder by its ID.",
+        "delete_routine",
+        "Cancel and remove an active routine by its ID.",
         {
             "type": "object",
             "properties": {
                 "job_id": {
                     "type": "string",
-                    "description": "Reminder ID to cancel (e.g. 'reminder_7735fb78').",
+                    "description": "Routine ID to cancel (e.g. 'routine_7735fb78').",
                 }
             },
             "required": ["job_id"],
@@ -360,20 +360,20 @@ TOOL_CATEGORIES: dict[str, str] = {
     "search_web":         "research",
     "fetch_url":          "research",
     "spawn_sub_session":  "orchestration",
-    "set_reminder":       "orchestration",
+    "set_routine":       "orchestration",
     "append_memory":      "orchestration",
     "agenda":              "orchestration",
     "add_skill":          "orchestration",
-    "list_reminders":     "orchestration",
-    "delete_reminder":    "orchestration",
+    "list_routines":     "orchestration",
+    "delete_routine":    "orchestration",
 }
 
 
 NL_TOOL_SCHEMAS = [
     _fn(
-        "set_reminder",
+        "set_routine",
         (
-            "Schedule a one-time or recurring reminder. Describe what you want "
+            "Schedule a one-time or recurring routine. Describe what you want "
             "in plain English — the system will translate it into structured arguments."
         ),
         {
@@ -382,7 +382,7 @@ NL_TOOL_SCHEMAS = [
                 "description": {
                     "type": "string",
                     "description": (
-                        "Plain-English description of the reminder: what, when, "
+                        "Plain-English description of the routine: what, when, "
                         "how often, and any action to perform when it fires."
                     ),
                 },
@@ -458,30 +458,30 @@ def get_tool_schemas(categories: set[str] | None = None,
 # ---------------------------------------------------------------------------
 
 # These will be injected by the scheduler thread at startup.
-_scheduler_set_reminder = None    # Callable[[dict], str]
-_scheduler_list_reminders = None  # Callable[[], dict]
-_scheduler_delete_reminder = None # Callable[[str], bool]
+_scheduler_set_routine = None    # Callable[[dict], str]
+_scheduler_list_routines = None  # Callable[[], dict]
+_scheduler_delete_routine = None # Callable[[str], bool]
 
 # This will be injected by the SubSessionManager at startup.
 _sub_session_spawn = None  # Callable[[dict, str], str]
 
 
 def register_scheduler(fn) -> None:
-    """Called once by the scheduler thread to provide the set_reminder hook."""
-    global _scheduler_set_reminder
-    _scheduler_set_reminder = fn
+    """Called once by the scheduler thread to provide the set_routine hook."""
+    global _scheduler_set_routine
+    _scheduler_set_routine = fn
 
 
-def register_reminder_lister(fn) -> None:
-    """Called once by the scheduler thread to provide the list_reminders hook."""
-    global _scheduler_list_reminders
-    _scheduler_list_reminders = fn
+def register_routine_lister(fn) -> None:
+    """Called once by the scheduler thread to provide the list_routines hook."""
+    global _scheduler_list_routines
+    _scheduler_list_routines = fn
 
 
-def register_reminder_deleter(fn) -> None:
-    """Called once by the scheduler thread to provide the delete_reminder hook."""
-    global _scheduler_delete_reminder
-    _scheduler_delete_reminder = fn
+def register_routine_deleter(fn) -> None:
+    """Called once by the scheduler thread to provide the delete_routine hook."""
+    global _scheduler_delete_routine
+    _scheduler_delete_routine = fn
 
 
 def register_sub_session_manager(fn) -> None:
@@ -546,8 +546,8 @@ def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
         return json.dumps({"error": str(exc)})
 
 
-def _tool_set_reminder(inputs: dict, thread_id: Optional[str] = None, **_kw) -> str:
-    if _scheduler_set_reminder is None:
+def _tool_set_routine(inputs: dict, thread_id: Optional[str] = None, **_kw) -> str:
+    if _scheduler_set_routine is None:
         return json.dumps({"error": "Scheduler not ready yet."})
     try:
         # Strip hallucinated legacy field
@@ -560,10 +560,10 @@ def _tool_set_reminder(inputs: dict, thread_id: Optional[str] = None, **_kw) -> 
             # Inject thread_id for delivery unless this is an explicit
             # background task (ai_prompt + background=true → fire-and-forget).
             inputs["thread_id"] = effective_thread
-        job_id = _scheduler_set_reminder(inputs)
+        job_id = _scheduler_set_routine(inputs)
         return json.dumps({"status": "scheduled", "job_id": job_id})
     except Exception as exc:  # noqa: BLE001
-        logger.exception("set_reminder failed")
+        logger.exception("set_routine failed")
         return json.dumps({"error": str(exc)})
 
 
@@ -680,23 +680,23 @@ def _tool_write_file(inputs: dict, **_kw) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _tool_list_reminders(_inputs: dict, **_kw) -> str:
-    if _scheduler_list_reminders is not None:
-        return json.dumps(_scheduler_list_reminders(), indent=2, ensure_ascii=False)
+def _tool_list_routines(_inputs: dict, **_kw) -> str:
+    if _scheduler_list_routines is not None:
+        return json.dumps(_scheduler_list_routines(), indent=2, ensure_ascii=False)
     return json.dumps({"active": [], "completed": [], "failed": []})
 
 
-def _tool_delete_reminder(inputs: dict, **_kw) -> str:
-    if _scheduler_delete_reminder is None:
+def _tool_delete_routine(inputs: dict, **_kw) -> str:
+    if _scheduler_delete_routine is None:
         return json.dumps({"error": "Scheduler not ready yet."})
     try:
         job_id = inputs["job_id"]
-        found = _scheduler_delete_reminder(job_id)
+        found = _scheduler_delete_routine(job_id)
         if found:
             return json.dumps({"status": "cancelled", "job_id": job_id})
-        return json.dumps({"error": f"Reminder not found: {job_id}"})
+        return json.dumps({"error": f"Routine not found: {job_id}"})
     except Exception as exc:  # noqa: BLE001
-        logger.exception("delete_reminder failed")
+        logger.exception("delete_routine failed")
         return json.dumps({"error": str(exc)})
 
 
@@ -859,15 +859,15 @@ def _tool_fetch_url(inputs: dict, **_kw) -> str:
 
 _DISPATCH: dict[str, Any] = {
     "spawn_sub_session":  _tool_spawn_sub_session,
-    "set_reminder":       _tool_set_reminder,
+    "set_routine":       _tool_set_routine,
     "append_memory":      _tool_append_memory,
     "agenda":              _tool_agenda,
     "add_skill":          _tool_add_skill,
     "execute_shell":      _tool_execute_shell,
     "read_file":          _tool_read_file,
     "write_file":         _tool_write_file,
-    "list_reminders":     _tool_list_reminders,
-    "delete_reminder":    _tool_delete_reminder,
+    "list_routines":     _tool_list_routines,
+    "delete_routine":    _tool_delete_routine,
     "search_web":         _tool_search_web,
     "fetch_url":          _tool_fetch_url,
 }

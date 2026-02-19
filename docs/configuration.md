@@ -112,7 +112,7 @@ nl_translation:
   enabled: false                        # Opt-in; default off
   backends: ["local_small"]             # Translator LLM (small/fast recommended)
   tools:                                # Which tools use NL schemas
-    - set_reminder
+    - set_routine
     - spawn_sub_session
 
 # ── Context Compaction ────────────────────────────────────────────
@@ -140,7 +140,7 @@ dreaming:
 
 # ── Scheduler ─────────────────────────────────────────────────────
 scheduler:
-  timezone: "UTC"                         # Timezone for reminder scheduling (e.g. Europe/Berlin)
+  timezone: "UTC"                         # Timezone for routine scheduling (e.g. Europe/Berlin)
 
 # ── Logging ───────────────────────────────────────────────────────
 logging:
@@ -335,7 +335,7 @@ turing_protocol:
 ### `nl_translation`
 
 Natural-language tool call translation for weak/small LLMs. When enabled,
-complex tools (`set_reminder`, `spawn_sub_session`) are presented to the
+complex tools (`set_routine`, `spawn_sub_session`) are presented to the
 main LLM as a single "describe in English" field. A dedicated translator
 LLM expands the description into structured arguments.
 
@@ -343,9 +343,9 @@ LLM expands the description into structured arguments.
 |-----|----------|---------|-------------|
 | `enabled` | no | `false` | Enable NL translation (opt-in) |
 | `backends` | no | turing_protocol backends | Ordered list of backend names for the translator LLM |
-| `tools` | no | `[set_reminder, spawn_sub_session]` | Which tools use simplified NL schemas |
+| `tools` | no | `[set_routine, spawn_sub_session]` | Which tools use simplified NL schemas |
 
-The translator can return JSON arrays to schedule multiple reminders or
+The translator can return JSON arrays to schedule multiple routines or
 spawn multiple sub-sessions from a single description. Ambiguous input
 triggers a clarification request back to the user.
 
@@ -393,7 +393,7 @@ See [matrix-setup.md](matrix-setup.md) for full setup instructions.
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `timezone` | no | `"UTC"` | Timezone for reminder scheduling |
+| `timezone` | no | `"UTC"` | Timezone for routine scheduling |
 
 ### `context.component_size_limits`
 

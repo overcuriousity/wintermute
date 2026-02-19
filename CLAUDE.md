@@ -42,7 +42,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 | `dreaming.py` | Nightly memory consolidation (direct LLM call, no tool loop) |
 | `agenda.py` | Periodic autonomous agenda reviews via sub-session |
 | `memory_harvest.py` | Periodic conversation mining → MEMORIES.txt extraction via sub-sessions |
-| `scheduler_thread.py` | APScheduler-based reminders; `ai_prompt` triggers sub-sessions |
+| `scheduler_thread.py` | APScheduler-based routines; `ai_prompt` triggers sub-sessions |
 | `database.py` | SQLite ops: messages, agenda, summaries, interaction_log |
 
 **LLM provider abstraction:** `BackendPool` wraps `AsyncOpenAI` with ordered failover. Three provider types: `"openai"` (any compatible endpoint), `"gemini-cli"`, `"kimi-code"`. Role-based routing (`base`, `compaction`, `sub_sessions`, `dreaming`, `turing_protocol`).

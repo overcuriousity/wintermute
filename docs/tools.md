@@ -10,7 +10,7 @@ Tools are grouped into three categories that control which tools are available i
 |----------|-------------|-------|
 | **execution** | All agents | `execute_shell`, `read_file`, `write_file` |
 | **research** | All agents | `search_web`, `fetch_url` |
-| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `set_reminder`, `append_memory`, `agenda`, `add_skill`, `list_reminders`, `delete_reminder` |
+| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `set_routine`, `append_memory`, `agenda`, `add_skill`, `list_routines`, `delete_routine` |
 
 ## Tool Filtering by Sub-session Mode
 
@@ -101,14 +101,14 @@ Maximum nesting depth: 2 (main -> sub -> sub-sub).
 
 **Dependency safety:** Unknown session IDs in `depends_on` are automatically stripped with a warning log, preventing permanent deadlocks from hallucinated or mistyped IDs.
 
-#### `set_reminder`
+#### `set_routine`
 
-Schedule a reminder with optional AI inference on trigger.
+Schedule a routine with optional AI inference on trigger.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `message` | string | yes | Human-readable reminder text |
-| `ai_prompt` | string | no | Prompt for AI inference when reminder fires |
+| `message` | string | yes | Human-readable routine text |
+| `ai_prompt` | string | no | Prompt for AI inference when routine fires |
 | `schedule_type` | enum | yes | `"once"`, `"daily"`, `"weekly"`, `"monthly"`, `"interval"` |
 | `at` | string | no | ISO-8601 datetime, natural language, or HH:MM |
 | `day_of_week` | enum | no | Required for `weekly`: `mon`-`sun` |
@@ -154,7 +154,7 @@ Create or overwrite a skill documentation file in `data/skills/`.
 
 ## NL Translation Mode
 
-When `nl_translation.enabled: true` in config, `set_reminder` and
+When `nl_translation.enabled: true` in config, `set_routine` and
 `spawn_sub_session` are presented to the main LLM with simplified
 single-field schemas. Instead of filling in all structured parameters,
 the LLM writes a plain-English description:
@@ -169,7 +169,7 @@ The tool result includes a `[Translated to: ...]` prefix showing the
 expanded arguments.
 
 The translator can return JSON arrays for multi-item requests (e.g.
-"set three reminders" or "research X then summarize it") — each item
+"set three routines" or "research X then summarize it") — each item
 is executed separately and results are combined.
 
 If the description is ambiguous, the translator returns a clarification
@@ -178,18 +178,18 @@ request that the main LLM relays to the user.
 This feature is complementary to the Turing Protocol's validation hooks,
 which validate the *translated* structured arguments.
 
-#### `list_reminders`
+#### `list_routines`
 
-Returns active, completed, and failed reminders. No parameters. History is capped at the 200 most recent entries per category.
+Returns active, completed, and failed routines. No parameters. History is capped at the 200 most recent entries per category.
 
 Returns: `active[]`, `completed[]`, `failed[]`
 
-#### `delete_reminder`
+#### `delete_routine`
 
-Cancel and remove a scheduled reminder by its job ID.
+Cancel and remove a scheduled routine by its job ID.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `job_id` | string | yes | The job ID returned by `set_reminder` or `list_reminders` |
+| `job_id` | string | yes | The job ID returned by `set_routine` or `list_routines` |
 
 Returns: `status`, `job_id`

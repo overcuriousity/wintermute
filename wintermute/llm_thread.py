@@ -242,7 +242,7 @@ class LLMThread:
         return await fut
 
     async def enqueue_system_event(self, text: str, thread_id: str = "default") -> None:
-        """Submit an autonomous system event (heartbeat, reminder, etc.)."""
+        """Submit an autonomous system event (heartbeat, routine, etc.)."""
         await self._queue.put(_QueueItem(text=text, thread_id=thread_id, is_system_event=True))
 
     async def enqueue_system_event_with_reply(self, text: str,
@@ -376,7 +376,7 @@ class LLMThread:
                 item.future.set_result(reply)
             elif item.is_system_event and not item.future and not item.is_turing_correction:
                 # System events without a future (sub-session results,
-                # reminders, /agenda commands) have no caller waiting for
+                # routines, /agenda commands) have no caller waiting for
                 # the reply.  Broadcast the LLM's response directly so
                 # it reaches the user.
                 # Turing Protocol corrections are excluded: both the correction

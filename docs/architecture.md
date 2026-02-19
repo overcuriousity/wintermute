@@ -11,7 +11,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **MatrixThread** | `matrix_thread.py` | Matrix client with E2E encryption (optional) |
 | **SubSessionManager** | `sub_session.py` | Manages background worker sub-sessions and workflow DAGs |
 | **Turing Protocol** | `turing_protocol.py` | Three-stage post-inference validation framework (detect, validate, correct) |
-| **ReminderScheduler** | `scheduler_thread.py` | APScheduler-based reminder system |
+| **RoutineScheduler** | `scheduler_thread.py` | APScheduler-based routine system |
 | **AgendaLoop** | `agenda.py` | Periodic autonomous agenda item reviews |
 | **DreamingLoop** | `dreaming.py` | Nightly memory consolidation |
 | **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
@@ -31,7 +31,7 @@ User (Matrix / Browser)
         |-- tool calls --> execute_shell / read_file / write_file
         |                  search_web / fetch_url
         |                  append_memory / agenda / add_skill
-        |                  set_reminder / list_reminders
+        |                  set_routine / list_routines
         |
         +-- spawn_sub_session --> SubSessionManager
                                         |
@@ -52,7 +52,7 @@ User (Matrix / Browser)
                                                         (back to LLMThread)
 
 AgendaLoop --------------------------------> per-thread sub-session (full mode, result → originating room)
-ReminderScheduler ------------------------> LLMThread queue / sub-session
+RoutineScheduler ------------------------> LLMThread queue / sub-session
 DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 ```
 
@@ -62,7 +62,7 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 2. Configure logging (console + rotating file)
 3. Initialise SQLite databases
 4. Bootstrap `data/` directories (skills/, scripts/, archive/)
-5. Restore APScheduler jobs (and execute missed reminders)
+5. Restore APScheduler jobs (and execute missed routines)
 6. Build shared broadcast function (routes to Matrix rooms or web clients)
 7. Start LLM inference task
 8. Start web interface task (if enabled)
@@ -126,7 +126,7 @@ Wintermute is explicitly designed to work with small, quantised models (3B–8B 
 
 **Turing Protocol.** A three-stage (detect → validate → correct) post-inference validation pipeline that catches the hallucination patterns small models are most prone to — claiming to have done things they didn't, fabricating tool output, or making promises without acting. Rather than requiring a stronger model, corrections are injected automatically so the model can self-correct. See [turing-protocol.md](turing-protocol.md) for the full reference.
 
-**NL Translation (optional).** For models that struggle with multi-field structured JSON schemas, complex tool calls (`set_reminder`, `spawn_sub_session`) can be exposed as a single plain-English `description` field. A dedicated small translator LLM expands the description into structured arguments. See [tools.md — NL Translation Mode](tools.md#nl-translation-mode).
+**NL Translation (optional).** For models that struggle with multi-field structured JSON schemas, complex tool calls (`set_routine`, `spawn_sub_session`) can be exposed as a single plain-English `description` field. A dedicated small translator LLM expands the description into structured arguments. See [tools.md — NL Translation Mode](tools.md#nl-translation-mode).
 
 **Lean system prompt.** The system prompt is assembled from independent file-based components (`BASE_PROMPT.txt`, `MEMORIES.txt`, agenda, skills). Components have configurable character caps with auto-summarisation when exceeded. No framework boilerplate is injected — the prompt contains only what you wrote and what the model genuinely needs.
 

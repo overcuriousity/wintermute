@@ -1,6 +1,6 @@
 # Two-Stage Inference Pipe for Complex Tool Calls
 
-**Target tools:** `set_reminder`, `spawn_sub_session`
+**Target tools:** `set_routine`, `spawn_sub_session`
 **Goal:** Allow weak/small main LLMs to invoke complex tools by writing a plain-English
 description, with a dedicated translator LLM converting that description to the full
 structured schema.
@@ -9,7 +9,7 @@ structured schema.
 
 ## Problem Statement
 
-`set_reminder` has 11 properties with conditional interdependencies (e.g. `schedule_type`
+`set_routine` has 11 properties with conditional interdependencies (e.g. `schedule_type`
 determines which of `at`, `day_of_week`, `day_of_month`, `interval_seconds` are required).
 `spawn_sub_session` has complex DAG semantics (`depends_on`, `depends_on_previous`,
 `not_before`). Small 8B models frequently produce partial or malformed arguments.
@@ -26,7 +26,7 @@ expand the natural-language description into fully-structured arguments.
 
 ```
 Main LLM
-  └─ calls set_reminder(description="daily 9am check email")
+  └─ calls set_routine(description="daily 9am check email")
        │
        ▼
   [NL Translation Layer]  ─── translator LLM call ───► structured args dict
@@ -34,7 +34,7 @@ Main LLM
        │                                                  "schedule_type": "daily",
        │                                                  "at": "09:00"}
        ▼
-  execute_tool("set_reminder", structured_args)
+  execute_tool("set_routine", structured_args)
        │
        ▼
   Tool result injected into history
@@ -53,20 +53,20 @@ Two simplified schemas replace the full ones when NL translation is enabled. The
 defined as an alternative export from `tools.py` and selected by `get_tool_schemas()`
 based on config.
 
-### `set_reminder` simplified
+### `set_routine` simplified
 
 ```json
 {
   "type": "function",
   "function": {
-    "name": "set_reminder",
-    "description": "Schedule a reminder or recurring task. Describe what you want in english natural language — include when, how often, and what action to take or message to send.",
+    "name": "set_routine",
+    "description": "Schedule a routine or recurring task. Describe what you want in english natural language — include when, how often, and what action to take or message to send.",
     "parameters": {
       "type": "object",
       "properties": {
         "description": {
           "type": "string",
-          "description": "Full english natural-language description of the reminder. Examples: 'daily at 09:00 to check email', 'every Monday at 14:00 to review agenda', 'once on 2026-03-15 at 10:00 — dentist appointment', 'every 3600 seconds between 08:00-18:00 to check server status'. Include the ai_prompt if an autonomous action should run instead of just a notification."
+          "description": "Full english natural-language description of the routine. Examples: 'daily at 09:00 to check email', 'every Monday at 14:00 to review agenda', 'once on 2026-03-15 at 10:00 — dentist appointment', 'every 3600 seconds between 08:00-18:00 to check server status'. Include the ai_prompt if an autonomous action should run instead of just a notification."
         }
       },
       "required": ["description"]
@@ -123,7 +123,7 @@ from wintermute import prompt_loader
 logger = logging.getLogger(__name__)
 
 # Tools that have NL variants and require translation.
-NL_TOOLS: frozenset[str] = frozenset({"set_reminder", "spawn_sub_session"})
+NL_TOOLS: frozenset[str] = frozenset({"set_routine", "spawn_sub_session"})
 
 
 async def translate_nl_tool_call(
@@ -140,7 +140,7 @@ async def translate_nl_tool_call(
     pool : BackendPool
         Backend pool to use for the translator inference call.
     tool_name : str
-        Name of the real tool to translate for (e.g. "set_reminder").
+        Name of the real tool to translate for (e.g. "set_routine").
     description : str
         Natural-language description provided by the main LLM.
     thread_id : str
@@ -221,21 +221,21 @@ def is_nl_tool_call(tool_name: str, tool_args: dict) -> bool:
 
 Two new files in `data/prompts/`:
 
-### `data/prompts/NL_TRANSLATOR_SET_REMINDER.txt`
+### `data/prompts/NL_TRANSLATOR_SET_ROUTINE.txt`
 
 ```
 You are a tool-call translator. You receive a natural-language description of a
-reminder and output ONLY a JSON object containing the arguments for the
-set_reminder tool.
+routine and output ONLY a JSON object containing the arguments for the
+set_routine tool.
 
 Full tool schema:
-{set_reminder_schema}
+{set_routine_schema}
 
 Rules:
 - Output ONLY valid JSON. No prose, no markdown explanation.
 - If the description is ambiguous and you cannot infer a required field,
   output: {"error": "missing_info", "clarification_needed": "<specific question>"}
-- "message" must always be a concise reminder text (the human-readable notification).
+- "message" must always be a concise routine text (the human-readable notification).
 - "schedule_type" must be one of: once, daily, weekly, monthly, interval.
 - "at" is required for all schedule types except interval. Use HH:MM for recurring,
   ISO-8601 for once.
@@ -267,11 +267,11 @@ User: remind me daily at noon to drink water
 Output: {"message": "Drink water", "schedule_type": "daily", "at": "12:00"}
 
 User: remind me to call John
-Output: {"error": "missing_info", "clarification_needed": "When should the reminder fire? Please specify a date/time or recurrence pattern."}
+Output: {"error": "missing_info", "clarification_needed": "When should the routine fire? Please specify a date/time or recurrence pattern."}
 ```
 
-The template string `{set_reminder_schema}` is filled at load time by `prompt_loader` with
-the JSON of the real `set_reminder` schema from `TOOL_SCHEMAS`. See
+The template string `{set_routine_schema}` is filled at load time by `prompt_loader` with
+the JSON of the real `set_routine` schema from `TOOL_SCHEMAS`. See
 **Schema Embedding** below.
 
 ### `data/prompts/NL_TRANSLATOR_SPAWN_SUB_SESSION.txt`
@@ -324,7 +324,7 @@ The prompt files contain the schema verbatim. Whenever `TOOL_SCHEMAS` changes, t
 files need regenerating. A helper script `scripts/regen_nl_prompts.py` does this.
 
 **Option B: Dynamic substitution via prompt_loader.**
-`prompt_loader.load("NL_TRANSLATOR_SET_REMINDER.txt", set_reminder_schema=schema_json)`.
+`prompt_loader.load("NL_TRANSLATOR_SET_ROUTINE.txt", set_routine_schema=schema_json)`.
 This requires `prompt_loader` to not fail on unknown substitution keys. Currently
 it passes kwargs directly to `str.format_map()`, so this already works — but the
 prompt file must escape all literal curly braces.
@@ -343,7 +343,7 @@ In `config.yaml.example` (and the config dataclass):
 nl_translation:
   enabled: false          # master switch; default false (opt-in)
   tools:                  # which tools to translate; default: both
-    - set_reminder
+    - set_routine
     - spawn_sub_session
   backend_role: nl_translation  # BackendPool role; falls back to sub_sessions if absent
 ```
@@ -354,7 +354,7 @@ Config dataclass additions (wherever LLMConfig or equivalent is defined):
 @dataclass
 class NLTranslationConfig:
     enabled: bool = False
-    tools: list[str] = field(default_factory=lambda: ["set_reminder", "spawn_sub_session"])
+    tools: list[str] = field(default_factory=lambda: ["set_routine", "spawn_sub_session"])
     backend_role: str = "nl_translation"
 ```
 
@@ -387,8 +387,8 @@ cleaner — create it once and pass it down.
 ```python
 NL_TOOL_SCHEMAS: list[dict] = [
     _fn(
-        "set_reminder",
-        "Schedule a reminder or recurring task. Describe what you want in natural "
+        "set_routine",
+        "Schedule a routine or recurring task. Describe what you want in natural "
         "language — include when, how often, and what action to take.",
         {
             "type": "object",
@@ -578,7 +578,7 @@ to the tool result:
 
 ```
 [Translated to: message="Check email", schedule_type="daily", at="09:00"]
-Reminder set: job_id=reminder_a1b2c3d4, fires daily at 09:00.
+Routine set: job_id=routine_a1b2c3d4, fires daily at 09:00.
 ```
 
 This is done in the integration layer after calling `execute_tool()`:
@@ -612,7 +612,7 @@ result = translation_summary + tool_module.execute_tool(tc.function.name, inputs
 2. **Add `NL_TOOL_SCHEMAS`, `_NL_SCHEMA_MAP`, updated `get_tool_schemas()`** to `tools.py`.
 
 3. **Create translator prompt files:**
-   - `data/prompts/NL_TRANSLATOR_SET_REMINDER.txt` (static, schema embedded)
+   - `data/prompts/NL_TRANSLATOR_SET_ROUTINE.txt` (static, schema embedded)
    - `data/prompts/NL_TRANSLATOR_SPAWN_SUB_SESSION.txt` (static, schema embedded)
    - Run `scripts/regen_nl_prompts.py` (one-liner) to regenerate if schemas change.
 
@@ -640,11 +640,11 @@ result = translation_summary + tool_module.execute_tool(tc.function.name, inputs
 9. **Handle multi-session spawn array** in both integration points.
 
 10. **Smoke test manually:**
-    - Main LLM calls `set_reminder(description="daily at 09:00 check email")`.
+    - Main LLM calls `set_routine(description="daily at 09:00 check email")`.
     - Verify translator fires, structured args produced, tool executes, result returned.
     - Verify `tool_schema_validation` hook validates the *translated* args (not the
       raw description).
-    - Verify ambiguity path: `set_reminder(description="remind me about the meeting")`
+    - Verify ambiguity path: `set_routine(description="remind me about the meeting")`
       returns a clarification request.
 
 ---
@@ -672,14 +672,14 @@ result = translation_summary + tool_module.execute_tool(tc.function.name, inputs
 
 2. **Should `prompt_loader` validate NL translator prompt files at startup?** Currently
    `prompt_loader` only validates files listed in its required set. Add
-   `NL_TRANSLATOR_SET_REMINDER.txt` and `NL_TRANSLATOR_SPAWN_SUB_SESSION.txt` to the
+   `NL_TRANSLATOR_SET_ROUTINE.txt` and `NL_TRANSLATOR_SPAWN_SUB_SESSION.txt` to the
    required set only when `nl_translation.enabled: true` — to avoid startup failure for
    users who don't enable the feature.
 
    -> yes, validate
 
-3. **Multi-session array from translator:** Should this be supported for `set_reminder`
-   too (schedule multiple reminders from one description)? Probably yes, same logic.
+3. **Multi-session array from translator:** Should this be supported for `set_routine`
+   too (schedule multiple routines from one description)? Probably yes, same logic.
 
    -> yes
 
