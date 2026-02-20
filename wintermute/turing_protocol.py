@@ -824,7 +824,7 @@ async def run_turing_protocol(
     context["phase"] = phase
     context["scope"] = scope
     if nl_tools:
-        context["nl_tools"] = nl_tools
+        context["nl_tools"] = sorted(nl_tools)  # sets are not JSON-serializable
 
     try:
         violations: list[dict] = []
