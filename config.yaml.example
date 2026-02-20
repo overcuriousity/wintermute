@@ -97,7 +97,7 @@ web:
 #
 # Fields per backend:
 #   name          [REQUIRED] Unique identifier (referenced in llm: mapping)
-#   provider      [REQUIRED] "openai" | "gemini-cli" | "kimi-code"
+#   provider      [REQUIRED] "openai" | "anthropic" | "gemini-cli" | "kimi-code"
 #   model         [REQUIRED] Model identifier (e.g. "qwen2.5:72b", "gpt-4o")
 #   context_size  Token window size. Default: 32768. Match your model's actual
 #                 context length — this controls when compaction triggers.
@@ -110,6 +110,11 @@ web:
 #                 Any OpenAI-compatible endpoint: vLLM, llama-server,
 #                 LM Studio, text-generation-inference, OpenAI, etc.
 #                 Use api_key: "llama-server" or "none" for unauthenticated local.
+#   "anthropic":  api_key [REQUIRED] (from console.anthropic.com)
+#                 Uses Anthropic's native Messages API with prompt caching.
+#                 No base_url needed — talks directly to api.anthropic.com.
+#                 Requires a paid API key (pay-per-token). Claude Pro/Max
+#                 subscriptions do NOT include API access.
 #   "gemini-cli": No base_url/api_key needed. Uses OAuth credentials in
 #                 data/gemini_credentials.json. Run: uv run python -m wintermute.gemini_auth
 #                 WARNING: ALPHA — piggybacks on Google Cloud Code Assist OAuth.
@@ -146,6 +151,14 @@ inference_backends:
   #   provider: "gemini-cli"
   #   model: "gemini-2.5-pro"              # Also: gemini-2.5-flash, gemini-3-pro-preview
   #   context_size: 1048576
+  #   max_tokens: 8192
+
+  # Anthropic example (uncomment to enable):
+  # - name: "claude"
+  #   provider: "anthropic"
+  #   api_key: "sk-ant-api03-..."          # From console.anthropic.com (pay-per-token)
+  #   model: "claude-sonnet-4-20250514"    # Also: claude-opus-4-20250514, claude-haiku-4-20250414
+  #   context_size: 200000
   #   max_tokens: 8192
 
   # Kimi-Code example (uncomment to enable):

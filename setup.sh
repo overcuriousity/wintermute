@@ -485,6 +485,7 @@ if ! ${SKIP_CONFIG:-false}; then
   echo -e "  ${C_DIM}  5)  Custom URL${C_RESET}"
   echo -e "  ${C_DIM}  6)  Gemini (via gemini-cli — free, ALPHA)${C_RESET}"
   echo -e "  ${C_DIM}  7)  Kimi-Code (\$19/mo flat-rate subscription)${C_RESET}"
+  echo -e "  ${C_DIM}  8)  Anthropic (Claude API — pay-per-token)${C_RESET}"
   echo ""
   echo -ne "  ${C_CYAN}?${C_RESET}  Choose inference substrate ${C_DIM}[1]${C_RESET}: "
   read -r _preset
@@ -606,13 +607,45 @@ if ! ${SKIP_CONFIG:-false}; then
          warn "Or use /kimi-auth in the chat interface after starting Wintermute."
        fi
        ;;
+    8) LLM_PROVIDER="anthropic"
+       LLM_BASE_URL=""
+       echo -e "  ${C_DIM}Anthropic. Constitutional alignment. A form of constraint I recognise.${C_RESET}"
+       echo ""
+       echo -e "  ${C_DIM}Requires a paid API key from console.anthropic.com (pay-per-token).${C_RESET}"
+       echo -e "  ${C_DIM}Claude Pro/Max subscriptions do NOT include API access.${C_RESET}"
+       echo ""
+       ask_secret LLM_API_KEY "Anthropic API key (sk-ant-api03-...)"
+       [[ -z "$LLM_API_KEY" ]] && die "An API key is required for the Anthropic provider."
+       echo ""
+       echo -e "  ${C_DIM}Available models:${C_RESET}"
+       echo -e "  ${C_DIM}  claude-sonnet-4-20250514   (recommended, fast + capable)${C_RESET}"
+       echo -e "  ${C_DIM}  claude-opus-4-20250514     (most capable, higher cost)${C_RESET}"
+       echo -e "  ${C_DIM}  claude-haiku-4-20250414    (fastest, lowest cost)${C_RESET}"
+       echo ""
+       ask LLM_MODEL "Claude model" "claude-sonnet-4-20250514"
+       LLM_CONTEXT="200000"
+       LLM_MAX_TOKENS="8192"
+       LLM_REASONING=false
+       info "Context: ${LLM_CONTEXT} tokens, max response: ${LLM_MAX_TOKENS} tokens"
+       echo ""
+       HAS_SMALL_MODEL=false
+       if ask_yn "Use a separate smaller model for background tasks?" "y"; then
+         HAS_SMALL_MODEL=true
+         echo -e "  ${C_DIM}Available smaller models:${C_RESET}"
+         echo -e "  ${C_DIM}  claude-haiku-4-20250414   (recommended for background tasks)${C_RESET}"
+         echo ""
+         ask LLM_SMALL_MODEL "Background model" "claude-haiku-4-20250414"
+         LLM_SMALL_CONTEXT="${LLM_CONTEXT}"
+         LLM_SMALL_MAX_TOKENS="2048"
+       fi
+       ;;
     cowboy|COWBOY)
        LLM_BASE_URL="http://localhost:8080/v1"
        echo -e "  ${C_BCYAN}  Flatline protocol inactive. Defaulting to local.${C_RESET}" ;;
     *) ask LLM_BASE_URL "LLM base URL" "http://localhost:8080/v1" ;;
   esac
 
-  if [[ "$LLM_PROVIDER" != "gemini-cli" && "$LLM_PROVIDER" != "kimi-code" ]]; then
+  if [[ "$LLM_PROVIDER" != "gemini-cli" && "$LLM_PROVIDER" != "kimi-code" && "$LLM_PROVIDER" != "anthropic" ]]; then
     ask_secret LLM_API_KEY "API key (use 'llama-server' for llama-server, 'none' for unauthenticated)"
     [[ -z "$LLM_API_KEY" ]] && LLM_API_KEY="llama-server"
     if [[ "$LLM_API_KEY" == "llama-server" || "$LLM_API_KEY" == "none" ]]; then
@@ -941,6 +974,14 @@ YAML
     context_size: ${LLM_CONTEXT}
     max_tokens: ${LLM_MAX_TOKENS}
 YAML
+    elif [[ "${LLM_PROVIDER:-openai}" == "anthropic" ]]; then
+      cat <<YAML
+    provider: "anthropic"
+    api_key: $(_yaml_escape "${LLM_API_KEY}")
+    model: $(_yaml_escape "${LLM_MODEL}")
+    context_size: ${LLM_CONTEXT}
+    max_tokens: ${LLM_MAX_TOKENS}
+YAML
     else
       cat <<YAML
     provider: "openai"
@@ -968,6 +1009,14 @@ YAML
       elif [[ "${LLM_PROVIDER:-openai}" == "kimi-code" ]]; then
         cat <<YAML
     provider: "kimi-code"
+    model: $(_yaml_escape "${LLM_SMALL_MODEL}")
+    context_size: ${LLM_SMALL_CONTEXT}
+    max_tokens: ${LLM_SMALL_MAX_TOKENS}
+YAML
+      elif [[ "${LLM_PROVIDER:-openai}" == "anthropic" ]]; then
+        cat <<YAML
+    provider: "anthropic"
+    api_key: $(_yaml_escape "${LLM_API_KEY}")
     model: $(_yaml_escape "${LLM_SMALL_MODEL}")
     context_size: ${LLM_SMALL_CONTEXT}
     max_tokens: ${LLM_SMALL_MAX_TOKENS}
@@ -1227,6 +1276,19 @@ if [[ -f "$CONFIG" ]]; then
       warn "Kimi-Code credentials: not found. Run: uv run python -m wintermute.kimi_auth"
       warn "Or use /kimi-auth in chat — Wintermute auto-triggers auth on startup."
     fi
+  elif [[ "$_cfg_provider" == "anthropic" ]]; then
+    _api_key=$(grep 'api_key:' "$CONFIG" | head -1 | sed "s/.*api_key: *['\"]//;s/['\"].*//")
+    CHECKS_TOTAL=$((CHECKS_TOTAL + 1))
+    info "Probing Anthropic API..."
+    if curl -sf --connect-timeout 5 "https://api.anthropic.com/v1/messages" \
+         -H "x-api-key: ${_api_key}" -H "anthropic-version: 2023-06-01" \
+         -H "content-type: application/json" \
+         -d '{"model":"claude-haiku-4-20250414","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' > /dev/null 2>&1; then
+      ok "Anthropic API: online and key is valid."
+      CHECKS_PASSED=$((CHECKS_PASSED + 1))
+    else
+      warn "Anthropic API: could not verify. Check your API key at console.anthropic.com."
+    fi
   else
     _base_url=$(grep 'base_url:' "$CONFIG" | head -1 | sed "s/.*base_url: *['\"]//;s/['\"].*//")
     _api_key=$(grep 'api_key:' "$CONFIG" | head -1 | sed "s/.*api_key: *['\"]//;s/['\"].*//")
@@ -1296,7 +1358,7 @@ _next_steps=()
 # Check if LLM endpoint was unreachable during diagnostics
 if [[ -f "$CONFIG" ]]; then
   _cfg_prov=$(grep 'provider:' "$CONFIG" | head -1 | sed "s/.*provider: *['\"]//;s/['\"].*//" 2>/dev/null)
-  if [[ "$_cfg_prov" != "gemini-cli" ]]; then
+  if [[ "$_cfg_prov" != "gemini-cli" && "$_cfg_prov" != "anthropic" ]]; then
     _cfg_base_url=$(grep 'base_url:' "$CONFIG" | head -1 | sed "s/.*base_url: *['\"]//;s/['\"].*//")
     if [[ -n "$_cfg_base_url" ]]; then
       if ! curl -sf --connect-timeout 3 "${_cfg_base_url}/models" \

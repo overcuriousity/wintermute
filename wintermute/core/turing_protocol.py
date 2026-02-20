@@ -550,9 +550,18 @@ def validate_tool_schema(context: dict, detection_result: dict) -> bool:
         # Not called in pre_execution context — skip silently.
         return False
 
-    # Use NL schema when NL translation is active for this tool.
+    # Use NL schema when NL translation is active for this tool AND the
+    # LLM actually used the NL format (i.e. args contain "description").
+    # If the LLM bypassed NL and sent full-schema args directly, validate
+    # against the full schema to avoid false rejections.
     nl_tools = context.get("nl_tools")
-    use_nl = nl_tools and tool_name in nl_tools and tool_name in _NL_SCHEMA_MAP
+    from wintermute.core.nl_translator import is_nl_tool_call
+    use_nl = (
+        nl_tools
+        and tool_name in nl_tools
+        and tool_name in _NL_SCHEMA_MAP
+        and is_nl_tool_call(tool_name, tool_args)
+    )
 
     schema = None
     if use_nl:

@@ -46,7 +46,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 | `scheduler_thread.py` | APScheduler-based routines; `ai_prompt` triggers sub-sessions |
 | `database.py` | SQLite ops: messages, agenda, summaries, interaction_log |
 
-**LLM provider abstraction:** `BackendPool` wraps `AsyncOpenAI` with ordered failover. Three provider types: `"openai"` (any compatible endpoint), `"gemini-cli"`, `"kimi-code"`. Role-based routing (`base`, `compaction`, `sub_sessions`, `dreaming`, `turing_protocol`).
+**LLM provider abstraction:** `BackendPool` wraps `AsyncOpenAI` with ordered failover. Four provider types: `"openai"` (any compatible endpoint), `"anthropic"` (native Messages API with prompt caching), `"gemini-cli"`, `"kimi-code"`. Role-based routing (`base`, `compaction`, `sub_sessions`, `dreaming`, `turing_protocol`).
 
 **Tool categories:** Tools are filtered for sub-sessions — `execution`+`research` always available; `orchestration` only for `full`-mode workers. `spawn()` also accepts an explicit `tool_names` list to bypass categories (used by memory harvest).
 

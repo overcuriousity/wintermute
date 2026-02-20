@@ -266,6 +266,12 @@ def _make_client_for_config(cfg: ProviderConfig, cache: dict) -> Any:
             # interfaces are up, or the user can run /kimi-auth manually.
             cache[key] = kimi_client.KimiCodeClient(creds)
         return cache[key]
+    elif cfg.provider == "anthropic":
+        key = ("anthropic", cfg.api_key)
+        if key not in cache:
+            from wintermute.backends.anthropic_client import AnthropicClient
+            cache[key] = AnthropicClient(api_key=cfg.api_key)
+        return cache[key]
     else:
         key = (cfg.base_url, cfg.api_key)
         if key not in cache:

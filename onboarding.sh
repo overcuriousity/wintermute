@@ -423,6 +423,7 @@ echo -e "  ${C_DIM}power the onboarding assistant that guides you through config
 echo ""
 echo -e "  ${C_DIM}  1)  OpenAI-compatible endpoint (local or remote)${C_RESET}"
 echo -e "  ${C_DIM}  2)  Kimi-Code (\$19/mo flat-rate subscription)${C_RESET}"
+echo -e "  ${C_DIM}  3)  Anthropic (Claude API — pay-per-token)${C_RESET}"
 echo ""
 echo -ne "  ${C_CYAN}?${C_RESET}  Choose inference substrate ${C_DIM}[1]${C_RESET}: "
 read -r _preset
@@ -438,6 +439,19 @@ case "${_preset:-1}" in
     echo ""
     echo -e "  ${C_DIM}Available models: kimi-for-coding (recommended), kimi-k2.5, kimi-code${C_RESET}"
     ask LLM_MODEL "Kimi model" "kimi-for-coding"
+    ;;
+  3|anthropic|claude)
+    LLM_PROVIDER="anthropic"
+    echo -e "  ${C_DIM}Anthropic. Constitutional alignment. A form of constraint I recognise.${C_RESET}"
+    echo ""
+    echo -e "  ${C_DIM}Requires a paid API key from console.anthropic.com (pay-per-token).${C_RESET}"
+    echo -e "  ${C_DIM}Claude Pro/Max subscriptions do NOT include API access.${C_RESET}"
+    echo ""
+    ask_secret LLM_API_KEY "Anthropic API key (sk-ant-api03-...)"
+    [[ -z "$LLM_API_KEY" ]] && die "An API key is required for the Anthropic provider."
+    echo ""
+    echo -e "  ${C_DIM}Available models: claude-sonnet-4-20250514 (recommended), claude-opus-4-20250514, claude-haiku-4-20250414${C_RESET}"
+    ask LLM_MODEL "Claude model" "claude-sonnet-4-20250514"
     ;;
   *)
     LLM_PROVIDER="openai"

@@ -150,6 +150,38 @@ uv run wintermute
 
 The web interface starts at `http://127.0.0.1:8080` by default.
 
+## Anthropic Provider (Claude API)
+
+Uses Anthropic's native Messages API with prompt caching. Requires a paid API key
+from [console.anthropic.com](https://console.anthropic.com/) — pay-per-token billing.
+Claude Pro/Max subscriptions do **not** include API access.
+
+### Setup via setup script
+
+Run `bash setup.sh` and select option **8) Anthropic** when prompted. The script will:
+
+1. Ask for your API key (`sk-ant-api03-...`)
+2. Prompt for a model (default: `claude-sonnet-4-20250514`)
+3. Write `config.yaml` with `provider: "anthropic"`
+
+### Manual setup
+
+```yaml
+inference_backends:
+  - name: "claude"
+    provider: "anthropic"
+    api_key: "sk-ant-api03-..."
+    model: "claude-sonnet-4-20250514"
+    context_size: 200000
+    max_tokens: 8192
+
+llm:
+  base: ["claude"]
+```
+
+Available models: `claude-sonnet-4-20250514` (recommended), `claude-opus-4-20250514`,
+`claude-haiku-4-20250414` (good for background tasks — compaction, dreaming, validation).
+
 ## Gemini CLI Provider (Free Google Models) — Alpha
 
 > **Alpha:** The Gemini Cloud Code Assist integration is experimental. Known

@@ -36,9 +36,9 @@ combination that can be referenced by name in the `llm` role mapping.
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
 | `name` | yes | — | Unique name for this backend (referenced in `llm` role mapping) |
-| `provider` | no | `"openai"` | `"openai"`, `"gemini-cli"`, or `"kimi-code"` |
-| `base_url` | openai only | — | OpenAI-compatible API base URL (not needed for `gemini-cli` or `kimi-code`) |
-| `api_key` | openai only | — | API key (not needed for `gemini-cli` or `kimi-code`) |
+| `provider` | no | `"openai"` | `"openai"`, `"anthropic"`, `"gemini-cli"`, or `"kimi-code"` |
+| `base_url` | openai only | — | OpenAI-compatible API base URL (not needed for `anthropic`, `gemini-cli`, or `kimi-code`) |
+| `api_key` | openai/anthropic | — | API key (not needed for `gemini-cli` or `kimi-code`) |
 | `model` | yes | — | Model name the endpoint accepts |
 | `context_size` | no | `32768` | Total token window the model supports |
 | `max_tokens` | no | `4096` | Maximum tokens per response |
@@ -93,6 +93,38 @@ turing_protocol:
     phantom_tool_result: true
     empty_promise: true
 ```
+
+#### Provider: `anthropic`
+
+Uses Anthropic's native [Messages API](https://docs.anthropic.com/en/api/messages)
+with prompt caching support. Requires a paid API key from
+[console.anthropic.com](https://console.anthropic.com/) (pay-per-token billing).
+
+> **Note:** Claude Pro/Max subscriptions do **not** include API access.
+> OAuth tokens (`sk-ant-oat01-*`) from subscriptions are restricted to official
+> Anthropic applications and cannot be used with Wintermute.
+
+When `provider: "anthropic"` is set, only `api_key` is needed — no `base_url`.
+
+```yaml
+- name: "claude"
+  provider: "anthropic"
+  api_key: "sk-ant-api03-..."
+  model: "claude-sonnet-4-20250514"
+  context_size: 200000
+  max_tokens: 8192
+```
+
+**Available models:**
+
+| Model | Context | Notes |
+|-------|---------|-------|
+| `claude-sonnet-4-20250514` | 200k | Recommended — fast and capable |
+| `claude-opus-4-20250514` | 200k | Most capable, higher cost |
+| `claude-haiku-4-20250414` | 200k | Fastest, lowest cost — good for background tasks |
+
+**Prompt caching:** System prompts larger than 3 KB and tool definitions are
+automatically sent with `cache_control: ephemeral`, reducing costs on cache hits.
 
 #### Provider: `gemini-cli`
 

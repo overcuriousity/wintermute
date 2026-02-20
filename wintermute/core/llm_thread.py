@@ -64,7 +64,7 @@ class ProviderConfig:
     context_size: int       # total token window the model supports (e.g. 65536)
     max_tokens: int = 4096  # maximum tokens in a single response
     reasoning: bool = False  # enable reasoning/thinking token support (o1/o3, DeepSeek R1, etc.)
-    provider: str = "openai"  # "openai", "gemini-cli", or "kimi-code"
+    provider: str = "openai"  # "openai", "anthropic", "gemini-cli", or "kimi-code"
     api_key: str = ""
     base_url: str = ""       # e.g. http://localhost:8080/v1  or  https://api.openai.com/v1
 
