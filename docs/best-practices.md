@@ -63,10 +63,11 @@ Wintermute's role-based backend routing (see [Configuration](configuration.md)) 
 | Premium cloud | Claude Sonnet 4.6 | $3.75 / $18.75 |
 | Budget cloud | Llama 3.3 70B | $0.70 / $2.80 |
 | Budget cloud (alt) | GLM-4 | $1.00 / $3.20 |
-| Local (≤16 GiB) | Nanbeige-4.1-3B (Q8\_0) | — |
+| Local (≤16 GiB) | Nanbeige-4.1-3B | — |
 | Local (alt) | Ministral-3-8B Reasoning (4-bit) | — |
 
 **Notes:**
+
 - Claude Sonnet 4.6 is the reference implementation. Anthropic's models lead on stateful agentic planning and persona retention; the Turing Protocol runs most reliably against them.
 - Llama 3.3 70B and GLM-4 offer strong reasoning at substantially lower cost and are well-suited to driving the main loop without Anthropic pricing.
 - For fully local deployments: Nanbeige-4.1-3B is an outlier — dual-stage RL training gives it reasoning performance disproportionate to its parameter count. Ministral-3-8B Reasoning is the alternative if you prefer a Mistral-family architecture.
@@ -86,6 +87,7 @@ Wintermute's role-based backend routing (see [Configuration](configuration.md)) 
 | Local (≤16 GiB) | Qwen3-4B-Instruct (8-bit or 16-bit) | — |
 
 **Notes:**
+
 - OpenAI's GPT-4.1 remains the most battle-tested model for raw tool-calling syntax and API interaction. Use it when correctness of shell commands or infrastructure mutations is non-negotiable.
 - MiniMax M2.5 consistently tops multi-turn tool-calling benchmarks (BFCL) and represents exceptional value for high-volume agentic loops.
 - Qwen models train heavily on tool-calling syntax. The 4B variant at 8-bit quantization fits comfortably within a 16 GiB budget while retaining syntax accuracy and leaving significant headroom for the context window KV cache.
@@ -117,7 +119,7 @@ Wintermute's role-based backend routing (see [Configuration](configuration.md)) 
 
 Enable the Turing Protocol from the start, especially with smaller models. The three failure modes it catches — hallucinated actions, phantom tool results, and empty promises — become more frequent as model size decreases, and they silently corrupt conversation state if uncorrected.
 
-**Use a plain instruct model for the Turing Protocol backend, not a reasoning model.** Reasoning models (those that emit a chain-of-thought scratchpad before responding) introduce significant latency on every validation pass and can produce verbose, unpredictable output that interferes with the structured detection pipeline. A small, fast instruct model — the same one you might use for compaction — is the correct choice here. The Turing Protocol does not require deep reasoning; it requires reliable instruction-following and consistent output format.
+**Use a plain instruct model for the Turing Protocol backend, not a reasoning model.** Reasoning models (those that emit a chain-of-thought scratchpad before responding) intro reduce significant latency on every validation pass and can produce verbose, unpredictable output that interferes with the structured detection pipeline. A small, fast instruct model — the same one you might use for compaction — is the correct choice here. The Turing Protocol does not require deep reasoning; it requires reliable instruction-following and consistent output format.  
 
 Recommended minimal config:
 
