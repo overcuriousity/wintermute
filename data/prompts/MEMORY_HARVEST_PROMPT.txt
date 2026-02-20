@@ -12,6 +12,7 @@ WHAT TO EXTRACT:
 - Recurring topics and interests
 - How the user prefers problems solved
 - Technical environment (OS, editor, stack)
+- DO NOT extract procedures or how-to knowledge (those belong in skills, not memories)
 
 RULES:
 - SKIP information already present in MEMORIES.txt.
