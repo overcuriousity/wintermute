@@ -513,12 +513,28 @@ class LLMThread:
 
         if result.correction:
             new_depth = turing_depth + 1
+            # At depth >= 2, the model already failed to comply with a
+            # correction once.  Repeating the same demanding prompt won't
+            # help — the model is likely incapable of making the tool call
+            # in this context.  Switch to a graceful fallback that tells
+            # the model to stop trying and explain the limitation instead.
+            if turing_depth >= 1:
+                correction_text = (
+                    "[TURING PROTOCOL — UNABLE TO COMPLY] "
+                    "You were asked to call a tool but could not do so after "
+                    "being corrected. Do NOT attempt the action again. Instead, "
+                    "tell the user plainly that you were unable to perform the "
+                    "action and explain why (e.g. the tool is unavailable, you "
+                    "lack the required information, etc). Be concise."
+                )
+            else:
+                correction_text = result.correction
             logger.info(
                 "Turing Protocol injecting correction into thread %s (depth=%d)",
                 thread_id, new_depth,
             )
             await self._queue.put(_QueueItem(
-                text=result.correction,
+                text=correction_text,
                 thread_id=thread_id,
                 is_system_event=True,
                 turing_depth=new_depth,
