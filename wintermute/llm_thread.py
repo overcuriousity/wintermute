@@ -570,7 +570,7 @@ class LLMThread:
 
         # Determine action type for interaction log
         if item.is_turing_correction:
-            _action = "turing_protocol"
+            _action = "turing_response"
         elif thread_id.startswith("sub_"):
             _action = "sub_session"
         elif item.is_system_event:

@@ -158,7 +158,9 @@ _BUILTIN_HOOKS: list[TuringHook] = [
             'information the user provided, or information from earlier in the '
             'conversation history. '
             'Do NOT flag future-tense action commitments ("I\'ll check…") — '
-            'those are handled by empty_promise.'
+            'those are handled by empty_promise. '
+            'Include a "tool" field naming the specific tool that should have been '
+            'called (e.g. "agenda", "add_skill", "read_file").'
         ),
         validator_type="programmatic",
         validator_fn_name="validate_phantom_tool_result",
@@ -167,8 +169,10 @@ _BUILTIN_HOOKS: list[TuringHook] = [
             "[TURING PROTOCOL CORRECTION] You presented data as if obtained from "
             "a tool, but no such tool was called.\n"
             "Issue: {reason}\n\n"
-            "Either call the appropriate tool now, or state clearly that you "
-            "do not have this information."
+            "You MUST call the tool now. Do NOT respond with text only — "
+            "make the actual tool call.\n\n"
+            "Tool schema:\n"
+            "```json\n{tool_schema}\n```"
         ),
         halt_inference=False,
         kill_on_detect=False,
@@ -951,7 +955,7 @@ async def run_turing_protocol(
             log_status = "ok" if not violations else "violation_detected"
             log_raw = stage1_raw if stage1_hooks else "no_stage1"
             database.save_interaction_log(
-                _time.time(), "turing_protocol", thread_id,
+                _time.time(), "turing_detection", thread_id,
                 pool.last_used,
                 json.dumps(context)[:2000], (log_raw or "")[:2000],
                 log_status,
@@ -1015,7 +1019,7 @@ async def run_turing_protocol(
                 "total_checked": len(violations),
             })
             database.save_interaction_log(
-                _time.time(), "turing_stage2", thread_id,
+                _time.time(), "turing_validation", thread_id,
                 pool.last_used,
                 json.dumps(violations)[:2000], stage2_output[:2000], stage2_status,
             )
@@ -1037,7 +1041,7 @@ async def run_turing_protocol(
         # Log Stage 3 correction
         try:
             database.save_interaction_log(
-                _time.time(), "turing_stage3", thread_id,
+                _time.time(), "turing_correction", thread_id,
                 pool.last_used,
                 json.dumps(confirmed)[:2000], correction_text[:2000], "violation_detected",
             )
