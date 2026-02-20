@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.1-alpha](https://github.com/overcuriousity/wintermute/compare/v0.2.0-alpha...v0.2.1-alpha) (2026-02-20)
+
+
+### Bug Fixes
+
+* always broadcast Turing correction responses to Matrix ([f2e2763](https://github.com/overcuriousity/wintermute/commit/f2e2763c899ad0e2322a99fe71063129f0cc8a57))
+* convert nl_tools set to list before JSON serialization in Turing Protocol ([0ab74d4](https://github.com/overcuriousity/wintermute/commit/0ab74d4661cb6cbe32731f90b7e9207cf50e691d))
+* guard against LLM returning empty/null choices across all modules ([e62f9b5](https://github.com/overcuriousity/wintermute/commit/e62f9b5eb3b61c65187a86c2413ec6a48a090a21))
+* make Turing Protocol corrections self-healing without user interaction ([1107778](https://github.com/overcuriousity/wintermute/commit/1107778651b2b1cea143d770e25230ba8e9f1e84))
+* make Turing Protocol NL-translation aware to prevent validation loops ([fc35a66](https://github.com/overcuriousity/wintermute/commit/fc35a66ffae76b6dabd1b336878d7ee3157a44f5))
+* re-check correction responses to catch models ignoring Turing Protocol ([7c7baaf](https://github.com/overcuriousity/wintermute/commit/7c7baafeb53517adcb202bdf0e1415f42a0f89ea))
+* use graceful fallback when Turing correction is ignored ([e3bf6de](https://github.com/overcuriousity/wintermute/commit/e3bf6de5a15d583cd2febad0266aa31a4e0667d5))
+* use thread-safe event loop scheduling in sub-session spawning ([ecbc0d6](https://github.com/overcuriousity/wintermute/commit/ecbc0d65b12ca31ddac96b0442917dc61910c9fb))
+* use thread-safe event loop scheduling in sub-session spawning ([de749b1](https://github.com/overcuriousity/wintermute/commit/de749b198eca5d46ba24833383050b3d622c63d7))
+
 ## [0.2.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.1.0-alpha...v0.2.0-alpha) (2026-02-20)
 
 
