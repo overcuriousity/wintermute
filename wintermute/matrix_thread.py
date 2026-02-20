@@ -16,11 +16,15 @@ automatically, skipping the emoji-comparison step.  After completion the
 device shows as verified (green shield) in Element.
 
 Special commands handled directly (before reaching the LLM):
-  /new         - reset the conversation for the current room
-  /compact     - force context compaction for the current room
-  /routines   - list active routines
-  /agenda       - manually trigger agenda review
-  /fingerprint - print the Ed25519 device fingerprint
+  /new            - reset the conversation for the current room
+  /compact        - force context compaction for the current room
+  /routines       - list active routines
+  /agenda         - manually trigger agenda review
+  /status         - show system status
+  /dream          - trigger a dream cycle
+  /kimi-auth      - authenticate Kimi-Code backend
+  /verify-session - send E2EE verification request to allowed_users
+  /commands       - list all slash commands
 """
 
 import asyncio
@@ -1259,7 +1263,7 @@ class MatrixThread:
 
         if content is None and text == "/agenda":
             await self._llm.enqueue_system_event(
-                "The user manually triggered a agenda review. "
+                "The user manually triggered an agenda review. "
                 "Review your active agenda items using the agenda tool and report what actions, if any, you take.",
                 thread_id,
             )
@@ -1290,16 +1294,19 @@ class MatrixThread:
 
         if content is None and text == "/commands":
             await self.send_message(
-                "**Available commands:**\n"
-                "- `/new` – Reset conversation history\n"
-                "- `/compact` – Compact context (summarise old messages)\n"
-                "- `/routines` – List active routines\n"
-                "- `/agenda` – Trigger a agenda review\n"
-                "- `/status` – Show system status\n"
-                "- `/dream` – Trigger a dream cycle\n"
-                "- `/kimi-auth` – Authenticate Kimi-Code backend\n"
-                "- `/verify-session` – Send E2EE verification request to allowed_users\n"
-                "- `/commands` – Show this list",
+                "**Wintermute — Slash Commands**\n\n"
+                "**Conversation**\n"
+                "- `/new` — Wipe history and start a fresh session (also cancels running sub-sessions)\n"
+                "- `/compact` — Force context compaction now; shows before/after token counts\n\n"
+                "**Autonomy**\n"
+                "- `/agenda` — Trigger an immediate agenda review\n"
+                "- `/dream` — Run a dream cycle (memory consolidation + agenda pruning)\n"
+                "- `/routines` — List all scheduled routines\n\n"
+                "**System**\n"
+                "- `/status` — Show runtime status: models, token budget, memory, loops, sub-sessions\n"
+                "- `/kimi-auth` — Start Kimi-Code OAuth device-code flow\n"
+                "- `/verify-session` — Send E2EE SAS verification request to all allowed users\n"
+                "- `/commands` — Show this list",
                 thread_id,
             )
             return
@@ -1325,49 +1332,95 @@ class MatrixThread:
     # ------------------------------------------------------------------
 
     async def _handle_status_command(self, thread_id: str) -> None:
-        import asyncio as _asyncio
-        lines = ["**Wintermute Status**\n"]
+        from wintermute import database as db, prompt_assembler
 
-        # Asyncio tasks
-        tasks = sorted(_asyncio.all_tasks(), key=lambda t: t.get_name())
-        running_names = [t.get_name() for t in tasks if not t.done()]
-        lines.append(f"**Core tasks:** {', '.join(running_names)}\n")
+        lines = ["**Wintermute Status**"]
 
-        # Sub-sessions
+        # --- LLM backends ---
+        lines.append("\n**LLM Backends**")
+        main_pool = self._llm._main_pool
+        main_cfg = main_pool.primary
+        tp_pool = self._llm._turing_protocol_pool
+        lines.append(
+            f"Main: `{main_cfg.model}` ({main_cfg.context_size // 1024}k ctx)"
+            + (f" — last used: `{main_pool.last_used}`" if main_pool.last_used != main_cfg.name else "")
+        )
+        if tp_pool.enabled:
+            lines.append(f"Turing Protocol: enabled — `{tp_pool.primary.model}`")
+        else:
+            lines.append("Turing Protocol: disabled")
+
+        # --- Context budget for current thread ---
+        try:
+            budget = self._llm.get_token_budget(thread_id)
+            lines.append(
+                f"\n**Context** (thread: `{thread_id}`)\n"
+                f"{budget['total_used']:,} / {budget['total_limit']:,} tokens"
+                f" ({budget['pct']}%) — {budget['msg_count']} messages"
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Queue depth
+        qsize = self._llm._queue.qsize()
+        if qsize:
+            lines.append(f"Queue: {qsize} item(s) pending")
+
+        # --- Memory & knowledge ---
+        lines.append("\n**Memory & Knowledge**")
+        mem_text = prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or ""
+        mem_lines = mem_text.count("\n") + (1 if mem_text.strip() else 0)
+        skills_count = len(list(prompt_assembler.SKILLS_DIR.glob("*.md"))) if prompt_assembler.SKILLS_DIR.exists() else 0
+        lines.append(f"MEMORIES.txt: {mem_lines} lines ({len(mem_text):,} chars)")
+        lines.append(f"Skills: {skills_count} file(s)")
+
+        # Active agenda items
+        try:
+            agenda_items = db.list_agenda_items("active")
+            lines.append(f"Agenda items: {len(agenda_items)} active")
+        except Exception:  # noqa: BLE001
+            pass
+
+        # --- Background loops ---
+        lines.append("\n**Background Loops**")
+        if hasattr(self, "_agenda_loop") and self._agenda_loop:
+            state = "running" if self._agenda_loop._running else "stopped"
+            lines.append(f"Agenda: {state} (every {self._agenda_loop._interval // 60}m)")
+        if hasattr(self, "_dreaming_loop") and self._dreaming_loop:
+            state = "running" if self._dreaming_loop._running else "stopped"
+            dl_cfg = self._dreaming_loop._cfg
+            lines.append(
+                f"Dreaming: {state} (nightly at {dl_cfg.hour:02d}:{dl_cfg.minute:02d} UTC,"
+                f" model: `{self._dreaming_loop._pool.primary.model}`)"
+            )
+        if hasattr(self, "_memory_harvest") and self._memory_harvest:
+            state = "running" if getattr(self._memory_harvest, "_running", False) else "stopped"
+            lines.append(f"Memory harvest: {state}")
+        if hasattr(self, "_scheduler") and self._scheduler:
+            routines = self._scheduler.list_routines()
+            lines.append(f"Scheduler routines: {len(routines.get('active', []))} active")
+
+        # --- Sub-sessions ---
+        lines.append("\n**Sub-sessions**")
         if hasattr(self, "_sub_sessions") and self._sub_sessions:
             active = self._sub_sessions.list_active()
             if active:
-                lines.append(f"**Active sub-sessions ({len(active)}):**")
+                lines.append(f"{len(active)} running:")
                 for s in active:
                     lines.append(f"- `{s['session_id']}` [{s['status']}] {s['objective'][:80]}")
             else:
-                lines.append("**Sub-sessions:** none active")
+                lines.append("None active")
             workflows = self._sub_sessions.list_workflows()
             running_wfs = [w for w in workflows if w["status"] == "running"]
             if running_wfs:
-                lines.append(f"\n**Active workflows ({len(running_wfs)}):**")
+                lines.append(f"\n{len(running_wfs)} active workflow(s):")
                 for w in running_wfs:
                     nodes_summary = ", ".join(
                         f"{n['node_id']}[{n['status']}]" for n in w["nodes"]
                     )
                     lines.append(f"- `{w['workflow_id']}`: {nodes_summary}")
         else:
-            lines.append("**Sub-sessions:** not available")
-
-        # Agenda loop
-        if hasattr(self, "_agenda_loop") and self._agenda_loop:
-            state = "running" if self._agenda_loop._running else "stopped"
-            lines.append(f"\n**Agenda loop:** {state} (interval: {self._agenda_loop._interval // 60}m)")
-
-        # Dreaming loop
-        if hasattr(self, "_dreaming_loop") and self._dreaming_loop:
-            state = "running" if self._dreaming_loop._running else "stopped"
-            lines.append(f"**Dreaming loop:** {state} (target: {self._dreaming_loop._cfg.hour:02d}:{self._dreaming_loop._cfg.minute:02d} UTC, model: {self._dreaming_loop._pool.primary.model})")
-
-        # Scheduler
-        if hasattr(self, "_scheduler") and self._scheduler:
-            routines = self._scheduler.list_routines()
-            lines.append(f"**Routines:** {len(routines.get('active', []))} active")
+            lines.append("Not available")
 
         await self.send_message("\n".join(lines), thread_id)
 
