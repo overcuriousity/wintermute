@@ -37,7 +37,7 @@ from dateutil import parser as dateutil_parser
 from wintermute import tools as tool_module
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from wintermute.sub_session import SubSessionManager
+    from wintermute.core.sub_session import SubSessionManager
 
 logger = logging.getLogger(__name__)
 

@@ -541,7 +541,7 @@ async def _tool_send_matrix_message(args: dict, config: dict) -> str:
 
 async def _tool_run_kimi_auth(args: dict, config: dict) -> str:
     # Check if already authenticated
-    from wintermute import kimi_auth
+    from wintermute.backends import kimi_auth
 
     creds = kimi_auth.load_credentials()
     if creds and not kimi_auth.is_token_expired(creds):
@@ -717,7 +717,7 @@ async def run_onboarding(
     if provider == "openai":
         client = AsyncOpenAI(api_key=api_key, base_url=base_url)
     elif provider == "kimi-code":
-        from wintermute import kimi_auth, kimi_client
+        from wintermute.backends import kimi_auth, kimi_client
 
         creds = kimi_auth.load_credentials()
         if not creds:

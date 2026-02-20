@@ -11,10 +11,10 @@ import asyncio
 import logging
 from typing import Optional, TYPE_CHECKING
 
-from wintermute import database
+from wintermute.infra import database
 
 if TYPE_CHECKING:
-    from wintermute.sub_session import SubSessionManager
+    from wintermute.core.sub_session import SubSessionManager
 
 logger = logging.getLogger(__name__)
 

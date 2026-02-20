@@ -19,7 +19,7 @@ from typing import Any
 
 import httpx
 
-from wintermute import gemini_auth
+from wintermute.backends import gemini_auth
 
 logger = logging.getLogger(__name__)
 

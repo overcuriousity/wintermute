@@ -25,8 +25,8 @@ from typing import Any, Optional
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from wintermute import database
-from wintermute import prompt_assembler
+from wintermute.infra import database
+from wintermute.infra import prompt_assembler
 
 logger = logging.getLogger(__name__)
 

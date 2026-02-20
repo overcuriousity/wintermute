@@ -66,13 +66,13 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Callable, Coroutine, Optional
 
-from wintermute import database
-from wintermute import prompt_assembler
-from wintermute import prompt_loader
-from wintermute import turing_protocol as turing_protocol_module
-from wintermute import nl_translator
+from wintermute.infra import database
+from wintermute.infra import prompt_assembler
+from wintermute.infra import prompt_loader
+from wintermute.core import turing_protocol as turing_protocol_module
+from wintermute.core import nl_translator
 from wintermute import tools as tool_module
-from wintermute.llm_thread import BackendPool
+from wintermute.core.llm_thread import BackendPool
 
 logger = logging.getLogger(__name__)
 
@@ -533,7 +533,7 @@ class SubSessionManager:
             dt = dateutil_parser.parse(value)
             if dt.tzinfo is None:
                 # Assume the configured timezone from prompt_assembler.
-                from wintermute.prompt_assembler import _timezone
+                from wintermute.infra.prompt_assembler import _timezone
                 try:
                     tz = ZoneInfo(_timezone)
                 except Exception:
@@ -1200,7 +1200,7 @@ class SubSessionManager:
 
                     # -- NL Translation: expand description to structured args --
                     if nl_enabled and nl_translator.is_nl_tool_call(name, inputs):
-                        from wintermute.prompt_assembler import _timezone as _pa_tz
+                        from wintermute.infra.prompt_assembler import _timezone as _pa_tz
                         translated = await nl_translator.translate_nl_tool_call(
                             self._nl_translation_pool, name, inputs["description"],
                             thread_id=state.session_id,

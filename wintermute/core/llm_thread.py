@@ -22,16 +22,16 @@ import time as _time
 from dataclasses import dataclass, field
 from typing import Optional
 
-from wintermute import database
-from wintermute import prompt_assembler
-from wintermute import prompt_loader
-from wintermute import turing_protocol as turing_protocol_module
-from wintermute import nl_translator
+from wintermute.infra import database
+from wintermute.infra import prompt_assembler
+from wintermute.infra import prompt_loader
+from wintermute.core import turing_protocol as turing_protocol_module
+from wintermute.core import nl_translator
 from wintermute import tools as tool_module
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from wintermute.sub_session import SubSessionManager
+    from wintermute.core.sub_session import SubSessionManager
 
 logger = logging.getLogger(__name__)
 

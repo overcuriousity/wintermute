@@ -1553,7 +1553,7 @@ class WebInterface:
     # ------------------------------------------------------------------
 
     async def _api_sessions(self, _request: web.Request) -> web.Response:
-        from wintermute import database
+        from wintermute.infra import database
 
         db_threads = set(database.get_active_thread_ids())
         web_live = set(self._threads.keys())
@@ -1591,7 +1591,7 @@ class WebInterface:
         return self._json({"sessions": sessions})
 
     async def _api_session_messages(self, request: web.Request) -> web.Response:
-        from wintermute import database
+        from wintermute.infra import database
 
         thread_id = request.match_info["thread_id"]
         msgs = database.load_active_messages(thread_id)
@@ -1635,7 +1635,7 @@ class WebInterface:
         thread_id = request.match_info["thread_id"]
         try:
             await self._llm.reset_session(thread_id)
-            from wintermute import prompt_loader
+            from wintermute.infra import prompt_loader
             try:
                 seed_prompt = prompt_loader.load_seed(self._llm._seed_language)
                 await self._llm.enqueue_system_event(seed_prompt, thread_id)
@@ -1680,12 +1680,12 @@ class WebInterface:
         return self._json({})
 
     async def _api_system_prompt(self, _request: web.Request) -> web.Response:
-        from wintermute import prompt_assembler
+        from wintermute.infra import prompt_assembler
         try:
             prompt = prompt_assembler.assemble()
         except Exception as exc:  # noqa: BLE001
             return self._json({"error": str(exc)})
-        from wintermute.llm_thread import _count_tokens
+        from wintermute.core.llm_thread import _count_tokens
         _cfg = self._main_pool.primary if (self._main_pool and self._main_pool.enabled) else None
         model = _cfg.model if _cfg else "gpt-4"
         sp_tokens = _count_tokens(prompt, model)
@@ -1798,7 +1798,7 @@ class WebInterface:
     # ------------------------------------------------------------------
 
     async def _api_agenda(self, _request: web.Request) -> web.Response:
-        from wintermute import database
+        from wintermute.infra import database
         items = database.list_agenda_items("all")
         return self._json({"items": items, "count": len(items)})
 
@@ -1807,7 +1807,7 @@ class WebInterface:
     # ------------------------------------------------------------------
 
     async def _api_interaction_log(self, request: web.Request) -> web.Response:
-        from wintermute import database
+        from wintermute.infra import database
         limit = int(request.query.get("limit", "200"))
         offset = int(request.query.get("offset", "0"))
         session = request.query.get("session") or None
@@ -1826,7 +1826,7 @@ class WebInterface:
         return self._json({"entries": entries, "total": total})
 
     async def _api_interaction_log_entry(self, request: web.Request) -> web.Response:
-        from wintermute import database
+        from wintermute.infra import database
         entry_id = int(request.match_info["id"])
         entry = database.get_interaction_log_entry(entry_id)
         if not entry:
@@ -1838,7 +1838,7 @@ class WebInterface:
     # ------------------------------------------------------------------
 
     async def _build_stream_snapshot(self) -> dict:
-        from wintermute import database
+        from wintermute.infra import database
 
         # Sessions
         db_threads = set(database.get_active_thread_ids())

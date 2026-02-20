@@ -66,9 +66,9 @@ from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from wintermute.llm_thread import BackendPool
+    from wintermute.core.llm_thread import BackendPool
 
-from wintermute import database
+from wintermute.infra import database
 
 from wintermute.tools import TOOL_SCHEMAS, _NL_SCHEMA_MAP
 
@@ -423,7 +423,7 @@ def _load_hooks(
 
 def _build_stage1_system_prompt(hooks: list[TuringHook]) -> str:
     """Assemble the Stage 1 system prompt from all enabled hooks' detection_prompt fields."""
-    from wintermute import prompt_loader
+    from wintermute.infra import prompt_loader
     bullets = "\n".join(h.detection_prompt for h in hooks)
     return prompt_loader.load("TURING_STAGE1.txt", detection_bullets=bullets)
 
@@ -1145,7 +1145,7 @@ async def _check_objective_completion(
     Makes a single LLM call using the TURING_OBJECTIVE_COMPLETION.txt
     prompt template.  Returns a violation dict if the objective is NOT met.
     """
-    from wintermute import prompt_loader
+    from wintermute.infra import prompt_loader
 
     objective = context.get("objective", "")
     assistant_response = context.get("assistant_response", "")

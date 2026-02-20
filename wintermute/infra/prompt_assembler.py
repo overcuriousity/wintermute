@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from wintermute import database
-from wintermute import prompt_loader
+from wintermute.infra import database
+from wintermute.infra import prompt_loader
 
 logger = logging.getLogger(__name__)
 

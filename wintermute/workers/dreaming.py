@@ -19,12 +19,12 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from wintermute import database
-from wintermute import prompt_assembler
-from wintermute import prompt_loader
+from wintermute.infra import database
+from wintermute.infra import prompt_assembler
+from wintermute.infra import prompt_loader
 
 if TYPE_CHECKING:
-    from wintermute.llm_thread import BackendPool
+    from wintermute.core.llm_thread import BackendPool
 
 logger = logging.getLogger(__name__)
 

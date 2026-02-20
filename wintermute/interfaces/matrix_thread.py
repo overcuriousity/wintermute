@@ -1298,7 +1298,7 @@ class MatrixThread:
         if content is None and text == "/new":
             await self._llm.reset_session(thread_id)
             await self.send_message("Session reset. Starting fresh conversation.", thread_id)
-            from wintermute import prompt_loader
+            from wintermute.infra import prompt_loader
             try:
                 seed_prompt = prompt_loader.load_seed(self._llm._seed_language)
                 await self._llm.enqueue_system_event(seed_prompt, thread_id)
@@ -1395,7 +1395,7 @@ class MatrixThread:
     # ------------------------------------------------------------------
 
     async def _handle_status_command(self, thread_id: str) -> None:
-        from wintermute import database as db, prompt_assembler
+        from wintermute.infra import database as db, prompt_assembler
 
         lines = ["**Wintermute Status**"]
 
@@ -1534,14 +1534,14 @@ class MatrixThread:
         await self.send_message("\n".join(lines), thread_id)
 
     async def _handle_dream_command(self, thread_id: str) -> None:
-        from wintermute import dreaming, prompt_assembler
+        from wintermute.workers import dreaming; from wintermute.infra import prompt_assembler
 
         if not hasattr(self, "_dreaming_loop") or not self._dreaming_loop:
             await self.send_message("Dreaming loop not available.", thread_id)
             return
 
         dl = self._dreaming_loop
-        from wintermute import database as db
+        from wintermute.infra import database as db
         mem_before = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
         agenda_before = len(db.list_agenda_items("active"))
         skills_before = sorted(prompt_assembler.SKILLS_DIR.glob("*.md")) if prompt_assembler.SKILLS_DIR.exists() else []
@@ -1578,7 +1578,7 @@ class MatrixThread:
             )
             return
 
-        from wintermute import kimi_auth
+        from wintermute.backends import kimi_auth
 
         async def _broadcast(msg: str) -> None:
             await self.send_message(msg, thread_id)

@@ -28,21 +28,21 @@ from typing import Any, Optional
 
 import yaml
 
-from wintermute import database
-from wintermute import prompt_assembler
-from wintermute import prompt_loader
+from wintermute.infra import database
+from wintermute.infra import prompt_assembler
+from wintermute.infra import prompt_loader
 from wintermute import tools as tool_module
-from wintermute.agenda import AgendaLoop
+from wintermute.workers.agenda import AgendaLoop
 from openai import AsyncOpenAI
 
-from wintermute.llm_thread import BackendPool, LLMThread, MultiProviderConfig, ProviderConfig
-from wintermute.matrix_thread import MatrixConfig, MatrixThread
-from wintermute.dreaming import DreamingConfig, DreamingLoop
-from wintermute.memory_harvest import MemoryHarvestConfig, MemoryHarvestLoop
-from wintermute.scheduler_thread import RoutineScheduler, SchedulerConfig
-from wintermute.sub_session import SubSessionManager
+from wintermute.core.llm_thread import BackendPool, LLMThread, MultiProviderConfig, ProviderConfig
+from wintermute.interfaces.matrix_thread import MatrixConfig, MatrixThread
+from wintermute.workers.dreaming import DreamingConfig, DreamingLoop
+from wintermute.workers.memory_harvest import MemoryHarvestConfig, MemoryHarvestLoop
+from wintermute.workers.scheduler_thread import RoutineScheduler, SchedulerConfig
+from wintermute.core.sub_session import SubSessionManager
 from wintermute.update_checker import UpdateCheckerConfig, UpdateCheckerLoop
-from wintermute.web_interface import WebInterface
+from wintermute.interfaces.web_interface import WebInterface
 
 logger = logging.getLogger(__name__)
 
@@ -250,7 +250,7 @@ def _make_client_for_config(cfg: ProviderConfig, cache: dict) -> Any:
     if cfg.provider == "gemini-cli":
         key = ("gemini-cli",)
         if key not in cache:
-            from wintermute import gemini_auth, gemini_client
+            from wintermute.backends import gemini_auth, gemini_client
             creds = gemini_auth.load_credentials()
             if not creds:
                 logger.info("No Gemini credentials found — running interactive setup")
@@ -260,7 +260,7 @@ def _make_client_for_config(cfg: ProviderConfig, cache: dict) -> Any:
     elif cfg.provider == "kimi-code":
         key = ("kimi-code",)
         if key not in cache:
-            from wintermute import kimi_auth, kimi_client
+            from wintermute.backends import kimi_auth, kimi_client
             creds = kimi_auth.load_credentials()
             # Client is created even without creds — auto-auth runs after
             # interfaces are up, or the user can run /kimi-auth manually.
@@ -545,7 +545,7 @@ async def main() -> None:
     kimi_client_instance = client_cache.get(("kimi-code",))
     if kimi_client_instance and not kimi_client_instance.authenticated:
         async def _kimi_auto_auth() -> None:
-            from wintermute import kimi_auth
+            from wintermute.backends import kimi_auth
             # Wait for Matrix client to be ready (connected + synced).
             if matrix:
                 for _ in range(30):

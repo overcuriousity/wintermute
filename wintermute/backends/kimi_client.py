@@ -11,7 +11,7 @@ import logging
 
 from openai import AsyncOpenAI
 
-from wintermute import kimi_auth
+from wintermute.backends import kimi_auth
 
 logger = logging.getLogger(__name__)
 

@@ -19,10 +19,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 from zoneinfo import ZoneInfo
 
-from wintermute import prompt_loader
+from wintermute.infra import prompt_loader
 
 if TYPE_CHECKING:
-    from wintermute.llm_thread import BackendPool
+    from wintermute.core.llm_thread import BackendPool
 
 logger = logging.getLogger(__name__)
 

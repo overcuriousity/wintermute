@@ -2,7 +2,7 @@
 
 ## Conversation Seed
 
-**Module:** `wintermute/llm_thread.py`
+**Module:** `wintermute/core/llm_thread.py`
 
 When a new conversation starts (first user message in an empty thread, `/new` in Matrix, or session reset in the web UI), a seed system event is automatically injected before the user's message is processed. The seed prompts the LLM to introduce itself, mention relevant active goals from memories and agendas, and briefly explain its capabilities.
 
@@ -16,7 +16,7 @@ Wintermute includes several autonomous background systems that operate without u
 
 ## Dreaming Loop
 
-**Module:** `wintermute/dreaming.py`
+**Module:** `wintermute/workers/dreaming.py`
 
 A nightly consolidation pass that reviews and prunes MEMORIES.txt and agenda DB items.
 
@@ -35,7 +35,7 @@ The prompts used for consolidation are stored in `data/DREAM_MEMORIES_PROMPT.txt
 
 ## Memory Harvest
 
-**Module:** `wintermute/memory_harvest.py`
+**Module:** `wintermute/workers/memory_harvest.py`
 
 Periodic background extraction of personal facts and preferences from conversation history into MEMORIES.txt.
 
@@ -69,7 +69,7 @@ Periodic background extraction of personal facts and preferences from conversati
 
 ## Agenda Reviews
 
-**Module:** `wintermute/agenda.py`
+**Module:** `wintermute/workers/agenda.py`
 
 Periodic autonomous reviews of active agenda items.
 
@@ -83,7 +83,7 @@ Periodic autonomous reviews of active agenda items.
 
 ## Sub-sessions and Workflow DAG
 
-**Module:** `wintermute/sub_session.py`
+**Module:** `wintermute/core/sub_session.py`
 
 Background workers for complex, multi-step tasks.
 
@@ -157,7 +157,7 @@ This is fully deterministic — no LLM inference is involved in the routing or a
 
 ## Routine-triggered Inference
 
-**Module:** `wintermute/scheduler_thread.py`
+**Module:** `wintermute/workers/scheduler_thread.py`
 
 Routines can optionally trigger AI inference when they fire:
 
@@ -169,7 +169,7 @@ Routines can optionally trigger AI inference when they fire:
 
 ## Context Compaction
 
-**Module:** `wintermute/llm_thread.py`
+**Module:** `wintermute/core/llm_thread.py`
 
 Automatic conversation history management:
 
