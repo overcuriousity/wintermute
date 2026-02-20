@@ -65,6 +65,8 @@ class AgendaLoop:
         parent_thread_id set, so results are delivered back to that room.
         Items without thread_id are skipped entirely.
         """
+        database.delete_old_completed_agenda(days=30)
+
         if self._sub_sessions is None:
             logger.warning("Global agenda: SubSessionManager not available, skipping")
             return
