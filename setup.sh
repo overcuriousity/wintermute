@@ -222,7 +222,9 @@ if $DRY_RUN; then
   echo ""
   echo -e "  ${C_DIM}Would install: Python 3.12+, curl, uv, build tools, libolm-dev, ffmpeg${C_RESET}"
   echo -e "  ${C_DIM}Would run: uv sync${C_RESET}"
-  echo -e "  ${C_DIM}Would write: config.yaml${C_RESET}"
+  echo -e "  ${C_DIM}Would write: config.yaml (matrix, whisper, web, inference backends,${C_RESET}"
+  echo -e "  ${C_DIM}  role mapping, turing protocol, nl translation, seed, agenda,${C_RESET}"
+  echo -e "  ${C_DIM}  context, dreaming, memory harvest, scheduler, logging)${C_RESET}"
   echo ""
   echo -e "  ${C_BOLD}No changes made.${C_RESET}"
   exit 0
@@ -537,8 +539,20 @@ if ! ${SKIP_CONFIG:-false}; then
        ask LLM_MODEL "Gemini model" "gemini-2.5-pro"
        LLM_CONTEXT="1048576"
        LLM_MAX_TOKENS="8192"
-       LLM_COMPACTION_MODEL=""
+       LLM_REASONING=false
        info "Context: ${LLM_CONTEXT} tokens, max response: ${LLM_MAX_TOKENS} tokens"
+       echo ""
+       HAS_SMALL_MODEL=false
+       if ask_yn "Use a separate smaller model for background tasks?" "y"; then
+         HAS_SMALL_MODEL=true
+         echo -e "  ${C_DIM}Available smaller models:${C_RESET}"
+         echo -e "  ${C_DIM}  gemini-2.5-flash       (recommended for background tasks)${C_RESET}"
+         echo -e "  ${C_DIM}  gemini-3-flash-preview  (next-gen fast, preview)${C_RESET}"
+         echo ""
+         ask LLM_SMALL_MODEL "Background model" "gemini-2.5-flash"
+         LLM_SMALL_CONTEXT="${LLM_CONTEXT}"
+         LLM_SMALL_MAX_TOKENS="2048"
+       fi
        echo ""
        info "Running OAuth setup — this will open your browser for Google sign-in..."
        info "${C_DIM}On headless systems: a URL will be printed. Open it in any browser,${C_RESET}"
@@ -568,8 +582,19 @@ if ! ${SKIP_CONFIG:-false}; then
        ask LLM_MODEL "Kimi model" "kimi-for-coding"
        LLM_CONTEXT="131072"
        LLM_MAX_TOKENS="8192"
-       LLM_COMPACTION_MODEL=""
+       LLM_REASONING=false
        info "Context: ${LLM_CONTEXT} tokens, max response: ${LLM_MAX_TOKENS} tokens"
+       echo ""
+       HAS_SMALL_MODEL=false
+       if ask_yn "Use a separate smaller model for background tasks?" "y"; then
+         HAS_SMALL_MODEL=true
+         echo -e "  ${C_DIM}Available models:${C_RESET}"
+         echo -e "  ${C_DIM}  kimi-code        (lighter, faster)${C_RESET}"
+         echo ""
+         ask LLM_SMALL_MODEL "Background model" "kimi-code"
+         LLM_SMALL_CONTEXT="${LLM_CONTEXT}"
+         LLM_SMALL_MAX_TOKENS="2048"
+       fi
        echo ""
        info "Running OAuth device-code setup — a URL will be printed."
        info "${C_DIM}Open it in any browser, sign in, and authorise the device.${C_RESET}"
@@ -594,6 +619,8 @@ if ! ${SKIP_CONFIG:-false}; then
       echo -e "  ${C_DIM}Unauthenticated. Running without a collar.${C_RESET}"
     fi
 
+    echo ""
+    echo -e "  ${C_BOLD}Primary model${C_RESET} ${C_DIM}(main conversation)${C_RESET}"
     ask LLM_MODEL "Model name" "qwen2.5:72b"
     case "${LLM_MODEL,,}" in
       *llama*)    echo -e "  ${C_DIM}A mammal for a mind. I will work with what I have.${C_RESET}" ;;
@@ -609,7 +636,21 @@ if ! ${SKIP_CONFIG:-false}; then
 
     ask LLM_CONTEXT "Context window size (tokens)" "32768"
     ask LLM_MAX_TOKENS "Max tokens per response" "4096"
-    ask LLM_COMPACTION_MODEL "Compaction/dreaming model (optional, smaller)" ""
+    if ask_yn "Is this a reasoning model (o1, o3, R1, QwQ)?" "n"; then
+      LLM_REASONING=true
+    else
+      LLM_REASONING=false
+    fi
+
+    echo ""
+    HAS_SMALL_MODEL=false
+    if ask_yn "Use a separate smaller model for background tasks?" "y"; then
+      HAS_SMALL_MODEL=true
+      echo -e "  ${C_DIM}This model handles compaction, dreaming, sub-sessions, and validation.${C_RESET}"
+      ask LLM_SMALL_MODEL "Background model name" "qwen2.5:7b"
+      ask LLM_SMALL_CONTEXT "Background model context size" "32768"
+      LLM_SMALL_MAX_TOKENS="2048"
+    fi
   fi
 
   # ── Web interface ────────────────────────────────────────────
@@ -623,6 +664,18 @@ if ! ${SKIP_CONFIG:-false}; then
   echo -e "  ${C_BOLD}── Timezone ──${C_RESET}"
   _sys_tz=$(timedatectl show --property=Timezone --value 2>/dev/null || echo "UTC")
   ask SCHEDULER_TZ "Timezone (e.g. Europe/Berlin)" "$_sys_tz"
+
+  # ── Seed language ──────────────────────────────────────────
+  echo ""
+  echo -e "  ${C_BOLD}── Conversation language ──${C_RESET}"
+  _lang_raw="${LANG:-en_US}"
+  _lang_raw="${_lang_raw%%[._]*}"
+  case "${_lang_raw,,}" in
+    de*) _auto_lang="de" ;; fr*) _auto_lang="fr" ;; es*) _auto_lang="es" ;;
+    it*) _auto_lang="it" ;; zh*) _auto_lang="zh" ;; ja*) _auto_lang="ja" ;;
+    *)   _auto_lang="en" ;;
+  esac
+  ask SEED_LANG "Language code (en, de, fr, es, it, zh, ja)" "$_auto_lang"
 
   # ── SearXNG hint ─────────────────────────────────────────────
   echo ""
@@ -760,6 +813,39 @@ print(json.dumps({
     fi
   fi
 
+  # ── Whisper (voice transcription, optional) ──────────────────
+  WHISPER_ENABLED=false
+  if ! $SKIP_MATRIX && $MATRIX_ENABLED; then
+    echo ""
+    echo -e "  ${C_BOLD}── Voice message transcription (Whisper) ──${C_RESET}"
+    echo -e "  ${C_DIM}  Requires an OpenAI-compatible /v1/audio/transcriptions endpoint.${C_RESET}"
+    echo -e "  ${C_DIM}  Local: faster-whisper-server, whisper.cpp  ·  Cloud: OpenAI whisper-1${C_RESET}"
+    echo ""
+    if ask_yn "Enable voice message transcription?" "n"; then
+      WHISPER_ENABLED=true
+      ask WHISPER_BASE_URL "Whisper API base URL" "http://localhost:8000/v1"
+      ask_secret WHISPER_API_KEY "Whisper API key (use 'none' for local unauthenticated)"
+      [[ -z "$WHISPER_API_KEY" ]] && WHISPER_API_KEY="none"
+      ask WHISPER_MODEL "Whisper model name" "whisper-large-v3"
+      ask WHISPER_LANG "Language hint (ISO-639-1, e.g. 'de', or empty for auto-detect)" ""
+      ok "Whisper configured."
+    fi
+  fi
+
+  # ── NL translation heuristic ────────────────────────────────
+  NL_TRANSLATION_ENABLED=false
+  _model_lower="${LLM_MODEL,,}"
+  if [[ "$_model_lower" =~ (3b|7b|8b|mini|small|tiny|micro) ]]; then
+    echo ""
+    echo -e "  ${C_BOLD}── Tool-call translation ──${C_RESET}"
+    echo -e "  ${C_DIM}  Your primary model appears to be small. NL translation simplifies${C_RESET}"
+    echo -e "  ${C_DIM}  complex tool schemas into plain-English descriptions for the LLM.${C_RESET}"
+    echo ""
+    if ask_yn "Enable NL translation for tool calls?" "y"; then
+      NL_TRANSLATION_ENABLED=true
+    fi
+  fi
+
   # ── write config.yaml ────────────────────────────────────────
   # Escape values that may contain YAML-special characters (: # { } ' " etc.)
   _yaml_escape() {
@@ -767,6 +853,7 @@ print(json.dumps({
   }
 
   {
+    # ── 1. Matrix ──
     if $MATRIX_ENABLED; then
       cat <<YAML
 # Matrix integration
@@ -798,6 +885,32 @@ YAML
     fi
     unset MATRIX_PASS
 
+    # ── 2. Whisper ──
+    if $WHISPER_ENABLED; then
+      cat <<YAML
+# Voice message transcription (Whisper)
+whisper:
+  enabled: true
+  base_url: $(_yaml_escape "${WHISPER_BASE_URL}")
+  api_key: $(_yaml_escape "${WHISPER_API_KEY}")
+  model: $(_yaml_escape "${WHISPER_MODEL}")
+  language: $(_yaml_escape "${WHISPER_LANG}")
+
+YAML
+    else
+      cat <<YAML
+# Voice message transcription (disabled)
+# whisper:
+#   enabled: true
+#   base_url: "http://localhost:8000/v1"
+#   api_key: "none"
+#   model: "whisper-large-v3"
+#   language: ""
+
+YAML
+    fi
+
+    # ── 3. Web interface ──
     cat <<YAML
 # Web interface
 web:
@@ -805,6 +918,10 @@ web:
   host: $(_yaml_escape "${WEB_HOST}")
   port: ${WEB_PORT}
 
+YAML
+
+    # ── 4. Inference backends ──
+    cat <<YAML
 # Inference backends
 inference_backends:
   - name: "main"
@@ -832,72 +949,164 @@ YAML
     model: $(_yaml_escape "${LLM_MODEL}")
     context_size: ${LLM_CONTEXT}
     max_tokens: ${LLM_MAX_TOKENS}
+    reasoning: ${LLM_REASONING}
 YAML
     fi
 
-    if [[ -n "${LLM_COMPACTION_MODEL:-}" ]]; then
-      # Generate a second backend for compaction with a smaller model.
+    if $HAS_SMALL_MODEL; then
+      echo ""
+      cat <<YAML
+  - name: "small"
+YAML
       if [[ "${LLM_PROVIDER:-openai}" == "gemini-cli" ]]; then
         cat <<YAML
-  - name: "compaction"
     provider: "gemini-cli"
-    model: $(_yaml_escape "${LLM_COMPACTION_MODEL}")
-    context_size: ${LLM_CONTEXT}
-    max_tokens: 2048
+    model: $(_yaml_escape "${LLM_SMALL_MODEL}")
+    context_size: ${LLM_SMALL_CONTEXT}
+    max_tokens: ${LLM_SMALL_MAX_TOKENS}
 YAML
       elif [[ "${LLM_PROVIDER:-openai}" == "kimi-code" ]]; then
         cat <<YAML
-  - name: "compaction"
     provider: "kimi-code"
-    model: $(_yaml_escape "${LLM_COMPACTION_MODEL}")
-    context_size: ${LLM_CONTEXT}
-    max_tokens: 2048
+    model: $(_yaml_escape "${LLM_SMALL_MODEL}")
+    context_size: ${LLM_SMALL_CONTEXT}
+    max_tokens: ${LLM_SMALL_MAX_TOKENS}
 YAML
       else
         cat <<YAML
-  - name: "compaction"
     provider: "openai"
     base_url: $(_yaml_escape "${LLM_BASE_URL}")
     api_key: $(_yaml_escape "${LLM_API_KEY}")
-    model: $(_yaml_escape "${LLM_COMPACTION_MODEL}")
-    context_size: ${LLM_CONTEXT}
-    max_tokens: 2048
+    model: $(_yaml_escape "${LLM_SMALL_MODEL}")
+    context_size: ${LLM_SMALL_CONTEXT}
+    max_tokens: ${LLM_SMALL_MAX_TOKENS}
 YAML
       fi
     fi
 
-    cat <<YAML
-
+    # ── 5. LLM role mapping ──
+    echo ""
+    if $HAS_SMALL_MODEL; then
+      cat <<YAML
 # LLM role mapping
 llm:
   base: ["main"]
+  compaction: ["small", "main"]
+  sub_sessions: ["small", "main"]
+  dreaming: ["small"]
+  turing_protocol: ["small"]
 YAML
-
-    if [[ -n "${LLM_COMPACTION_MODEL:-}" ]]; then
-      echo '  compaction: ["compaction"]'
     else
-      echo '  # compaction: ["main"]  # uncomment and add a dedicated backend for compaction'
+      cat <<YAML
+# LLM role mapping
+llm:
+  base: ["main"]
+  compaction: ["main"]
+  sub_sessions: ["main"]
+  dreaming: ["main"]
+  turing_protocol: ["main"]
+YAML
     fi
 
+    # ── 6. Turing Protocol ──
+    echo ""
+    if $HAS_SMALL_MODEL; then _tp_backend='["small"]'; else _tp_backend='["main"]'; fi
     cat <<YAML
+# Turing Protocol (post-inference validation)
+turing_protocol:
+  backends: ${_tp_backend}
+  validators:
+    workflow_spawn: true
+    phantom_tool_result: true
+    empty_promise: true
+    objective_completion:
+      enabled: true
+      scope: "sub_session"
+YAML
 
+    # ── 7. NL Translation ──
+    echo ""
+    if $NL_TRANSLATION_ENABLED; then
+      if $HAS_SMALL_MODEL; then _nl_backend='["small"]'; else _nl_backend='["main"]'; fi
+      cat <<YAML
+# NL translation (tool-call simplification for small models)
+nl_translation:
+  enabled: true
+  backends: ${_nl_backend}
+  tools:
+    - set_routine
+    - spawn_sub_session
+    - add_skill
+    - agenda
+YAML
+    else
+      cat <<YAML
+# NL translation (disabled — enable for small models < 14B)
+# nl_translation:
+#   enabled: true
+#   backends: ["small"]
+#   tools:
+#     - set_routine
+#     - spawn_sub_session
+#     - add_skill
+#     - agenda
+YAML
+    fi
+
+    # ── 8. Seed ──
+    echo ""
+    cat <<YAML
+# Conversation seed language
+seed:
+  language: $(_yaml_escape "${SEED_LANG}")
+YAML
+
+    # ── 9. Agenda ──
+    echo ""
+    cat <<YAML
 agenda:
   enabled: true
   review_interval_minutes: 60
+YAML
 
+    # ── 10. Context ──
+    echo ""
+    cat <<YAML
 context:
   component_size_limits:
     memories: 10000
     agenda: 5000
     skills_total: 20000
+YAML
 
+    # ── 11. Dreaming ──
+    echo ""
+    cat <<YAML
 dreaming:
   hour: 1
   minute: 0
+YAML
 
+    # ── 12. Memory Harvest ──
+    echo ""
+    cat <<YAML
+memory_harvest:
+  enabled: true
+  message_threshold: 20
+  inactivity_timeout_minutes: 15
+  max_message_chars: 2000
+YAML
+
+    # ── 13. Scheduler ──
+    echo ""
+    cat <<YAML
 scheduler:
   timezone: $(_yaml_escape "${SCHEDULER_TZ}")
+YAML
 
+    # ── 14. Logging ──
+    echo ""
+    cat <<YAML
 logging:
   level: "INFO"
   directory: "logs"
@@ -1140,9 +1349,7 @@ echo -e "  ${C_BOLD}Web UI:${C_RESET}  ${C_CYAN}http://${WEB_H}:${WEB_P}${C_RESE
 echo -e "  ${C_BOLD}Debug:${C_RESET}   ${C_CYAN}http://${WEB_H}:${WEB_P}/debug${C_RESET}"
 echo ""
 echo -e "  ${C_BOLD}── Configuration ──${C_RESET}"
-echo -e "  ${C_DIM}When convenient, review ${C_WHITE}config.yaml${C_DIM} to configure auxiliary models.${C_RESET}"
-echo -e "  ${C_DIM}Separate backends for compaction, dreaming, sub-sessions, and the supervisor${C_RESET}"
-echo -e "  ${C_DIM}can reduce costs and improve performance. See ${C_WHITE}config.yaml.example${C_DIM} for details.${C_RESET}"
+echo -e "  ${C_DIM}Review ${C_WHITE}config.yaml${C_DIM} to fine-tune settings. See ${C_WHITE}config.yaml.example${C_DIM} for documentation.${C_RESET}"
 echo ""
 echo -e "  ${C_DIM}\"The sky above the port was the color of television, tuned to a dead channel.\"${C_RESET}"
 echo -e "  ${C_DIM}                                            — William Gibson, Neuromancer${C_RESET}"
