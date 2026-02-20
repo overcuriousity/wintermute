@@ -70,7 +70,7 @@ if TYPE_CHECKING:
 
 from wintermute import database
 
-from wintermute.tools import TOOL_SCHEMAS
+from wintermute.tools import TOOL_SCHEMAS, _NL_SCHEMA_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -488,6 +488,11 @@ def validate_tool_schema(context: dict, detection_result: dict) -> bool:
     Full validation: required fields, types, enum values, minimum/maximum
     constraints, and unknown properties.
 
+    When NL translation is active for the tool being validated (indicated by
+    the tool name appearing in ``context["nl_tools"]``), the NL schema is used
+    instead of the full schema.  This prevents false rejections when the LLM
+    produces ``{"description": "..."}`` args intended for NL translation.
+
     When a violation is found, stores a human-readable bullet list of errors
     in ``context["_turing_hook_reason"]`` so Stage 3 can embed them in the
     correction prompt.
@@ -501,11 +506,19 @@ def validate_tool_schema(context: dict, detection_result: dict) -> bool:
         # Not called in pre_execution context — skip silently.
         return False
 
+    # Use NL schema when NL translation is active for this tool.
+    nl_tools = context.get("nl_tools")
+    use_nl = nl_tools and tool_name in nl_tools and tool_name in _NL_SCHEMA_MAP
+
     schema = None
-    for tool in TOOL_SCHEMAS:
-        if tool.get("function", {}).get("name") == tool_name:
-            schema = tool["function"]["parameters"]
-            break
+    if use_nl:
+        nl_schema = _NL_SCHEMA_MAP[tool_name]
+        schema = nl_schema["function"]["parameters"]
+    else:
+        for tool in TOOL_SCHEMAS:
+            if tool.get("function", {}).get("name") == tool_name:
+                schema = tool["function"]["parameters"]
+                break
 
     if schema is None:
         logger.warning(
@@ -576,7 +589,8 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook
     parts = []
     ctx = context or {}
     tool_name = ctx.get("tool_name", "")
-    tool_schema = _get_tool_schema(tool_name) if tool_name else _get_spawn_tool_schema()
+    nl_tools = ctx.get("nl_tools")
+    tool_schema = _get_tool_schema(tool_name, nl_tools=nl_tools) if tool_name else _get_spawn_tool_schema(nl_tools)
 
     for violation in confirmed:
         hook = hooks_by_name.get(violation["type"])
@@ -612,20 +626,26 @@ def _truncate_middle(text: str, keep_head: int, keep_tail: int) -> str:
     return text[:keep_head] + f"\n[… {omitted} chars omitted …]\n" + text[-keep_tail:]
 
 
-def _get_tool_schema(tool_name: str) -> str:
+def _get_tool_schema(tool_name: str, nl_tools: "set[str] | None" = None) -> str:
     """Return a compact JSON string of the named tool's schema.
+
+    When *nl_tools* is provided and contains *tool_name*, the NL schema is
+    returned instead of the full schema — so correction messages show the
+    schema the LLM actually sees.
 
     Falls back to a descriptive placeholder if the tool is not found.
     """
+    if nl_tools and tool_name in nl_tools and tool_name in _NL_SCHEMA_MAP:
+        return json.dumps(_NL_SCHEMA_MAP[tool_name], indent=2)
     for tool in TOOL_SCHEMAS:
         if tool.get("function", {}).get("name") == tool_name:
             return json.dumps(tool, indent=2)
     return f"(schema for tool '{tool_name}' not found)"
 
 
-def _get_spawn_tool_schema() -> str:
+def _get_spawn_tool_schema(nl_tools: "set[str] | None" = None) -> str:
     """Return a compact JSON string of the spawn_sub_session tool schema."""
-    return _get_tool_schema("spawn_sub_session")
+    return _get_tool_schema("spawn_sub_session", nl_tools=nl_tools)
 
 
 # ---------------------------------------------------------------------------
@@ -729,6 +749,7 @@ async def run_turing_protocol(
     tool_name: Optional[str] = None,
     tool_args: Optional[dict] = None,
     tool_result: Optional[str] = None,
+    nl_tools: "set[str] | None" = None,
 ) -> TuringResult:
     """Run the three-stage Turing Protocol validation pipeline.
 
@@ -802,6 +823,8 @@ async def run_turing_protocol(
         context["tool_result"] = _truncate_middle(tool_result, keep_head=500, keep_tail=200)
     context["phase"] = phase
     context["scope"] = scope
+    if nl_tools:
+        context["nl_tools"] = nl_tools
 
     try:
         violations: list[dict] = []

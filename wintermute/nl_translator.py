@@ -41,13 +41,15 @@ _PROMPT_MAP: dict[str, str] = {
 def is_nl_tool_call(tool_name: str, tool_args: dict) -> bool:
     """Detect whether a tool call uses the simplified NL schema.
 
-    Returns True when the tool is NL-eligible and the only argument key
-    is ``"description"``.
+    Returns True when the tool is NL-eligible and has a ``"description"``
+    string key — even if the LLM also included extra keys (e.g. ``timeout``)
+    alongside it.  The translator will use only the description; extra keys
+    are discarded.
     """
     return (
         tool_name in NL_TOOLS
-        and set(tool_args.keys()) == {"description"}
-        and isinstance(tool_args.get("description"), str)
+        and "description" in tool_args
+        and isinstance(tool_args["description"], str)
     )
 
 

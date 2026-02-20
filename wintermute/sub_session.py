@@ -1262,6 +1262,7 @@ class SubSessionManager:
                             assistant_response=(choice.message.content or ""),
                             tool_name=name,
                             tool_args=inputs,
+                            nl_tools=nl_tools,
                         )
                         if pre_result and pre_result.correction:
                             logger.warning(
@@ -1300,6 +1301,7 @@ class SubSessionManager:
                             assistant_response=(choice.message.content or ""),
                             tool_name=name,
                             tool_result=result,
+                            nl_tools=nl_tools,
                         )
                         if post_result and post_result.correction:
                             result += f"\n\n[TURING PROTOCOL WARNING] {post_result.correction}"
@@ -1338,6 +1340,7 @@ class SubSessionManager:
                     state=state,
                     tool_calls_made=tool_calls_made,
                     assistant_response=final_text,
+                    nl_tools=nl_tools,
                 )
                 if pi_result and pi_result.correction:
                     tp_corrected = True
@@ -1373,6 +1376,7 @@ class SubSessionManager:
         tool_name: Optional[str] = None,
         tool_args: Optional[dict] = None,
         tool_result: Optional[str] = None,
+        nl_tools: "set[str] | None" = None,
     ) -> Optional[turing_protocol_module.TuringResult]:
         """Run Turing Protocol hooks for a specific phase in sub-session scope.
 
@@ -1405,6 +1409,7 @@ class SubSessionManager:
                 tool_name=tool_name,
                 tool_args=tool_args,
                 tool_result=tool_result,
+                nl_tools=nl_tools,
             )
         except Exception:  # noqa: BLE001
             logger.exception(

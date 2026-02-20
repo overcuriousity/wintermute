@@ -477,6 +477,9 @@ class LLMThread:
 
         active_sessions = self._sub_sessions.list_active() if self._sub_sessions else []
 
+        nl_enabled = self._nl_translation_config.get("enabled", False)
+        nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
+
         try:
             result = await turing_protocol_module.run_turing_protocol(
                 pool=self._turing_protocol_pool,
@@ -488,6 +491,7 @@ class LLMThread:
                 thread_id=thread_id,
                 phase="post_inference",
                 scope="main",
+                nl_tools=nl_tools,
             )
         except Exception:  # noqa: BLE001
             logger.exception("Turing Protocol check raised (non-fatal)")
@@ -832,6 +836,7 @@ class LLMThread:
                             assistant_response=(choice.message.content or ""),
                             tool_name=name,
                             tool_args=inputs,
+                            nl_tools=nl_tools,
                         )
                         if pre_result and pre_result.correction:
                             logger.warning(
@@ -868,6 +873,7 @@ class LLMThread:
                             assistant_response=(choice.message.content or ""),
                             tool_name=name,
                             tool_result=result,
+                            nl_tools=nl_tools,
                         )
                         if post_result and post_result.correction:
                             result += f"\n\n[TURING PROTOCOL WARNING] {post_result.correction}"
@@ -911,6 +917,7 @@ class LLMThread:
         tool_name: Optional[str] = None,
         tool_args: Optional[dict] = None,
         tool_result: Optional[str] = None,
+        nl_tools: "set[str] | None" = None,
     ) -> Optional["turing_protocol_module.TuringResult"]:
         """Run Turing Protocol hooks for a specific phase/scope.
 
@@ -940,6 +947,7 @@ class LLMThread:
                 tool_name=tool_name,
                 tool_args=tool_args,
                 tool_result=tool_result,
+                nl_tools=nl_tools,
             )
         except Exception:  # noqa: BLE001
             logger.exception("Turing Protocol %s check raised (non-fatal)", phase)
