@@ -203,8 +203,9 @@ _BUILTIN_HOOKS: list[TuringHook] = [
             "[TURING PROTOCOL CORRECTION] You committed to an action but did not "
             "execute it — no tool was called.\n"
             "Issue: {reason}\n\n"
-            "Either call the appropriate tool now, or explain why you cannot "
-            "and ask the user how to proceed."
+            "You MUST call the tool now. Do NOT describe what you will do — "
+            "make the actual tool call. If you truly cannot, explain the "
+            "specific blocker and ask the user how to proceed."
         ),
         halt_inference=False,
         kill_on_detect=False,
@@ -623,6 +624,10 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook
                       *, objective: Optional[str] = None) -> str:
     """Build an aggregated correction prompt from all confirmed violations.
 
+    Multiple violations of the same hook type are merged into a single
+    correction block (numbered issues) to avoid repetitive instructions
+    that dilute the signal for weak models.
+
     When *context* is provided and contains ``tool_name`` (i.e. in the
     ``pre_execution`` phase), the tool schema embedded in correction messages
     is loaded dynamically for the tool that was called.  Otherwise it falls
@@ -633,23 +638,43 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook
     ctx = context or {}
     tool_name = ctx.get("tool_name", "")
     nl_tools = ctx.get("nl_tools")
-    # Only embed a tool schema when we know which tool is relevant.
-    # For post_inference hooks without a tool_name, each hook's correction
-    # template may or may not use {tool_schema}; we provide a per-hook
-    # schema below if the hook is workflow_spawn, otherwise a placeholder.
     tool_schema = _get_tool_schema(tool_name, nl_tools=nl_tools) if tool_name else ""
 
+    # Group violations by hook type to merge same-type violations.
+    from collections import OrderedDict
+    grouped: OrderedDict[str, list[dict]] = OrderedDict()
     for violation in confirmed:
-        hook = hooks_by_name.get(violation["type"])
+        vtype = violation.get("type", "")
+        grouped.setdefault(vtype, []).append(violation)
+
+    for vtype, violations in grouped.items():
+        hook = hooks_by_name.get(vtype)
         if not hook:
             continue
 
-        reason = violation.get("reason", "unknown violation")
-        # Use the spawn schema for workflow_spawn; the pre-computed
-        # tool_schema for pre_execution hooks; empty otherwise.
+        # Merge reasons: single violation uses reason directly,
+        # multiple violations get numbered.
+        if len(violations) == 1:
+            reason = violations[0].get("reason", "unknown violation")
+        else:
+            reason = "\n".join(
+                f"  {i}. {v.get('reason', 'unknown violation')}"
+                for i, v in enumerate(violations, 1)
+            )
+
+        # Resolve tool schema for the correction template.
         effective_schema = tool_schema
         if not effective_schema and hook.name == "workflow_spawn":
             effective_schema = _get_spawn_tool_schema(nl_tools)
+        if not effective_schema and hook.name == "phantom_tool_result":
+            # Collect schemas from all violations of this type.
+            all_schemas: dict[str, str] = {}
+            for v in violations:
+                partial = _get_phantom_tool_schemas(v, nl_tools)
+                if partial and not partial.startswith("("):
+                    all_schemas[partial] = partial
+            effective_schema = "\n\n".join(all_schemas.values()) if all_schemas else \
+                "(call the tool that corresponds to the action you claimed)"
         try:
             part = hook.correction_template.format(
                 reason=reason,
@@ -705,6 +730,26 @@ def _get_tool_schema(tool_name: str, nl_tools: "set[str] | None" = None) -> str:
 def _get_spawn_tool_schema(nl_tools: "set[str] | None" = None) -> str:
     """Return a compact JSON string of the spawn_sub_session tool schema."""
     return _get_tool_schema("spawn_sub_session", nl_tools=nl_tools)
+
+
+def _get_phantom_tool_schemas(violation: dict, nl_tools: "set[str] | None" = None) -> str:
+    """Extract tool names mentioned in a phantom_tool_result violation and return their schemas.
+
+    Parses the violation reason for backtick-quoted tool names (e.g. `agenda`,
+    `add_skill`) and returns their schemas concatenated.  Falls back to a
+    generic message if no tools are identified.
+    """
+    import re
+    reason = violation.get("reason", "")
+    # Match backtick-quoted tool names and bare tool names from the known set.
+    known_tools = {t["function"]["name"] for t in TOOL_SCHEMAS}
+    found = set(re.findall(r'`(\w+)`', reason)) & known_tools
+    if not found:
+        return "(call the tool that corresponds to the action you claimed)"
+    schemas = []
+    for name in sorted(found):
+        schemas.append(_get_tool_schema(name, nl_tools=nl_tools))
+    return "\n\n".join(schemas)
 
 
 # ---------------------------------------------------------------------------
