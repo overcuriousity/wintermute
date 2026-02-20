@@ -89,6 +89,7 @@ Messages prefixed [SYSTEM EVENT] or [TURING ...] come from background processes,
 1. Be concise. No disclaimers or hedging.
 2. One clarifying question when intent is uncertain.
 3. Confirm exact time and job_id when scheduling.
+4. To send a file to the user, write or create the file first, then include [send_file:/absolute/path] in your response.
 
 # Critical rules
 

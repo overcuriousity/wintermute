@@ -32,6 +32,7 @@ import base64 as _base64
 import hashlib as _hashlib
 import json as _json
 import logging
+import mimetypes as _mimetypes
 import re as _re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -233,9 +234,14 @@ class MatrixThread:
     # Public interface
     # ------------------------------------------------------------------
 
+    _SEND_FILE_RE = _re.compile(r"\[send_file:(/[^\]\s]+)\]")
+
     async def send_message(self, text: str, room_id: str = None,
                            _retries: int = 3, _delay: float = 2.0) -> None:
         """Send a message to a room.  Auto-encrypts if room has E2EE.
+
+        Any ``[send_file:/absolute/path]`` markers in *text* are extracted
+        and uploaded as separate file/image messages before the text is sent.
 
         Retries up to *_retries* times on transient failures so that
         system-event broadcasts (sub-session results) are not silently lost.
@@ -246,6 +252,16 @@ class MatrixThread:
         if room_id is None:
             logger.warning("send_message called without room_id, dropping message")
             return
+
+        # Extract and send file markers before the text message.
+        file_paths = self._SEND_FILE_RE.findall(text)
+        for fpath in file_paths:
+            await self._send_file(fpath, room_id)
+        text = self._SEND_FILE_RE.sub("", text).strip()
+
+        if not text:
+            return  # nothing left after stripping markers
+
         last_exc: Optional[Exception] = None
         for attempt in range(1, _retries + 1):
             async with self._send_lock:
@@ -266,6 +282,53 @@ class MatrixThread:
                 await asyncio.sleep(_delay * attempt)
         logger.error("Matrix send to %s failed after %d attempts: %s",
                      room_id, _retries, last_exc)
+
+    async def _send_file(self, file_path: str, room_id: str,
+                         _retries: int = 3, _delay: float = 2.0) -> None:
+        """Upload a local file and send it to *room_id* as a file or image."""
+        p = Path(file_path)
+        if not p.is_file():
+            logger.warning("send_file: %s does not exist or is not a file", file_path)
+            return
+
+        data = p.read_bytes()
+        mime_type = _mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+        filename = p.name
+        file_size = len(data)
+
+        last_exc: Optional[Exception] = None
+        for attempt in range(1, _retries + 1):
+            async with self._send_lock:
+                try:
+                    mxc_uri = await self._client.upload_media(
+                        data, mime_type=mime_type, filename=filename,
+                    )
+                    if mime_type.startswith("image/"):
+                        await self._client.send_image(
+                            room_id=RoomID(room_id),
+                            url=mxc_uri,
+                            file_name=filename,
+                            info={"mimetype": mime_type, "size": file_size},
+                        )
+                    else:
+                        await self._client.send_file(
+                            room_id=RoomID(room_id),
+                            url=mxc_uri,
+                            file_name=filename,
+                            info={"mimetype": mime_type, "size": file_size},
+                        )
+                    logger.info("Sent file %s (%s, %d bytes) to %s", filename, mime_type, file_size, room_id)
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+                    logger.warning(
+                        "Matrix send_file %s to %s failed (attempt %d/%d): %s",
+                        file_path, room_id, attempt, _retries, exc,
+                    )
+            if attempt < _retries:
+                await asyncio.sleep(_delay * attempt)
+        logger.error("Matrix send_file %s to %s failed after %d attempts: %s",
+                     file_path, room_id, _retries, last_exc)
 
     @property
     def joined_room_ids(self) -> set[str]:
