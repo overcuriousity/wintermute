@@ -35,7 +35,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 | `llm_thread.py` | Inference engine, conversation history, context compaction, tool dispatch, Turing Protocol dispatch |
 | `tools.py` | 12 tool definitions (OpenAI function-calling schemas) + `execute_tool()` dispatcher |
 | `sub_session.py` | Background worker DAG: `TaskNode`/`Workflow` with `depends_on` edges, nested workers (depth 2), timeout continuation |
-| `prompt_assembler.py` | Assembles system prompt per-turn: BASE_PROMPT + datetime + MEMORIES + agenda + skills |
+| `prompt_assembler.py` | Assembles system prompt per-turn: BASE_PROMPT + datetime + MEMORIES + agenda + skills TOC (full skills loaded on demand via read_file) |
 | `prompt_loader.py` | Loads/validates prompt templates from `data/prompts/` (required files; missing = startup failure) |
 | `turing_protocol.py` | Phase-aware 3-stage pipeline: detect → validate → correct. Phases: `post_inference`, `pre_execution`, `post_execution`. Scoped to `main` and/or `sub_session`. |
 | `matrix_thread.py` | Matrix client (mautrix) with E2E encryption; voice messages transcribed via configurable Whisper endpoint |
@@ -57,7 +57,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 - `data/prompts/*.txt` — All prompt templates (externalized, not hardcoded); seed prompts are per-language (`SEED_en.txt`, `SEED_de.txt`, ...)
 - `data/MEMORIES.txt` — Long-term memory (append-based, consolidated nightly)
 - `data/conversation.db` — SQLite: messages, summaries, agenda, interaction_log
-- `data/skills/*.md` — Learned procedures
+- `data/skills/*.md` — Learned procedures (first line = summary for TOC; full content loaded on demand)
 - `data/TURING_PROTOCOL_HOOKS.txt` — Hook definitions (JSON)
 - `config.yaml` — Runtime config (gitignored)
 

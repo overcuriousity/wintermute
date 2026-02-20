@@ -34,7 +34,9 @@ Key rule: if it only matters because something is in progress right now, it belo
 
 ### 4. skills/*.md — Learned Procedures
 
-Each file in `data/skills/` is a Markdown document describing a reusable procedure the AI has learned. Created via the `add_skill` tool. All skills are loaded and injected into every prompt.
+Each file in `data/skills/` is a Markdown document describing a reusable procedure the AI has learned. Created via the `add_skill` tool. The first line of each file serves as a one-line summary.
+
+Only a table of contents (skill name + summary) is injected into the system prompt. The full skill content is loaded on demand by the LLM via `read_file` when relevant to the current task. This keeps the prompt lightweight even with many skills.
 
 ### 5. SEED_{language}.txt — Conversation Seed
 
@@ -73,17 +75,12 @@ The `prompt_assembler.assemble()` function builds the final system prompt:
 ---
 
 # Skills
-
-### Skill: {skill_name}
-{skill content}
-
----
-
-### Skill: {another_skill}
-{another skill content}
+Load a skill with read_file when relevant to the current task.
+- data/skills/calendar.md — Google Calendar event management
+- data/skills/deploy-docker.md — Docker container deployment workflow
 ```
 
-Sections are separated by `---` dividers. Empty sections are omitted entirely.
+Sections are separated by `---` dividers. Empty sections are omitted (except Skills, which always appears with at least the load instruction).
 
 ## Sub-session System Prompt Modes
 
@@ -106,7 +103,7 @@ Each component has a configurable character limit (set in `config.yaml` under `c
 |-----------|---------------|---------------------|
 | MEMORIES.txt | 10,000 chars | AI is asked to condense and prioritise |
 | Agenda (DB) | 5,000 chars | AI is asked to condense and prioritise |
-| skills/ (total) | 20,000 chars | AI is asked to reorganise |
+| skills/ (TOC) | 2,000 chars | AI is asked to reorganise |
 
 When a component exceeds its limit after any inference, a system event is enqueued asking the AI to read the component, condense it, and update it using the appropriate tool.
 

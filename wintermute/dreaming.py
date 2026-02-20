@@ -112,7 +112,7 @@ async def _consolidate_skills(pool: "BackendPool") -> None:
             prompt = condense_template.format(skill_name=name, content=content)
             response = await pool.call(
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens_override=300,
+                max_tokens_override=600,
             )
             result = (response.choices[0].message.content or "").strip()
             if result:

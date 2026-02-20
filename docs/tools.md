@@ -145,26 +145,28 @@ Manage active agenda items (working memory for ongoing tasks). Agenda items are 
 
 #### `add_skill`
 
-Create or overwrite a skill documentation file in `data/skills/`.
+Create or overwrite a skill documentation file in `data/skills/`. A summary appears in the system prompt's skills TOC; the full content is loaded on demand via `read_file`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `skill_name` | string | yes | Filename stem (no extension), e.g. `"calendar"` |
+| `summary` | string | yes | One-line summary for the skills index (max 80 chars) |
 | `documentation` | string | yes | Markdown documentation for the skill |
 
 ## NL Translation Mode
 
-When `nl_translation.enabled: true` in config, `set_routine` and
-`spawn_sub_session` are presented to the main LLM with simplified
-single-field schemas. Instead of filling in all structured parameters,
-the LLM writes a plain-English description:
+When `nl_translation.enabled: true` in config, `set_routine`,
+`spawn_sub_session`, and `add_skill` are presented to the main LLM with
+simplified single-field schemas. Instead of filling in all structured
+parameters, the LLM writes a plain-English description:
 
 ```json
 {"description": "remind me daily at 9am to check email"}
 ```
 
 A dedicated translator LLM then expands this into the full structured
-arguments (`schedule_type`, `at`, `message`, etc.) before execution.
+arguments (`schedule_type`, `at`, `message`, etc. for routines;
+`skill_name`, `summary`, `documentation` for skills) before execution.
 The tool result includes a `[Translated to: ...]` prefix showing the
 expanded arguments.
 

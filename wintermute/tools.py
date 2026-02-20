@@ -225,7 +225,7 @@ TOOL_SCHEMAS = [
     ),
     _fn(
         "add_skill",
-        "Create or overwrite a skill in data/skills/. Skills are auto-loaded into every system prompt.",
+        "Create or overwrite a skill in data/skills/. A summary appears in the system prompt; full content is loaded on demand via read_file.",
         {
             "type": "object",
             "properties": {
@@ -233,12 +233,16 @@ TOOL_SCHEMAS = [
                     "type": "string",
                     "description": "Filename stem without extension (e.g. 'calendar').",
                 },
+                "summary": {
+                    "type": "string",
+                    "description": "One-line summary for the skills index (max 80 chars).",
+                },
                 "documentation": {
                     "type": "string",
                     "description": "Markdown documentation for the skill. Be concise, max 500 chars.",
                 },
             },
-            "required": ["skill_name", "documentation"],
+            "required": ["skill_name", "summary", "documentation"],
         },
     ),
     _fn(
@@ -410,6 +414,28 @@ NL_TOOL_SCHEMAS = [
                         "each worker should do, which tasks must run before others, "
                         "and which can run in parallel. Be explicit about sequencing "
                         "(e.g. 'then', 'after that', 'at the same time as')."
+                    ),
+                },
+            },
+            "required": ["description"],
+        },
+    ),
+    _fn(
+        "add_skill",
+        (
+            "Save a learned procedure as a reusable skill. Describe what skill "
+            "to save and the procedure details in plain English — the system "
+            "will format it into a properly structured skill file."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": (
+                        "What skill to save: a name and the full procedure. "
+                        "Example: 'save a skill called deploy-docker about "
+                        "deploying containers: run docker compose up -d ...'"
                     ),
                 },
             },
@@ -629,7 +655,11 @@ def _tool_agenda(inputs: dict, thread_id: Optional[str] = None,
 
 def _tool_add_skill(inputs: dict, **_kw) -> str:
     try:
-        prompt_assembler.add_skill(inputs["skill_name"], inputs["documentation"])
+        prompt_assembler.add_skill(
+            inputs["skill_name"],
+            inputs["documentation"],
+            summary=inputs.get("summary"),
+        )
         return json.dumps({"status": "ok", "skill": inputs["skill_name"]})
     except Exception as exc:  # noqa: BLE001
         logger.exception("add_skill failed")

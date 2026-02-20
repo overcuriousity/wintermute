@@ -244,6 +244,7 @@ nl_translation:
   tools:                                  # Which tools get NL-simplified schemas
     - set_routine                         # Routine scheduling (complex cron + params)
     - spawn_sub_session                   # Background worker spawning (DAG dependencies)
+    - add_skill                           # Skill creation (summary + documentation formatting)
 
 
 # ── Seed (Conversation Starter) ──────────────────────────────────────

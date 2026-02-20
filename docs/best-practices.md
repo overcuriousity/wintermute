@@ -75,7 +75,7 @@ The system auto-summarises memory components when they exceed their size limits,
 
 - **MEMORIES.txt**: Keep entries factual and specific. Avoid storing transient state here — use Agenda for that. The nightly dreaming pass deduplicates and merges, but only as well as the model can reason about your entries.
 - **Agenda**: Complete items promptly when done. Stale agenda items consume prompt tokens on every turn and confuse the model about what is still active.
-- **Skills**: Keep skill files focused on one procedure. Large or overly broad skill files are harder for small models to apply correctly.
+- **Skills**: Keep skill files focused on one procedure. The first line of each skill file is used as a summary in the system prompt's TOC — make it clear and descriptive so the model knows when to load the full skill via `read_file`.
 
 ---
 

@@ -213,15 +213,15 @@ turing_protocol:
 ### `nl_translation`
 
 Natural-language tool call translation for weak/small LLMs. When enabled,
-complex tools (`set_routine`, `spawn_sub_session`) are presented to the
-main LLM as a single "describe in English" field. A dedicated translator
-LLM expands the description into structured arguments.
+complex tools (`set_routine`, `spawn_sub_session`, `add_skill`) are
+presented to the main LLM as a single "describe in English" field. A
+dedicated translator LLM expands the description into structured arguments.
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
 | `enabled` | no | `false` | Enable NL translation (opt-in) |
 | `backends` | no | turing_protocol backends | Ordered list of backend names for the translator LLM |
-| `tools` | no | `[set_routine, spawn_sub_session]` | Which tools use simplified NL schemas |
+| `tools` | no | `[set_routine, spawn_sub_session, add_skill]` | Which tools use simplified NL schemas |
 
 The translator can return JSON arrays to schedule multiple routines or
 spawn multiple sub-sessions from a single description. Ambiguous input
@@ -323,4 +323,4 @@ Seed prompts are language-specific files in `data/prompts/SEED_{language}.txt`. 
 |-----|---------|-------------|
 | `memories` | `10000` | Char limit before MEMORIES.txt auto-summarisation |
 | `agenda` | `5000` | Char limit before agenda auto-summarisation |
-| `skills_total` | `20000` | Total char limit across all skills |
+| `skills_total` | `2000` | Char limit for the skills TOC (summaries only; full skills are loaded on demand) |

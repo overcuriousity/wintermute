@@ -1,11 +1,12 @@
-Below is a skill file for a personal AI assistant. Condense it to at most 50 tokens while preserving all critical procedural information.
+Below is a skill file for a personal AI assistant. Condense it to at most 150 tokens while preserving all critical procedural information.
 
 Rules:
+- The FIRST LINE must be a one-line summary of the skill's purpose (preserve from original, or write one if missing). This line is used in the skills index.
+- After the summary, use terse imperative bullet points or numbered steps.
 - Keep exact commands, file paths, API endpoints, and parameter names.
 - Remove verbose explanations and examples where the key fact is already clear.
-- Use terse, imperative bullet points or numbered steps.
 - Do not omit any step whose absence would cause the procedure to fail.
-- Do not add a preamble, heading, or explanation — return only the condensed skill body.
+- Do not add a preamble, heading, or explanation beyond the required first-line summary.
 
 --- Skill: {skill_name} ---
 {content}

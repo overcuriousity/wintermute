@@ -28,7 +28,7 @@ SKILLS_DIR        = DATA_DIR / "skills"
 # Size thresholds (characters) that trigger AI summarisation
 MEMORIES_LIMIT = 10_000
 AGENDA_LIMIT    = 5_000
-SKILLS_LIMIT   = 20_000
+SKILLS_LIMIT   = 2_000  # TOC-only; individual skills loaded on demand
 
 # Configured timezone — set by main.py at startup via set_timezone().
 _timezone: str = "UTC"
@@ -55,6 +55,7 @@ def _read(path: Path, default: str = "") -> str:
 
 
 def _read_skills() -> str:
+    """Read full content of all skill files (used by dreaming/size checks)."""
     if not SKILLS_DIR.exists():
         return ""
     parts = []
@@ -63,6 +64,26 @@ def _read_skills() -> str:
         if content:
             parts.append(f"### Skill: {md_file.stem}\n\n{content}")
     return "\n\n---\n\n".join(parts)
+
+
+def _read_skills_toc() -> str:
+    """Build a TOC of skills with first-line summaries and exact file paths.
+
+    Always returns a non-empty string (includes instructions even when no
+    skills exist) so the LLM knows the skill system is available.
+    """
+    header = 'Load a skill with read_file when relevant to the current task.'
+    entries: list[str] = []
+    if SKILLS_DIR.exists():
+        for md_file in sorted(SKILLS_DIR.glob("*.md")):
+            content = _read(md_file)
+            if content:
+                summary = content.split("\n", 1)[0].strip()
+                rel_path = f"data/skills/{md_file.name}"
+                entries.append(f"- {rel_path} — {summary}")
+    if entries:
+        return header + "\n" + "\n".join(entries)
+    return header
 
 
 def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = None) -> str:
@@ -97,9 +118,8 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     if extra_summary:
         sections.append(f"# Conversation Summary\n\n{extra_summary}")
 
-    skills = _read_skills()
-    if skills:
-        sections.append(f"# Skills\n\n{skills}")
+    skills_toc = _read_skills_toc()
+    sections.append(f"# Skills\n\n{skills_toc}")
 
     return "\n\n---\n\n".join(sections)
 
@@ -111,12 +131,11 @@ def check_component_sizes() -> dict[str, bool]:
     """
     memories_len = len(_read(MEMORIES_FILE))
     agenda_len    = len(database.get_active_agenda_text())
-    skills_len   = len(_read_skills())
-
+    skills_toc_len = len(_read_skills_toc())
     return {
         "memories": memories_len > MEMORIES_LIMIT,
         "agenda":    agenda_len    > AGENDA_LIMIT,
-        "skills":   skills_len   > SKILLS_LIMIT,
+        "skills":   skills_toc_len > SKILLS_LIMIT,
     }
 
 
@@ -141,8 +160,14 @@ def append_memory(entry: str) -> int:
     return len(new_content)
 
 
-def add_skill(skill_name: str, documentation: str) -> None:
+def add_skill(skill_name: str, documentation: str,
+              summary: Optional[str] = None) -> None:
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
     skill_file = SKILLS_DIR / f"{skill_name}.md"
-    skill_file.write_text(documentation, encoding="utf-8")
+    if summary:
+        content = f"{summary.strip()}\n\n{documentation.strip()}"
+    else:
+        # Fallback: use first line of documentation as summary.
+        content = documentation.strip()
+    skill_file.write_text(content, encoding="utf-8")
     logger.info("Skill '%s' written to %s", skill_name, skill_file)
