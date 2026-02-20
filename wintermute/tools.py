@@ -442,6 +442,29 @@ NL_TOOL_SCHEMAS = [
             "required": ["description"],
         },
     ),
+    _fn(
+        "agenda",
+        (
+            "Manage agenda items (working memory for ongoing tasks). "
+            "Describe what you want to do in plain English — the system "
+            "will translate it into structured arguments."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": (
+                        "Plain-English description of what to do with the agenda. "
+                        "Examples: 'add a high-priority item to fix the login bug', "
+                        "'mark item 3 as done because the patch was deployed', "
+                        "'show all active items', 'update item 5 priority to urgent'."
+                    ),
+                },
+            },
+            "required": ["description"],
+        },
+    ),
 ]
 
 _NL_SCHEMA_MAP: dict[str, dict] = {

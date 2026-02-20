@@ -245,6 +245,7 @@ nl_translation:
     - set_routine                         # Routine scheduling (complex cron + params)
     - spawn_sub_session                   # Background worker spawning (DAG dependencies)
     - add_skill                           # Skill creation (summary + documentation formatting)
+    - agenda                              # Agenda management (add/complete/list/update)
 
 
 # ── Seed (Conversation Starter) ──────────────────────────────────────

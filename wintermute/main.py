@@ -310,7 +310,7 @@ async def main() -> None:
     nl_raw = cfg.get("nl_translation", {}) or {}
     nl_translation_config = {
         "enabled": nl_raw.get("enabled", False) and nl_translation_pool.enabled,
-        "tools": set(nl_raw.get("tools", ["set_routine", "spawn_sub_session", "add_skill"])),
+        "tools": set(nl_raw.get("tools", ["set_routine", "spawn_sub_session", "add_skill", "agenda"])),
     }
     if nl_translation_config["enabled"]:
         prompt_loader.validate_nl_translation()

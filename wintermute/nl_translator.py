@@ -27,13 +27,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Tools that have NL translation variants.
-NL_TOOLS: frozenset[str] = frozenset({"set_routine", "spawn_sub_session", "add_skill"})
+NL_TOOLS: frozenset[str] = frozenset({"set_routine", "spawn_sub_session", "add_skill", "agenda"})
 
 # Maps tool name -> prompt template filename.
 _PROMPT_MAP: dict[str, str] = {
     "set_routine": "NL_TRANSLATOR_SET_ROUTINE.txt",
     "spawn_sub_session": "NL_TRANSLATOR_SPAWN_SUB_SESSION.txt",
     "add_skill": "NL_TRANSLATOR_ADD_SKILL.txt",
+    "agenda": "NL_TRANSLATOR_AGENDA.txt",
 }
 
 

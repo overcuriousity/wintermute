@@ -156,7 +156,7 @@ Create or overwrite a skill documentation file in `data/skills/`. A summary appe
 ## NL Translation Mode
 
 When `nl_translation.enabled: true` in config, `set_routine`,
-`spawn_sub_session`, and `add_skill` are presented to the main LLM with
+`spawn_sub_session`, `add_skill`, and `agenda` are presented to the main LLM with
 simplified single-field schemas. Instead of filling in all structured
 parameters, the LLM writes a plain-English description:
 
@@ -166,7 +166,8 @@ parameters, the LLM writes a plain-English description:
 
 A dedicated translator LLM then expands this into the full structured
 arguments (`schedule_type`, `at`, `message`, etc. for routines;
-`skill_name`, `summary`, `documentation` for skills) before execution.
+`skill_name`, `summary`, `documentation` for skills;
+`action`, `item_id`, `content`, etc. for agenda) before execution.
 The tool result includes a `[Translated to: ...]` prefix showing the
 expanded arguments.
 

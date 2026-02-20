@@ -126,7 +126,7 @@ Wintermute is explicitly designed to work with small, quantised models (3B–8B 
 
 **Turing Protocol.** A three-stage (detect → validate → correct) post-inference validation pipeline that catches the hallucination patterns small models are most prone to — claiming to have done things they didn't, fabricating tool output, or making promises without acting. Rather than requiring a stronger model, corrections are injected automatically so the model can self-correct. See [turing-protocol.md](turing-protocol.md) for the full reference.
 
-**NL Translation (optional).** For models that struggle with multi-field structured JSON schemas, complex tool calls (`set_routine`, `spawn_sub_session`, `add_skill`) can be exposed as a single plain-English `description` field. A dedicated small translator LLM expands the description into structured arguments. See [tools.md — NL Translation Mode](tools.md#nl-translation-mode).
+**NL Translation (optional).** For models that struggle with multi-field structured JSON schemas, complex tool calls (`set_routine`, `spawn_sub_session`, `add_skill`, `agenda`) can be exposed as a single plain-English `description` field. A dedicated small translator LLM expands the description into structured arguments. See [tools.md — NL Translation Mode](tools.md#nl-translation-mode).
 
 **Lean system prompt.** The system prompt is assembled from independent file-based components (`BASE_PROMPT.txt`, `MEMORIES.txt`, agenda, skills TOC). Skills inject only a one-line-per-skill table of contents; full procedures are loaded on demand via `read_file`. Components have configurable character caps with auto-summarisation when exceeded. No framework boilerplate is injected — the prompt contains only what you wrote and what the model genuinely needs.
 
