@@ -410,13 +410,16 @@ class LLMThread:
                 except Exception:  # noqa: BLE001
                     logger.exception("Failed to broadcast system-event reply for thread %s",
                                      item.thread_id)
-            elif item.turing_depth > 0 and reply.tool_calls_made:
-                # Turing correction succeeded — the model complied and made
-                # tool calls.  Broadcast the result so the user sees it.
+            elif item.turing_depth > 0 and reply.text:
+                # Turing correction response — always broadcast so the user
+                # sees the self-correction.  The model may have complied with
+                # tool calls, or explained why it can't — either way the user
+                # should see the result.
                 logger.info(
-                    "Turing correction succeeded (depth=%d, tools=%s) — "
-                    "broadcasting response for thread %s",
-                    item.turing_depth, reply.tool_calls_made, item.thread_id,
+                    "Broadcasting Turing correction response for thread %s "
+                    "(depth=%d, tools=%s)",
+                    item.thread_id, item.turing_depth,
+                    reply.tool_calls_made or "none",
                 )
                 try:
                     await self._broadcast(reply.text, item.thread_id,
@@ -612,16 +615,11 @@ class LLMThread:
         database.save_message("assistant", _assistant_text, thread_id,
                               token_count=_count_tokens(_assistant_text, self._cfg.model))
 
-        # If a Turing correction was ignored (model responded with text only,
-        # no tool calls), delete the correction prompt + response from the DB
-        # so they don't pollute future conversation history.
-        if item.turing_depth > 0 and not reply.tool_calls_made:
-            logger.info(
-                "Turing correction ignored (no tool calls) — removing from "
-                "conversation history for thread %s (depth=%d)",
-                thread_id, item.turing_depth,
-            )
-            database.delete_last_n_messages(thread_id, 2)  # correction prompt + response
+        # Turing correction cleanup: if the re-check (at depth+1) confirms
+        # the model STILL violated after the correction, the failed exchange
+        # will be cleaned up by the next depth's check.  For now, keep the
+        # response in DB — it may be a valid explanation of why the model
+        # can't comply.
         await self._maybe_summarise_components(
             thread_id, _from_system_event=item.is_system_event,
         )
