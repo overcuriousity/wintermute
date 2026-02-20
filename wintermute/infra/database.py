@@ -163,28 +163,6 @@ def load_latest_summary(thread_id: str = "default") -> Optional[str]:
     return row[0] if row else None
 
 
-def delete_last_n_messages(thread_id: str, n: int) -> int:
-    """Delete the last *n* active (non-archived) messages for a thread.
-
-    Returns the number of rows actually deleted.  Used by the Turing
-    Protocol to remove failed correction exchanges from conversation
-    history so they don't pollute future turns.
-    """
-    with _connect() as conn:
-        # Find the IDs of the last N active messages.
-        rows = conn.execute(
-            "SELECT id FROM messages WHERE archived=0 AND thread_id=? "
-            "ORDER BY id DESC LIMIT ?",
-            (thread_id, n),
-        ).fetchall()
-        if not rows:
-            return 0
-        ids = [r[0] for r in rows]
-        placeholders = ",".join("?" * len(ids))
-        conn.execute(f"DELETE FROM messages WHERE id IN ({placeholders})", ids)
-        conn.commit()
-        return len(ids)
-
 
 def clear_active_messages(thread_id: str = "default") -> None:
     """Archive all active messages for a thread (used by /new command)."""
