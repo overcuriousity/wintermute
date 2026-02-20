@@ -469,14 +469,6 @@ def validate_phantom_tool_result(context: dict, detection_result: dict) -> bool:
             "LLM reason: %s", claimed_tool, detection_result.get("reason", "?"),
         )
         return False
-    if not claimed_tool and tool_calls_made:
-        # No specific tool named by Stage 1; if any tools were called,
-        # give the benefit of the doubt (backward-compatible behavior).
-        logger.info(
-            "Stage 2: False positive — tools were called (%s) and no specific "
-            "tool named. LLM reason: %s", tool_calls_made, detection_result.get("reason", "?"),
-        )
-        return False
     logger.warning(
         "Stage 2: Confirmed phantom tool result — claimed tool %r not in "
         "tool_calls_made %s", claimed_tool or "(unspecified)", tool_calls_made,
