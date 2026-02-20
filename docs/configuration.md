@@ -279,6 +279,19 @@ Transcribes Matrix voice messages using an OpenAI-compatible `/v1/audio/transcri
 | `hour` | no | `1` | Hour (UTC, 0-23) for nightly consolidation |
 | `minute` | no | `0` | Minute (0-59) |
 
+### `update_checker`
+
+Periodically checks the git remote for new commits and notifies via Matrix when updates are available. Requires git to be installed. The cached result is also shown by the `/status` command.
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `enabled` | no | `true` | Set `false` to disable entirely |
+| `check_on_startup` | no | `true` | Run a check immediately on startup (otherwise the first check happens after `interval_hours`) |
+| `interval_hours` | no | `24` | Hours between periodic checks |
+| `remote_url` | no | `""` | Git remote URL to check. Empty = use `origin` |
+
+Notifications are sent to the Matrix rooms listed in `matrix.allowed_rooms` (or all rooms if that list is empty). If Matrix is not configured, the checker still runs (results visible via `/status`) but no notifications are sent.
+
 ### `memory_harvest`
 
 Periodically mines recent conversation history for personal facts and preferences, extracting them into `MEMORIES.txt` via background sub-sessions. Complements the `append_memory` tool (which the AI uses in real-time during conversation).

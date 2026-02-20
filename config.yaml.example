@@ -319,7 +319,8 @@ dreaming:
 #
 update_checker:
   enabled: true                           # Set false to disable entirely
-  interval_hours: 24                      # Hours between checks (default: 24)
+  check_on_startup: true                  # Run a check immediately on startup
+  interval_hours: 24                      # Hours between periodic checks (default: 24)
   remote_url: ""                          # Git remote URL; empty = use 'origin'
 
 

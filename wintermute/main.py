@@ -485,6 +485,7 @@ async def main() -> None:
     uc_raw = cfg.get("update_checker", {})
     uc_config = UpdateCheckerConfig(
         enabled=uc_raw.get("enabled", True),
+        check_on_startup=uc_raw.get("check_on_startup", True),
         interval_hours=uc_raw.get("interval_hours", 24),
         remote_url=uc_raw.get("remote_url", ""),
     )

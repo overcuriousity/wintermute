@@ -23,6 +23,7 @@ _GIT_TIMEOUT = 60  # seconds
 @dataclass
 class UpdateCheckerConfig:
     enabled: bool = True
+    check_on_startup: bool = True
     interval_hours: int = 24
     remote_url: str = ""  # empty → use 'origin'
 
@@ -53,6 +54,15 @@ class UpdateCheckerLoop:
         logger.info("Update checker started (interval=%dh)", self._config.interval_hours)
         if not self._matrix_rooms:
             logger.warning("Update checker: no Matrix rooms configured — notifications will not be sent")
+
+        if self._config.check_on_startup:
+            try:
+                msg = await self.check()
+                if msg:
+                    await self._notify(msg)
+            except Exception:
+                logger.exception("Update check on startup failed")
+
         while self._running:
             await asyncio.sleep(interval)
             if not self._running:
