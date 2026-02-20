@@ -320,6 +320,129 @@ efficiency for every single turn.
 
 ---
 
+## 6. Deep Dive: 0.5B Model for Sub-Sessions and Turing Protocol
+
+### 6.1 Turing Protocol — Hook-by-Hook Assessment
+
+The Turing Protocol makes two distinct types of LLM calls with very different
+cognitive demands:
+
+#### Stage 1: Universal Detection (main thread, post_inference)
+
+**Task:** Receive JSON (`tool_calls_made`, `user_message`, `assistant_response`,
+`active_sessions`) → output `{"violations": [...]}` classifying whether
+`workflow_spawn`, `phantom_tool_result`, or `empty_promise` violations occurred.
+
+**Could a 0.5B model do this?** Marginal, with caveats:
+
+| Factor | Assessment |
+|--------|-----------|
+| JSON in / JSON out | Yes — structured I/O is fine-tunable at 0.5B |
+| Pattern matching ("I spawned" vs tool_calls_made) | Borderline — requires comparing text claims against a list |
+| Nuance (past-tense vs future, "I'll do X" vs "Should I?") | Weak — 0.5B struggles with subtle distinctions |
+| Multilingual (de/fr/en detection prompts) | No — 0.5B lacks multilingual capacity at this precision |
+| False positive cost | **Low** — Stage 2 programmatic validators catch FPs |
+| False negative cost | **High** — hallucination gets through to user |
+
+**Key insight:** The 4 programmatic hooks (`workflow_spawn`, `phantom_tool_result`,
+`empty_promise`, `tool_schema_validation`, `agenda_complete`) already have Python
+validators as Stage 2 safety net. So a 0.5B model with high recall / low precision
+*could* work as a first-pass detector since Stage 2 filters mistakes. **But the
+ruvltra model is trained on Claude Code IDE patterns, not on this specific JSON
+classification schema.** You'd need to fine-tune it on Wintermute's own
+interaction_log data.
+
+**Verdict:** Theoretically possible for programmatic-backed hooks only, but
+requires domain-specific fine-tuning that the ruvltra model doesn't provide.
+
+#### `objective_completion` (sub-session exit gate)
+
+**Task:** Decide whether a sub-session's response satisfies its stated objective.
+Input: objective + response + tools called → `{"objective_met": true/false, "reason": "..."}`.
+
+**Could a 0.5B model do this?** Almost certainly not:
+
+- Must understand arbitrary natural-language objectives
+- Must evaluate whether response *actually accomplished* vs *described what it would do*
+- Must assess whether real data was obtained (checking tools_called_this_session)
+- This is **semantic reasoning**, not classification
+
+A 0.5B model would likely either always approve (letting workers exit prematurely)
+or always reject (trapping workers in infinite retry loops). The objective_completion
+hook is the single most important sub-session quality gate — getting it wrong
+degrades every background task.
+
+**Verdict: No.** Minimum 3B+ model required. Your existing `local_small`
+(qwen2.5:7b) is the right choice here.
+
+### 6.2 Sub-Sessions — Why 0.5B Fails Entirely
+
+Sub-sessions run full tool-use inference loops (`_worker_loop` at
+`sub_session.py:1063`). Each iteration the model must:
+
+1. Parse the system prompt + objective + accumulated tool results
+2. Decide which tool to call next (from a filtered set of up to 12)
+3. Generate **valid JSON arguments** matching the tool's schema
+4. Interpret tool results and adjust strategy
+5. Know when to stop and produce a final answer
+
+**Concrete failure modes at 0.5B:**
+
+| Step | What goes wrong |
+|------|----------------|
+| Tool selection | Model picks wrong tool or hallucinates non-existent tools |
+| JSON arguments | Malformed JSON → `tool_schema_validation` fires → correction → retry → likely fails again |
+| Multi-step planning | Loses the objective after 2-3 tool rounds, starts looping |
+| Result interpretation | Can't synthesize search_web results or parse file contents |
+| Continuation | After timeout + resume, completely loses prior context |
+
+Wintermute's architecture is already optimized for small models (ministral-3b is
+noted as the floor). A 0.5B model is **below that floor** for tool-use inference.
+The NL translation layer (`nl_translator.py`) exists specifically to help weak
+models produce valid tool calls — but even with NL translation, 0.5B lacks the
+working memory to maintain multi-step task coherence.
+
+**Verdict: Not viable.** Sub-sessions need at minimum 3B for simple tasks,
+7B+ for anything involving research or file manipulation.
+
+### 6.3 The One Role Where 0.5B Could Add Value (New)
+
+A role that Wintermute **doesn't currently have**: pre-inference classification.
+
+```
+User message arrives
+  → 0.5B classifier: {needs_tools: bool, category: str, spawn_sub: bool}
+  → If needs_tools=false: skip tool schema injection, save ~2K tokens
+  → If category known: present only relevant tool subset to main model
+  → If spawn_sub: suggest objective template to main model
+```
+
+This would run **before** the main BackendPool call, purely as a token/latency
+optimization. But:
+
+- Requires fine-tuning on Wintermute's interaction_log (not ruvltra's training data)
+- Adds latency to every turn (0.5B inference + main model inference)
+- A simple keyword heuristic might achieve 80% of the value with zero model overhead
+
+**Verdict:** Interesting concept, but the ruvltra model as-is doesn't serve this
+purpose. You'd need custom fine-tuning, at which point you might as well fine-tune
+on Qwen2.5-0.5B directly rather than starting from ruvltra's Claude-Code-optimized
+weights.
+
+### 6.4 Summary Table
+
+| Wintermute Role | Cognitive Demand | 0.5B Viable? | ruvltra-as-is? | Notes |
+|----------------|-----------------|-------------|----------------|-------|
+| `base` (main) | High: conversation + tools | No | No | Needs 7B+ |
+| `sub_sessions` | High: multi-step tool loops | No | No | Needs 3B+ minimum |
+| `turing_protocol` Stage 1 | Medium: JSON classification | Maybe (fine-tuned) | No (wrong domain) | Programmatic Stage 2 provides safety net |
+| `turing_protocol` objective_completion | High: semantic reasoning | No | No | Needs 3B+ |
+| `compaction` | Medium-high: summarization | No | No | Quality matters for memory |
+| `dreaming` | Medium: consolidation | No | No | Needs understanding |
+| **New: pre-inference router** | Low: classification | Yes (fine-tuned) | No (wrong domain) | Best-case scenario for tiny models |
+
+---
+
 ## Sources
 
 - [ruv/ruvltra-claude-code on HuggingFace](https://huggingface.co/ruv/ruvltra-claude-code)
