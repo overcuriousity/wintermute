@@ -76,6 +76,10 @@ logger = logging.getLogger(__name__)
 
 HOOKS_FILE = Path("data") / "TURING_PROTOCOL_HOOKS.txt"
 
+# Cache for file-loaded hooks: (mtime, file_hooks_dict).
+# Avoids re-reading + re-parsing the file on every protocol call.
+_hooks_file_cache: tuple[float, dict[str, "TuringHook"]] = (0.0, {})
+
 
 # ------------------------------------------------------------------
 # Data model
@@ -283,25 +287,21 @@ _BUILTIN_HOOKS: list[TuringHook] = [
 # Hook loading
 # ------------------------------------------------------------------
 
-def _load_hooks(
-    enabled_validators: Optional[dict[str, Any]] = None,
-    *,
-    phase_filter: Optional[str] = None,
-    scope_filter: Optional[str] = None,
-) -> list[TuringHook]:
-    """Load hooks from TURING_PROTOCOL_HOOKS.txt, merged with built-in defaults.
+def _load_file_hooks_cached() -> dict[str, TuringHook]:
+    """Load hooks from the hooks file, using an mtime-based cache."""
+    global _hooks_file_cache
+    try:
+        mtime = HOOKS_FILE.stat().st_mtime
+    except FileNotFoundError:
+        return {}
+    except OSError as exc:
+        logger.error("Cannot stat %s (%s); using built-in defaults", HOOKS_FILE, exc)
+        return {}
 
-    Returns a list of enabled TuringHook objects, optionally filtered by
-    ``phase_filter`` (e.g. ``"post_inference"``) and ``scope_filter``
-    (e.g. ``"main"`` or ``"sub_session"``).
+    cached_mtime, cached_hooks = _hooks_file_cache
+    if mtime == cached_mtime and cached_hooks is not None:
+        return copy.deepcopy(cached_hooks)
 
-    ``enabled_validators`` overrides each hook's enabled flag by name.
-    Values can be ``True``/``False`` (simple toggle) or a dict with keys
-    like ``enabled``, ``scope``, ``phase`` for granular overrides.
-    """
-    builtin_map = {h.name: copy.deepcopy(h) for h in _BUILTIN_HOOKS}
-
-    # Try loading from file.
     file_hooks: dict[str, TuringHook] = {}
     try:
         raw = HOOKS_FILE.read_text(encoding="utf-8").strip()
@@ -334,12 +334,35 @@ def _load_hooks(
                         phase=raw_phase,
                         scope=raw_scope,
                     )
-    except FileNotFoundError:
-        pass
     except (json.JSONDecodeError, TypeError) as exc:
         logger.error("Cannot parse %s (%s); using built-in defaults", HOOKS_FILE, exc)
     except OSError as exc:
         logger.error("Cannot read %s (%s); using built-in defaults", HOOKS_FILE, exc)
+
+    _hooks_file_cache = (mtime, file_hooks)
+    return copy.deepcopy(file_hooks)
+
+
+def _load_hooks(
+    enabled_validators: Optional[dict[str, Any]] = None,
+    *,
+    phase_filter: Optional[str] = None,
+    scope_filter: Optional[str] = None,
+) -> list[TuringHook]:
+    """Load hooks from TURING_PROTOCOL_HOOKS.txt, merged with built-in defaults.
+
+    Returns a list of enabled TuringHook objects, optionally filtered by
+    ``phase_filter`` (e.g. ``"post_inference"``) and ``scope_filter``
+    (e.g. ``"main"`` or ``"sub_session"``).
+
+    ``enabled_validators`` overrides each hook's enabled flag by name.
+    Values can be ``True``/``False`` (simple toggle) or a dict with keys
+    like ``enabled``, ``scope``, ``phase`` for granular overrides.
+    """
+    builtin_map = {h.name: copy.deepcopy(h) for h in _BUILTIN_HOOKS}
+
+    # Load file hooks with mtime-based caching to avoid disk I/O per call.
+    file_hooks = _load_file_hooks_cached()
 
     # Merge: file overrides built-ins by name.
     merged = {**builtin_map, **file_hooks}
@@ -425,18 +448,34 @@ def validate_phantom_tool_result(context: dict, detection_result: dict) -> bool:
     """Programmatic validator for phantom_tool_result.
 
     Returns True if the violation is confirmed — the assistant claimed to
-    present output from a tool but no tools were actually called this turn.
-    If any tool was called, the claim may be grounded and we treat it as a
-    false positive (the LLM detection already verified the specific claim).
+    present output from a tool that was NOT actually called this turn.
+
+    The detection_result from Stage 1 may include a ``tool`` field naming the
+    specific tool the LLM claims was used.  If that tool is in
+    tool_calls_made, it's a false positive.  If no specific tool is named,
+    we fall back to checking whether ANY tool was called.
     """
     tool_calls_made = context.get("tool_calls_made", [])
-    if tool_calls_made:
+    claimed_tool = detection_result.get("tool", "")
+
+    if claimed_tool and claimed_tool in tool_calls_made:
         logger.info(
-            "Stage 2: False positive — tools were called (%s). "
-            "LLM reason: %s", tool_calls_made, detection_result.get("reason", "?"),
+            "Stage 2: False positive — claimed tool %r was actually called. "
+            "LLM reason: %s", claimed_tool, detection_result.get("reason", "?"),
         )
         return False
-    logger.warning("Stage 2: Confirmed phantom tool result — no tools called but output was claimed")
+    if not claimed_tool and tool_calls_made:
+        # No specific tool named by Stage 1; if any tools were called,
+        # give the benefit of the doubt (backward-compatible behavior).
+        logger.info(
+            "Stage 2: False positive — tools were called (%s) and no specific "
+            "tool named. LLM reason: %s", tool_calls_made, detection_result.get("reason", "?"),
+        )
+        return False
+    logger.warning(
+        "Stage 2: Confirmed phantom tool result — claimed tool %r not in "
+        "tool_calls_made %s", claimed_tool or "(unspecified)", tool_calls_made,
+    )
     return True
 
 
@@ -466,7 +505,7 @@ def validate_empty_promise(context: dict, detection_result: dict) -> bool:
     # approval, not an unfulfilled promise.
     assistant_response = context.get("assistant_response", "")
     # Get the last non-empty line, stripping markdown/whitespace.
-    lines = [ln.strip().strip("*_~`") for ln in assistant_response.splitlines() if ln.strip()]
+    lines = [ln.strip().lstrip(">-#) ").strip("*_~`") for ln in assistant_response.splitlines() if ln.strip()]
     if lines:
         last_line = lines[-1]
         if last_line.endswith("?"):
@@ -590,7 +629,11 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook
     ctx = context or {}
     tool_name = ctx.get("tool_name", "")
     nl_tools = ctx.get("nl_tools")
-    tool_schema = _get_tool_schema(tool_name, nl_tools=nl_tools) if tool_name else _get_spawn_tool_schema(nl_tools)
+    # Only embed a tool schema when we know which tool is relevant.
+    # For post_inference hooks without a tool_name, each hook's correction
+    # template may or may not use {tool_schema}; we provide a per-hook
+    # schema below if the hook is workflow_spawn, otherwise a placeholder.
+    tool_schema = _get_tool_schema(tool_name, nl_tools=nl_tools) if tool_name else ""
 
     for violation in confirmed:
         hook = hooks_by_name.get(violation["type"])
@@ -598,12 +641,24 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook
             continue
 
         reason = violation.get("reason", "unknown violation")
-        part = hook.correction_template.format(
-            reason=reason,
-            tool_schema=tool_schema,
-            tool_name=tool_name or "(unknown)",
-            objective=objective or "(unknown)",
-        )
+        # Use the spawn schema for workflow_spawn; the pre-computed
+        # tool_schema for pre_execution hooks; empty otherwise.
+        effective_schema = tool_schema
+        if not effective_schema and hook.name == "workflow_spawn":
+            effective_schema = _get_spawn_tool_schema(nl_tools)
+        try:
+            part = hook.correction_template.format(
+                reason=reason,
+                tool_schema=effective_schema,
+                tool_name=tool_name or "(unknown)",
+                objective=objective or "(unknown)",
+            )
+        except KeyError as exc:
+            logger.warning(
+                "Correction template for hook %r has unknown placeholder %s — "
+                "using raw reason instead", hook.name, exc,
+            )
+            part = f"[TURING PROTOCOL CORRECTION] {hook.name}: {reason}"
         parts.append(part)
 
     return "\n\n".join(parts)
@@ -847,7 +902,7 @@ async def run_turing_protocol(
             if not response.choices:
                 logger.warning("Turing Protocol Stage 1: LLM returned empty choices")
                 logger.debug("Empty choices raw response: %s", response)
-                return []
+                return TuringResult(correction=None)
             stage1_raw = (response.choices[0].message.content or "").strip()
             if not stage1_raw:
                 logger.warning(
@@ -860,7 +915,13 @@ async def run_turing_protocol(
                     stage1_raw = stage1_raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
                 result = json.loads(stage1_raw)
-                violations.extend(result.get("violations", []))
+                if not isinstance(result, dict):
+                    logger.warning(
+                        "Stage 1: LLM returned %s instead of JSON object — skipping",
+                        type(result).__name__,
+                    )
+                else:
+                    violations.extend(result.get("violations", []))
 
         # -- Dedicated LLM hooks (each gets its own call) --
         for hook in dedicated_llm_hooks:

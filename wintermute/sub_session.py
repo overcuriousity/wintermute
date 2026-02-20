@@ -1141,7 +1141,7 @@ class SubSessionManager:
             )
 
             if not response.choices:
-                logger.warning("Sub-session %s: LLM returned empty choices, retrying", self.session_id)
+                logger.warning("Sub-session %s: LLM returned empty choices, retrying", state.session_id)
                 logger.debug("Empty choices raw response: %s", response)
                 state.messages.append({"role": "assistant", "content": ""})
                 state.messages.append({"role": "user", "content": "Continue."})
@@ -1177,8 +1177,19 @@ class SubSessionManager:
 
             if choice.message.tool_calls:
                 state.messages.append(choice.message)
+                # Pre-populate placeholder tool results for ALL tool_calls so
+                # state.messages is always API-valid even if a timeout cancels
+                # us mid-execution.  Each placeholder is overwritten in-place
+                # as the real result arrives.
+                _placeholder_start = len(state.messages)
+                for _i, _tc in enumerate(choice.message.tool_calls):
+                    state.messages.append({
+                        "role":         "tool",
+                        "tool_call_id": _tc.id,
+                        "content":      "[Timed out — result not available]",
+                    })
 
-                for tc in choice.message.tool_calls:
+                for tc_idx, tc in enumerate(choice.message.tool_calls):
                     try:
                         inputs = json.loads(tc.function.arguments)
                     except json.JSONDecodeError:
@@ -1207,18 +1218,18 @@ class SubSessionManager:
                         except Exception:
                             pass
                         if translated is None:
-                            state.messages.append({
+                            state.messages[_placeholder_start + tc_idx] = {
                                 "role":         "tool",
                                 "tool_call_id": tc.id,
                                 "content":      "[TRANSLATION ERROR] Failed to translate natural-language tool call. Please try rephrasing or use structured arguments.",
-                            })
+                            }
                             continue
                         if isinstance(translated, dict) and "error" in translated:
-                            state.messages.append({
+                            state.messages[_placeholder_start + tc_idx] = {
                                 "role":         "tool",
                                 "tool_call_id": tc.id,
                                 "content":      f"[CLARIFICATION NEEDED] {translated.get('clarification_needed', translated['error'])}",
-                            })
+                            }
                             continue
                         if isinstance(translated, list):
                             combined_results = []
@@ -1244,11 +1255,11 @@ class SubSessionManager:
                                     )
                                 except Exception:
                                     pass
-                            state.messages.append({
+                            state.messages[_placeholder_start + tc_idx] = {
                                 "role":         "tool",
                                 "tool_call_id": tc.id,
                                 "content":      "\n\n".join(combined_results),
-                            })
+                            }
                             continue
                         inputs = translated
                         nl_was_translated = True
@@ -1270,11 +1281,11 @@ class SubSessionManager:
                                 state.session_id, name,
                                 pre_result.correction[:200],
                             )
-                            state.messages.append({
+                            state.messages[_placeholder_start + tc_idx] = {
                                 "role":         "tool",
                                 "tool_call_id": tc.id,
                                 "content":      f"[BLOCKED BY TURING PROTOCOL] {pre_result.correction}",
-                            })
+                            }
                             continue
 
                     result = await asyncio.get_running_loop().run_in_executor(
@@ -1322,11 +1333,11 @@ class SubSessionManager:
                     state.tool_calls_log.append((name, result_preview))
                     logger.debug("Sub-session %s tool %s -> %s",
                                  state.session_id, name, result[:200])
-                    state.messages.append({
+                    state.messages[_placeholder_start + tc_idx] = {
                         "role":         "tool",
                         "tool_call_id": tc.id,
                         "content":      result,
-                    })
+                    }
                 continue
 
             # -- Terminal response: model produced text without tool calls --

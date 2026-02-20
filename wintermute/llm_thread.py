@@ -213,9 +213,6 @@ class LLMThread:
         # time a non-system-event item is processed.  Used to detect stale
         # Turing Protocol corrections that arrived after the conversation moved on.
         self._thread_seq: dict[str, int] = {}
-        # Pre-compute whether any enabled hook has halt_inference=True.
-        hooks = turing_protocol_module.get_hooks(self._turing_protocol_validators)
-        self._has_halt_hooks = any(h.halt_inference for h in hooks)
 
     def inject_sub_session_manager(self, manager: "SubSessionManager") -> None:
         """Called after construction once SubSessionManager is built."""
