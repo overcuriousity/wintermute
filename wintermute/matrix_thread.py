@@ -1338,17 +1338,22 @@ class MatrixThread:
 
         # --- LLM backends ---
         lines.append("\n**LLM Backends**")
-        main_pool = self._llm._main_pool
-        main_cfg = main_pool.primary
-        tp_pool = self._llm._turing_protocol_pool
-        lines.append(
-            f"Main: `{main_cfg.model}` ({main_cfg.context_size // 1024}k ctx)"
-            + (f" — last used: `{main_pool.last_used}`" if main_pool.last_used != main_cfg.name else "")
-        )
-        if tp_pool.enabled:
-            lines.append(f"Turing Protocol: enabled — `{tp_pool.primary.model}`")
-        else:
-            lines.append("Turing Protocol: disabled")
+
+        def _fmt_pool(label, pool):
+            if not pool or not pool.enabled:
+                return f"{label}: disabled"
+            chain = " → ".join(f"`{b[0].model}`" for b in pool._backends)
+            ctx = pool.primary.context_size // 1024
+            return f"{label}: {chain} ({ctx}k ctx)"
+
+        lines.append(_fmt_pool("Main", self._llm._main_pool))
+        lines.append(_fmt_pool("Compaction", self._llm._compaction_pool))
+        lines.append(_fmt_pool("Turing Protocol", self._llm._turing_protocol_pool))
+        lines.append(_fmt_pool("NL Translation", self._llm._nl_translation_pool))
+        if hasattr(self, "_sub_sessions") and self._sub_sessions:
+            lines.append(_fmt_pool("Sub-sessions", self._sub_sessions._pool))
+        if hasattr(self, "_dreaming_loop") and self._dreaming_loop:
+            lines.append(_fmt_pool("Dreaming", self._dreaming_loop._pool))
 
         # --- Context budget for current thread ---
         try:
@@ -1372,12 +1377,24 @@ class MatrixThread:
         mem_lines = mem_text.count("\n") + (1 if mem_text.strip() else 0)
         skills_count = len(list(prompt_assembler.SKILLS_DIR.glob("*.md"))) if prompt_assembler.SKILLS_DIR.exists() else 0
         lines.append(f"MEMORIES.txt: {mem_lines} lines ({len(mem_text):,} chars)")
-        lines.append(f"Skills: {skills_count} file(s)")
+        if skills_count:
+            lines.append(f"Skills ({skills_count}):")
+            for p in sorted(prompt_assembler.SKILLS_DIR.glob("*.md")):
+                lines.append(f"- {p.stem}")
+        else:
+            lines.append("Skills: none")
 
         # Active agenda items
         try:
             agenda_items = db.list_agenda_items("active")
-            lines.append(f"Agenda items: {len(agenda_items)} active")
+            if agenda_items:
+                lines.append(f"Agenda items ({len(agenda_items)} active):")
+                for item in agenda_items:
+                    content = (item["content"] or "")[:80]
+                    prio = item.get("priority", "?")
+                    lines.append(f"- [P{prio}] #{item['id']}: {content}")
+            else:
+                lines.append("Agenda items: none")
         except Exception:  # noqa: BLE001
             pass
 
@@ -1395,10 +1412,22 @@ class MatrixThread:
             )
         if hasattr(self, "_memory_harvest") and self._memory_harvest:
             state = "running" if getattr(self._memory_harvest, "_running", False) else "stopped"
-            lines.append(f"Memory harvest: {state}")
+            interval = getattr(getattr(self._memory_harvest, "_cfg", None), "poll_interval_seconds", None)
+            extra = f" (every {interval // 60}m)" if interval else ""
+            lines.append(f"Memory harvest: {state}{extra}")
         if hasattr(self, "_scheduler") and self._scheduler:
             routines = self._scheduler.list_routines()
-            lines.append(f"Scheduler routines: {len(routines.get('active', []))} active")
+            active_routines = routines.get("active", [])
+            if active_routines:
+                lines.append(f"Scheduler routines ({len(active_routines)} active):")
+                for r in active_routines:
+                    msg = r.get("ai_prompt") or r.get("message") or ""
+                    msg = msg[:60]
+                    sched = r.get("schedule", "")
+                    nxt = r.get("next_run", "")
+                    lines.append(f"- {r.get('id', '?')}: \"{msg}\" ({sched}, next: {nxt})")
+            else:
+                lines.append("Scheduler routines: none")
 
         # --- Update checker ---
         if hasattr(self, "_update_checker") and self._update_checker:
