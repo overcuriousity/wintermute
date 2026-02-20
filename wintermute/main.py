@@ -41,6 +41,7 @@ from wintermute.dreaming import DreamingConfig, DreamingLoop
 from wintermute.memory_harvest import MemoryHarvestConfig, MemoryHarvestLoop
 from wintermute.scheduler_thread import RoutineScheduler, SchedulerConfig
 from wintermute.sub_session import SubSessionManager
+from wintermute.update_checker import UpdateCheckerConfig, UpdateCheckerLoop
 from wintermute.web_interface import WebInterface
 
 logger = logging.getLogger(__name__)
@@ -480,11 +481,33 @@ async def main() -> None:
         pool=dreaming_pool,
     )
 
+    # Update checker
+    uc_raw = cfg.get("update_checker", {})
+    uc_config = UpdateCheckerConfig(
+        enabled=uc_raw.get("enabled", True),
+        interval_hours=uc_raw.get("interval_hours", 24),
+        remote_url=uc_raw.get("remote_url", ""),
+    )
+    update_checker: Optional[UpdateCheckerLoop] = None
+    if uc_config.enabled:
+        # Collect Matrix rooms for notifications.
+        uc_rooms: list[str] = []
+        if matrix_enabled and matrix_cfg_raw:
+            uc_rooms = matrix_cfg_raw.get("allowed_rooms", []) or []
+        update_checker = UpdateCheckerLoop(
+            config=uc_config,
+            broadcast_fn=broadcast,
+            matrix_rooms=uc_rooms,
+        )
+    else:
+        logger.info("Update checker disabled by config")
+
     # Inject remaining references for /status and /dream commands.
     if matrix:
         matrix._scheduler = scheduler
         matrix._agenda_loop = agenda_loop
         matrix._dreaming_loop = dreaming_loop
+        matrix._update_checker = update_checker
     if web_iface:
         web_iface._agenda_loop = agenda_loop
         web_iface._dreaming_loop = dreaming_loop
@@ -503,6 +526,8 @@ async def main() -> None:
         tasks.append(asyncio.create_task(agenda_loop.run(), name="agenda"))
     if harvest_loop:
         tasks.append(asyncio.create_task(harvest_loop.run(), name="memory_harvest"))
+    if update_checker:
+        tasks.append(asyncio.create_task(update_checker.run(), name="update_checker"))
     if matrix:
         tasks.append(asyncio.create_task(matrix.run(), name="matrix"))
     if web_iface:
@@ -562,6 +587,8 @@ async def main() -> None:
         agenda_loop.stop()
     if harvest_loop:
         harvest_loop.stop()
+    if update_checker:
+        update_checker.stop()
     dreaming_loop.stop()
     if matrix:
         matrix.stop()

@@ -1400,6 +1400,23 @@ class MatrixThread:
             routines = self._scheduler.list_routines()
             lines.append(f"Scheduler routines: {len(routines.get('active', []))} active")
 
+        # --- Update checker ---
+        if hasattr(self, "_update_checker") and self._update_checker:
+            uc = self._update_checker
+            state = "running" if uc._running else "stopped"
+            lines.append(f"\n**Updates**")
+            lines.append(f"Update checker: {state} (every {uc._config.interval_hours}h)")
+            try:
+                msg = await uc.check()
+                lines.append(f"Status: {msg}" if msg else "Status: up-to-date")
+            except Exception:
+                logger.debug("Update check in /status failed", exc_info=True)
+                cached = uc.last_result
+                if cached:
+                    lines.append(f"Status: {cached} (cached)")
+                else:
+                    lines.append("Status: check failed")
+
         # --- Sub-sessions ---
         lines.append("\n**Sub-sessions**")
         if hasattr(self, "_sub_sessions") and self._sub_sessions:

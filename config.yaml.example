@@ -313,6 +313,16 @@ dreaming:
   minute: 0                               # Minute (0-59)
 
 
+# ── Update Checker ───────────────────────────────────────────────────
+# Periodically checks the git remote for new commits and notifies via
+# Matrix when updates are available. Requires git to be installed.
+#
+update_checker:
+  enabled: true                           # Set false to disable entirely
+  interval_hours: 24                      # Hours between checks (default: 24)
+  remote_url: ""                          # Git remote URL; empty = use 'origin'
+
+
 # ── Memory Harvest (Automatic Memory Extraction) ────────────────────
 # Periodically mines recent conversation history for personal facts,
 # preferences, and important information, extracting them into
