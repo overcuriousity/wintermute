@@ -1140,6 +1140,13 @@ class SubSessionManager:
                 tools=tool_schemas,
             )
 
+            if not response.choices:
+                logger.warning("Sub-session %s: LLM returned empty choices, retrying", self.session_id)
+                logger.debug("Empty choices raw response: %s", response)
+                state.messages.append({"role": "assistant", "content": ""})
+                state.messages.append({"role": "user", "content": "Continue."})
+                continue
+
             choice = response.choices[0]
 
             # Log this inference round

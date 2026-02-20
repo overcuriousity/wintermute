@@ -818,6 +818,15 @@ async def run_onboarding(
                 print(f"\n  {C_DIM}Onboarding interrupted.{C_RESET}")
                 break
 
+        if not response.choices:
+            _warn("LLM returned empty choices (response.choices is None/empty), retrying")
+            _warn(f"Raw response: {response}")
+            consecutive_errors += 1
+            if consecutive_errors >= 3:
+                _err("Too many consecutive empty responses. Aborting.")
+                break
+            continue
+
         msg = response.choices[0].message
 
         # Serialize the message for history, preserving all provider-specific

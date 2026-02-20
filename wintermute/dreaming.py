@@ -48,6 +48,10 @@ async def _consolidate(pool: "BackendPool",
         messages=[{"role": "user", "content": prompt}],
         max_tokens_override=2048,
     )
+    if not response.choices:
+        logger.warning("Dreaming (%s): LLM returned empty choices", label)
+        logger.debug("Empty choices raw response: %s", response)
+        return ""
     result = (response.choices[0].message.content or "").strip()
     try:
         database.save_interaction_log(
@@ -114,6 +118,10 @@ async def _consolidate_skills(pool: "BackendPool") -> None:
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens_override=600,
             )
+            if not response.choices:
+                logger.warning("Dreaming: skill condensation returned empty choices for '%s'", name)
+                logger.debug("Empty choices raw response: %s", response)
+                continue
             result = (response.choices[0].message.content or "").strip()
             if result:
                 fpath.write_text(result, encoding="utf-8")

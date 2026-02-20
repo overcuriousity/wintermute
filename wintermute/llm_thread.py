@@ -700,6 +700,13 @@ class LLMThread:
                 tools=tools,
             )
 
+            if not response.choices:
+                logger.warning("LLM returned empty choices, retrying")
+                logger.debug("Empty choices raw response: %s", response)
+                full_messages.append({"role": "assistant", "content": ""})
+                full_messages.append({"role": "user", "content": "Continue."})
+                continue
+
             choice = response.choices[0]
 
             # Collect reasoning tokens from every round (including tool-use rounds).
