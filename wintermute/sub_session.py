@@ -173,6 +173,10 @@ class SubSessionManager:
         nl_translation_pool: Optional[BackendPool] = None,
         nl_translation_config: Optional[dict] = None,
     ) -> None:
+        # Capture the running event loop so that spawn() (which is synchronous
+        # and may be called from a thread-pool worker via run_in_executor) can
+        # schedule asyncio tasks/callbacks safely with call_soon_threadsafe.
+        self._loop = asyncio.get_running_loop()
         self._pool = pool
         self._cfg = pool.primary
         self._enqueue = enqueue_system_event
@@ -402,9 +406,8 @@ class SubSessionManager:
                     error=node.error,
                 )
                 self._states[session_id] = state
-                asyncio.get_running_loop().create_task(
-                    self._report(state, f"[SUB-SESSION {session_id} FAILED] dependency failed")
-                )
+                report_coro = self._report(state, f"[SUB-SESSION {session_id} FAILED] dependency failed")
+                self._loop.call_soon_threadsafe(self._loop.create_task, report_coro)
                 return session_id
 
             if not all_done:
@@ -492,9 +495,10 @@ class SubSessionManager:
             "Scheduling time-gate wakeup for %s in %.0fs",
             session_id, delay,
         )
-        asyncio.get_running_loop().call_later(
+        self._loop.call_soon_threadsafe(
+            self._loop.call_later,
             delay,
-            lambda: asyncio.ensure_future(self._time_gate_wakeup(session_id)),
+            lambda: self._loop.create_task(self._time_gate_wakeup(session_id)),
         )
 
     async def _time_gate_wakeup(self, session_id: str) -> None:
@@ -568,12 +572,22 @@ class SubSessionManager:
         )
         self._states[session_id] = state
 
-        task = asyncio.create_task(
-            self._run(state, node.context_blobs, node.timeout),
-            name=f"sub_session_{session_id}",
-        )
-        self._tasks[session_id] = task
-        task.add_done_callback(lambda t: self._tasks.pop(session_id, None))
+        # Schedule the asyncio Task on the event loop.  spawn() is
+        # synchronous and may be called from a thread-pool worker (via
+        # run_in_executor in llm_thread / sub-session tool dispatch), so
+        # bare asyncio.create_task() would raise "no running event loop".
+        # call_soon_threadsafe works from both the event-loop thread and
+        # worker threads.
+        coro = self._run(state, node.context_blobs, node.timeout)
+
+        def _create_task() -> None:
+            task = self._loop.create_task(
+                coro, name=f"sub_session_{session_id}",
+            )
+            self._tasks[session_id] = task
+            task.add_done_callback(lambda t: self._tasks.pop(session_id, None))
+
+        self._loop.call_soon_threadsafe(_create_task)
 
         logger.info(
             "Sub-session %s spawned (parent=%s mode=%s timeout=%ds depth=%d nest=%d)",
