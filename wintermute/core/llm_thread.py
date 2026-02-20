@@ -176,7 +176,7 @@ class _QueueItem:
     thread_id: str = "default"
     is_system_event: bool = False
     future: Optional[asyncio.Future] = field(default=None, compare=False)
-    is_turing_correction: bool = False  # marks items injected by Turing Protocol
+    turing_depth: int = 0  # 0=normal, 1=first correction, 2=re-check correction (max)
     content: Optional[list] = None  # multimodal content parts (OpenAI vision format)
     # Sequence number of the user-message turn this correction was issued for.
     # If the thread has advanced past this number by the time the correction is
@@ -332,7 +332,7 @@ class LLMThread:
             # Drop Turing Protocol corrections that are stale — i.e. the thread
             # has already processed at least one new user-facing turn since the
             # correction was issued, making it no longer relevant.
-            if item.is_turing_correction and item.correction_for_seq is not None:
+            if item.turing_depth > 0 and item.correction_for_seq is not None:
                 current_seq = self._thread_seq.get(item.thread_id, 0)
                 if current_seq > item.correction_for_seq:
                     logger.warning(
@@ -394,7 +394,7 @@ class LLMThread:
 
             if item.future and not item.future.done():
                 item.future.set_result(reply)
-            elif item.is_system_event and not item.future and not item.is_turing_correction:
+            elif item.is_system_event and not item.future and item.turing_depth == 0:
                 # System events without a future (sub-session results,
                 # routines, /agenda commands) have no caller waiting for
                 # the reply.  Broadcast the LLM's response directly so
@@ -415,15 +415,15 @@ class LLMThread:
                                      item.thread_id)
 
             # -- Turing Protocol validation --
-            # Fire async after the reply is delivered.  Only check
-            # user-facing messages (not system events, not sub-session
-            # threads, and not the protocol's own corrections).
-            # Each turn gets at most one correction — no re-checking.
+            # Fire async after the reply is delivered.  Checks user-facing
+            # messages AND correction responses (up to depth 2 to prevent
+            # infinite loops).  If the model ignores a correction and
+            # repeats the violation, the re-check catches it.
             if (
                 not item.thread_id.startswith("sub_")
                 and reply.text
-                and not item.is_system_event
-                and not item.is_turing_correction
+                and (not item.is_system_event or item.turing_depth > 0)
+                and item.turing_depth < 2
             ):
                 # Snapshot the current sequence number so the correction can
                 # be dropped if the conversation has moved on before it lands.
@@ -435,6 +435,7 @@ class LLMThread:
                         tool_calls_made=reply.tool_calls_made,
                         thread_id=item.thread_id,
                         issued_for_seq=seq_at_fire,
+                        turing_depth=item.turing_depth,
                     ),
                     name=f"turing_{item.thread_id}",
                 )
@@ -455,13 +456,16 @@ class LLMThread:
         tool_calls_made: list[str],
         thread_id: str,
         issued_for_seq: int = 0,
+        turing_depth: int = 0,
     ) -> None:
         """Fire the Turing Protocol pipeline to detect violations.
 
         Runs asynchronously after the main reply has already been delivered.
-        If violations are confirmed, a single corrective system event is
-        enqueued.  The model's response to the correction is NOT re-checked
-        — each turn gets at most one correction.
+        If violations are confirmed, a corrective system event is enqueued.
+
+        Correction responses are re-checked once (depth 0 → 1 → 2 max) to
+        catch models that ignore the correction and repeat the violation.
+        Depth 2 responses are never re-checked, preventing infinite loops.
 
         ``issued_for_seq`` records the per-thread sequence number at the time
         the check was fired.  If the thread has advanced past this number by
@@ -495,15 +499,16 @@ class LLMThread:
             return
 
         if result.correction:
+            new_depth = turing_depth + 1
             logger.info(
-                "Turing Protocol injecting correction into thread %s",
-                thread_id,
+                "Turing Protocol injecting correction into thread %s (depth=%d)",
+                thread_id, new_depth,
             )
             await self._queue.put(_QueueItem(
                 text=result.correction,
                 thread_id=thread_id,
                 is_system_event=True,
-                is_turing_correction=True,
+                turing_depth=new_depth,
                 correction_for_seq=issued_for_seq,
             ))
 
@@ -555,7 +560,7 @@ class LLMThread:
             _se_text = f"[SYSTEM EVENT] {item.text}"
             database.save_message("user", _se_text, thread_id,
                                   token_count=_count_tokens(_se_text, self._cfg.model))
-        elif item.is_turing_correction:
+        elif item.turing_depth > 0:
             # Save the correction prompt to the DB so it is visible in the web
             # debug interface, but do NOT broadcast it to Matrix (see broadcast
             # guard below).  The model's reply is saved normally via the
@@ -569,7 +574,7 @@ class LLMThread:
         )
 
         # Determine action type for interaction log
-        if item.is_turing_correction:
+        if item.turing_depth > 0:
             _action = "turing_response"
         elif thread_id.startswith("sub_"):
             _action = "sub_session"
