@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.3.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.2.1-alpha...v0.3.0-alpha) (2026-02-21)
+
+
+### Features
+
+* fix MEMORIES.txt race condition and add git auto-versioning for data/ ([308150a](https://github.com/overcuriousity/wintermute/commit/308150a1e54ea87be343017dca33f2cbc5f164f5))
+* unified ContextTooLargeError detection and per-caller recovery ([e4fcee7](https://github.com/overcuriousity/wintermute/commit/e4fcee757a67bfdbbda57b432e56eef3687034af))
+
+
+### Bug Fixes
+
+* add exponential backoff retry for rate-limited LLM requests ([9fd4053](https://github.com/overcuriousity/wintermute/commit/9fd4053dc59323170a21e720d8b0ce9254be1688))
+* add write_file to phantom_tool_result detection and document all TP hooks in config ([2940bcc](https://github.com/overcuriousity/wintermute/commit/2940bcc8cd35083dae656d14da911415e6b76da9))
+* await dependency resolution in cancel_for_thread to prevent deadlocks ([b32adb0](https://github.com/overcuriousity/wintermute/commit/b32adb07e90455a096b270725e563c9e34385700))
+* collect recent_assistant_messages before saving reply to DB ([d9f81ac](https://github.com/overcuriousity/wintermute/commit/d9f81ac9939f58d91b12dc34889c01db85f7b4b4))
+* defer memory harvest state update until sub-session completes ([59461d0](https://github.com/overcuriousity/wintermute/commit/59461d05489a9a423575c204df660e1673839626))
+* handle ChatCompletionMessage objects in sub-session TP context ([9f22e62](https://github.com/overcuriousity/wintermute/commit/9f22e620f27cb594663a9cfcc75c0ef16c7a1bf1))
+* harden Turing Protocol pipeline against weak-model failure modes ([7eb75bb](https://github.com/overcuriousity/wintermute/commit/7eb75bbd7045a9009d3ce8054ba50626503f2f07))
+* improve Turing Protocol correction effectiveness for weak models ([d8c3093](https://github.com/overcuriousity/wintermute/commit/d8c309360109be98a58a29ba664eb32d89ca0e4c))
+* log and report malformed tool args instead of silently defaulting to {} ([1e00036](https://github.com/overcuriousity/wintermute/commit/1e00036bf5af26e21235a6c18346188c9934fc87))
+* reduce phantom_tool_result false positives when tools were called ([8415a58](https://github.com/overcuriousity/wintermute/commit/8415a58e956d54466c6da63d6fac3043989de70a))
+* replace get_event_loop().run_in_executor with daemon threads in prompt_assembler ([67060ed](https://github.com/overcuriousity/wintermute/commit/67060ed0198d0f12882ccfc589163582e6e8674a))
+* resolve dependents on CancelledError to prevent workflow deadlock ([7b7fdb6](https://github.com/overcuriousity/wintermute/commit/7b7fdb6609534f995f7dfa4a01b86d8ccd74cf77))
+* three minor correctness issues ([7a8ffc0](https://github.com/overcuriousity/wintermute/commit/7a8ffc09e335dc9d3bb7741472b4bd362804f814))
+
 ## [0.2.1-alpha](https://github.com/overcuriousity/wintermute/compare/v0.2.0-alpha...v0.2.1-alpha) (2026-02-20)
 
 
