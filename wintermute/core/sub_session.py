@@ -676,7 +676,7 @@ class SubSessionManager:
             logger.info("Workflow %s %s (%d nodes)", workflow_id, wf.status, total)
             self._cleanup_workflow(workflow_id)
 
-    def cancel_for_thread(self, thread_id: str) -> int:
+    async def cancel_for_thread(self, thread_id: str) -> int:
         """
         Cancel all running/pending sub-sessions whose parent is thread_id.
         Returns the number of sessions cancelled.
@@ -708,7 +708,7 @@ class SubSessionManager:
                 needs_resolve.append(sid)
         # Resolve dependents so nothing stays deadlocked.
         for sid in needs_resolve:
-            asyncio.ensure_future(self._resolve_dependents(sid))
+            await self._resolve_dependents(sid)
         return cancelled
 
     def _cleanup_workflow(self, workflow_id: str) -> None:

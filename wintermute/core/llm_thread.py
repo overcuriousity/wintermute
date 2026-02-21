@@ -292,7 +292,7 @@ class LLMThread:
         await database.async_call(database.clear_active_messages, thread_id)
         self._compaction_summaries.pop(thread_id, None)
         if self._sub_sessions:
-            n = self._sub_sessions.cancel_for_thread(thread_id)
+            n = await self._sub_sessions.cancel_for_thread(thread_id)
             if n:
                 logger.info("Cancelled %d sub-session(s) for reset thread %s", n, thread_id)
         logger.info("Session reset for thread %s", thread_id)
