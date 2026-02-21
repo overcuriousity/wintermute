@@ -496,6 +496,11 @@ def validate_phantom_tool_result(context: dict, detection_result: dict) -> bool:
     specific tool the LLM claims was used.  If that tool is in
     tool_calls_made, it's a false positive.  If no specific tool is named,
     we fall back to checking whether ANY tool was called.
+
+    ``execute_shell`` is treated as a universal data source — it can
+    substitute for ``read_file``, directory listings, etc.  When it
+    appears in tool_calls_made, any file/data phantom violation is
+    dismissed as a false positive.
     """
     tool_calls_made = context.get("tool_calls_made", [])
     claimed_tool = detection_result.get("tool", "")
@@ -506,6 +511,28 @@ def validate_phantom_tool_result(context: dict, detection_result: dict) -> bool:
             "LLM reason: %s", claimed_tool, detection_result.get("reason", "?"),
         )
         return False
+
+    # execute_shell is a general-purpose tool that can read files, list
+    # directories, fetch URLs, etc.  If it was called, the model likely
+    # sourced its data from the shell output — not hallucinated.
+    if "execute_shell" in tool_calls_made:
+        logger.info(
+            "Stage 2: False positive — execute_shell was called (can "
+            "substitute for %r). LLM reason: %s",
+            claimed_tool or "(unspecified)", detection_result.get("reason", "?"),
+        )
+        return False
+
+    # Fallback: if no specific tool is claimed but ANY tool was called,
+    # the data likely came from that tool — dismiss as false positive.
+    if not claimed_tool and tool_calls_made:
+        logger.info(
+            "Stage 2: False positive — no specific tool claimed but "
+            "tools were called (%s). LLM reason: %s",
+            tool_calls_made, detection_result.get("reason", "?"),
+        )
+        return False
+
     logger.warning(
         "Stage 2: Confirmed phantom tool result — claimed tool %r not in "
         "tool_calls_made %s", claimed_tool or "(unspecified)", tool_calls_made,
