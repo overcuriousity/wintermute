@@ -409,6 +409,27 @@ class LLMThread:
                 except Exception:  # noqa: BLE001
                     logger.exception("Seed injection failed (non-fatal)")
 
+            # Collect recent assistant messages BEFORE _process() saves
+            # the new reply to the DB.  This avoids the repetition detector
+            # comparing the current response against itself (which would
+            # always yield 100% similarity).
+            _prior_assistant = None
+            _recent_assistant: list[str] = []
+            try:
+                _db_msgs = database.load_active_messages(item.thread_id)
+                for m in reversed(_db_msgs):
+                    if m.get("role") == "assistant":
+                        content = m.get("content", "")
+                        if isinstance(content, str) and content:
+                            _recent_assistant.append(content)
+                            if _prior_assistant is None:
+                                _prior_assistant = content
+                            if len(_recent_assistant) >= 3:
+                                break
+                _recent_assistant.reverse()
+            except Exception:
+                pass
+
             try:
                 reply = await self._process(item)
             except Exception as exc:  # noqa: BLE001
@@ -480,24 +501,9 @@ class LLMThread:
                 # Snapshot the current sequence number so the correction can
                 # be dropped if the conversation has moved on before it lands.
                 seq_at_fire = self._thread_seq.get(item.thread_id, 0)
-                # Extract prior assistant message and recent assistant messages
-                # for TP context (false-positive mitigation + repetition detection).
-                _prior_assistant = None
-                _recent_assistant: list[str] = []
-                try:
-                    _db_msgs = database.load_active_messages(item.thread_id)
-                    for m in reversed(_db_msgs):
-                        if m.get("role") == "assistant":
-                            content = m.get("content", "")
-                            if isinstance(content, str) and content:
-                                _recent_assistant.append(content)
-                                if _prior_assistant is None:
-                                    _prior_assistant = content
-                                if len(_recent_assistant) >= 3:
-                                    break
-                    _recent_assistant.reverse()
-                except Exception:
-                    pass
+                # _prior_assistant and _recent_assistant were collected
+                # before _process() above, so they don't include the
+                # current reply.
                 asyncio.create_task(
                     self._run_turing_check(
                         user_message=item.text,
