@@ -1555,7 +1555,7 @@ class WebInterface:
     async def _api_sessions(self, _request: web.Request) -> web.Response:
         from wintermute.infra import database
 
-        db_threads = set(database.get_active_thread_ids())
+        db_threads = set(await database.async_call(database.get_active_thread_ids))
         web_live = set(self._threads.keys())
 
         matrix_rooms: set[str] = set()
@@ -1594,7 +1594,7 @@ class WebInterface:
         from wintermute.infra import database
 
         thread_id = request.match_info["thread_id"]
-        msgs = database.load_active_messages(thread_id)
+        msgs = await database.async_call(database.load_active_messages, thread_id)
         budget = self._token_budget(thread_id)
 
         result = {
@@ -1799,7 +1799,7 @@ class WebInterface:
 
     async def _api_agenda(self, _request: web.Request) -> web.Response:
         from wintermute.infra import database
-        items = database.list_agenda_items("all")
+        items = await database.async_call(database.list_agenda_items, "all")
         return self._json({"items": items, "count": len(items)})
 
     # ------------------------------------------------------------------
@@ -1816,19 +1816,19 @@ class WebInterface:
         after_id_s = request.query.get("after_id")
         before_id = int(before_id_s) if before_id_s else None
         after_id = int(after_id_s) if after_id_s else None
-        entries = database.get_interaction_log(limit=limit, offset=offset,
-                                               session_filter=session,
-                                               action_filter=action,
-                                               before_id=before_id,
-                                               after_id=after_id)
-        total = database.count_interaction_log(session_filter=session,
-                                               action_filter=action)
+        entries = await database.async_call(
+            database.get_interaction_log, limit=limit, offset=offset,
+            session_filter=session, action_filter=action,
+            before_id=before_id, after_id=after_id)
+        total = await database.async_call(
+            database.count_interaction_log, session_filter=session,
+            action_filter=action)
         return self._json({"entries": entries, "total": total})
 
     async def _api_interaction_log_entry(self, request: web.Request) -> web.Response:
         from wintermute.infra import database
         entry_id = int(request.match_info["id"])
-        entry = database.get_interaction_log_entry(entry_id)
+        entry = await database.async_call(database.get_interaction_log_entry, entry_id)
         if not entry:
             return web.json_response({"error": "not found"}, status=404)
         return self._json(entry)
@@ -1841,7 +1841,7 @@ class WebInterface:
         from wintermute.infra import database
 
         # Sessions
-        db_threads = set(database.get_active_thread_ids())
+        db_threads = set(await database.async_call(database.get_active_thread_ids))
         web_live = set(self._threads.keys())
         matrix_rooms: set[str] = set()
         if self._matrix is not None:
@@ -1886,11 +1886,11 @@ class WebInterface:
             routines = {"active": [], "completed": [], "failed": []}
 
         # Agenda items (all statuses for the debug view)
-        agenda_items = database.list_agenda_items("all")
+        agenda_items = await database.async_call(database.list_agenda_items, "all")
 
         # Interaction log counts
-        interactions_total = database.count_interaction_log()
-        interactions_max_id = database.get_interaction_log_max_id()
+        interactions_total = await database.async_call(database.count_interaction_log)
+        interactions_max_id = await database.async_call(database.get_interaction_log_max_id)
 
         return {
             "sessions": sessions,

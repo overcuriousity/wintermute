@@ -1117,7 +1117,8 @@ async def run_turing_protocol(
         try:
             log_status = "ok" if not violations else "violation_detected"
             log_raw = stage1_raw if stage1_hooks else "no_stage1"
-            database.save_interaction_log(
+            await database.async_call(
+                database.save_interaction_log,
                 _time.time(), "turing_detection", thread_id,
                 pool.last_used,
                 json.dumps(context)[:2000], (log_raw or "")[:2000],
@@ -1181,7 +1182,8 @@ async def run_turing_protocol(
                 "false_positives": len(violations) - len(confirmed),
                 "total_checked": len(violations),
             })
-            database.save_interaction_log(
+            await database.async_call(
+                database.save_interaction_log,
                 _time.time(), "turing_validation", thread_id,
                 pool.last_used,
                 json.dumps(violations)[:2000], stage2_output[:2000], stage2_status,
@@ -1203,7 +1205,8 @@ async def run_turing_protocol(
 
         # Log Stage 3 correction
         try:
-            database.save_interaction_log(
+            await database.async_call(
+                database.save_interaction_log,
                 _time.time(), "turing_correction", thread_id,
                 pool.last_used,
                 json.dumps(confirmed)[:2000], correction_text[:2000], "violation_detected",
@@ -1326,7 +1329,8 @@ async def _check_objective_completion(
     reason = result.get("reason", "")
 
     try:
-        database.save_interaction_log(
+        await database.async_call(
+            database.save_interaction_log,
             _time.time(), "turing_objective", thread_id,
             pool.last_used,
             eval_context[:2000], raw[:2000],

@@ -112,7 +112,7 @@ class MemoryHarvestLoop:
         if self._sub_sessions is None:
             return
 
-        thread_ids = database.get_active_thread_ids()
+        thread_ids = await database.async_call(database.get_active_thread_ids)
         for thread_id in thread_ids:
             # Skip sub-session threads (in-memory only, defensive check).
             if thread_id.startswith("sub_"):
@@ -121,7 +121,7 @@ class MemoryHarvestLoop:
             if thread_id in self._in_flight:
                 continue
 
-            messages = database.load_active_messages(thread_id)
+            messages = await database.async_call(database.load_active_messages, thread_id)
             if self._should_harvest(thread_id, messages):
                 await self._spawn_harvest(thread_id, messages)
 
@@ -266,7 +266,8 @@ class MemoryHarvestLoop:
                 )
 
             try:
-                database.save_interaction_log(
+                await database.async_call(
+                    database.save_interaction_log,
                     _time.time(),
                     "memory_harvest",
                     f"harvest:{thread_id}",

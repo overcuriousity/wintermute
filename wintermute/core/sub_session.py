@@ -832,7 +832,8 @@ class SubSessionManager:
             state.status = "timeout"
             state.completed_at = datetime.now(timezone.utc).isoformat()
             try:
-                database.save_interaction_log(
+                await database.async_call(
+                    database.save_interaction_log,
                     _time.time(), "sub_session", state.session_id,
                     self._pool.last_used,
                     state.objective[:500], "timeout", "timeout",
@@ -923,7 +924,8 @@ class SubSessionManager:
             state.error = str(exc)
             state.completed_at = datetime.now(timezone.utc).isoformat()
             try:
-                database.save_interaction_log(
+                await database.async_call(
+                    database.save_interaction_log,
                     _time.time(), "sub_session", state.session_id,
                     self._pool.last_used,
                     state.objective[:500], str(exc)[:500], "error",
@@ -1168,7 +1170,8 @@ class SubSessionManager:
                     _input_summary = f"[round {len(tool_calls_made)+1}, after: {', '.join(_recent)}]"
                 else:
                     _input_summary = state.objective[:500]
-                database.save_interaction_log(
+                await database.async_call(
+                    database.save_interaction_log,
                     _time.time(), "sub_session", state.session_id,
                     self._pool.last_used,
                     _input_summary, output_summary, "ok",
@@ -1224,7 +1227,8 @@ class SubSessionManager:
                         )
                         # Log the NL translation call.
                         try:
-                            database.save_interaction_log(
+                            await database.async_call(
+                                database.save_interaction_log,
                                 _time.time(), "nl_translation", state.session_id,
                                 self._nl_translation_pool.last_used,
                                 inputs["description"],
@@ -1263,7 +1267,8 @@ class SubSessionManager:
                                 tool_calls_made.append(name)
                                 state.tool_calls_log.append((name, item_result[:120].replace("\n", " ")))
                                 try:
-                                    database.save_interaction_log(
+                                    await database.async_call(
+                                        database.save_interaction_log,
                                         _time.time(), "tool_call", state.session_id,
                                         self._pool.last_used,
                                         json.dumps({"tool": name, "arguments": json.dumps(item_args)}),
@@ -1335,7 +1340,8 @@ class SubSessionManager:
 
                     # Log the tool call
                     try:
-                        database.save_interaction_log(
+                        await database.async_call(
+                            database.save_interaction_log,
                             _time.time(), "tool_call", state.session_id,
                             self._pool.last_used,
                             json.dumps({"tool": name, "arguments": tc.function.arguments}),

@@ -65,13 +65,13 @@ class AgendaLoop:
         parent_thread_id set, so results are delivered back to that room.
         Items without thread_id are skipped entirely.
         """
-        database.delete_old_completed_agenda(days=30)
+        await database.async_call(database.delete_old_completed_agenda, days=30)
 
         if self._sub_sessions is None:
             logger.warning("Global agenda: SubSessionManager not available, skipping")
             return
 
-        thread_items = database.get_agenda_thread_ids()
+        thread_items = await database.async_call(database.get_agenda_thread_ids)
         if not thread_items:
             logger.debug("Agenda review: no active thread-bound items, skipping")
             return

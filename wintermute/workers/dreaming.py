@@ -55,7 +55,8 @@ async def _consolidate(pool: "BackendPool",
         return ""
     result = (response.choices[0].message.content or "").strip()
     try:
-        database.save_interaction_log(
+        await database.async_call(
+            database.save_interaction_log,
             _time.time(), "dreaming", f"system:dreaming:{label}",
             pool.last_used,
             prompt[:2000], result[:2000], "ok",
@@ -131,7 +132,8 @@ async def _consolidate_skills(pool: "BackendPool") -> None:
                     name, len(content), len(result),
                 )
                 try:
-                    database.save_interaction_log(
+                    await database.async_call(
+                        database.save_interaction_log,
                         _time.time(), "dreaming", f"system:dreaming:skill:{name}",
                         pool.last_used, prompt[:2000], result[:2000], "ok",
                     )
@@ -165,7 +167,7 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
     else:
         logger.debug("Dreaming: MEMORIES.txt empty or missing, skipping")
 
-    agenda_items = database.list_agenda_items("active")
+    agenda_items = await database.async_call(database.list_agenda_items, "active")
     if agenda_items:
         try:
             agenda_prompt = prompt_loader.load("DREAM_AGENDA_PROMPT.txt")
@@ -185,7 +187,7 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
                     a = act.get("action")
                     aid = act.get("id")
                     if a == "complete" and aid is not None:
-                        database.complete_agenda_item(int(aid))
+                        await database.async_call(database.complete_agenda_item, int(aid))
                         applied += 1
                     elif a == "update" and aid is not None:
                         kwargs = {}
@@ -194,10 +196,10 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
                         if "priority" in act:
                             kwargs["priority"] = int(act["priority"])
                         if kwargs:
-                            database.update_agenda_item(int(aid), **kwargs)
+                            await database.async_call(database.update_agenda_item, int(aid), **kwargs)
                             applied += 1
                 logger.info("Dreaming: applied %d agenda actions", applied)
-            database.delete_old_completed_agenda(30)
+            await database.async_call(database.delete_old_completed_agenda, 30)
         except Exception:  # noqa: BLE001
             logger.exception("Dreaming: failed to consolidate agenda")
     else:

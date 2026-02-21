@@ -289,7 +289,7 @@ class LLMThread:
         return await fut
 
     async def reset_session(self, thread_id: str = "default") -> None:
-        database.clear_active_messages(thread_id)
+        await database.async_call(database.clear_active_messages, thread_id)
         self._compaction_summaries.pop(thread_id, None)
         if self._sub_sessions:
             n = self._sub_sessions.cancel_for_thread(thread_id)
@@ -344,8 +344,8 @@ class LLMThread:
     async def run(self) -> None:
         self._running = True
         # Load summaries for all known threads
-        for tid in database.get_active_thread_ids():
-            summary = database.load_latest_summary(tid)
+        for tid in await database.async_call(database.get_active_thread_ids):
+            summary = await database.async_call(database.load_latest_summary, tid)
             if summary:
                 self._compaction_summaries[tid] = summary
         logger.info("LLM thread started (endpoint=%s model=%s)", self._cfg.base_url, self._cfg.model)
@@ -372,7 +372,8 @@ class LLMThread:
                         item.thread_id, item.correction_for_seq, current_seq,
                     )
                     try:
-                        database.save_interaction_log(
+                        await database.async_call(
+                            database.save_interaction_log,
                             _time.time(), "turing_stale_drop", item.thread_id,
                             self._main_pool.last_used,
                             item.text[:2000], "", "stale",
@@ -389,7 +390,7 @@ class LLMThread:
                 )
 
             # Seed empty threads on first real user message
-            if not item.is_system_event and not database.thread_has_messages(item.thread_id):
+            if not item.is_system_event and not await database.async_call(database.thread_has_messages, item.thread_id):
                 try:
                     seed_prompt = prompt_loader.load_seed(self._seed_language)
                     seed_item = _QueueItem(
@@ -416,7 +417,7 @@ class LLMThread:
             _prior_assistant = None
             _recent_assistant: list[str] = []
             try:
-                _db_msgs = database.load_active_messages(item.thread_id)
+                _db_msgs = await database.async_call(database.load_active_messages, item.thread_id)
                 for m in reversed(_db_msgs):
                     if m.get("role") == "assistant":
                         content = m.get("content", "")
@@ -435,7 +436,8 @@ class LLMThread:
             except Exception as exc:  # noqa: BLE001
                 logger.exception("LLM processing error")
                 try:
-                    database.save_interaction_log(
+                    await database.async_call(
+                        database.save_interaction_log,
                         _time.time(), "chat", item.thread_id,
                         self._main_pool.last_used,
                         item.text, str(exc), "error",
@@ -617,7 +619,7 @@ class LLMThread:
 
     async def _process(self, item: _QueueItem) -> LLMReply:
         thread_id = item.thread_id
-        messages = self._build_messages(item.text, item.is_system_event, thread_id, item.content)
+        messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
 
         # Assemble system prompt first so we can measure its real token cost.
         summary = self._compaction_summaries.get(thread_id)
@@ -643,7 +645,7 @@ class LLMThread:
                 history_tokens, overhead_tokens, compaction_threshold, thread_id,
             )
             await self._compact_context(thread_id)
-            messages = self._build_messages(item.text, item.is_system_event, thread_id, item.content)
+            messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
             # Reassemble with the updated compaction summary.
             summary = self._compaction_summaries.get(thread_id)
             system_prompt = prompt_assembler.assemble(extra_summary=summary)
@@ -653,19 +655,22 @@ class LLMThread:
             db_text = item.text
             if item.content is not None:
                 db_text = item.text or "[image attached]"
-            database.save_message("user", db_text, thread_id,
-                                  token_count=_count_tokens(db_text, self._cfg.model))
+            await database.async_call(
+                database.save_message, "user", db_text, thread_id,
+                token_count=_count_tokens(db_text, self._cfg.model))
         elif is_sub_session_result:
             _se_text = f"[SYSTEM EVENT] {item.text}"
-            database.save_message("user", _se_text, thread_id,
-                                  token_count=_count_tokens(_se_text, self._cfg.model))
+            await database.async_call(
+                database.save_message, "user", _se_text, thread_id,
+                token_count=_count_tokens(_se_text, self._cfg.model))
         elif item.turing_depth > 0:
             # Turing correction prompt: saved to DB before inference so the
             # model sees it.  If the model ignores the correction (no tool
             # calls), both the prompt and the response are deleted afterward
             # to avoid polluting future turns (see cleanup below).
-            database.save_message("user", item.text, thread_id,
-                                  token_count=_count_tokens(item.text, self._cfg.model))
+            await database.async_call(
+                database.save_message, "user", item.text, thread_id,
+                token_count=_count_tokens(item.text, self._cfg.model))
 
         reply = await self._inference_loop(
             system_prompt, messages, thread_id,
@@ -688,7 +693,8 @@ class LLMThread:
                 "tool_calls": reply.tool_call_details,
                 "reasoning": reply.reasoning,
             }
-            database.save_interaction_log(
+            await database.async_call(
+                database.save_interaction_log,
                 _time.time(), _action, thread_id,
                 self._main_pool.last_used,
                 item.text, reply.text, "ok",
@@ -698,8 +704,9 @@ class LLMThread:
             logger.debug("Failed to save interaction log entry", exc_info=True)
 
         _assistant_text = reply.text or "..."
-        database.save_message("assistant", _assistant_text, thread_id,
-                              token_count=_count_tokens(_assistant_text, self._cfg.model))
+        await database.async_call(
+            database.save_message, "assistant", _assistant_text, thread_id,
+            token_count=_count_tokens(_assistant_text, self._cfg.model))
 
         # Turing correction cleanup: if the re-check (at depth+1) confirms
         # the model STILL violated after the correction, the failed exchange
@@ -836,7 +843,8 @@ class LLMThread:
                 try:
                     _tc_names = [tc.function.name for tc in choice.message.tool_calls]
                     _round_content = (choice.message.content or "").strip()
-                    database.save_interaction_log(
+                    await database.async_call(
+                        database.save_interaction_log,
                         _time.time(), "inference_round", thread_id,
                         self._main_pool.last_used,
                         _round_content[:500] or f"[requesting {len(_tc_names)} tool call(s)]",
@@ -889,7 +897,8 @@ class LLMThread:
                         )
                         # Log the NL translation call.
                         try:
-                            database.save_interaction_log(
+                            await database.async_call(
+                                database.save_interaction_log,
                                 _time.time(), "nl_translation", thread_id,
                                 self._nl_translation_pool.last_used,
                                 inputs["description"],
@@ -930,7 +939,8 @@ class LLMThread:
                                     "result": item_result,
                                 })
                                 try:
-                                    database.save_interaction_log(
+                                    await database.async_call(
+                                        database.save_interaction_log,
                                         _time.time(), "tool_call", thread_id,
                                         self._main_pool.last_used,
                                         json.dumps({"tool": name, "arguments": json.dumps(item_args)}),
@@ -1005,7 +1015,8 @@ class LLMThread:
                         "result": result,
                     })
                     try:
-                        database.save_interaction_log(
+                        await database.async_call(
+                            database.save_interaction_log,
                             _time.time(), "tool_call", thread_id,
                             self._main_pool.last_used,
                             json.dumps({"tool": name, "arguments": tc.function.arguments}),
@@ -1079,7 +1090,7 @@ class LLMThread:
     # ------------------------------------------------------------------
 
     async def _compact_context(self, thread_id: str = "default") -> None:
-        rows = database.load_active_messages(thread_id)
+        rows = await database.async_call(database.load_active_messages, thread_id)
         if len(rows) <= COMPACTION_KEEP_RECENT:
             return
 
@@ -1105,7 +1116,8 @@ class LLMThread:
         summary = (summary_response.choices[0].message.content or "").strip()
 
         try:
-            database.save_interaction_log(
+            await database.async_call(
+                database.save_interaction_log,
                 _time.time(), "compaction", thread_id,
                 self._compaction_pool.last_used,
                 summary_prompt, summary, "ok",
@@ -1114,8 +1126,8 @@ class LLMThread:
             logger.debug("Failed to save compaction interaction log", exc_info=True)
 
         if to_summarise:
-            database.archive_messages(to_summarise[-1]["id"], thread_id)
-        database.save_summary(summary, thread_id)
+            await database.async_call(database.archive_messages, to_summarise[-1]["id"], thread_id)
+        await database.async_call(database.save_summary, summary, thread_id)
         self._compaction_summaries[thread_id] = summary
 
         logger.info("Compacted %d messages into summary (%d chars) for thread %s",
@@ -1155,10 +1167,10 @@ class LLMThread:
     # Message list construction
     # ------------------------------------------------------------------
 
-    def _build_messages(self, new_text: str, is_system_event: bool,
-                        thread_id: str = "default",
-                        content: Optional[list] = None) -> list[dict]:
-        rows = database.load_active_messages(thread_id)
+    async def _build_messages(self, new_text: str, is_system_event: bool,
+                              thread_id: str = "default",
+                              content: Optional[list] = None) -> list[dict]:
+        rows = await database.async_call(database.load_active_messages, thread_id)
         messages = [
             {"role": r["role"], "content": r["content"] or "..."}
             for r in rows

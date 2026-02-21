@@ -1,17 +1,37 @@
 """
 SQLite database operations for conversation history and agenda.
 The APScheduler job store uses its own SQLite file (scheduler.db).
+
+All public functions are synchronous (they use sqlite3 directly).
+Async callers MUST use ``await async_call(fn, *args, **kwargs)`` to
+avoid blocking the event loop (SQLite's busy_timeout can stall for
+up to 5 seconds under write contention).
 """
 
+import asyncio
 import sqlite3
 import time
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
 CONVERSATION_DB = Path("data/conversation.db")
+
+
+async def async_call(fn: Callable, *args: Any, **kwargs: Any) -> Any:
+    """Run a synchronous database function in a thread.
+
+    All async code that touches the database should use this wrapper
+    to prevent SQLite I/O (especially ``busy_timeout`` waits) from
+    blocking the asyncio event loop.
+
+    Usage::
+
+        rows = await database.async_call(database.load_active_messages, thread_id)
+    """
+    return await asyncio.to_thread(fn, *args, **kwargs)
 
 
 def thread_has_messages(thread_id: str = "default") -> bool:
