@@ -9,7 +9,6 @@ Order:
   5. skills/*.md       – capability documentation
 """
 
-import asyncio
 import logging
 import threading
 from datetime import datetime
@@ -146,9 +145,10 @@ def update_memories(content: str) -> None:
     with _memories_lock:
         MEMORIES_FILE.write_text(content, encoding="utf-8")
     logger.info("MEMORIES.txt updated (%d chars)", len(content))
-    asyncio.get_event_loop().run_in_executor(
-        None, data_versioning.auto_commit, "memory: consolidation",
-    )
+    threading.Thread(
+        target=data_versioning.auto_commit, args=("memory: consolidation",),
+        daemon=True,
+    ).start()
 
 
 def append_memory(entry: str) -> int:
@@ -162,9 +162,10 @@ def append_memory(entry: str) -> int:
             new_content = entry.strip()
         MEMORIES_FILE.write_text(new_content, encoding="utf-8")
     logger.info("MEMORIES.txt appended (%d chars total)", len(new_content))
-    asyncio.get_event_loop().run_in_executor(
-        None, data_versioning.auto_commit, "memory: append",
-    )
+    threading.Thread(
+        target=data_versioning.auto_commit, args=("memory: append",),
+        daemon=True,
+    ).start()
     return len(new_content)
 
 
@@ -179,9 +180,10 @@ def add_skill(skill_name: str, documentation: str,
         content = documentation.strip()
     skill_file.write_text(content, encoding="utf-8")
     logger.info("Skill '%s' written to %s", skill_name, skill_file)
-    asyncio.get_event_loop().run_in_executor(
-        None, data_versioning.auto_commit, f"skill: {skill_name}",
-    )
+    threading.Thread(
+        target=data_versioning.auto_commit, args=(f"skill: {skill_name}",),
+        daemon=True,
+    ).start()
 
 
 def merge_consolidated_memories(snapshot: str, consolidated: str) -> None:
