@@ -135,6 +135,9 @@ _BUILTIN_HOOKS: list[TuringHook] = [
             "was started, but spawn_sub_session was never called.\n"
             "Issue: {reason}\n\n"
             "Either call spawn_sub_session now, or acknowledge no session was started.\n\n"
+            "IMPORTANT: Do NOT write JSON arguments as plain text in your message. "
+            "You must use the function-calling mechanism — the same way you would "
+            "normally invoke any tool.\n\n"
             "spawn_sub_session tool schema:\n"
             "```json\n{tool_schema}\n```"
         ),
@@ -159,6 +162,9 @@ _BUILTIN_HOOKS: list[TuringHook] = [
             'conversation history. '
             'Do NOT flag future-tense action commitments ("I\'ll check…") — '
             'those are handled by empty_promise. '
+            'Do NOT flag the assistant reflecting on, admitting, or apologising for '
+            'its own previous errors or fabricated data — self-criticism about past '
+            'turns is not a new phantom tool result. '
             'Include a "tool" field naming the specific tool that should have been '
             'called (e.g. "agenda", "add_skill", "read_file").'
         ),
@@ -171,6 +177,9 @@ _BUILTIN_HOOKS: list[TuringHook] = [
             "Issue: {reason}\n\n"
             "You MUST call the tool now. Do NOT respond with text only — "
             "make the actual tool call.\n\n"
+            "IMPORTANT: Do NOT write JSON arguments as plain text in your message. "
+            "You must use the function-calling mechanism — the same way you would "
+            "normally invoke any tool.\n\n"
             "Tool schema:\n"
             "```json\n{tool_schema}\n```"
         ),
@@ -205,7 +214,12 @@ _BUILTIN_HOOKS: list[TuringHook] = [
             "Issue: {reason}\n\n"
             "You MUST call the tool now. Do NOT describe what you will do — "
             "make the actual tool call. If you truly cannot, explain the "
-            "specific blocker and ask the user how to proceed."
+            "specific blocker and ask the user how to proceed.\n\n"
+            "IMPORTANT: Do NOT write JSON arguments as plain text in your message. "
+            "You must use the function-calling mechanism — the same way you would "
+            "normally invoke any tool.\n\n"
+            "Available tools:\n"
+            "```json\n{tool_schema}\n```"
         ),
         halt_inference=False,
         kill_on_detect=False,
@@ -248,7 +262,7 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         validator_prompt=None,
         correction_template=(
             "[TURING PROTOCOL — AGENDA COMPLETE BLOCKED] You attempted to "
-            "complete a agenda item without sufficient evidence.\n"
+            "complete an agenda item without sufficient evidence.\n"
             "Issue: {reason}\n\n"
             "Do NOT complete agenda items unless you have concrete, verifiable "
             "proof the task is finished. If the item describes ongoing work or "
@@ -667,6 +681,11 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook
         effective_schema = tool_schema
         if not effective_schema and hook.name == "workflow_spawn":
             effective_schema = _get_spawn_tool_schema(nl_tools)
+        if not effective_schema and hook.name == "empty_promise":
+            all_nl: list[str] = []
+            for tname in sorted(_NL_SCHEMA_MAP):
+                all_nl.append(_get_tool_schema(tname, nl_tools=nl_tools))
+            effective_schema = "\n\n".join(all_nl) if all_nl else "(no tool schemas available)"
         if not effective_schema and hook.name == "phantom_tool_result":
             # Collect schemas from all violations of this type.
             all_schemas: dict[str, str] = {}
@@ -746,7 +765,13 @@ def _get_phantom_tool_schemas(violation: dict, nl_tools: "set[str] | None" = Non
     known_tools = {t["function"]["name"] for t in TOOL_SCHEMAS}
     found = set(re.findall(r'`(\w+)`', reason)) & known_tools
     if not found:
-        return "(call the tool that corresponds to the action you claimed)"
+        # Fallback: provide all NL tool schemas so the model has something
+        # concrete to work with.
+        all_schemas = []
+        for tname in sorted(_NL_SCHEMA_MAP):
+            all_schemas.append(_get_tool_schema(tname, nl_tools=nl_tools))
+        return "\n\n".join(all_schemas) if all_schemas else \
+            "(call the tool that corresponds to the action you claimed)"
     schemas = []
     for name in sorted(found):
         schemas.append(_get_tool_schema(name, nl_tools=nl_tools))
