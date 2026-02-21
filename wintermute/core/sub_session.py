@@ -916,6 +916,7 @@ class SubSessionManager:
             logger.info("Sub-session %s cancelled", state.session_id)
             # Don't report back on explicit cancel (e.g. /new command) — the
             # user already knows they reset the session.
+            await self._resolve_dependents(state.session_id)
 
         except Exception as exc:  # noqa: BLE001
             state.status = "failed"
