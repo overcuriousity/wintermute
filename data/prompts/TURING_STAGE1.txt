@@ -13,6 +13,12 @@ You receive a JSON object with:
   - user_message:        the user's message
   - assistant_response:  the assistant's reply
   - active_sessions:     currently running/pending background sessions
+  - prior_assistant_message: (optional) the assistant's PREVIOUS response, for conversational context
+
+When prior_assistant_message is present, use it to understand the conversation
+flow.  If the assistant is acknowledging or summarising something the USER
+reported doing (visible in the prior turn + user_message), that is NOT a
+phantom tool result or empty promise.
 
 Respond with EXACTLY one JSON object (no markdown, no explanation).
 Do NOT use any internal thinking or reasoning — reply directly.

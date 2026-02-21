@@ -27,7 +27,9 @@ Stage 3 (Correction)
      to the sub-session message list (sub-sessions).
 ```
 
-Each hook fires **at most once per turn**. There is no escalation — one clear, concise correction is issued and the protocol moves on.
+Each hook fires **at most once per turn**.
+
+**Re-checking:** Both the main thread and sub-sessions support depth-2 re-checking. After a correction is issued (depth 0 → 1), the model's response is validated once more. If the model still violates at depth 1, a graceful fallback is injected (depth 2) that tells the model to stop attempting the action and respond naturally, preventing infinite correction loops.
 
 ---
 
@@ -79,6 +81,8 @@ Correction: instructs the model to either call `spawn_sub_session` now or acknow
 **Phase:** `post_inference` | **Scope:** `main` | **Type:** programmatic
 
 Detects when the model presents specific data (file contents, search results, command output, directory listings) as if already obtained from a tool during this exchange, without any tool having been called.
+
+Stage 1 context enrichment: when available, the previous assistant message is included in the detection context. This helps the detector distinguish between the model acknowledging something the user reported doing (not a violation) and the model fabricating its own tool-based action (a violation).
 
 Stage 2 check: if any tool was called this turn, the detection is treated as a false positive (the data may be grounded in a real tool result).
 
@@ -141,6 +145,16 @@ Always-on. Fires before every tool call. Validates the LLM-supplied arguments ag
 When a validation error is found, the tool call is blocked and a correction is injected with a bullet list of errors and the full schema for the tool. The model retries the call with corrected arguments.
 
 Not configurable via the `validators` map. Always active in all scopes.
+
+---
+
+### `repetition_loop` — Stuck-in-a-loop detection
+
+**Phase:** `post_inference` | **Scope:** `main` + `sub_session` | **Type:** programmatic
+
+Detects when the model produces a response that is substantially identical to a previous response in the conversation. Uses `difflib.SequenceMatcher` to compare the current response against the last 3 assistant messages. Flags when similarity ratio exceeds 0.85 and both messages are non-trivial (>50 characters). Common with weak models after corrections.
+
+Correction: instructs the model to take a different approach — use a different tool, rephrase the answer, or explain what is blocking it.
 
 ---
 
@@ -246,6 +260,10 @@ Custom `"llm"` type hooks currently require a Python implementation for the dedi
 
 All validation rounds are written to the `interaction_log` table in SQLite and visible via the debug panel at `/debug` → (interaction log endpoint at `/api/debug/interaction-log`). Each entry records the input context, raw detection output, and final status (`ok` or `violation_detected`) for stages 1, 2, and 3 separately.
 
+**Stale correction logging:** When a correction is dropped because the conversation has already advanced past the turn it was issued for, a `turing_stale_drop` entry is written to the interaction log. This makes previously invisible stale drops auditable.
+
+**Correction metadata:** Each `TuringResult` now carries structured `correction_metadata` — a list of `{hook, reason, halt, kill}` dicts identifying which hooks fired. This is logged alongside corrections for debugging and future context enrichment.
+
 ---
 
 ## Why It Matters for Small LLMs
@@ -257,5 +275,6 @@ Autonomous tool-use agents fail in predictable ways when the underlying model is
 3. **Empty promises** — the model acknowledges a task but forgets to call the tool
 4. **Premature completion** — a sub-session declares success before the objective is met
 5. **Schema drift** — the model produces malformed tool arguments that silently fail
+6. **Repetition loops** — the model gets stuck producing nearly identical responses across turns
 
-The Turing Protocol catches all five failure modes programmatically and corrects them within the same inference loop. A separate small validator model (recommended: 3B–7B, fast) handles Stage 1 detection, making the overhead low even on modest hardware. The result is usable, reliable autonomous behaviour from models that would otherwise be too unreliable for agentic tasks.
+The Turing Protocol catches all six failure modes programmatically and corrects them within the same inference loop. A separate small validator model (recommended: 3B–7B, fast) handles Stage 1 detection, making the overhead low even on modest hardware. The result is usable, reliable autonomous behaviour from models that would otherwise be too unreliable for agentic tasks.

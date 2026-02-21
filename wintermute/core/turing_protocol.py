@@ -110,6 +110,7 @@ class TuringResult:
     confirmed_violations: list[dict] = field(default_factory=list)  # [{type, reason, halt, kill}, ...]
     has_halt_violations: bool = False      # Any confirmed violation with halt_inference=True
     has_kill_violations: bool = False      # Any confirmed violation with kill_on_detect=True
+    correction_metadata: list[dict] = field(default_factory=list)   # [{hook, reason, halt, kill}, ...]
 
 
 # ------------------------------------------------------------------
@@ -273,6 +274,28 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         kill_on_detect=False,
         phase="pre_execution",
         scope=["sub_session"],
+    ),
+    # -- repetition_loop: detect stuck-in-a-loop responses --
+    # Fires when the model produces a response that is substantially identical
+    # to a previous response in the conversation.  Entirely programmatic — no
+    # Stage 1 LLM call.  Common with weak models after corrections.
+    TuringHook(
+        name="repetition_loop",
+        detection_prompt="",  # programmatic-only
+        validator_type="programmatic",
+        validator_fn_name="validate_repetition_loop",
+        validator_prompt=None,
+        correction_template=(
+            "[TURING PROTOCOL — REPETITION DETECTED] Your response is nearly "
+            "identical to a previous response in this conversation.\n"
+            "Issue: {reason}\n\n"
+            "You are stuck in a loop. Take a DIFFERENT approach: use a different "
+            "tool, rephrase your answer, or explain what is blocking you."
+        ),
+        halt_inference=False,
+        kill_on_detect=False,
+        phase="post_inference",
+        scope=["main", "sub_session"],
     ),
     # -- tool_schema_validation: pre-execution argument guard --
     # Fires before every tool call.  Validates the LLM-supplied arguments
@@ -620,6 +643,34 @@ def validate_agenda_complete(context: dict, detection_result: dict) -> bool:
     return False
 
 
+def validate_repetition_loop(context: dict, detection_result: dict) -> bool:
+    """Detect when the model repeats a substantially identical response.
+
+    Uses difflib.SequenceMatcher to compare the current response against
+    recent assistant messages. Flags when similarity ratio exceeds 0.85
+    and both messages are non-trivial (>50 chars).
+    """
+    response = context.get("assistant_response", "")
+    if len(response) < 50:
+        return False
+    recent = context.get("recent_assistant_messages", [])
+    if not recent:
+        return False
+
+    from difflib import SequenceMatcher
+    for prev in recent:
+        if len(prev) < 50:
+            continue
+        ratio = SequenceMatcher(None, response, prev).ratio()
+        if ratio > 0.85:
+            context["_turing_hook_reason"] = (
+                f"Response is {ratio:.0%} similar to a previous response. "
+                f"The model appears stuck in a loop."
+            )
+            return True
+    return False
+
+
 # Registry of programmatic validator functions.
 _PROGRAMMATIC_VALIDATORS = {
     "validate_workflow_spawn": validate_workflow_spawn,
@@ -627,6 +678,7 @@ _PROGRAMMATIC_VALIDATORS = {
     "validate_empty_promise": validate_empty_promise,
     "validate_tool_schema": validate_tool_schema,
     "validate_agenda_complete": validate_agenda_complete,
+    "validate_repetition_loop": validate_repetition_loop,
 }
 
 
@@ -880,6 +932,8 @@ async def run_turing_protocol(
     tool_args: Optional[dict] = None,
     tool_result: Optional[str] = None,
     nl_tools: "set[str] | None" = None,
+    prior_assistant_message: Optional[str] = None,
+    recent_assistant_messages: Optional[list[str]] = None,
 ) -> TuringResult:
     """Run the three-stage Turing Protocol validation pipeline.
 
@@ -913,6 +967,11 @@ async def run_turing_protocol(
         Tool arguments (for ``pre_execution`` phase).
     tool_result : str or None
         Tool result (for ``post_execution`` phase).
+    prior_assistant_message : str or None
+        Previous assistant message for conversational context (helps
+        Stage 1 distinguish acknowledgements from phantom actions).
+    recent_assistant_messages : list[str] or None
+        Last N assistant messages for repetition loop detection.
     """
     hooks = _load_hooks(enabled_validators, phase_filter=phase, scope_filter=scope)
     if not hooks:
@@ -955,6 +1014,12 @@ async def run_turing_protocol(
     context["scope"] = scope
     if nl_tools:
         context["nl_tools"] = sorted(nl_tools)  # sets are not JSON-serializable
+    if prior_assistant_message:
+        context["prior_assistant_message"] = _truncate_middle(
+            prior_assistant_message, keep_head=300, keep_tail=200
+        )
+    if recent_assistant_messages:
+        context["recent_assistant_messages"] = recent_assistant_messages
 
     try:
         violations: list[dict] = []
@@ -1122,11 +1187,22 @@ async def run_turing_protocol(
         has_halt = any(v["halt"] for v in confirmed)
         has_kill = any(v["kill"] for v in confirmed)
 
+        correction_meta = [
+            {
+                "hook": v["type"],
+                "reason": v["reason"][:200],
+                "halt": v["halt"],
+                "kill": v["kill"],
+            }
+            for v in confirmed
+        ]
+
         return TuringResult(
             correction=correction_text,
             confirmed_violations=confirmed,
             has_halt_violations=has_halt,
             has_kill_violations=has_kill,
+            correction_metadata=correction_meta,
         )
 
     except (json.JSONDecodeError, KeyError) as exc:

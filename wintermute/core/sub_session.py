@@ -1110,7 +1110,7 @@ class SubSessionManager:
             tool_schemas = tool_module.get_tool_schemas(categories, nl_tools=nl_tools)
 
         tp_enabled = bool(self._tp_pool and self._tp_pool.enabled)
-        tp_corrected = False  # single-shot: only one objective correction allowed
+        tp_correction_depth = 0  # depth-2 re-check: 0=unchecked, 1=corrected once, >=2=graceful fallback
         tool_calls_made: list[str] = []  # accumulated across the session
 
         if state.messages:
@@ -1123,6 +1123,7 @@ class SubSessionManager:
                     continuation_depth=state.continuation_depth,
                 ),
             })
+            tp_correction_depth = 0  # fresh TP budget for the resumed session
         else:
             # Fresh start — build the initial conversation.
             system_prompt = self._build_system_prompt(
@@ -1344,22 +1345,50 @@ class SubSessionManager:
             final_text = (choice.message.content or "").strip()
 
             # -- Turing Protocol: post_inference phase (objective gatekeeper) --
-            # Single-shot: one correction at most, no re-checking.
-            if tp_enabled and not tp_corrected:
+            # Depth-2 re-check: after first correction, re-check once more.
+            # At depth >= 2, switch to graceful fallback.
+            if tp_enabled and tp_correction_depth < 2:
+                # Extract prior assistant message and recent messages for TP context.
+                _prior_assistant = None
+                _recent_assistant: list[str] = []
+                for m in reversed(state.messages):
+                    if m.get("role") == "assistant":
+                        content = m.get("content", "")
+                        if isinstance(content, str) and content:
+                            _recent_assistant.append(content)
+                            if _prior_assistant is None:
+                                _prior_assistant = content
+                            if len(_recent_assistant) >= 3:
+                                break
+                _recent_assistant.reverse()
+
                 pi_result = await self._run_tp_phase(
                     phase="post_inference",
                     state=state,
                     tool_calls_made=tool_calls_made,
                     assistant_response=final_text,
                     nl_tools=nl_tools,
+                    prior_assistant_message=_prior_assistant,
+                    recent_assistant_messages=_recent_assistant,
                 )
                 if pi_result and pi_result.correction:
-                    tp_corrected = True
+                    tp_correction_depth += 1
                     logger.info(
                         "Sub-session %s: objective not met — injecting "
-                        "correction and resuming loop",
-                        state.session_id,
+                        "correction and resuming loop (depth=%d, hooks=%s)",
+                        state.session_id, tp_correction_depth,
+                        [m["hook"] for m in pi_result.correction_metadata],
                     )
+                    # At depth >= 1 (already corrected once), use graceful fallback.
+                    if tp_correction_depth >= 2:
+                        correction_text = (
+                            "[TURING PROTOCOL — UNABLE TO COMPLY] "
+                            "You were corrected but could not comply. Stop attempting the "
+                            "action. Produce your best-effort final answer with whatever "
+                            "information you have. Be concise."
+                        )
+                    else:
+                        correction_text = pi_result.correction
                     # Append the model's response and the correction as a
                     # system message, then re-enter the inference loop.
                     state.messages.append({
@@ -1368,7 +1397,7 @@ class SubSessionManager:
                     })
                     state.messages.append({
                         "role": "user",
-                        "content": pi_result.correction,
+                        "content": correction_text,
                     })
                     continue  # back to while True → next inference call
 
@@ -1388,6 +1417,8 @@ class SubSessionManager:
         tool_args: Optional[dict] = None,
         tool_result: Optional[str] = None,
         nl_tools: "set[str] | None" = None,
+        prior_assistant_message: Optional[str] = None,
+        recent_assistant_messages: Optional[list[str]] = None,
     ) -> Optional[turing_protocol_module.TuringResult]:
         """Run Turing Protocol hooks for a specific phase in sub-session scope.
 
@@ -1421,6 +1452,8 @@ class SubSessionManager:
                 tool_args=tool_args,
                 tool_result=tool_result,
                 nl_tools=nl_tools,
+                prior_assistant_message=prior_assistant_message,
+                recent_assistant_messages=recent_assistant_messages,
             )
         except Exception:  # noqa: BLE001
             logger.exception(

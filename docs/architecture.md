@@ -88,9 +88,10 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
    phase (`post_inference`, `pre_execution`, `post_execution`) and context
    (`main` thread or `sub_session`). If violations are confirmed (e.g. the
    model claimed to spawn a session but `spawn_sub_session` is not in
-   `tool_calls_made`), a single corrective system event is injected so the
-   model can self-correct. Each hook fires at most once per turn — there is
-   no escalation or re-checking of the correction response
+   `tool_calls_made`), a corrective system event is injected so the model
+   can self-correct. Both main thread and sub-sessions support depth-2
+   re-checking: if the model ignores the first correction, a graceful
+   fallback is issued instructing it to stop retrying and respond naturally
 
 ## Sub-session Lifecycle
 

@@ -371,6 +371,14 @@ class LLMThread:
                         "(issued at seq=%d, current seq=%d)",
                         item.thread_id, item.correction_for_seq, current_seq,
                     )
+                    try:
+                        database.save_interaction_log(
+                            _time.time(), "turing_stale_drop", item.thread_id,
+                            self._main_pool.last_used,
+                            item.text[:2000], "", "stale",
+                        )
+                    except Exception:
+                        pass
                     self._queue.task_done()
                     continue
 
@@ -472,6 +480,24 @@ class LLMThread:
                 # Snapshot the current sequence number so the correction can
                 # be dropped if the conversation has moved on before it lands.
                 seq_at_fire = self._thread_seq.get(item.thread_id, 0)
+                # Extract prior assistant message and recent assistant messages
+                # for TP context (false-positive mitigation + repetition detection).
+                _prior_assistant = None
+                _recent_assistant: list[str] = []
+                try:
+                    _db_msgs = database.load_active_messages(item.thread_id)
+                    for m in reversed(_db_msgs):
+                        if m.get("role") == "assistant":
+                            content = m.get("content", "")
+                            if isinstance(content, str) and content:
+                                _recent_assistant.append(content)
+                                if _prior_assistant is None:
+                                    _prior_assistant = content
+                                if len(_recent_assistant) >= 3:
+                                    break
+                    _recent_assistant.reverse()
+                except Exception:
+                    pass
                 asyncio.create_task(
                     self._run_turing_check(
                         user_message=item.text,
@@ -480,6 +506,8 @@ class LLMThread:
                         thread_id=item.thread_id,
                         issued_for_seq=seq_at_fire,
                         turing_depth=item.turing_depth,
+                        prior_assistant_message=_prior_assistant,
+                        recent_assistant_messages=_recent_assistant,
                     ),
                     name=f"turing_{item.thread_id}",
                 )
@@ -501,6 +529,8 @@ class LLMThread:
         thread_id: str,
         issued_for_seq: int = 0,
         turing_depth: int = 0,
+        prior_assistant_message: Optional[str] = None,
+        recent_assistant_messages: Optional[list[str]] = None,
     ) -> None:
         """Fire the Turing Protocol pipeline to detect violations.
 
@@ -537,6 +567,8 @@ class LLMThread:
                 phase="post_inference",
                 scope="main",
                 nl_tools=nl_tools,
+                prior_assistant_message=prior_assistant_message,
+                recent_assistant_messages=recent_assistant_messages,
             )
         except Exception:  # noqa: BLE001
             logger.exception("Turing Protocol check raised (non-fatal)")
@@ -552,17 +584,18 @@ class LLMThread:
             if turing_depth >= 1:
                 correction_text = (
                     "[TURING PROTOCOL — UNABLE TO COMPLY] "
-                    "You were asked to call a tool but could not do so after "
-                    "being corrected. Do NOT attempt the action again. Instead, "
-                    "tell the user plainly that you were unable to perform the "
-                    "action and explain why (e.g. the tool is unavailable, you "
-                    "lack the required information, etc). Be concise."
+                    "The previous correction could not be fulfilled. "
+                    "Simply continue the conversation naturally. "
+                    "Do NOT claim tools are blocked or unavailable. "
+                    "Do NOT repeat the failed action. Just respond "
+                    "helpfully to the user's last real message."
                 )
             else:
                 correction_text = result.correction
             logger.info(
-                "Turing Protocol injecting correction into thread %s (depth=%d)",
+                "Turing Protocol injecting correction into thread %s (depth=%d, hooks=%s)",
                 thread_id, new_depth,
+                [m["hook"] for m in result.correction_metadata],
             )
             await self._queue.put(_QueueItem(
                 text=correction_text,
