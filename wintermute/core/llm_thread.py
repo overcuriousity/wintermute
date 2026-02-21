@@ -18,6 +18,7 @@ Public API used by other modules
 import asyncio
 import json
 import logging
+import random
 import time as _time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -101,6 +102,11 @@ class BackendPool:
     def __len__(self) -> int:
         return len(self._backends)
 
+    # -- Rate-limit retry settings --------------------------------------------
+    RATE_LIMIT_MAX_RETRIES = 5
+    RATE_LIMIT_INITIAL_BACKOFF = 2.0   # seconds
+    RATE_LIMIT_MAX_BACKOFF = 60.0      # seconds
+
     # -- API call with failover -----------------------------------------------
 
     async def call(self, *, messages: list[dict],
@@ -112,6 +118,9 @@ class BackendPool:
         Each backend uses its own model, max_tokens, and reasoning setting.
         *max_tokens_override* replaces the backend's configured max_tokens
         (useful for compaction's hard-coded 2048).
+
+        Rate-limit errors (HTTP 429) are retried with exponential backoff
+        before failing over to the next backend.
         """
         last_error: Exception | None = None
         for cfg, client in self._backends:
@@ -125,17 +134,39 @@ class BackendPool:
             else:
                 call_kwargs["max_tokens"] = max_tok
             call_kwargs.update(extra_kwargs)
-            try:
-                result = await client.chat.completions.create(**call_kwargs)
-                self.last_used = cfg.name
-                return result
-            except Exception as exc:  # noqa: BLE001
-                last_error = exc
-                backend_desc = f"'{cfg.name}' ({cfg.model})"
-                if len(self._backends) > 1:
-                    logger.warning("Backend %s failed: %s — trying next", backend_desc, exc)
-                else:
-                    raise
+
+            backoff = self.RATE_LIMIT_INITIAL_BACKOFF
+            for attempt in range(self.RATE_LIMIT_MAX_RETRIES + 1):
+                try:
+                    result = await client.chat.completions.create(**call_kwargs)
+                    self.last_used = cfg.name
+                    return result
+                except Exception as exc:  # noqa: BLE001
+                    is_rate_limit = (
+                        getattr(exc, "status_code", None) == 429
+                        or "429" in str(type(exc).__name__)
+                        or (hasattr(exc, "code") and str(getattr(exc, "code", "")) == "429")
+                    )
+                    if is_rate_limit and attempt < self.RATE_LIMIT_MAX_RETRIES:
+                        jitter = random.uniform(0, backoff * 0.5)
+                        wait = min(backoff + jitter, self.RATE_LIMIT_MAX_BACKOFF)
+                        backend_desc = f"'{cfg.name}' ({cfg.model})"
+                        logger.warning(
+                            "Backend %s rate-limited — retrying in %.1fs (attempt %d/%d)",
+                            backend_desc, wait, attempt + 1, self.RATE_LIMIT_MAX_RETRIES,
+                        )
+                        await asyncio.sleep(wait)
+                        backoff = min(backoff * 2, self.RATE_LIMIT_MAX_BACKOFF)
+                        continue
+
+                    last_error = exc
+                    backend_desc = f"'{cfg.name}' ({cfg.model})"
+                    if len(self._backends) > 1:
+                        logger.warning("Backend %s failed: %s — trying next", backend_desc, exc)
+                    else:
+                        raise
+                    break  # try next backend
+
         raise last_error  # type: ignore[misc]
 
 
