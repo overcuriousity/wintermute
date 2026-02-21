@@ -225,29 +225,59 @@ class MemoryHarvestLoop:
             timeout=180,
         )
 
-        # Update tracking optimistically.
-        self._last_harvested_id[thread_id] = max_id
-
         logger.info(
             "Memory harvest spawned %s for thread %s (%d new user msgs, up to id=%d)",
             session_id, thread_id, new_count, max_id,
         )
 
-        # Log to interaction_log for debug panel visibility.
-        try:
-            database.save_interaction_log(
-                _time.time(),
-                "memory_harvest",
-                f"harvest:{thread_id}",
-                "sub_sessions",
-                f"thread={thread_id} msgs={new_count} max_id={max_id}",
-                f"spawned {session_id}",
-                "ok",
-            )
-        except Exception:  # noqa: BLE001
-            pass
-
-        # Clear in_flight guard after a generous timeout.
-        asyncio.get_running_loop().call_later(
-            300, lambda: self._in_flight.discard(thread_id)
+        # Monitor completion in background — only commit the harvested ID range
+        # and write the interaction_log entry after the sub-session succeeds.
+        asyncio.ensure_future(
+            self._await_harvest(session_id, thread_id, max_id, new_count)
         )
+
+    async def _await_harvest(self, session_id: str, thread_id: str,
+                              max_id: int, new_count: int) -> None:
+        """Poll sub-session status; commit harvest state only on success."""
+        try:
+            # Poll until terminal (completed/failed/timeout).
+            while True:
+                await asyncio.sleep(5)
+                state = self._sub_sessions._states.get(session_id)
+                if state is None:
+                    logger.warning("Memory harvest %s: state vanished", session_id)
+                    break
+                if state.status in ("completed", "failed", "timeout"):
+                    break
+
+            status = state.status if state else "unknown"
+
+            if status == "completed":
+                self._last_harvested_id[thread_id] = max_id
+                logger.info(
+                    "Memory harvest %s completed — committed max_id=%d for thread %s",
+                    session_id, max_id, thread_id,
+                )
+            else:
+                logger.warning(
+                    "Memory harvest %s ended with status=%s for thread %s — "
+                    "ID range NOT committed (will retry next cycle)",
+                    session_id, status, thread_id,
+                )
+
+            try:
+                database.save_interaction_log(
+                    _time.time(),
+                    "memory_harvest",
+                    f"harvest:{thread_id}",
+                    "sub_sessions",
+                    f"thread={thread_id} msgs={new_count} max_id={max_id}",
+                    f"{session_id} {status}",
+                    "ok" if status == "completed" else status,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+        except Exception:  # noqa: BLE001
+            logger.exception("Memory harvest monitor for %s failed", session_id)
+        finally:
+            self._in_flight.discard(thread_id)

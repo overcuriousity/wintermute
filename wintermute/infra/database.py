@@ -377,12 +377,13 @@ def _migrate_agenda_from_file() -> None:
 # ---------------------------------------------------------------------------
 
 def load_harvest_state() -> dict[str, int]:
-    """Return {thread_id: max_message_id} from the last harvest run per thread."""
+    """Return {thread_id: max_message_id} from the last *successful* harvest per thread."""
     import re
     result: dict[str, int] = {}
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT session, input FROM interaction_log WHERE action = 'memory_harvest'"
+            "SELECT session, input FROM interaction_log "
+            "WHERE action = 'memory_harvest' AND status = 'ok'"
         ).fetchall()
     for session, input_text in rows:
         # session = "harvest:<thread_id>", input = "thread=<id> msgs=<n> max_id=<N>"
