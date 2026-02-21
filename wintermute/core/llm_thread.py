@@ -36,6 +36,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+class ContextTooLargeError(Exception):
+    """The request payload or token count exceeds backend limits."""
+
+
 # Keep the last N messages untouched during compaction.
 COMPACTION_KEEP_RECENT = 10
 
@@ -158,6 +163,20 @@ class BackendPool:
                         await asyncio.sleep(wait)
                         backoff = min(backoff * 2, self.RATE_LIMIT_MAX_BACKOFF)
                         continue
+
+                    is_context_too_large = (
+                        getattr(exc, "status_code", None) == 413
+                        or (
+                            getattr(exc, "status_code", None) == 400
+                            and any(
+                                phrase in str(exc).lower()
+                                for phrase in ("context length", "too many tokens", "maximum context",
+                                               "token limit", "content too large", "payload too large")
+                            )
+                        )
+                    )
+                    if is_context_too_large:
+                        raise ContextTooLargeError(str(exc)) from exc
 
                     last_error = exc
                     backend_desc = f"'{cfg.name}' ({cfg.model})"
@@ -676,10 +695,22 @@ class LLMThread:
                 database.save_message, "user", item.text, thread_id,
                 token_count=_count_tokens(item.text, self._cfg.model))
 
-        reply = await self._inference_loop(
-            system_prompt, messages, thread_id,
-            disable_tools=is_sub_session_result,
-        )
+        try:
+            reply = await self._inference_loop(
+                system_prompt, messages, thread_id,
+                disable_tools=is_sub_session_result,
+            )
+        except ContextTooLargeError:
+            logger.warning("Context too large for thread %s — forcing compaction", thread_id)
+            await self._compact_context(thread_id)
+            messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
+            summary = self._compaction_summaries.get(thread_id)
+            system_prompt = prompt_assembler.assemble(extra_summary=summary)
+            # Retry once after compaction
+            reply = await self._inference_loop(
+                system_prompt, messages, thread_id,
+                disable_tools=is_sub_session_result,
+            )
 
         # Determine action type for interaction log
         if item.turing_depth > 0:
@@ -1113,11 +1144,15 @@ class LLMThread:
 
         summary_prompt = prompt_loader.load("COMPACTION_PROMPT.txt", history=history_text)
 
-        summary_response = await self._compaction_pool.call(
-            messages=[{"role": "user", "content": summary_prompt}],
-            max_tokens_override=2048,
-        )
-        summary = (summary_response.choices[0].message.content or "").strip()
+        try:
+            summary_response = await self._compaction_pool.call(
+                messages=[{"role": "user", "content": summary_prompt}],
+                max_tokens_override=2048,
+            )
+            summary = (summary_response.choices[0].message.content or "").strip()
+        except Exception:  # noqa: BLE001
+            logger.exception("Compaction failed for thread %s — skipping", thread_id)
+            return
 
         try:
             await database.async_call(

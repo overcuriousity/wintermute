@@ -72,7 +72,7 @@ from wintermute.infra import prompt_loader
 from wintermute.core import turing_protocol as turing_protocol_module
 from wintermute.core import nl_translator
 from wintermute import tools as tool_module
-from wintermute.core.llm_thread import BackendPool
+from wintermute.core.llm_thread import BackendPool, ContextTooLargeError
 
 logger = logging.getLogger(__name__)
 
@@ -1143,10 +1143,21 @@ class SubSessionManager:
             ]
 
         while True:
-            response = await self._pool.call(
-                messages=state.messages,
-                tools=tool_schemas,
-            )
+            try:
+                response = await self._pool.call(
+                    messages=state.messages,
+                    tools=tool_schemas,
+                )
+            except ContextTooLargeError:
+                if len(state.messages) > 4:
+                    logger.warning(
+                        "Sub-session %s: context too large (%d messages), trimming and retrying",
+                        state.session_id, len(state.messages),
+                    )
+                    # Keep system prompt + original objective + last 2 exchanges
+                    state.messages = state.messages[:2] + state.messages[-4:]
+                    continue
+                raise  # Can't trim further, let _run() handle it
 
             if not response.choices:
                 logger.warning("Sub-session %s: LLM returned empty choices, retrying", state.session_id)
