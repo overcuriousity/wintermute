@@ -54,6 +54,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 
 ## Data Layout
 
+- `data/` has its own local git repo for auto-versioning; mutations to memories and skills are auto-committed for rollback (`cd data && git log`)
 - `data/prompts/*.txt` — All prompt templates (externalized, not hardcoded); seed prompts are per-language (`SEED_en.txt`, `SEED_de.txt`, ...)
 - `data/MEMORIES.txt` — Long-term memory (append-based, consolidated nightly)
 - `data/conversation.db` — SQLite: messages, summaries, agenda, interaction_log

@@ -139,6 +139,7 @@ Wintermute is explicitly designed to work with small, quantised models (3B–8B 
 
 ```
 data/
+  .git/                      -- Local git repo for auto-versioning (rollback via git log / git revert)
   BASE_PROMPT.txt            -- Immutable core instructions
   MEMORIES.txt               -- Long-term user facts (updated via append_memory)
   conversation.db (agenda)    -- Active goals / working memory (managed via agenda tool, stored in SQLite)
@@ -149,3 +150,5 @@ data/
   matrix_crypto.db           -- Matrix E2E encryption keys
   matrix_recovery.key        -- Cross-signing recovery key
 ```
+
+Changes to MEMORIES.txt, skills, and other data files are automatically committed to a local git repository inside `data/`. This provides a full change history so that any mutation (memory append, nightly consolidation, skill updates) can be inspected with `cd data && git log --oneline` and rolled back with `git revert`.

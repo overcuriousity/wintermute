@@ -29,3 +29,5 @@ build/
 .vscode/
 *.swp
 data/MEMORIES.txt
+data/skills/
+data/.git/

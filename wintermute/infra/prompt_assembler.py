@@ -9,6 +9,7 @@ Order:
   5. skills/*.md       – capability documentation
 """
 
+import asyncio
 import logging
 import threading
 from datetime import datetime
@@ -17,6 +18,7 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from wintermute.infra import database
+from wintermute.infra import data_versioning
 from wintermute.infra import prompt_loader
 
 logger = logging.getLogger(__name__)
@@ -144,6 +146,9 @@ def update_memories(content: str) -> None:
     with _memories_lock:
         MEMORIES_FILE.write_text(content, encoding="utf-8")
     logger.info("MEMORIES.txt updated (%d chars)", len(content))
+    asyncio.get_event_loop().run_in_executor(
+        None, data_versioning.auto_commit, "memory: consolidation",
+    )
 
 
 def append_memory(entry: str) -> int:
@@ -157,6 +162,9 @@ def append_memory(entry: str) -> int:
             new_content = entry.strip()
         MEMORIES_FILE.write_text(new_content, encoding="utf-8")
     logger.info("MEMORIES.txt appended (%d chars total)", len(new_content))
+    asyncio.get_event_loop().run_in_executor(
+        None, data_versioning.auto_commit, "memory: append",
+    )
     return len(new_content)
 
 
@@ -171,3 +179,38 @@ def add_skill(skill_name: str, documentation: str,
         content = documentation.strip()
     skill_file.write_text(content, encoding="utf-8")
     logger.info("Skill '%s' written to %s", skill_name, skill_file)
+    asyncio.get_event_loop().run_in_executor(
+        None, data_versioning.auto_commit, f"skill: {skill_name}",
+    )
+
+
+def merge_consolidated_memories(snapshot: str, consolidated: str) -> None:
+    """Atomically write *consolidated* memories while preserving any lines
+    that were appended to MEMORIES.txt after *snapshot* was taken.
+
+    This solves the race condition where ``append_memory()`` is called while
+    the dreaming consolidation LLM call is in flight: the snapshot (taken
+    before the LLM call) is diffed against the current file content, and any
+    newly appended lines are tacked onto the consolidated result before
+    writing.
+
+    The entire read-diff-write cycle runs under ``_memories_lock`` so no
+    appends can slip through.
+    """
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    snapshot_lines = set(snapshot.strip().splitlines())
+    with _memories_lock:
+        current = _read(MEMORIES_FILE)
+        new_lines = [
+            line for line in current.strip().splitlines()
+            if line not in snapshot_lines
+        ]
+        merged = consolidated.strip()
+        if new_lines:
+            merged = merged + "\n" + "\n".join(new_lines)
+            logger.info(
+                "merge_consolidated_memories: preserved %d appended line(s)",
+                len(new_lines),
+            )
+        MEMORIES_FILE.write_text(merged, encoding="utf-8")
+    logger.info("MEMORIES.txt merged-write (%d chars)", len(merged))

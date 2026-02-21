@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from wintermute.infra import database
+from wintermute.infra import data_versioning
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 
@@ -147,15 +148,17 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
     Skips any component that is empty or missing.  Each component is
     consolidated independently so a failure in one does not abort the other.
     """
-    memories = prompt_assembler._read(prompt_assembler.MEMORIES_FILE)
-    if memories:
+    memories_snapshot = prompt_assembler._read(prompt_assembler.MEMORIES_FILE)
+    if memories_snapshot:
         try:
             mem_prompt = prompt_loader.load("DREAM_MEMORIES_PROMPT.txt")
             consolidated = await _consolidate(
-                pool, "MEMORIES.txt", mem_prompt, memories,
+                pool, "MEMORIES.txt", mem_prompt, memories_snapshot,
             )
             if consolidated:
-                prompt_assembler.update_memories(consolidated)
+                prompt_assembler.merge_consolidated_memories(
+                    memories_snapshot, consolidated,
+                )
                 logger.info("Dreaming: MEMORIES.txt updated (%d chars)", len(consolidated))
         except Exception:  # noqa: BLE001
             logger.exception("Dreaming: failed to consolidate MEMORIES.txt")
@@ -204,6 +207,11 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
         await _consolidate_skills(pool)
     except Exception:  # noqa: BLE001
         logger.exception("Dreaming: failed to consolidate skills")
+
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(
+        None, data_versioning.auto_commit, "dreaming: nightly consolidation",
+    )
 
 
 class DreamingLoop:
