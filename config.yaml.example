@@ -237,6 +237,23 @@ turing_protocol:
                                            # "main" = only validate main conversation
                                            # "both" = validate everywhere
 
+    # The following hooks are always enabled by default and rarely need
+    # configuration. Set to false to disable if needed.
+
+    #agenda_complete: true                 # Blocks agenda(action='complete') without a
+                                           # substantive reason. Prevents models from
+                                           # blindly marking tasks as done. (pre_execution,
+                                           # sub_session scope only)
+
+    #repetition_loop: true                 # Detects when the model produces a response
+                                           # nearly identical to a previous one (>85%
+                                           # similarity). Common with weak models after
+                                           # corrections. (post_inference, all scopes)
+
+    #tool_schema_validation: true          # Validates tool arguments against JSON Schema
+                                           # before execution (required fields, types,
+                                           # enums, min/max). (pre_execution, all scopes)
+
 
 # ── NL Translation (Natural-Language Tool Pipe) ─────────────────────
 # For weak models that struggle with complex tool-call schemas, NL

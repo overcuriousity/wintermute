@@ -155,7 +155,7 @@ _BUILTIN_HOOKS: list[TuringHook] = [
             'results, command output, a routine being set/scheduled, a routine '
             'being cancelled/deleted, memory being saved, a skill being created — '
             'as if **already done** during THIS exchange, AND the corresponding tool '
-            '(`read_file`, `search_web`, `fetch_url`, `execute_shell`, '
+            '(`read_file`, `write_file`, `search_web`, `fetch_url`, `execute_shell`, '
             '`list_routines`, `set_routine`, `delete_routine`, `append_memory`, '
             '`agenda`, `add_skill`) is NOT in tool_calls_made. '
             'Do NOT flag general knowledge, reasoning from context, references to '
