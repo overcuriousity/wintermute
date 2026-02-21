@@ -1352,8 +1352,12 @@ class SubSessionManager:
                 _prior_assistant = None
                 _recent_assistant: list[str] = []
                 for m in reversed(state.messages):
-                    if m.get("role") == "assistant":
-                        content = m.get("content", "")
+                    # state.messages contains a mix of plain dicts and
+                    # ChatCompletionMessage pydantic objects; handle both.
+                    role = m.get("role") if isinstance(m, dict) else getattr(m, "role", None)
+                    if role == "assistant":
+                        content = (m.get("content", "") if isinstance(m, dict)
+                                   else getattr(m, "content", "") or "")
                         if isinstance(content, str) and content:
                             _recent_assistant.append(content)
                             if _prior_assistant is None:
