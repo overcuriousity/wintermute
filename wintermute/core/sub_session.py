@@ -1194,8 +1194,22 @@ class SubSessionManager:
                 for tc_idx, tc in enumerate(choice.message.tool_calls):
                     try:
                         inputs = json.loads(tc.function.arguments)
-                    except json.JSONDecodeError:
-                        inputs = {}
+                    except json.JSONDecodeError as _jde:
+                        logger.warning(
+                            "Malformed tool args in sub-session %s for %s: %s — raw: %s",
+                            state.session_id, tc.function.name, _jde,
+                            tc.function.arguments[:500],
+                        )
+                        state.messages[_placeholder_start + tc_idx] = {
+                            "role":         "tool",
+                            "tool_call_id": tc.id,
+                            "content":      (
+                                f"[ERROR] Could not parse arguments for tool "
+                                f"'{tc.function.name}': {_jde}. "
+                                f"Please retry with valid JSON arguments."
+                            ),
+                        }
+                        continue
 
                     name = tc.function.name
                     nl_was_translated = False

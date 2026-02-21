@@ -859,8 +859,22 @@ class LLMThread:
                 for tc in choice.message.tool_calls:
                     try:
                         inputs = json.loads(tc.function.arguments)
-                    except json.JSONDecodeError:
-                        inputs = {}
+                    except json.JSONDecodeError as _jde:
+                        logger.warning(
+                            "Malformed tool args for %s (id=%s): %s — raw: %s",
+                            tc.function.name, tc.id, _jde,
+                            tc.function.arguments[:500],
+                        )
+                        full_messages.append({
+                            "role":         "tool",
+                            "tool_call_id": tc.id,
+                            "content":      (
+                                f"[ERROR] Could not parse arguments for tool "
+                                f"'{tc.function.name}': {_jde}. "
+                                f"Please retry with valid JSON arguments."
+                            ),
+                        })
+                        continue
 
                     name = tc.function.name
                     nl_was_translated = False

@@ -218,7 +218,11 @@ class GeminiCloudClient:
                             thought_sig = getattr(tc, "thought_signature", None)
                         try:
                             args_dict = json.loads(fn_args) if isinstance(fn_args, str) else fn_args
-                        except json.JSONDecodeError:
+                        except json.JSONDecodeError as _exc:
+                            logger.warning(
+                                "Malformed tool args in history for %s: %s",
+                                fn_name, _exc,
+                            )
                             args_dict = {}
                         if thought_sig:
                             # Has signature — send as proper functionCall

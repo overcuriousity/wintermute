@@ -186,7 +186,11 @@ class AnthropicClient:
                         fn = tc.get("function", {})
                         try:
                             args = json.loads(fn.get("arguments", "{}"))
-                        except (json.JSONDecodeError, TypeError):
+                        except (json.JSONDecodeError, TypeError) as _exc:
+                            logger.warning(
+                                "Malformed tool args in history for %s: %s",
+                                fn.get("name", "?"), _exc,
+                            )
                             args = {}
                         blocks.append({
                             "type": "tool_use",
