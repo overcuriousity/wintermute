@@ -383,8 +383,12 @@ class LLMThread:
                     self._queue.task_done()
                     continue
 
-            # Advance the per-thread sequence counter for every user-facing turn.
-            if not item.is_system_event:
+            # Advance the per-thread sequence counter for every user-facing turn
+            # and for Turing corrections that passed the staleness check.
+            # Corrections must also advance the counter so that cascaded
+            # corrections (depth > 1) record a higher correction_for_seq and
+            # aren't falsely dropped if a user turn arrives in between.
+            if not item.is_system_event or item.turing_depth > 0:
                 self._thread_seq[item.thread_id] = (
                     self._thread_seq.get(item.thread_id, 0) + 1
                 )

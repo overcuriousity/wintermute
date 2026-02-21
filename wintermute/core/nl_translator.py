@@ -171,7 +171,11 @@ async def translate_nl_tool_call(
         fixed = _fix_unescaped_control_chars(raw)
         try:
             parsed = json.loads(fixed)
-            logger.debug("NL translator: fixed unescaped control chars in JSON for %s", tool_name)
+            logger.warning(
+                "NL translator: repaired unescaped control chars in JSON for %s "
+                "(lossy — newlines/tabs in values converted to escape sequences): %s",
+                tool_name, raw[:300],
+            )
         except json.JSONDecodeError:
             logger.warning("NL translator returned invalid JSON for %s: %s", tool_name, raw[:200])
             return None

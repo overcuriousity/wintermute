@@ -722,6 +722,10 @@ class SubSessionManager:
         if wf is None:
             return
 
+        # The workflow is terminal — aggregation guards are no longer needed.
+        for nid in wf.nodes:
+            self._aggregated_parents.discard(nid)
+
         # Count how many completed workflows already exist (excluding this one).
         completed_wfs = [
             wid for wid, w in self._workflows.items()
