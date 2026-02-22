@@ -1356,14 +1356,14 @@ class MatrixThread:
             return
 
         if content is None and text == "/rebuild-index":
-            from wintermute.infra import memory_store
+            from wintermute.infra import database as db, memory_store
             if not memory_store.is_vector_enabled():
                 await self.send_message("Vector memory is not enabled (backend: flat_file).", thread_id)
                 return
             await self.send_message("Rebuilding memory index...", thread_id)
             try:
-                await database.async_call(memory_store.rebuild)
-                st = await database.async_call(memory_store.stats)
+                await db.async_call(memory_store.rebuild)
+                st = await db.async_call(memory_store.stats)
                 await self.send_message(
                     f"Memory index rebuilt.\n```json\n{_json.dumps(st, indent=2)}\n```", thread_id,
                 )
@@ -1372,9 +1372,9 @@ class MatrixThread:
             return
 
         if content is None and text == "/memory-stats":
-            from wintermute.infra import memory_store
+            from wintermute.infra import database as db, memory_store
             try:
-                st = await database.async_call(memory_store.stats)
+                st = await db.async_call(memory_store.stats)
                 await self.send_message(
                     f"**Memory Store**\n```json\n{_json.dumps(st, indent=2)}\n```", thread_id,
                 )

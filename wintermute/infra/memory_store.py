@@ -459,9 +459,12 @@ def _embed(texts: list[str], embed_cfg: dict) -> list[list[float]]:
 
     url = f"{endpoint}/embeddings"
     payload = {"input": texts, "model": model}
-    dimensions = embed_cfg.get("dimensions")
-    if dimensions:
-        payload["dimensions"] = dimensions
+    # Only send dimensions if explicitly opted in — most non-OpenAI
+    # endpoints reject this parameter.
+    if embed_cfg.get("send_dimensions"):
+        dimensions = embed_cfg.get("dimensions")
+        if dimensions:
+            payload["dimensions"] = dimensions
 
     headers = {}
     if api_key:
