@@ -285,7 +285,10 @@ class QdrantBackend:
         from qdrant_client import QdrantClient
         from qdrant_client.models import Distance, VectorParams
 
-        self._client = QdrantClient(url=self._url, api_key=self._api_key, timeout=30)
+        self._client = QdrantClient(
+            url=self._url, api_key=self._api_key, timeout=30,
+            prefer_grpc=False,
+        )
         # Create collection if it doesn't exist.
         collections = [c.name for c in self._client.get_collections().collections]
         if self._collection not in collections:
