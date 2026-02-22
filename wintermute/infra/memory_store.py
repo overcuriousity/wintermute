@@ -284,9 +284,18 @@ class QdrantBackend:
     def init(self) -> None:
         from qdrant_client import QdrantClient
         from qdrant_client.models import Distance, VectorParams
+        from urllib.parse import urlparse
+
+        # Parse URL into host/port/https components — qdrant-client's url=
+        # parameter doesn't work reliably with HTTPS endpoints.
+        parsed = urlparse(self._url)
+        use_https = parsed.scheme == "https"
+        host = parsed.hostname or "localhost"
+        port = parsed.port or (443 if use_https else 6333)
 
         self._client = QdrantClient(
-            url=self._url, api_key=self._api_key, timeout=30,
+            host=host, port=port, https=use_https,
+            api_key=self._api_key, timeout=30,
             prefer_grpc=False,
         )
         # Create collection if it doesn't exist.
