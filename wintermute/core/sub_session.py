@@ -810,7 +810,7 @@ class SubSessionManager:
 
     def _serialise(self, state: SubSessionState) -> dict:
         """Return state as a dict, omitting the (potentially large) messages list."""
-        d = {k: v for k, v in state.__dict__.items() if k != "messages"}
+        d = {k: v for k, v in state.__dict__.items() if k not in ("messages", "pool_override")}
         d["tool_call_count"] = len(state.tool_calls_log)
         # Enrich with workflow metadata.
         wf_id = self._session_to_workflow.get(state.session_id)
