@@ -222,7 +222,7 @@ class MemoryHarvestLoop:
             parent_thread_id=None,      # fire-and-forget: no chat delivery
             system_prompt_mode="none",   # all instructions in the objective
             tool_names=["append_memory", "read_file"],
-            timeout=180,
+            timeout=600, # generous timeout for slow workers and large conversations
         )
 
         logger.info(
