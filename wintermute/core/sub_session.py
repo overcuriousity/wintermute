@@ -1339,6 +1339,16 @@ class SubSessionManager:
                             }
                             continue
                         if isinstance(translated, list):
+                            # Merge orphan metadata items (no required field) into
+                            # the preceding item.  Handles NL translator emitting
+                            # depends_on / not_before as separate array elements.
+                            merged: list[dict] = []
+                            for item in translated:
+                                if merged and "objective" not in item and name == "spawn_sub_session":
+                                    merged[-1].update(item)
+                                else:
+                                    merged.append(item)
+                            translated = merged
                             combined_results = []
                             for i, item_args in enumerate(translated):
                                 item_result = await asyncio.get_running_loop().run_in_executor(

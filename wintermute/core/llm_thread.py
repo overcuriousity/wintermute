@@ -958,6 +958,16 @@ class LLMThread:
                             })
                             continue
                         if isinstance(translated, list):
+                            # Merge orphan metadata items (no required field) into
+                            # the preceding item.  Handles NL translator emitting
+                            # depends_on / not_before as separate array elements.
+                            merged: list[dict] = []
+                            for item in translated:
+                                if merged and "objective" not in item and name == "spawn_sub_session":
+                                    merged[-1].update(item)
+                                else:
+                                    merged.append(item)
+                            translated = merged
                             # Multi-item: execute each, combine results.
                             combined_results = []
                             for i, item_args in enumerate(translated):
