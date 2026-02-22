@@ -483,8 +483,10 @@ def _embed(texts: list[str], embed_cfg: dict) -> list[list[float]]:
 # ---------------------------------------------------------------------------
 
 def _make_id(text: str) -> str:
-    """Deterministic ID from text content (SHA-256 prefix)."""
-    return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()[:16]
+    """Deterministic UUID from text content (SHA-256 → UUID v5-style)."""
+    h = hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
+    # Format as UUID: 8-4-4-4-12
+    return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
 
 
 # ---------------------------------------------------------------------------
