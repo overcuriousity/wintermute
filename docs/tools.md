@@ -21,6 +21,34 @@ Tools are grouped into three categories that control which tools are available i
 | `none` | execution, research |
 | `full` | execution, research, orchestration |
 
+## Tool Profiles
+
+Named tool profiles provide config-driven presets for common sub-session worker patterns. Instead of specifying individual `tool_names` or relying on coarse category-based modes, the LLM can use a named profile when spawning workers.
+
+### Default Profiles
+
+| Profile | Tools | Prompt Mode |
+|---------|-------|-------------|
+| `researcher` | `search_web`, `fetch_url` | `minimal` |
+| `file_worker` | `execute_shell`, `read_file`, `write_file` | `minimal` |
+| `full_worker` | `execute_shell`, `read_file`, `write_file`, `search_web`, `fetch_url` | `minimal` |
+| `orchestrator` | `spawn_sub_session`, `agenda`, `append_memory`, `set_routine`, `add_skill`, `list_routines`, `delete_routine` | `full` |
+
+### Custom Profiles
+
+Define custom profiles in `config.yaml` under `tool_profiles`:
+
+```yaml
+tool_profiles:
+  my_profile:
+    tools: [search_web, fetch_url, execute_shell]
+    prompt_mode: base_only
+```
+
+### Relationship to `system_prompt_mode`
+
+A profile sets both the tool set and the system prompt mode. If `system_prompt_mode` is explicitly passed alongside `profile`, the explicit mode takes precedence. If `tool_names` is explicitly passed, it overrides the profile's tool list.
+
 ## Tool Reference
 
 ### Execution Tools
@@ -94,6 +122,7 @@ Spawn an isolated background worker for a complex, multi-step task.
 | `depends_on` | string[] | no | Session IDs that must complete first. Prefer `depends_on_previous` over manually listing IDs. |
 | `depends_on_previous` | boolean | no | If true, automatically depend on all sessions spawned so far by the calling worker. Eliminates the need to track session IDs manually — prevents hallucinated-ID deadlocks. |
 | `not_before` | string | no | Earliest start time (ISO-8601). Task waits even if deps are done. |
+| `profile` | string | no | Named tool profile (e.g. `"researcher"`, `"file_worker"`). Sets an optimised tool set and prompt mode. Overrides `system_prompt_mode`. |
 
 Returns: `status`, `session_id`
 

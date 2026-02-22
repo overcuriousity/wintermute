@@ -131,6 +131,10 @@ Wintermute is explicitly designed to work with small, quantised models (3B–8B 
 
 **Lean system prompt.** The system prompt is assembled from independent file-based components (`BASE_PROMPT.txt`, `MEMORIES.txt`, agenda, skills TOC). Skills inject only a one-line-per-skill table of contents; full procedures are loaded on demand via `read_file`. Components have configurable character caps with auto-summarisation when exceeded. No framework boilerplate is injected — the prompt contains only what you wrote and what the model genuinely needs.
 
+**Sectioned system prompt.** BASE_PROMPT sections are conditionally included based on available tools. Sub-sessions with only execution tools don't receive instructions about delegation, routines, or knowledge routing — saving ~800 tokens per worker invocation.
+
+**Tool profiles.** Named presets (e.g. `researcher`, `file_worker`) reduce cognitive load on the orchestrating model when spawning focused workers. Instead of reasoning about which individual tools to include, the model selects a profile name.
+
 **Context compaction.** When conversation history approaches the context window, older messages are summarised via a chained rolling summary rather than truncated. This keeps the model oriented without requiring a large context window.
 
 **Role-segregated backends.** Heavy tasks (compaction, dreaming, Turing Protocol detection) can be routed to different, purpose-sized backends. A small 3B model can serve as the Turing Protocol validator while a 7B model handles the main conversation.

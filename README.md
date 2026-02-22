@@ -29,7 +29,7 @@ Two architectural choices make this concrete:
 - **Persistent memory** — `MEMORIES.txt` (long-term facts, append-based), agenda items in SQLite (active goals / working memory with priorities), and `skills/*.md` (reusable procedures) survive restarts and are injected into every prompt
 - **Sub-session workers** — long-running tasks are delegated to autonomous background agents that report back when done; the main agent stays responsive during execution; workers auto-resume after timeouts (nesting possible)
 - **Workflow DAG** — multi-step tasks are expressed as dependency graphs via `depends_on`; downstream tasks auto-start when their dependencies complete, with results passed as context
-- **Tool-filtered workers** — minimal workers receive only execution + research tools; `full`-mode workers get orchestration tools too, keeping context lean
+- **Tool-filtered workers** — minimal workers receive only execution + research tools; `full`-mode workers get orchestration tools too. Named tool profiles (`researcher`, `file_worker`, etc.) and conditional system prompt sections keep context lean
 - **Web search** — `search_web` queries a local SearXNG instance and falls back to DuckDuckGo when SearXNG is unavailable
 - **Routines & scheduler** — one-time and recurring routines with optional AI inference on trigger; per-timezone scheduling
 - **Nightly dreaming** — automatic overnight consolidation of MEMORIES.txt and agenda items via a direct LLM call (no tool loop, no conversation side effects)

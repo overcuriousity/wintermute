@@ -111,6 +111,14 @@ TOOL_SCHEMAS = [
                     "type": "string",
                     "description": "Earliest start time (ISO-8601). Waits even if deps are satisfied.",
                 },
+                "profile": {
+                    "type": "string",
+                    "description": (
+                        "Named tool profile (e.g. 'researcher', 'file_worker'). "
+                        "Overrides system_prompt_mode and sets an optimised tool set. "
+                        "See available profiles in config."
+                    ),
+                },
             },
             "required": ["objective"],
         },
@@ -566,6 +574,8 @@ def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
             kwargs["depends_on_previous"] = True
         if "not_before" in inputs:
             kwargs["not_before"] = inputs["not_before"]
+        if "profile" in inputs:
+            kwargs["profile"] = inputs["profile"]
         session_id = _sub_session_spawn(**kwargs)
         has_deps = bool(inputs.get("depends_on")) or bool(inputs.get("depends_on_previous"))
         has_gate = bool(inputs.get("not_before"))

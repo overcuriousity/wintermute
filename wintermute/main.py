@@ -318,6 +318,9 @@ async def main() -> None:
     configured_tz = cfg.get("scheduler", {}).get("timezone", "UTC")
     prompt_assembler.set_timezone(configured_tz)
 
+    # Load tool profiles for sub-session spawning.
+    prompt_assembler.set_tool_profiles(cfg.get("tool_profiles", {}) or {})
+
     multi_cfg = _build_multi_provider_config(cfg)
 
     # Build BackendPools (clients are created/shared internally).

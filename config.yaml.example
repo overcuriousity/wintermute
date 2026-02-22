@@ -282,6 +282,32 @@ nl_translation:
     - agenda                              # Agenda management (add/complete/list/update)
 
 
+# ── Tool Profiles (Named Sub-session Presets) ────────────────────────
+# Named presets that map to specific tool sets and system prompt modes.
+# When spawning a sub-session, the LLM can use profile="researcher"
+# instead of manually specifying tool_names and system_prompt_mode.
+#
+# Each profile has:
+#   tools        List of tool names available to the worker
+#   prompt_mode  System prompt mode: "minimal" | "full" | "base_only" | "none"
+#
+# Default profiles (used when this section is omitted):
+#
+tool_profiles:
+  researcher:
+    tools: [search_web, fetch_url]
+    prompt_mode: minimal
+  file_worker:
+    tools: [execute_shell, read_file, write_file]
+    prompt_mode: minimal
+  full_worker:
+    tools: [execute_shell, read_file, write_file, search_web, fetch_url]
+    prompt_mode: minimal
+  orchestrator:
+    tools: [spawn_sub_session, agenda, append_memory, set_routine, add_skill, list_routines, delete_routine]
+    prompt_mode: full
+
+
 # ── Seed (Conversation Starter) ──────────────────────────────────────
 # When a new conversation starts (first message or /new), Wintermute
 # injects a seed system event that prompts the LLM to introduce itself,

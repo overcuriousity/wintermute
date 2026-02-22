@@ -92,9 +92,21 @@ Background workers for complex, multi-step tasks.
 | Mode | System Prompt | Tools | Use Case |
 |------|--------------|-------|----------|
 | `minimal` | Lightweight execution instructions | execution + research | Default, fast and cheap |
-| `full` | Full prompt (BASE + MEMORIES + AGENDA + SKILLS TOC) | all including orchestration | When worker needs full context or must spawn further workers |
-| `base_only` | BASE_PROMPT.txt only | execution + research | Core instructions without memory overhead |
+| `full` | Sectioned BASE + MEMORIES + AGENDA + SKILLS TOC | all including orchestration | When worker needs full context or must spawn further workers |
+| `base_only` | Sectioned BASE_PROMPT.txt only | execution + research | Core instructions without memory overhead |
 | `none` | Empty | execution + research | Purely mechanical tasks |
+
+Both `full` and `base_only` modes use conditional BASE_PROMPT sections — only sections relevant to the worker's available tools are included. This saves ~800 tokens for minimal workers.
+
+### Tool Profiles
+
+As an alternative to manually selecting `system_prompt_mode` and `tool_names`, named tool profiles provide config-driven presets for common worker patterns:
+
+```
+spawn_sub_session(objective="Search for X", profile="researcher")
+```
+
+See [tools.md — Tool Profiles](tools.md#tool-profiles) for available profiles and how to define custom ones.
 
 ### Workflow DAG
 

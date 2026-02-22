@@ -20,6 +20,27 @@ Content covers:
 - System event handling (sub-session results, routines, errors, timeouts)
 - Behavioural guidelines (concise responses, credential policy, confidence)
 
+#### Sectioned BASE_PROMPT
+
+BASE_PROMPT.txt is divided into named sections using HTML comment markers:
+
+```
+<!-- section: knowledge_routing requires: append_memory,agenda,add_skill -->
+```
+
+Each section declares which tool(s) it requires. When a sub-session is spawned with a limited tool set, only sections whose required tools are available are included. Sections marked `always` are always included.
+
+| Section | Required Tools | Content |
+|---------|---------------|---------|
+| `core` | always | Personality, environment, prompt note |
+| `knowledge_routing` | `append_memory`, `agenda`, `add_skill` (any) | Memory/agenda/skill/routine routing |
+| `delegation` | `spawn_sub_session` | Task delegation patterns |
+| `routines` | `set_routine` | Scheduled task instructions |
+| `system_events` | `spawn_sub_session` | System event handling |
+| `guidelines` | always | Guidelines, critical rules, personality |
+
+This reduces effective prompt size for minimal sub-sessions by ~800 tokens — significant for weak/small models where every token counts.
+
 ### 2. MEMORIES.txt — Long-Term Facts
 
 Stores persistent facts about the user — preferences, biographical details, established decisions. Updated day-to-day via `append_memory` (preferred). Consolidated nightly by the dreaming loop to merge duplicates and prune outdated entries.
@@ -89,11 +110,11 @@ When spawning sub-sessions, the system prompt varies by mode:
 | Mode | System Prompt Content |
 |------|----------------------|
 | `minimal` | Lightweight execution agent instructions (default) |
-| `full` | Full assembled prompt (BASE + MEMORIES + AGENDA + SKILLS) |
-| `base_only` | BASE_PROMPT.txt only |
+| `full` | Full assembled prompt (sectioned BASE + MEMORIES + AGENDA + SKILLS) |
+| `base_only` | Sectioned BASE_PROMPT.txt only |
 | `none` | No system prompt (bare tool-use loop) |
 
-All modes append the task context and objective at the end.
+Both `full` and `base_only` modes use the sectioned BASE_PROMPT — sections irrelevant to the worker's available tools are automatically omitted. All modes append the task context and objective at the end.
 
 ## Size Limits and Auto-summarisation
 

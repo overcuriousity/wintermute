@@ -353,6 +353,33 @@ Triggers when **either** condition is met:
 | `level` | no | `"INFO"` | `DEBUG` \| `INFO` \| `WARNING` \| `ERROR`. `DEBUG` is very verbose (includes all LLM calls) |
 | `directory` | no | `"logs"` | Log directory relative to working directory. Logs rotate daily, 7-day retention |
 
+### `tool_profiles`
+
+Named presets for sub-session workers. Each profile maps to a specific tool set and system prompt mode, providing a simpler alternative to manually specifying `tool_names` and `system_prompt_mode`.
+
+```yaml
+tool_profiles:
+  researcher:
+    tools: [search_web, fetch_url]
+    prompt_mode: minimal
+  file_worker:
+    tools: [execute_shell, read_file, write_file]
+    prompt_mode: minimal
+  full_worker:
+    tools: [execute_shell, read_file, write_file, search_web, fetch_url]
+    prompt_mode: minimal
+  orchestrator:
+    tools: [spawn_sub_session, agenda, append_memory, set_routine, add_skill, list_routines, delete_routine]
+    prompt_mode: full
+```
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `tools` | yes | — | List of tool names available to the worker |
+| `prompt_mode` | no | `"minimal"` | System prompt mode: `"minimal"`, `"full"`, `"base_only"`, or `"none"` |
+
+Profiles are used via `spawn_sub_session(profile="researcher")`. Available profile names are automatically injected into the delegation section of the system prompt so the LLM knows what's available.
+
 ### `seed`
 
 Controls the conversation seed — an automatic system event injected when a new conversation starts (first message in an empty thread or after `/new`). The seed prompts the LLM to introduce itself, mention relevant memories/agendas, and explain its capabilities.

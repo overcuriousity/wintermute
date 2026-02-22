@@ -224,6 +224,7 @@ class SubSessionManager:
         pool: Optional[object] = None,
         max_rounds: Optional[int] = None,
         skip_tp_on_exit: bool = False,
+        profile: Optional[str] = None,
     ) -> str:
         """
         Register a sub-session and start it immediately (or defer if deps pending).
@@ -238,9 +239,33 @@ class SubSessionManager:
         worker.  This eliminates the need for the LLM to track and reference
         session IDs, preventing hallucinated-ID deadlocks.
 
+        If *profile* is provided, it resolves to a tool_names list and
+        system_prompt_mode from the configured tool profiles (unless those
+        are explicitly overridden by the caller).
+
         Pass prior_messages to resume from a previous session's message history
         (used internally by the auto-continuation logic on timeout).
         """
+        # Resolve tool profile if provided.
+        if profile:
+            profiles = prompt_assembler.get_tool_profiles()
+            if profile in profiles:
+                prof = profiles[profile]
+                if tool_names is None:
+                    tool_names = prof.get("tools")
+                if system_prompt_mode == "minimal":
+                    # Only override if caller didn't explicitly set a mode.
+                    system_prompt_mode = prof.get("prompt_mode", "minimal")
+                logger.info(
+                    "Resolved profile '%s' → tools=%s, mode=%s",
+                    profile, tool_names, system_prompt_mode,
+                )
+            else:
+                logger.warning(
+                    "Unknown tool profile '%s' (available: %s) — using defaults",
+                    profile, ", ".join(profiles) if profiles else "none",
+                )
+
         session_id = f"sub_{uuid.uuid4().hex[:8]}"
         now = datetime.now(timezone.utc).isoformat()
 
@@ -1135,6 +1160,17 @@ class SubSessionManager:
         tp_correction_depth = 0  # depth-2 re-check: 0=unchecked, 1=corrected once, >=2=graceful fallback
         tool_calls_made: list[str] = []  # accumulated across the session
 
+        # Derive the set of available tool names for prompt section filtering.
+        _available_tool_names: set[str] | None = None
+        if state.tool_names:
+            _available_tool_names = set(state.tool_names)
+        elif state.system_prompt_mode in _MODE_TOOL_CATEGORIES:
+            categories = _MODE_TOOL_CATEGORIES[state.system_prompt_mode]
+            _available_tool_names = {
+                name for name, cat in tool_module.TOOL_CATEGORIES.items()
+                if cat in categories
+            }
+
         if state.messages:
             # Resuming from a prior timed-out session.  The full prior history
             # is already in state.messages; just append a resumption note.
@@ -1151,6 +1187,7 @@ class SubSessionManager:
             system_prompt = self._build_system_prompt(
                 state.system_prompt_mode, state.objective, context_blobs,
                 thread_id=state.parent_thread_id,
+                available_tools=_available_tool_names,
             )
             state.messages = [
                 {"role": "system", "content": system_prompt},
@@ -1549,16 +1586,19 @@ class SubSessionManager:
         objective: str,
         context_blobs: list[str],
         thread_id: Optional[str] = None,
+        available_tools: Optional[set[str]] = None,
     ) -> str:
         if mode == "none":
             base = ""
         elif mode == "minimal":
             base = prompt_loader.load("WORKER_MINIMAL.txt")
         elif mode == "full":
-            base = prompt_assembler.assemble(thread_id=thread_id)
+            base = prompt_assembler.assemble(
+                thread_id=thread_id, available_tools=available_tools,
+            )
         else:  # "base_only"
-            raw = prompt_loader.load("BASE_PROMPT.txt")
-            base = f"# Core Instructions\n\n{raw}" if raw else ""
+            base_text = prompt_assembler._assemble_base(available_tools)
+            base = f"# Core Instructions\n\n{base_text}" if base_text else ""
 
         parts = [base] if base else []
 

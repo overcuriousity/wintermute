@@ -10,6 +10,7 @@ Order:
 """
 
 import logging
+import re
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -37,12 +38,119 @@ _timezone: str = "UTC"
 # Lock guarding read-modify-write operations on MEMORIES.txt.
 _memories_lock = threading.Lock()
 
+# Configured tool profiles — set by main.py at startup via set_tool_profiles().
+_tool_profiles: dict[str, dict] = {}
+
+# Cached parsed BASE_PROMPT sections — populated on first call to _get_sections().
+_cached_sections: list[tuple[str, set[str], str]] | None = None
+
 
 def set_timezone(tz: str) -> None:
     """Set the timezone used for datetime injection into the system prompt."""
     global _timezone
     _timezone = tz
     logger.info("Prompt assembler timezone set to %s", tz)
+
+
+def set_tool_profiles(profiles: dict[str, dict]) -> None:
+    """Set tool profiles from config (called once at startup by main.py)."""
+    global _tool_profiles
+    _tool_profiles = dict(profiles) if profiles else {}
+    if _tool_profiles:
+        logger.info("Tool profiles loaded: %s", ", ".join(_tool_profiles))
+
+
+def get_tool_profiles() -> dict[str, dict]:
+    """Return the configured tool profiles."""
+    return _tool_profiles
+
+
+# ---------------------------------------------------------------------------
+# Sectioned BASE_PROMPT parsing
+# ---------------------------------------------------------------------------
+
+_SECTION_RE = re.compile(
+    r'<!--\s*section:\s*(\S+)\s+requires:\s*(\S+)\s*-->'
+)
+
+
+def _parse_sections(raw: str) -> list[tuple[str, set[str], str]]:
+    """Parse BASE_PROMPT into (name, required_tools, content) tuples.
+
+    Section markers have the format:
+        <!-- section: <name> requires: <tool1>,<tool2> -->
+    or:
+        <!-- section: <name> requires: always -->
+
+    Sections with ``always`` as the requirement are always included.
+    """
+    sections: list[tuple[str, set[str], str]] = []
+    # Split on section markers, keeping the marker groups.
+    parts = _SECTION_RE.split(raw)
+    # parts[0] is text before the first marker (if any).
+    # Then groups of (name, requires, text) follow.
+    preamble = parts[0].strip()
+    if preamble:
+        # Text before any marker → always-included section.
+        sections.append(("preamble", set(), preamble))
+
+    idx = 1
+    while idx + 2 < len(parts):
+        name = parts[idx].strip()
+        requires_str = parts[idx + 1].strip()
+        content = parts[idx + 2].strip()
+        idx += 3
+
+        if requires_str == "always":
+            required_tools: set[str] = set()
+        else:
+            required_tools = {t.strip() for t in requires_str.split(",") if t.strip()}
+
+        if content:
+            sections.append((name, required_tools, content))
+
+    return sections
+
+
+def _get_sections() -> list[tuple[str, set[str], str]]:
+    """Return cached parsed BASE_PROMPT sections (parses once on first call)."""
+    global _cached_sections
+    if _cached_sections is None:
+        raw = prompt_loader.load("BASE_PROMPT.txt")
+        _cached_sections = _parse_sections(raw)
+    return _cached_sections
+
+
+def _assemble_base(available_tools: set[str] | None = None) -> str:
+    """Assemble the BASE_PROMPT, optionally filtering sections by available tools.
+
+    When *available_tools* is None, all sections are included (backward
+    compatible — main session behavior).
+
+    When *available_tools* is provided, only sections where at least one
+    required tool is in the set (or the section has no requirements, i.e.
+    ``always``) are included.
+
+    The ``delegation`` section gets dynamic profile names appended when
+    tool profiles are configured and ``spawn_sub_session`` is available.
+    """
+    sections = _get_sections()
+    parts: list[str] = []
+
+    for name, required_tools, content in sections:
+        if available_tools is not None and required_tools:
+            # Section requires specific tools — include only if at least one is available.
+            if not required_tools & available_tools:
+                continue
+        text = content
+        # Inject tool profile names into the delegation section.
+        if name == "delegation" and _tool_profiles:
+            if available_tools is None or "spawn_sub_session" in available_tools:
+                profile_names = ", ".join(sorted(_tool_profiles))
+                text += f"\n\nAvailable tool profiles: {profile_names}"
+        parts.append(text)
+
+    return "\n\n".join(parts)
 
 
 def _read(path: Path, default: str = "") -> str:
@@ -87,16 +195,21 @@ def _read_skills_toc() -> str:
     return header
 
 
-def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = None) -> str:
+def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = None,
+             available_tools: Optional[set[str]] = None) -> str:
     """
     Build and return the full system prompt string.
 
     ``extra_summary`` is an optional compaction summary injected between
     Agenda and SKILLS when context has been compacted.
+
+    ``available_tools``, when provided, filters BASE_PROMPT sections to only
+    include those relevant to the given tool set.  When None (default), all
+    sections are included (backward compatible).
     """
     sections: list[str] = []
 
-    base = prompt_loader.load("BASE_PROMPT.txt")
+    base = _assemble_base(available_tools)
     sections.append(f"# Core Instructions\n\n{base}")
 
     # Inject current local datetime so the LLM has accurate time awareness.
