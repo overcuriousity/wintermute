@@ -40,24 +40,6 @@ _INACTIVITY_MIN_MESSAGES = 5
 # ~15k tokens — leaves headroom for the prompt and tool schemas.
 _MAX_BLOB_CHARS = 60_000
 
-# Fallback prompt used when MEMORY_HARVEST_PROMPT.txt is missing.
-_FALLBACK_PROMPT = (
-    "You are a memory extraction worker. Analyze the conversation transcript "
-    "below and extract personal facts worth remembering long-term.\n\n"
-    "PROCEDURE:\n"
-    "1. Use read_file(path=\"data/MEMORIES.txt\") to review existing memories.\n"
-    "2. Read the conversation transcript carefully.\n"
-    "3. For each NEW fact not already in MEMORIES.txt, call "
-    "append_memory(entry=\"...\") once per fact.\n"
-    "4. Write each memory as a concise, standalone statement.\n\n"
-    "RULES:\n"
-    "- SKIP information already present in MEMORIES.txt.\n"
-    "- SKIP transient information (one-off tasks, debugging sessions).\n"
-    "- Each append_memory call = exactly ONE fact.\n"
-    "- If nothing is worth remembering, do not call any tools.\n\n"
-    "CONVERSATION TRANSCRIPT:\n{transcript}"
-)
-
 
 @dataclass
 class MemoryHarvestConfig:
@@ -205,12 +187,8 @@ class MemoryHarvestLoop:
         if not blob.strip():
             return
 
-        # Load prompt template (with embedded fallback).
-        try:
-            prompt = prompt_loader.load("MEMORY_HARVEST_PROMPT.txt",
-                                        transcript=blob)
-        except (FileNotFoundError, KeyError):
-            prompt = _FALLBACK_PROMPT.format(transcript=blob)
+        prompt = prompt_loader.load("MEMORY_HARVEST_PROMPT.txt",
+                                    transcript=blob)
 
         max_id = max(m["id"] for m in messages)
         new_count = sum(

@@ -609,8 +609,6 @@ def _tool_set_routine(inputs: dict, thread_id: Optional[str] = None, **_kw) -> s
     if _scheduler_set_routine is None:
         return json.dumps({"error": "Scheduler not ready yet."})
     try:
-        # Strip hallucinated legacy field
-        inputs.pop("system", None)
         # Bind the calling thread for delivery routing.
         # For sub-sessions, prefer parent_thread_id (the real user thread).
         effective_thread = _kw.get("parent_thread_id") or thread_id

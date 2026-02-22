@@ -213,11 +213,7 @@ llm:
 # (< 30B parameters). For strong models (GPT-4, Claude, 70B+), you can
 # disable some validators to reduce latency.
 #
-# The "backends" field here is DEPRECATED — use llm.turing_protocol instead.
-# It remains supported for backwards compatibility.
-#
 turing_protocol:
-  backends: ["local_small"]               # DEPRECATED: use llm.turing_protocol
   validators:
     workflow_spawn: true                   # Detects when the LLM claims it spawned a
                                            # background worker but didn't actually call

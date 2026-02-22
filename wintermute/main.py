@@ -200,21 +200,7 @@ def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
         sys.exit(1)
 
     # -- Turing Protocol backends --
-    tp_raw = cfg.get("turing_protocol", {}) or {}
-    tp_backends_raw = tp_raw.get("backends")
-    if tp_backends_raw is None:
-        # Omitted → default to base model backends
-        tp_configs = _resolve_role("turing_protocol", default_list, backends,
-                                   config_path="turing_protocol.backends")
-    elif isinstance(tp_backends_raw, list):
-        if not tp_backends_raw:
-            tp_configs = []  # explicitly disabled
-        else:
-            tp_configs = _resolve_role("turing_protocol", tp_backends_raw, backends,
-                                       config_path="turing_protocol.backends")
-    else:
-        print(f"ERROR: turing_protocol.backends must be a list (got {type(tp_backends_raw).__name__})")
-        sys.exit(1)
+    tp_configs = _get_role("turing_protocol", allow_empty=True)
 
     # -- NL Translation backends --
     nl_raw = cfg.get("nl_translation", {}) or {}
@@ -317,6 +303,14 @@ async def main() -> None:
     # Set timezone for prompt assembler (used to inject current datetime).
     configured_tz = cfg.get("scheduler", {}).get("timezone", "UTC")
     prompt_assembler.set_timezone(configured_tz)
+
+    # Apply component size limits from config (context.component_size_limits).
+    csl = cfg.get("context", {}).get("component_size_limits", {})
+    prompt_assembler.set_component_limits(
+        memories=csl.get("memories", 10_000),
+        agenda=csl.get("agenda", 5_000),
+        skills=csl.get("skills_total", 2_000),
+    )
 
     # Load tool profiles for sub-session spawning.
     prompt_assembler.set_tool_profiles(cfg.get("tool_profiles", {}) or {})

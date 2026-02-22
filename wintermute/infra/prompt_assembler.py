@@ -27,9 +27,10 @@ DATA_DIR = Path("data")
 MEMORIES_FILE     = DATA_DIR / "MEMORIES.txt"
 SKILLS_DIR        = DATA_DIR / "skills"
 
-# Size thresholds (characters) that trigger AI summarisation
+# Size thresholds (characters) that trigger AI summarisation.
+# Defaults — overridden at startup via set_component_limits() from config.yaml.
 MEMORIES_LIMIT = 10_000
-AGENDA_LIMIT    = 5_000
+AGENDA_LIMIT   = 5_000
 SKILLS_LIMIT   = 2_000  # TOC-only; individual skills loaded on demand
 
 # Configured timezone — set by main.py at startup via set_timezone().
@@ -43,6 +44,17 @@ _tool_profiles: dict[str, dict] = {}
 
 # Cached parsed BASE_PROMPT sections — populated on first call to _get_sections().
 _cached_sections: list[tuple[str, set[str], str]] | None = None
+
+
+def set_component_limits(memories: int = 10_000, agenda: int = 5_000,
+                         skills: int = 2_000) -> None:
+    """Override component size limits from config.yaml."""
+    global MEMORIES_LIMIT, AGENDA_LIMIT, SKILLS_LIMIT
+    MEMORIES_LIMIT = memories
+    AGENDA_LIMIT = agenda
+    SKILLS_LIMIT = skills
+    logger.info("Component size limits: memories=%d, agenda=%d, skills=%d",
+                memories, agenda, skills)
 
 
 def set_timezone(tz: str) -> None:
@@ -161,18 +173,6 @@ def _read(path: Path, default: str = "") -> str:
     except OSError as exc:
         logger.error("Cannot read %s: %s", path, exc)
         return default
-
-
-def _read_skills() -> str:
-    """Read full content of all skill files (used by dreaming/size checks)."""
-    if not SKILLS_DIR.exists():
-        return ""
-    parts = []
-    for md_file in sorted(SKILLS_DIR.glob("*.md")):
-        content = _read(md_file)
-        if content:
-            parts.append(f"### Skill: {md_file.stem}\n\n{content}")
-    return "\n\n---\n\n".join(parts)
 
 
 def _read_skills_toc() -> str:
