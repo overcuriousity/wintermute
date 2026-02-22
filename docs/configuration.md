@@ -335,17 +335,18 @@ Three backends are available:
 |---------|-------------|-------------|
 | `flat_file` | none | Default. Loads entire MEMORIES.txt (current behavior). Zero config. |
 | `fts5` | none | SQLite FTS5 keyword search with BM25 ranking. Creates `data/memory_index.db`. |
+| `local_vector` | embeddings endpoint | Semantic vector search with numpy cosine similarity. Vectors stored in `data/local_vectors.db`. No external vector service required. |
 | `qdrant` | Qdrant instance + embeddings endpoint | Semantic vector search via Qdrant. Requires a running Qdrant instance and an OpenAI-compatible embeddings endpoint. |
 
-When `fts5` or `qdrant` is active, MEMORIES.txt is kept as a git-versioned backup via dual-write on every mutation. If the configured backend fails to initialize at startup, Wintermute warns and falls back to `flat_file` automatically.
+When any non-`flat_file` backend is active, MEMORIES.txt is kept as a git-versioned backup via dual-write on every mutation. If the configured backend fails to initialize at startup, Wintermute warns and falls back to `flat_file` automatically.
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `backend` | no | `"flat_file"` | `"flat_file"`, `"fts5"`, or `"qdrant"` |
+| `backend` | no | `"flat_file"` | `"flat_file"`, `"fts5"`, `"local_vector"`, or `"qdrant"` |
 | `top_k` | no | `10` | Maximum memories to inject per turn |
-| `score_threshold` | no | `0.3` | Minimum relevance score (qdrant only) |
+| `score_threshold` | no | `0.3` | Minimum relevance score (vector backends only) |
 
-#### `memory.embeddings` (qdrant only)
+#### `memory.embeddings` (local_vector and qdrant only)
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|

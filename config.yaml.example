@@ -430,11 +430,11 @@ scheduler:
 # warns and falls back to flat_file automatically.
 #
 memory:
-  backend: "flat_file"                  # "flat_file" | "fts5" | "qdrant"
+  backend: "flat_file"                  # "flat_file" | "fts5" | "local_vector" | "qdrant"
   top_k: 10                            # Max memories to inject per turn
-  score_threshold: 0.3                  # Min relevance score (qdrant only)
+  score_threshold: 0.3                  # Min relevance score (local_vector and qdrant only)
 
-  # Embeddings endpoint (required for qdrant backend only).
+  # Embeddings endpoint (required for local_vector and qdrant backends).
   # Any OpenAI-compatible /v1/embeddings endpoint works:
   #   - Local: text-embeddings-inference, llama.cpp, Infinity
   #   - Cloud: OpenAI, Together, Fireworks

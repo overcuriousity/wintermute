@@ -265,6 +265,195 @@ class FTS5Backend:
 
 
 # ---------------------------------------------------------------------------
+# Local vector backend (numpy cosine similarity, persisted in SQLite BLOBs)
+# ---------------------------------------------------------------------------
+
+LOCAL_VECTOR_DB_PATH = DATA_DIR / "local_vectors.db"
+
+
+class LocalVectorBackend:
+    """numpy cosine similarity over vectors stored in SQLite BLOBs.
+
+    Requires an OpenAI-compatible embeddings endpoint (same config key as
+    QdrantBackend) but does **not** require any external vector service.
+    """
+
+    def __init__(self, config: dict) -> None:
+        self._embed_cfg = config.get("embeddings", {})
+        self._db_path = LOCAL_VECTOR_DB_PATH
+        self._lock = threading.Lock()
+
+    def init(self) -> None:
+        with self._lock:
+            conn = self._connect()
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS local_vectors ("
+                "  entry_id TEXT PRIMARY KEY,"
+                "  text TEXT NOT NULL,"
+                "  vector BLOB NOT NULL,"
+                "  created_at REAL NOT NULL"
+                ")"
+            )
+            conn.commit()
+            conn.close()
+        logger.info("Memory backend: local_vector (SQLite+numpy at %s)", self._db_path)
+
+    def _connect(self) -> sqlite3.Connection:
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(self._db_path), timeout=10)
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
+
+    @staticmethod
+    def _vec_to_blob(vec: list[float]) -> bytes:
+        import numpy as np
+        return np.array(vec, dtype=np.float32).tobytes()
+
+    def add(self, entry: str, entry_id: str | None = None) -> str:
+        eid = entry_id or _make_id(entry)
+        vectors = _embed([entry], self._embed_cfg)
+        if not vectors:
+            raise RuntimeError("Embedding call returned no vectors")
+        blob = self._vec_to_blob(vectors[0])
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    "INSERT OR REPLACE INTO local_vectors "
+                    "(entry_id, text, vector, created_at) VALUES (?, ?, ?, ?)",
+                    (eid, entry.strip(), blob, time.time()),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        return eid
+
+    def search(self, query: str, top_k: int, threshold: float) -> list[dict]:
+        import numpy as np
+
+        vectors = _embed([query], self._embed_cfg)
+        if not vectors:
+            logger.warning("LocalVector: embedding failed for query, falling back to get_all")
+            return self.get_all()[:top_k]
+        q_vec = np.array(vectors[0], dtype=np.float32)
+        q_norm = np.linalg.norm(q_vec)
+        if q_norm == 0:
+            return self.get_all()[:top_k]
+        q_vec = q_vec / q_norm
+
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT entry_id, text, vector FROM local_vectors ORDER BY created_at"
+                ).fetchall()
+            finally:
+                conn.close()
+
+        if not rows:
+            return []
+
+        results: list[dict] = []
+        for entry_id, text, blob in rows:
+            vec = np.frombuffer(blob, dtype=np.float32)
+            norm = np.linalg.norm(vec)
+            if norm == 0:
+                continue
+            score = float(np.dot(q_vec, vec / norm))
+            if score >= threshold:
+                results.append({"id": entry_id, "text": text, "score": score})
+
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:top_k]
+
+    def get_all(self) -> list[dict]:
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT entry_id, text FROM local_vectors ORDER BY created_at"
+                ).fetchall()
+            finally:
+                conn.close()
+        return [{"id": r[0], "text": r[1], "score": 1.0} for r in rows]
+
+    def replace_all(self, entries: list[str]) -> None:
+        entries = [e.strip() for e in entries if e.strip()]
+        if not entries:
+            with self._lock:
+                conn = self._connect()
+                try:
+                    conn.execute("DELETE FROM local_vectors")
+                    conn.commit()
+                finally:
+                    conn.close()
+            return
+
+        vectors = _embed(entries, self._embed_cfg)
+        if not vectors or len(vectors) != len(entries):
+            raise RuntimeError(
+                f"Embedding mismatch: {len(entries)} entries but "
+                f"{len(vectors) if vectors else 0} vectors"
+            )
+
+        now = time.time()
+        rows = [
+            (_make_id(entry), entry, self._vec_to_blob(vec), now)
+            for entry, vec in zip(entries, vectors)
+        ]
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute("DELETE FROM local_vectors")
+                conn.executemany(
+                    "INSERT INTO local_vectors (entry_id, text, vector, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    rows,
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        logger.info("LocalVector: replaced all entries (%d)", len(entries))
+
+    def delete(self, entry_id: str) -> bool:
+        with self._lock:
+            conn = self._connect()
+            try:
+                cur = conn.execute(
+                    "DELETE FROM local_vectors WHERE entry_id = ?", (entry_id,)
+                )
+                conn.commit()
+                return cur.rowcount > 0
+            finally:
+                conn.close()
+
+    def count(self) -> int:
+        with self._lock:
+            conn = self._connect()
+            try:
+                return conn.execute("SELECT COUNT(*) FROM local_vectors").fetchone()[0]
+            finally:
+                conn.close()
+
+    def stats(self) -> dict:
+        return {
+            "backend": "local_vector",
+            "count": self.count(),
+            "db_path": str(self._db_path),
+        }
+
+    def rebuild(self) -> None:
+        """Drop and re-embed from MEMORIES.txt."""
+        try:
+            text = MEMORIES_FILE.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            text = ""
+        entries = [l.strip() for l in text.splitlines() if l.strip()] if text else []
+        self.replace_all(entries)
+        logger.info("LocalVector: rebuilt index from MEMORIES.txt (%d entries)", len(entries))
+
+
+# ---------------------------------------------------------------------------
 # Qdrant backend (vector semantic search)
 # ---------------------------------------------------------------------------
 
@@ -547,6 +736,8 @@ def init(config: dict) -> None:
     try:
         if backend_name == "fts5":
             _backend = FTS5Backend()
+        elif backend_name == "local_vector":
+            _backend = LocalVectorBackend(config)
         elif backend_name == "qdrant":
             _backend = QdrantBackend(config)
         else:
@@ -560,7 +751,7 @@ def init(config: dict) -> None:
         return
 
     # Cold-boot: if vector backend is empty and MEMORIES.txt has content, import.
-    if backend_name in ("fts5", "qdrant"):
+    if backend_name in ("fts5", "local_vector", "qdrant"):
         try:
             if _backend.count() == 0:
                 text = MEMORIES_FILE.read_text(encoding="utf-8").strip()
