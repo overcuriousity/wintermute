@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Debug panel SPA
 # ---------------------------------------------------------------------------
 
-_DEBUG_HTML = """\
+_DEBUG_HTML = r"""\
 <!doctype html>
 <html lang="en">
 <head>
