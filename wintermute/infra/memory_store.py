@@ -275,6 +275,7 @@ class QdrantBackend:
         self._qdrant_cfg = config.get("qdrant", {})
         self._embed_cfg = config.get("embeddings", {})
         self._url = self._qdrant_cfg.get("url", "http://localhost:6333")
+        self._api_key = self._qdrant_cfg.get("api_key", "") or None
         self._collection = self._qdrant_cfg.get("collection", "wintermute_memories")
         self._dimensions = self._embed_cfg.get("dimensions", 1536)
         self._client: Any = None
@@ -284,7 +285,7 @@ class QdrantBackend:
         from qdrant_client import QdrantClient
         from qdrant_client.models import Distance, VectorParams
 
-        self._client = QdrantClient(url=self._url, timeout=30)
+        self._client = QdrantClient(url=self._url, api_key=self._api_key, timeout=30)
         # Create collection if it doesn't exist.
         collections = [c.name for c in self._client.get_collections().collections]
         if self._collection not in collections:

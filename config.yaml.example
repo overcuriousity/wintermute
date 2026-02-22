@@ -444,8 +444,11 @@ memory:
     dimensions: 1536
 
   # Qdrant connection (required for qdrant backend only).
+  # api_key is optional — only needed for Qdrant Cloud or instances
+  # configured with authentication. Leave empty for local unauthenticated.
   qdrant:
     url: "http://localhost:6333"
+    api_key: ""
     collection: "wintermute_memories"
 
 
