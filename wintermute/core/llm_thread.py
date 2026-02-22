@@ -645,9 +645,17 @@ class LLMThread:
         thread_id = item.thread_id
         messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
 
+        # Build a query for vector memory retrieval (user message + last assistant reply).
+        _query_parts = [item.text] if item.text else []
+        for m in reversed(messages):
+            if m.get("role") == "assistant" and isinstance(m.get("content"), str):
+                _query_parts.append(m["content"][:500])
+                break
+        _memory_query = " ".join(_query_parts) if _query_parts else None
+
         # Assemble system prompt first so we can measure its real token cost.
         summary = self._compaction_summaries.get(thread_id)
-        system_prompt = prompt_assembler.assemble(extra_summary=summary)
+        system_prompt = prompt_assembler.assemble(extra_summary=summary, query=_memory_query)
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
         active_schemas = tool_module.get_tool_schemas(nl_tools=nl_tools)
@@ -672,7 +680,7 @@ class LLMThread:
             messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
             # Reassemble with the updated compaction summary.
             summary = self._compaction_summaries.get(thread_id)
-            system_prompt = prompt_assembler.assemble(extra_summary=summary)
+            system_prompt = prompt_assembler.assemble(extra_summary=summary, query=_memory_query)
 
         is_sub_session_result = item.is_system_event and "[SUB-SESSION " in item.text
         if not item.is_system_event:
@@ -706,7 +714,7 @@ class LLMThread:
             await self._compact_context(thread_id)
             messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
             summary = self._compaction_summaries.get(thread_id)
-            system_prompt = prompt_assembler.assemble(extra_summary=summary)
+            system_prompt = prompt_assembler.assemble(extra_summary=summary, query=_memory_query)
             # Retry once after compaction
             reply = await self._inference_loop(
                 system_prompt, messages, thread_id,

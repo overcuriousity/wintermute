@@ -300,6 +300,14 @@ async def main() -> None:
     prompt_loader.validate_all()
     database.init_db()
 
+    # Initialize vector memory store (before pool construction).
+    from wintermute.infra import memory_store
+    try:
+        memory_store.init(cfg.get("memory", {}))
+    except Exception:
+        logger.exception("Memory store init failed — falling back to flat_file")
+        memory_store.init({"backend": "flat_file"})
+
     # Set timezone for prompt assembler (used to inject current datetime).
     configured_tz = cfg.get("scheduler", {}).get("timezone", "UTC")
     prompt_assembler.set_timezone(configured_tz)

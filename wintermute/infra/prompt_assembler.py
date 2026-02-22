@@ -196,7 +196,8 @@ def _read_skills_toc() -> str:
 
 
 def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = None,
-             available_tools: Optional[set[str]] = None) -> str:
+             available_tools: Optional[set[str]] = None,
+             query: Optional[str] = None) -> str:
     """
     Build and return the full system prompt string.
 
@@ -206,7 +207,12 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     ``available_tools``, when provided, filters BASE_PROMPT sections to only
     include those relevant to the given tool set.  When None (default), all
     sections are included (backward compatible).
+
+    ``query``, when provided alongside a vector memory backend, triggers
+    relevance-ranked memory retrieval instead of loading the full file.
     """
+    from wintermute.infra import memory_store
+
     sections: list[str] = []
 
     base = _assemble_base(available_tools)
@@ -221,9 +227,15 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     except Exception as exc:
         logger.warning("Could not determine local time: %s", exc)
 
-    memories = _read(MEMORIES_FILE)
-    if memories:
-        sections.append(f"# User Memories\n\n{memories}")
+    if memory_store.is_vector_enabled() and query:
+        results = memory_store.search(query)
+        if results:
+            memories_text = "\n".join(r["text"] for r in results)
+            sections.append(f"# User Memories (relevance-ranked)\n\n{memories_text}")
+    else:
+        memories = _read(MEMORIES_FILE)
+        if memories:
+            sections.append(f"# User Memories\n\n{memories}")
 
     agenda = database.get_active_agenda_text(thread_id=thread_id)
     if agenda:
@@ -254,10 +266,18 @@ def check_component_sizes() -> dict[str, bool]:
 
 
 def update_memories(content: str) -> None:
+    from wintermute.infra import memory_store
+
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with _memories_lock:
         MEMORIES_FILE.write_text(content, encoding="utf-8")
     logger.info("MEMORIES.txt updated (%d chars)", len(content))
+    if memory_store.is_vector_enabled():
+        try:
+            entries = [l.strip() for l in content.strip().splitlines() if l.strip()]
+            memory_store.replace_all(entries)
+        except Exception as exc:
+            logger.error("Failed to sync vector store on update_memories: %s", exc)
     threading.Thread(
         target=data_versioning.auto_commit, args=("memory: consolidation",),
         daemon=True,
@@ -266,6 +286,8 @@ def update_memories(content: str) -> None:
 
 def append_memory(entry: str) -> int:
     """Append a memory entry to MEMORIES.txt. Returns the new total length."""
+    from wintermute.infra import memory_store
+
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with _memories_lock:
         existing = _read(MEMORIES_FILE)
@@ -275,6 +297,11 @@ def append_memory(entry: str) -> int:
             new_content = entry.strip()
         MEMORIES_FILE.write_text(new_content, encoding="utf-8")
     logger.info("MEMORIES.txt appended (%d chars total)", len(new_content))
+    if memory_store.is_vector_enabled():
+        try:
+            memory_store.add(entry.strip())
+        except Exception as exc:
+            logger.error("Failed to add memory to vector store: %s", exc)
     threading.Thread(
         target=data_versioning.auto_commit, args=("memory: append",),
         daemon=True,
@@ -312,6 +339,8 @@ def merge_consolidated_memories(snapshot: str, consolidated: str) -> None:
     The entire read-diff-write cycle runs under ``_memories_lock`` so no
     appends can slip through.
     """
+    from wintermute.infra import memory_store
+
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     snapshot_lines = set(snapshot.strip().splitlines())
     with _memories_lock:
@@ -329,3 +358,9 @@ def merge_consolidated_memories(snapshot: str, consolidated: str) -> None:
             )
         MEMORIES_FILE.write_text(merged, encoding="utf-8")
     logger.info("MEMORIES.txt merged-write (%d chars)", len(merged))
+    if memory_store.is_vector_enabled():
+        try:
+            entries = [l.strip() for l in merged.splitlines() if l.strip()]
+            memory_store.replace_all(entries)
+        except Exception as exc:
+            logger.error("Failed to sync vector store on merge_consolidated: %s", exc)

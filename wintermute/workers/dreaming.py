@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from wintermute.infra import database
 from wintermute.infra import data_versioning
+from wintermute.infra import memory_store
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 
@@ -150,22 +151,45 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
     Skips any component that is empty or missing.  Each component is
     consolidated independently so a failure in one does not abort the other.
     """
-    memories_snapshot = prompt_assembler._read(prompt_assembler.MEMORIES_FILE)
-    if memories_snapshot:
-        try:
-            mem_prompt = prompt_loader.load("DREAM_MEMORIES_PROMPT.txt")
-            consolidated = await _consolidate(
-                pool, "MEMORIES.txt", mem_prompt, memories_snapshot,
-            )
-            if consolidated:
-                prompt_assembler.merge_consolidated_memories(
-                    memories_snapshot, consolidated,
+    if memory_store.is_vector_enabled():
+        all_entries = memory_store.get_all()
+        if all_entries:
+            try:
+                mem_prompt = prompt_loader.load("DREAM_MEMORIES_PROMPT.txt")
+                memories_text = "\n".join(e["text"] for e in all_entries)
+                consolidated = await _consolidate(
+                    pool, "MEMORIES.txt", mem_prompt, memories_text,
                 )
-                logger.info("Dreaming: MEMORIES.txt updated (%d chars)", len(consolidated))
-        except Exception:  # noqa: BLE001
-            logger.exception("Dreaming: failed to consolidate MEMORIES.txt")
+                if consolidated:
+                    entries = [l.strip() for l in consolidated.strip().splitlines() if l.strip()]
+                    memory_store.replace_all(entries)
+                    # Keep MEMORIES.txt as git-versioned backup.
+                    prompt_assembler.MEMORIES_FILE.write_text(
+                        consolidated, encoding="utf-8",
+                    )
+                    logger.info("Dreaming: vector store + MEMORIES.txt updated (%d entries)",
+                                len(entries))
+            except Exception:  # noqa: BLE001
+                logger.exception("Dreaming: failed to consolidate vector memories")
+        else:
+            logger.debug("Dreaming: vector store empty, skipping memory consolidation")
     else:
-        logger.debug("Dreaming: MEMORIES.txt empty or missing, skipping")
+        memories_snapshot = prompt_assembler._read(prompt_assembler.MEMORIES_FILE)
+        if memories_snapshot:
+            try:
+                mem_prompt = prompt_loader.load("DREAM_MEMORIES_PROMPT.txt")
+                consolidated = await _consolidate(
+                    pool, "MEMORIES.txt", mem_prompt, memories_snapshot,
+                )
+                if consolidated:
+                    prompt_assembler.merge_consolidated_memories(
+                        memories_snapshot, consolidated,
+                    )
+                    logger.info("Dreaming: MEMORIES.txt updated (%d chars)", len(consolidated))
+            except Exception:  # noqa: BLE001
+                logger.exception("Dreaming: failed to consolidate MEMORIES.txt")
+        else:
+            logger.debug("Dreaming: MEMORIES.txt empty or missing, skipping")
 
     agenda_items = await database.async_call(database.list_agenda_items, "active")
     if agenda_items:

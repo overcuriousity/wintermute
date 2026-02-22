@@ -411,6 +411,44 @@ scheduler:
                                           # Also affects dreaming schedule above
 
 
+# ── Memory Retrieval (Vector-Indexed Memories) ──────────────────────
+# Controls how memories are injected into the system prompt each turn.
+#
+# Backends:
+#   "flat_file"  Default — loads entire MEMORIES.txt (current behavior).
+#                Zero config, works everywhere, no ranking.
+#   "fts5"       SQLite FTS5 keyword search (BM25 ranking). No external
+#                services needed. Creates data/memory_index.db.
+#   "qdrant"     Semantic vector search via Qdrant. Requires a running
+#                Qdrant instance and an embeddings endpoint.
+#
+# When fts5 or qdrant is active, only the top_k most relevant memories
+# are injected per turn instead of the full file. MEMORIES.txt is kept
+# as a git-versioned backup (dual-write on every mutation).
+#
+# If the configured backend fails to initialize at startup, Wintermute
+# warns and falls back to flat_file automatically.
+#
+memory:
+  backend: "flat_file"                  # "flat_file" | "fts5" | "qdrant"
+  top_k: 10                            # Max memories to inject per turn
+  score_threshold: 0.3                  # Min relevance score (qdrant only)
+
+  # Embeddings endpoint (required for qdrant backend only).
+  # Any OpenAI-compatible /v1/embeddings endpoint works:
+  #   - Local: text-embeddings-inference, llama.cpp, Infinity
+  #   - Cloud: OpenAI, Together, Fireworks
+  embeddings:
+    endpoint: "http://localhost:8080/v1"
+    model: "text-embedding-3-small"
+    dimensions: 1536
+
+  # Qdrant connection (required for qdrant backend only).
+  qdrant:
+    url: "http://localhost:6333"
+    collection: "wintermute_memories"
+
+
 # ── Logging ──────────────────────────────────────────────────────────
 logging:
   level: "INFO"                           # DEBUG | INFO | WARNING | ERROR

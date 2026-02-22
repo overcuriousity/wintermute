@@ -1605,6 +1605,7 @@ class SubSessionManager:
         elif mode == "full":
             base = prompt_assembler.assemble(
                 thread_id=thread_id, available_tools=available_tools,
+                query=objective,
             )
         else:  # "base_only"
             base_text = prompt_assembler._assemble_base(available_tools)
