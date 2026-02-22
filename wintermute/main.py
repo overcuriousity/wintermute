@@ -235,12 +235,28 @@ def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
     else:
         nl_configs = []
 
+    # -- Memory Harvest backends --
+    # Falls back to sub_sessions backends when omitted (not to first backend).
+    mh_raw = llm_raw.get("memory_harvest")
+    sub_sessions_configs = _get_role("sub_sessions")
+    if mh_raw is None:
+        mh_configs = list(sub_sessions_configs)
+    elif isinstance(mh_raw, list):
+        if not mh_raw:
+            mh_configs = list(sub_sessions_configs)  # empty list → fallback
+        else:
+            mh_configs = _resolve_role("memory_harvest", mh_raw, backends)
+    else:
+        print(f"ERROR: llm.memory_harvest must be a list of backend names (got {type(mh_raw).__name__})")
+        sys.exit(1)
+
     return MultiProviderConfig(
         main=_get_role("base"),
         compaction=_get_role("compaction"),
-        sub_sessions=_get_role("sub_sessions"),
+        sub_sessions=sub_sessions_configs,
         dreaming=_get_role("dreaming"),
         turing_protocol=tp_configs,
+        memory_harvest=mh_configs,
         nl_translation=nl_configs,
     )
 
@@ -311,6 +327,7 @@ async def main() -> None:
     sub_sessions_pool = _build_pool(multi_cfg.sub_sessions, client_cache)
     dreaming_pool = _build_pool(multi_cfg.dreaming, client_cache)
     turing_protocol_pool = _build_pool(multi_cfg.turing_protocol, client_cache)
+    memory_harvest_pool = _build_pool(multi_cfg.memory_harvest, client_cache)
     nl_translation_pool = _build_pool(multi_cfg.nl_translation, client_cache)
 
     # Parse NL translation config.
@@ -478,6 +495,7 @@ async def main() -> None:
         harvest_loop = MemoryHarvestLoop(
             config=harvest_config,
             sub_session_manager=sub_sessions,
+            pool=memory_harvest_pool,
         )
     else:
         logger.info("Memory harvest disabled by config")

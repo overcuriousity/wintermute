@@ -55,6 +55,7 @@ fails (API error, timeout), the next one is tried automatically.
 | `base` | no | first backend | Primary conversation inference |
 | `compaction` | no | first backend | Context history summarisation |
 | `sub_sessions` | no | first backend | Background sub-session workers |
+| `memory_harvest` | no | `sub_sessions` | Background memory extraction from conversations |
 | `dreaming` | no | first backend | Nightly memory consolidation |
 | `turing_protocol` | no | first backend | Turing Protocol validation pipeline |
 **Failover:** When multiple backends are listed, they are tried in order on

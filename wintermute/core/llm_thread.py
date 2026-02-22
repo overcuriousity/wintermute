@@ -205,6 +205,7 @@ class MultiProviderConfig:
     sub_sessions: list[ProviderConfig]
     dreaming: list[ProviderConfig]
     turing_protocol: list[ProviderConfig]
+    memory_harvest: list[ProviderConfig] = field(default_factory=list)
     nl_translation: list[ProviderConfig] = field(default_factory=list)
 
 

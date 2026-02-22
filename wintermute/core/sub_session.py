@@ -112,6 +112,7 @@ class SubSessionState:
     continuation_depth: int = 0          # how many hops deep this session is
     continued_from: Optional[str] = None # session_id of predecessor, if any
     tool_names: Optional[list[str]] = None  # explicit tool whitelist (bypasses category filter)
+    pool_override: Optional[object] = None   # per-session BackendPool override
 
 
 @dataclass
@@ -131,6 +132,7 @@ class TaskNode:
     error: Optional[str] = None
     not_before: Optional[datetime] = None # time gate: don't start before this
     tool_names: Optional[list[str]] = None  # explicit tool whitelist (bypasses category filter)
+    pool_override: Optional[object] = None   # per-session BackendPool override
 
 
 @dataclass
@@ -215,6 +217,7 @@ class SubSessionManager:
         depends_on_previous: bool = False,
         not_before: Optional[str] = None,
         tool_names: Optional[list[str]] = None,
+        pool: Optional[object] = None,
     ) -> str:
         """
         Register a sub-session and start it immediately (or defer if deps pending).
@@ -296,6 +299,7 @@ class SubSessionManager:
             root_thread_id=root_thread_id,
             not_before=not_before_dt,
             tool_names=tool_names,
+            pool_override=pool,
         )
 
         if deps:
@@ -569,6 +573,7 @@ class SubSessionManager:
             continuation_depth=continuation_depth,
             continued_from=continued_from,
             tool_names=node.tool_names,
+            pool_override=node.pool_override,
         )
         self._states[session_id] = state
 
@@ -1144,7 +1149,8 @@ class SubSessionManager:
 
         while True:
             try:
-                response = await self._pool.call(
+                pool = state.pool_override or self._pool
+                response = await pool.call(
                     messages=state.messages,
                     tools=tool_schemas,
                 )

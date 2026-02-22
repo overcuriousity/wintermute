@@ -28,6 +28,7 @@ from wintermute.infra import database
 from wintermute.infra import prompt_loader
 
 if TYPE_CHECKING:
+    from wintermute.core.llm_thread import BackendPool
     from wintermute.core.sub_session import SubSessionManager
 
 logger = logging.getLogger(__name__)
@@ -74,9 +75,11 @@ class MemoryHarvestLoop:
         self,
         config: MemoryHarvestConfig,
         sub_session_manager: Optional[SubSessionManager] = None,
+        pool: Optional[BackendPool] = None,
     ) -> None:
         self._cfg = config
         self._sub_sessions = sub_session_manager
+        self._pool = pool
         self._running = False
         # Per-thread: last harvested message id — restored from DB on startup
         self._last_harvested_id: dict[str, int] = database.load_harvest_state()
@@ -223,6 +226,7 @@ class MemoryHarvestLoop:
             system_prompt_mode="none",   # all instructions in the objective
             tool_names=["append_memory", "read_file"],
             timeout=600, # generous timeout for slow workers and large conversations
+            pool=self._pool,
         )
 
         logger.info(

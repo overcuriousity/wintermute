@@ -179,8 +179,11 @@ inference_backends:
 #   compaction     Summarises old messages when context fills up. Ideally use
 #                  the same model (or same context_size) as base to preserve
 #                  quality. A smaller model works but may lose nuance.
-#   sub_sessions   Background workers (agenda reviews, memory harvest, user-spawned
-#                  tasks). Can use a smaller model to save resources.
+#   sub_sessions   Background workers (agenda reviews, user-spawned tasks).
+#                  Can use a smaller model to save resources.
+#   memory_harvest Background memory extraction from conversations. Fire-and-forget,
+#                  not latency-sensitive. A small/CPU-only model works well here.
+#                  Defaults to sub_sessions backends when omitted.
 #   dreaming       Nightly memory consolidation. Runs once per day, not latency-
 #                  sensitive. A small model works well here.
 #   turing_protocol  Post-inference validation pipeline. A small/fast model is
@@ -193,6 +196,7 @@ llm:
   base: ["local_large"]
   compaction: ["local_small", "local_large"]
   sub_sessions: ["local_large"]
+  memory_harvest: ["local_small"]
   dreaming: ["local_small"]
   turing_protocol: ["local_small"]
 

@@ -1042,6 +1042,7 @@ llm:
   base: ["main"]
   compaction: ["small", "main"]
   sub_sessions: ["small", "main"]
+  memory_harvest: ["small"]
   dreaming: ["small"]
   turing_protocol: ["small"]
 YAML
@@ -1052,6 +1053,7 @@ llm:
   base: ["main"]
   compaction: ["main"]
   sub_sessions: ["main"]
+  memory_harvest: ["main"]
   dreaming: ["main"]
   turing_protocol: ["main"]
 YAML
