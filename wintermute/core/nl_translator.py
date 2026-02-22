@@ -38,6 +38,48 @@ _PROMPT_MAP: dict[str, str] = {
 }
 
 
+_AGENDA_LIST_PATTERNS: dict[str, "dict | None"] = {
+    # Maps normalised description → structured args.
+    # Value None means "default list" (active items).
+    "list": None,
+    "show": None,
+    "show items": None,
+    "list items": None,
+    "show active": None,
+    "list active": None,
+    "show active items": None,
+    "list active items": None,
+    "show all active items": None,
+    "show me all active items": None,
+    "show me all agenda items": {"action": "list", "status": "all"},
+    "list all": {"action": "list", "status": "all"},
+    "show all": {"action": "list", "status": "all"},
+    "show all items": {"action": "list", "status": "all"},
+    "list all items": {"action": "list", "status": "all"},
+    "show everything": {"action": "list", "status": "all"},
+    "list everything": {"action": "list", "status": "all"},
+    "show completed": {"action": "list", "status": "completed"},
+    "list completed": {"action": "list", "status": "completed"},
+    "show completed items": {"action": "list", "status": "completed"},
+    "list completed items": {"action": "list", "status": "completed"},
+}
+
+_AGENDA_LIST_DEFAULT: dict = {"action": "list"}
+
+
+def _agenda_list_fastpath(description: str) -> "dict | None":
+    """Return structured args if *description* matches a known agenda-list
+    pattern, or ``None`` to fall through to the LLM translator."""
+    normalised = re.sub(r"[.!?]+$", "", description.strip()).strip().lower()
+    result = _AGENDA_LIST_PATTERNS.get(normalised, _SENTINEL)
+    if result is _SENTINEL:
+        return None
+    return result if result is not None else _AGENDA_LIST_DEFAULT.copy()
+
+
+_SENTINEL = object()
+
+
 def is_nl_tool_call(tool_name: str, tool_args: dict) -> bool:
     """Detect whether a tool call uses the simplified NL schema.
 
@@ -116,6 +158,13 @@ async def translate_nl_tool_call(
     A dict with an ``"error"`` key signals ambiguity that needs user
     clarification.
     """
+    # Fast-path: agenda list patterns bypass the LLM entirely.
+    if tool_name == "agenda":
+        fast = _agenda_list_fastpath(description)
+        if fast is not None:
+            logger.debug("NL translator fast-path for agenda: %r -> %s", description, fast)
+            return fast
+
     prompt_file = _PROMPT_MAP.get(tool_name)
     if not prompt_file:
         logger.error("No NL translator prompt for tool %s", tool_name)
