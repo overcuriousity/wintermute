@@ -41,11 +41,13 @@ Each section declares which tool(s) it requires. When a sub-session is spawned w
 
 This reduces effective prompt size for minimal sub-sessions by ~800 tokens — significant for weak/small models where every token counts.
 
-### 2. MEMORIES.txt — Long-Term Facts
+### 2. MEMORIES.txt / Vector Memory — Long-Term Facts
 
 Stores persistent facts about the user — preferences, biographical details, established decisions. Updated day-to-day via `append_memory` (preferred). Consolidated nightly by the dreaming loop to merge duplicates and prune outdated entries.
 
 Key rule: if information would still matter in a month with no active project around it, it belongs in MEMORIES.
+
+**Vector-indexed retrieval (optional):** When a vector memory backend (`fts5` or `qdrant`) is configured, only the top-K most relevant memories are injected per turn based on the current user message and last assistant reply. This replaces the full MEMORIES.txt dump, reducing token waste on irrelevant memories. MEMORIES.txt is kept as a git-versioned backup via dual-write. See [configuration.md — memory](configuration.md#memory) for setup.
 
 ### 3. Agenda (SQLite) — Working Memory
 
@@ -67,7 +69,7 @@ Language-specific files (`SEED_en.txt`, `SEED_de.txt`, `SEED_fr.txt`, `SEED_es.t
 
 ## Prompt Assembly Pipeline
 
-The `prompt_assembler.assemble()` function builds the final system prompt:
+The `prompt_assembler.assemble()` function builds the final system prompt. It accepts an optional `query` parameter — when a vector memory backend is active and a query is provided, relevance-ranked memories are injected instead of the full file.
 
 ```
 # Core Instructions
@@ -80,8 +82,11 @@ The `prompt_assembler.assemble()` function builds the final system prompt:
 
 ---
 
-# User Memories
+# User Memories                          (flat-file mode)
 {MEMORIES.txt content}
+  — OR —
+# User Memories (relevance-ranked)       (vector mode)
+{top-K memories from vector search}
 
 ---
 

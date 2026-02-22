@@ -325,9 +325,51 @@ Periodically checks the git remote for new commits and notifies via Matrix when 
 
 Notifications are sent to the Matrix rooms listed in `matrix.allowed_rooms` (or all rooms if that list is empty). If Matrix is not configured, the checker still runs (results visible via `/status`) but no notifications are sent.
 
+### `memory`
+
+Controls how memories are injected into the system prompt. By default, the entire `MEMORIES.txt` file is loaded each turn (flat-file mode). When a vector backend is configured, only the top-K most relevant memories are injected based on the current conversation context.
+
+Three backends are available:
+
+| Backend | Dependencies | Description |
+|---------|-------------|-------------|
+| `flat_file` | none | Default. Loads entire MEMORIES.txt (current behavior). Zero config. |
+| `fts5` | none | SQLite FTS5 keyword search with BM25 ranking. Creates `data/memory_index.db`. |
+| `qdrant` | Qdrant instance + embeddings endpoint | Semantic vector search via Qdrant. Requires a running Qdrant instance and an OpenAI-compatible embeddings endpoint. |
+
+When `fts5` or `qdrant` is active, MEMORIES.txt is kept as a git-versioned backup via dual-write on every mutation. If the configured backend fails to initialize at startup, Wintermute warns and falls back to `flat_file` automatically.
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `backend` | no | `"flat_file"` | `"flat_file"`, `"fts5"`, or `"qdrant"` |
+| `top_k` | no | `10` | Maximum memories to inject per turn |
+| `score_threshold` | no | `0.3` | Minimum relevance score (qdrant only) |
+
+#### `memory.embeddings` (qdrant only)
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `endpoint` | yes | — | OpenAI-compatible `/v1/embeddings` base URL |
+| `api_key` | no | `""` | API key for the embeddings endpoint |
+| `model` | no | `"text-embedding-3-small"` | Embedding model name |
+| `dimensions` | no | `1536` | Vector dimensions (must match the model's output and the Qdrant collection) |
+| `send_dimensions` | no | `false` | Send `dimensions` parameter in the embedding request (only OpenAI supports this) |
+
+#### `memory.qdrant` (qdrant only)
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `url` | no | `"http://localhost:6333"` | Qdrant server URL (supports HTTP and HTTPS) |
+| `api_key` | no | `""` | Qdrant API key (required for Qdrant Cloud or authenticated instances) |
+| `collection` | no | `"wintermute_memories"` | Qdrant collection name |
+
+**Cold boot:** When a vector backend is configured and the index is empty but `MEMORIES.txt` has content, all entries are automatically imported at startup.
+
+**Interaction logging:** All embedding API calls and Qdrant operations (search, add, replace_all) are logged to the interaction log, visible in the debug panel under the `embedding`, `qdrant_search`, `qdrant_add`, and `qdrant_replace_all` action types.
+
 ### `memory_harvest`
 
-Periodically mines recent conversation history for personal facts and preferences, extracting them into `MEMORIES.txt` via background sub-sessions. Complements the `append_memory` tool (which the AI uses in real-time during conversation).
+Periodically mines recent conversation history for personal facts and preferences, extracting them into `MEMORIES.txt` (and the vector store, if active) via background sub-sessions. Complements the `append_memory` tool (which the AI uses in real-time during conversation).
 
 Triggers when **either** condition is met:
 - `message_threshold` new user messages have accumulated since last harvest

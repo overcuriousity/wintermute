@@ -320,6 +320,7 @@ class QdrantBackend:
         vectors = _embed([entry], self._embed_cfg)
         if not vectors:
             raise RuntimeError("Embedding call returned no vectors")
+        t0 = time.time()
         with self._lock:
             self._client.upsert(
                 collection_name=self._collection,
@@ -329,6 +330,7 @@ class QdrantBackend:
                     payload={"text": entry.strip(), "created_at": time.time()},
                 )],
             )
+        _log_interaction(t0, "qdrant_add", entry[:200], f"id={eid}", llm="qdrant")
         return eid
 
     def search(self, query: str, top_k: int, threshold: float) -> list[dict]:
@@ -336,6 +338,7 @@ class QdrantBackend:
         if not vectors:
             logger.warning("Qdrant: embedding failed for query, falling back to get_all")
             return self.get_all()[:top_k]
+        t0 = time.time()
         with self._lock:
             results = self._client.query_points(
                 collection_name=self._collection,
@@ -343,10 +346,16 @@ class QdrantBackend:
                 limit=top_k,
                 score_threshold=threshold,
             ).points
-        return [
+        hits = [
             {"id": str(r.id), "text": r.payload.get("text", ""), "score": r.score}
             for r in results
         ]
+        _log_interaction(
+            t0, "qdrant_search", query[:200],
+            f"{len(hits)} hits (top_k={top_k}, threshold={threshold})",
+            llm="qdrant",
+        )
+        return hits
 
     def get_all(self) -> list[dict]:
         with self._lock:
@@ -364,12 +373,14 @@ class QdrantBackend:
     def replace_all(self, entries: list[str]) -> None:
         from qdrant_client.models import PointStruct
 
+        t0 = time.time()
         entries = [e.strip() for e in entries if e.strip()]
         if not entries:
             with self._lock:
                 # Delete all points.
                 self._client.delete_collection(self._collection)
             self.init()  # Recreate empty collection.
+            _log_interaction(t0, "qdrant_replace_all", "0 entries", "collection cleared", llm="qdrant")
             return
 
         # Batch embed.
@@ -401,6 +412,10 @@ class QdrantBackend:
                     points=batch,
                 )
         logger.info("Qdrant: replaced all entries (%d)", len(entries))
+        _log_interaction(
+            t0, "qdrant_replace_all", f"{len(entries)} entries",
+            f"upserted {len(points)} points", llm="qdrant",
+        )
 
     def delete(self, entry_id: str) -> bool:
         from qdrant_client.models import PointIdsList
@@ -470,12 +485,24 @@ def _embed(texts: list[str], embed_cfg: dict) -> list[list[float]]:
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    resp = httpx.post(url, json=payload, headers=headers, timeout=60.0)
-    resp.raise_for_status()
-    data = resp.json()
-    # Sort by index to preserve order.
-    items = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
-    return [item["embedding"] for item in items]
+    t0 = time.time()
+    status = "ok"
+    try:
+        resp = httpx.post(url, json=payload, headers=headers, timeout=60.0)
+        resp.raise_for_status()
+        data = resp.json()
+        # Sort by index to preserve order.
+        items = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
+        result = [item["embedding"] for item in items]
+        output_summary = f"{len(result)} vectors, {len(result[0])} dims" if result else "empty"
+    except Exception as exc:
+        status = f"error: {exc}"
+        output_summary = status
+        raise
+    finally:
+        input_summary = f"{len(texts)} texts, model={model}"
+        _log_interaction(t0, "embedding", input_summary, output_summary, status, llm=model)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -487,6 +514,20 @@ def _make_id(text: str) -> str:
     h = hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
     # Format as UUID: 8-4-4-4-12
     return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
+
+
+def _log_interaction(timestamp: float, action: str, input_text: str,
+                     output_text: str, status: str = "ok",
+                     llm: str = "") -> None:
+    """Log a memory store interaction to the database interaction_log."""
+    try:
+        from wintermute.infra import database
+        database.save_interaction_log(
+            timestamp, action, "system:memory_store",
+            llm, input_text[:2000], output_text[:2000], status,
+        )
+    except Exception:  # noqa: BLE001
+        pass  # Never let logging failures break memory operations.
 
 
 # ---------------------------------------------------------------------------

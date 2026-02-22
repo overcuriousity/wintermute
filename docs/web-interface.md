@@ -37,6 +37,6 @@ The debug panel is backed by a REST API:
 | POST | `/api/debug/routines` | Create a new routine |
 | DELETE | `/api/debug/routines/{job_id}` | Delete a routine |
 | GET | `/api/debug/agenda` | List current agenda items |
-| GET | `/api/debug/interaction-log` | List Turing Protocol interaction log entries |
+| GET | `/api/debug/interaction-log` | List interaction log entries (Turing Protocol, dreaming, embedding calls, Qdrant operations) |
 | GET | `/api/debug/interaction-log/{id}` | Get a specific interaction log entry |
 | GET | `/api/debug/stream` | Server-sent events stream for live panel updates |

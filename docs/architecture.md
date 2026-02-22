@@ -16,6 +16,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **DreamingLoop** | `dreaming.py` | Nightly memory consolidation |
 | **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
 | **NL Translator** | `nl_translator.py` | Expands natural-language tool descriptions into structured arguments via a translator LLM |
+| **MemoryStore** | `memory_store.py` | Vector-indexed memory retrieval (flat_file / FTS5 / Qdrant backends) |
 | **PromptAssembler** | `prompt_assembler.py` | Builds system prompts from file components |
 | **Database** | `database.py` | SQLite message persistence, thread management, and agenda storage |
 
@@ -26,7 +27,8 @@ User (Matrix / Browser)
         |
         v
   LLMThread  <--- system prompt (BASE + MEMORIES + AGENDA + SKILLS TOC)
-  (asyncio)        assembled fresh each turn; skills loaded on demand
+  (asyncio)        assembled fresh each turn; memories via vector search
+                   (if configured) or full file; skills loaded on demand
         |
         |-- tool calls --> execute_shell / read_file / write_file
         |                  search_web / fetch_url
@@ -61,22 +63,23 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 1. Load `config.yaml`
 2. Configure logging (console + rotating file)
 3. Initialise SQLite databases
-4. Bootstrap `data/` directories (skills/, scripts/, archive/)
-5. Restore APScheduler jobs (and execute missed routines)
-6. Build shared broadcast function (routes to Matrix rooms or web clients)
-7. Start LLM inference task
-8. Start web interface task (if enabled)
-9. Start Matrix task (if configured)
-10. Start agenda review loop
-11. Start dreaming loop
-12. Await shutdown signals (SIGTERM / SIGINT)
+4. Initialise memory store (vector backend or flat-file fallback; cold-boot import if needed)
+5. Bootstrap `data/` directories (skills/, scripts/, archive/)
+6. Restore APScheduler jobs (and execute missed routines)
+7. Build shared broadcast function (routes to Matrix rooms or web clients)
+8. Start LLM inference task
+9. Start web interface task (if enabled)
+10. Start Matrix task (if configured)
+11. Start agenda review loop
+12. Start dreaming loop
+13. Await shutdown signals (SIGTERM / SIGINT)
 
 ## Data Flow: User Message
 
 1. User sends a message via Matrix or WebSocket
 2. Message enters the LLMThread queue
 3. LLMThread builds the message list from the SQLite DB
-4. System prompt is assembled fresh (BASE + MEMORIES + AGENDA + SKILLS TOC + compaction summary)
+4. System prompt is assembled fresh (BASE + MEMORIES + AGENDA + SKILLS TOC + compaction summary). When a vector memory backend is active, only the top-K relevant memories are retrieved (via embedding search) instead of the full MEMORIES.txt
 5. If history tokens exceed the compaction threshold, context is compacted first
 6. Message is saved to the DB, then inference runs
 7. If the model returns tool calls:
@@ -145,7 +148,8 @@ Wintermute is explicitly designed to work with small, quantised models (3B–8B 
 data/
   .git/                      -- Local git repo for auto-versioning (rollback via git log / git revert)
   BASE_PROMPT.txt            -- Immutable core instructions
-  MEMORIES.txt               -- Long-term user facts (updated via append_memory)
+  MEMORIES.txt               -- Long-term user facts (updated via append_memory; git-versioned backup when vector backend is active)
+  memory_index.db            -- FTS5 keyword index (only when backend=fts5)
   conversation.db (agenda)    -- Active goals / working memory (managed via agenda tool, stored in SQLite)
   skills/                    -- Learned procedures as *.md files (updated via add_skill tool)
   DREAM_MEMORIES_PROMPT.txt  -- Customisable dreaming prompt for MEMORIES consolidation
@@ -156,3 +160,5 @@ data/
 ```
 
 Changes to MEMORIES.txt, skills, and other data files are automatically committed to a local git repository inside `data/`. This provides a full change history so that any mutation (memory append, nightly consolidation, skill updates) can be inspected with `cd data && git log --oneline` and rolled back with `git revert`.
+
+When a vector memory backend (`fts5` or `qdrant`) is active, all memory mutations are dual-written: the file is updated first (for git versioning), then the vector store is updated. This ensures MEMORIES.txt always reflects the current state and can be used to rebuild the index via `/rebuild-index`.
