@@ -113,6 +113,8 @@ class SubSessionState:
     continued_from: Optional[str] = None # session_id of predecessor, if any
     tool_names: Optional[list[str]] = None  # explicit tool whitelist (bypasses category filter)
     pool_override: Optional[object] = None   # per-session BackendPool override
+    max_rounds: Optional[int] = None        # None = unlimited inference rounds
+    skip_tp_on_exit: bool = False           # skip TP post_inference on terminal response
 
 
 @dataclass
@@ -133,6 +135,8 @@ class TaskNode:
     not_before: Optional[datetime] = None # time gate: don't start before this
     tool_names: Optional[list[str]] = None  # explicit tool whitelist (bypasses category filter)
     pool_override: Optional[object] = None   # per-session BackendPool override
+    max_rounds: Optional[int] = None        # None = unlimited inference rounds
+    skip_tp_on_exit: bool = False           # skip TP post_inference on terminal response
 
 
 @dataclass
@@ -218,6 +222,8 @@ class SubSessionManager:
         not_before: Optional[str] = None,
         tool_names: Optional[list[str]] = None,
         pool: Optional[object] = None,
+        max_rounds: Optional[int] = None,
+        skip_tp_on_exit: bool = False,
     ) -> str:
         """
         Register a sub-session and start it immediately (or defer if deps pending).
@@ -300,6 +306,8 @@ class SubSessionManager:
             not_before=not_before_dt,
             tool_names=tool_names,
             pool_override=pool,
+            max_rounds=max_rounds,
+            skip_tp_on_exit=skip_tp_on_exit,
         )
 
         if deps:
@@ -574,6 +582,8 @@ class SubSessionManager:
             continued_from=continued_from,
             tool_names=node.tool_names,
             pool_override=node.pool_override,
+            max_rounds=node.max_rounds,
+            skip_tp_on_exit=node.skip_tp_on_exit,
         )
         self._states[session_id] = state
 
@@ -1147,7 +1157,26 @@ class SubSessionManager:
                 {"role": "user",   "content": state.objective},
             ]
 
+        round_count = 0
         while True:
+            round_count += 1
+            if state.max_rounds is not None and round_count > state.max_rounds:
+                logger.info(
+                    "Sub-session %s: max_rounds (%d) exceeded — returning last result",
+                    state.session_id, state.max_rounds,
+                )
+                # Return whatever text the model last produced, or a fallback.
+                last_text = None
+                for m in reversed(state.messages):
+                    role = m.get("role") if isinstance(m, dict) else getattr(m, "role", None)
+                    if role == "assistant":
+                        content = (m.get("content", "") if isinstance(m, dict)
+                                   else getattr(m, "content", "") or "")
+                        if isinstance(content, str) and content.strip():
+                            last_text = content.strip()
+                            break
+                return last_text or "Budget exhausted — max inference rounds reached."
+
             try:
                 pool = state.pool_override or self._pool
                 response = await pool.call(
@@ -1387,9 +1416,11 @@ class SubSessionManager:
             final_text = (choice.message.content or "").strip()
 
             # -- Turing Protocol: post_inference phase (objective gatekeeper) --
+            # skip_tp_on_exit: when the model produces a text-only response,
+            # return immediately without running TP post_inference hooks.
             # Depth-2 re-check: after first correction, re-check once more.
             # At depth >= 2, switch to graceful fallback.
-            if tp_enabled and tp_correction_depth < 2:
+            if tp_enabled and tp_correction_depth < 2 and not state.skip_tp_on_exit:
                 # Extract prior assistant message and recent messages for TP context.
                 _prior_assistant = None
                 _recent_assistant: list[str] = []

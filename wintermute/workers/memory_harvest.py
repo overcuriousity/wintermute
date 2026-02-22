@@ -227,6 +227,8 @@ class MemoryHarvestLoop:
             tool_names=["append_memory", "read_file"],
             timeout=600, # generous timeout for slow workers and large conversations
             pool=self._pool,
+            max_rounds=5,               # hard cap: prevent runaway tool-call loops
+            skip_tp_on_exit=True,       # don't let TP override "nothing to extract"
         )
 
         logger.info(
