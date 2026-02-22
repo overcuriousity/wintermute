@@ -453,6 +453,7 @@ def _embed(texts: list[str], embed_cfg: dict) -> list[list[float]]:
 
     endpoint = embed_cfg.get("endpoint", "").rstrip("/")
     model = embed_cfg.get("model", "text-embedding-3-small")
+    api_key = embed_cfg.get("api_key", "") or None
     if not endpoint:
         raise RuntimeError("memory.embeddings.endpoint is not configured")
 
@@ -462,7 +463,11 @@ def _embed(texts: list[str], embed_cfg: dict) -> list[list[float]]:
     if dimensions:
         payload["dimensions"] = dimensions
 
-    resp = httpx.post(url, json=payload, timeout=60.0)
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    resp = httpx.post(url, json=payload, headers=headers, timeout=60.0)
     resp.raise_for_status()
     data = resp.json()
     # Sort by index to preserve order.

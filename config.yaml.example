@@ -440,6 +440,7 @@ memory:
   #   - Cloud: OpenAI, Together, Fireworks
   embeddings:
     endpoint: "http://localhost:8080/v1"
+    api_key: ""                           # API key for the embeddings endpoint (if required)
     model: "text-embedding-3-small"
     dimensions: 1536
 
