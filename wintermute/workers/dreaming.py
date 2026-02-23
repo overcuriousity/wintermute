@@ -153,24 +153,29 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
     consolidated independently so a failure in one does not abort the other.
     """
     if memory_store.is_vector_enabled():
-        all_entries = memory_store.get_all()
+        all_entries = await asyncio.to_thread(memory_store.get_all)
         if all_entries:
             try:
                 mem_prompt = prompt_loader.load("DREAM_MEMORIES_PROMPT.txt")
                 memories_text = "\n".join(e["text"] for e in all_entries)
+                # Snapshot current MEMORIES.txt before the LLM call so we can
+                # use merge_consolidated_memories to preserve concurrent appends.
+                memories_snapshot = prompt_assembler._read(prompt_assembler.MEMORIES_FILE)
                 consolidated = await _consolidate(
                     pool, "MEMORIES.txt", mem_prompt, memories_text,
                     source="vector store", entry_count=str(len(all_entries)),
                 )
                 if consolidated:
-                    entries = [l.strip() for l in consolidated.strip().splitlines() if l.strip()]
-                    memory_store.replace_all(entries)
-                    # Keep MEMORIES.txt as git-versioned backup.
-                    prompt_assembler.MEMORIES_FILE.write_text(
-                        consolidated, encoding="utf-8",
+                    # Use the locked merge path to preserve concurrent appends.
+                    prompt_assembler.merge_consolidated_memories(
+                        memories_snapshot, consolidated,
                     )
+                    # Sync vector store from the merged file.
+                    merged = prompt_assembler._read(prompt_assembler.MEMORIES_FILE)
+                    merged_entries = [l.strip() for l in merged.splitlines() if l.strip()]
+                    await asyncio.to_thread(memory_store.replace_all, merged_entries)
                     logger.info("Dreaming: vector store + MEMORIES.txt updated (%d entries)",
-                                len(entries))
+                                len(merged_entries))
             except Exception:  # noqa: BLE001
                 logger.exception("Dreaming: failed to consolidate vector memories")
         else:

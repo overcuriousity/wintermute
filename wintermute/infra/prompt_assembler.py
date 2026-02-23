@@ -197,7 +197,8 @@ def _read_skills_toc() -> str:
 
 def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = None,
              available_tools: Optional[set[str]] = None,
-             query: Optional[str] = None) -> str:
+             query: Optional[str] = None,
+             memory_results: Optional[list[dict]] = None) -> str:
     """
     Build and return the full system prompt string.
 
@@ -210,6 +211,11 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
 
     ``query``, when provided alongside a vector memory backend, triggers
     relevance-ranked memory retrieval instead of loading the full file.
+
+    ``memory_results``, when provided, uses pre-fetched memory search results
+    instead of calling memory_store.search() synchronously. Callers in async
+    contexts should fetch memories via ``asyncio.to_thread`` and pass them here
+    to avoid blocking the event loop.
     """
     from wintermute.infra import memory_store
 
@@ -227,7 +233,11 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     except Exception as exc:
         logger.warning("Could not determine local time: %s", exc)
 
-    if memory_store.is_vector_enabled() and query:
+    if memory_results is not None:
+        if memory_results:
+            memories_text = "\n".join(r["text"] for r in memory_results)
+            sections.append(f"# User Memories (relevance-ranked)\n\n{memories_text}")
+    elif memory_store.is_vector_enabled() and query:
         results = memory_store.search(query)
         if results:
             memories_text = "\n".join(r["text"] for r in results)

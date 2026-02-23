@@ -662,9 +662,16 @@ class LLMThread:
                 break
         _memory_query = " ".join(_query_parts) if _query_parts else None
 
+        # Pre-fetch memories off the event loop to avoid blocking I/O.
+        from wintermute.infra import memory_store
+        if memory_store.is_vector_enabled() and _memory_query:
+            _memory_results = await asyncio.to_thread(memory_store.search, _memory_query)
+        else:
+            _memory_results = None
+
         # Assemble system prompt first so we can measure its real token cost.
         summary = self._compaction_summaries.get(thread_id)
-        system_prompt = prompt_assembler.assemble(extra_summary=summary, query=_memory_query)
+        system_prompt = prompt_assembler.assemble(extra_summary=summary, query=_memory_query, memory_results=_memory_results)
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
         active_schemas = tool_module.get_tool_schemas(nl_tools=nl_tools)
@@ -689,7 +696,7 @@ class LLMThread:
             messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
             # Reassemble with the updated compaction summary.
             summary = self._compaction_summaries.get(thread_id)
-            system_prompt = prompt_assembler.assemble(extra_summary=summary, query=_memory_query)
+            system_prompt = prompt_assembler.assemble(extra_summary=summary, query=_memory_query, memory_results=_memory_results)
 
         self._last_system_prompt[thread_id] = system_prompt
 
@@ -725,7 +732,7 @@ class LLMThread:
             await self._compact_context(thread_id)
             messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
             summary = self._compaction_summaries.get(thread_id)
-            system_prompt = prompt_assembler.assemble(extra_summary=summary, query=_memory_query)
+            system_prompt = prompt_assembler.assemble(extra_summary=summary, query=_memory_query, memory_results=_memory_results)
             # Retry once after compaction
             reply = await self._inference_loop(
                 system_prompt, messages, thread_id,

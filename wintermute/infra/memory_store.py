@@ -17,7 +17,7 @@ import logging
 import sqlite3
 import threading
 import time
-import uuid
+
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -178,11 +178,11 @@ class FTS5Backend:
             conn = self._connect()
             try:
                 rows = conn.execute(
-                    "SELECT m.entry_id, m.text, rank "
+                    "SELECT m.entry_id, m.text, bm25(memories_fts) AS score "
                     "FROM memories_fts f "
                     "JOIN memories_meta m ON f.rowid = m.rowid "
                     "WHERE memories_fts MATCH ? "
-                    "ORDER BY rank "
+                    "ORDER BY score "
                     "LIMIT ?",
                     (fts_query, top_k),
                 ).fetchall()
@@ -820,7 +820,9 @@ def rebuild() -> None:
 
 
 def is_vector_enabled() -> bool:
-    """True when the active backend is not flat_file."""
+    """True when the active backend is not flat_file (and has been initialized)."""
+    if _backend is None:
+        return False
     return not isinstance(_backend, FlatFileBackend)
 
 
