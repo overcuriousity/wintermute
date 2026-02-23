@@ -265,11 +265,8 @@ _DEBUG_HTML = r"""\
     <button class="tab-btn active" data-tab="sessions" onclick="showTab('sessions')">
       Sessions <span class="tab-count" id="cnt-sessions">0</span>
     </button>
-    <button class="tab-btn" data-tab="subsessions" onclick="showTab('subsessions')">
-      Sub-sessions <span class="tab-count" id="cnt-subsessions">0</span>
-    </button>
-    <button class="tab-btn" data-tab="workflows" onclick="showTab('workflows')">
-      Workflows <span class="tab-count" id="cnt-workflows">0</span>
+    <button class="tab-btn" data-tab="workers" onclick="showTab('workers')">
+      Workers <span class="tab-count" id="cnt-workers">0</span>
     </button>
     <button class="tab-btn" data-tab="jobs" onclick="showTab('jobs')">
       Jobs <span class="tab-count" id="cnt-jobs">0</span>
@@ -314,27 +311,9 @@ _DEBUG_HTML = r"""\
       </div>
     </div>
 
-    <!-- ── Sub-sessions ── -->
-    <div class="tab-panel" id="panel-subsessions">
-      <div class="scroll-area">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th></th><th>ID</th><th>Workflow</th><th>Deps</th><th>Parent</th><th>Status</th>
-              <th>Tools</th><th>Objective</th><th>Mode</th>
-              <th>Created</th><th>Duration</th><th>Result / Error</th>
-            </tr>
-          </thead>
-          <tbody id="subsessions-body">
-            <tr><td colspan="12" class="empty">Loading\u2026</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- ── Workflows ── -->
-    <div class="tab-panel" id="panel-workflows">
-      <div class="scroll-area" id="workflows-area">
+    <!-- ── Workers ── -->
+    <div class="tab-panel" id="panel-workers">
+      <div class="scroll-area" id="workers-area">
         <div class="empty">Loading\u2026</div>
       </div>
     </div>
@@ -546,7 +525,7 @@ _DEBUG_HTML = r"""\
 // ── State ──
 let currentTab = 'sessions';
 let selectedSession = null;
-const _closedWorkflows = new Set();
+const _closedWorkerGroups = new Set();
 const _closedRoutines = new Set();
 let ilMaxId = 0;
 let ilMinId = null;
@@ -603,8 +582,7 @@ async function loadTab(name) {
   try {
     switch (name) {
       case 'sessions':    await loadSessions(); break;
-      case 'subsessions': await loadSubSessions(); break;
-      case 'workflows':   await loadWorkflows(); break;
+      case 'workers':     await loadWorkers(); break;
       case 'jobs':        await loadJobs(); break;
       case 'routines':   await loadRoutines(); break;
       case 'agenda':       await loadAgenda(); break;
@@ -632,8 +610,7 @@ function connectStream() {
   es.onmessage = (e) => {
     const data = JSON.parse(e.data);
     renderSessions(data.sessions || []);
-    renderSubSessions(data.subsessions || []);
-    renderWorkflows(data.workflows || []);
+    renderWorkers(data.subsessions || [], data.workflows || []);
     renderJobs(data.jobs || []);
     renderRoutines(data.routines || {});
     renderAgenda(data.agenda || []);
@@ -857,19 +834,50 @@ function toggleSpSection(id) {
   el.style.display = el.style.display === 'none' ? '' : 'none';
 }
 
-// ── Sub-sessions ──
-let _expandedSubSessions = new Set();
+// ── Workers (unified sub-sessions + workflows) ──
+let _expandedWorkers = new Set();
 
-function renderSubSessions(sessions) {
-  document.getElementById('cnt-subsessions').textContent = sessions.length;
-  const tbody = document.getElementById('subsessions-body');
-  const scrollArea = tbody.closest('.scroll-area');
-  const outerScroll = scrollArea ? scrollArea.scrollTop : 0;
+function _workerSessionRow(s, indent) {
+  const duration = fmtDuration(s.created_at, s.completed_at);
+  const resultText = s.result
+    ? s.result.slice(0, 120) + (s.result.length > 120 ? '\u2026' : '')
+    : (s.error ? '\u26a0 ' + s.error.slice(0, 80) : '');
+  const deps = (s.depends_on || []);
+  const depsStr = deps.length ? deps.map(d => d.slice(0, 12)).join(', ') : '\u2014';
+  const tcCount = s.tool_call_count || 0;
+  const isExpanded = _expandedWorkers.has(s.session_id);
+  const arrow = isExpanded ? '\u25bc' : '\u25b6';
+  const activityIndicator = s.status === 'running' && tcCount > 0
+    ? ' <span style="color:#6fe06f" title="Active tool calls">\u25cf</span>' : '';
+  const indentStyle = indent ? 'padding-left:1.6rem' : '';
+  return `<tr style="cursor:pointer" onclick="toggleWorker('${esc(s.session_id)}')">
+    <td style="width:1.5em;text-align:center;color:#666;${indentStyle}">${arrow}</td>
+    <td class="mono">${esc(s.session_id)}${activityIndicator}</td>
+    <td class="mono dim" title="${esc(deps.join(', '))}">${depsStr}</td>
+    <td>${badge(s.status, s.status)}</td>
+    <td class="dim">${tcCount}</td>
+    <td class="trunc" title="${esc(s.objective)}">${esc(s.objective.slice(0, 60))}${s.objective.length > 60 ? '\u2026' : ''}</td>
+    <td class="dim">${esc(s.system_prompt_mode)}</td>
+    <td class="dim" style="white-space:nowrap">${fmtTime(s.created_at)}</td>
+    <td class="dim" style="white-space:nowrap">${duration}</td>
+    <td class="trunc" title="${esc(resultText)}">${esc(resultText)}</td>
+  </tr>
+  <tr id="wkdetail-${esc(s.session_id)}" style="display:${isExpanded ? '' : 'none'}">
+    <td colspan="10" style="background:#0d1526;padding:.6rem 1rem">
+      <div id="wkcontent-${esc(s.session_id)}" style="font-size:.8rem;color:#999">Loading\u2026</div>
+    </td>
+  </tr>`;
+}
+
+function renderWorkers(sessions, workflows) {
+  document.getElementById('cnt-workers').textContent = sessions.length;
+  const area = document.getElementById('workers-area');
+  const scrollTop = area.scrollTop;
 
   // Save expanded detail content + inner scroll so SSE updates don't wipe them
   const savedDetails = {};
-  for (const sid of _expandedSubSessions) {
-    const contentEl = document.getElementById('sscontent-' + sid);
+  for (const sid of _expandedWorkers) {
+    const contentEl = document.getElementById('wkcontent-' + sid);
     if (contentEl) {
       const innerDiv = contentEl.querySelector('div[style*="overflow-y"]');
       savedDetails[sid] = {
@@ -880,94 +888,132 @@ function renderSubSessions(sessions) {
   }
 
   if (!sessions.length) {
-    tbody.innerHTML = '<tr><td colspan="12" class="empty">No sub-sessions recorded</td></tr>';
-    if (scrollArea) scrollArea.scrollTop = outerScroll;
+    area.innerHTML = '<div class="empty">No workers recorded</div>';
+    area.scrollTop = scrollTop;
     return;
   }
-  tbody.innerHTML = sessions.map(s => {
-    const duration = fmtDuration(s.created_at, s.completed_at);
-    const resultText = s.result
-      ? s.result.slice(0, 120) + (s.result.length > 120 ? '\u2026' : '')
-      : (s.error ? '\u26a0 ' + s.error.slice(0, 80) : '');
-    const parentShort = s.parent_thread_id
-      ? (s.parent_thread_id.length > 20 ? s.parent_thread_id.slice(0, 18) + '\u2026' : s.parent_thread_id)
-      : '\u2014';
-    const wfShort = s.workflow_id || '\u2014';
-    const deps = (s.depends_on || []);
-    const depsStr = deps.length ? deps.join(', ') : '\u2014';
-    const tcCount = s.tool_call_count || 0;
-    const isExpanded = _expandedSubSessions.has(s.session_id);
-    const arrow = isExpanded ? '\u25bc' : '\u25b6';
-    const activityIndicator = s.status === 'running' && tcCount > 0
-      ? ' <span style="color:#6fe06f" title="Active tool calls">\u25cf</span>' : '';
-    return `<tr style="cursor:pointer" onclick="toggleSubSession('${esc(s.session_id)}')">
-      <td style="width:1.5em;text-align:center;color:#666">${arrow}</td>
-      <td class="mono">${esc(s.session_id)}${activityIndicator}</td>
-      <td class="mono dim">${esc(wfShort)}</td>
-      <td class="mono dim" title="${esc(depsStr)}">${deps.length ? esc(deps.map(d => d.slice(0,12)).join(', ')) : '\u2014'}</td>
-      <td class="mono dim" title="${esc(s.parent_thread_id || '')}">${esc(parentShort)}</td>
-      <td>${badge(s.status, s.status)}</td>
-      <td class="dim">${tcCount}</td>
-      <td class="trunc" title="${esc(s.objective)}">${esc(s.objective.slice(0, 60))}${s.objective.length > 60 ? '\u2026' : ''}</td>
-      <td class="dim">${esc(s.system_prompt_mode)}</td>
-      <td class="dim" style="white-space:nowrap">${fmtTime(s.created_at)}</td>
-      <td class="dim" style="white-space:nowrap">${duration}</td>
-      <td class="trunc" title="${esc(resultText)}">${esc(resultText)}</td>
-    </tr>
-    <tr id="ssdetail-${esc(s.session_id)}" style="display:${isExpanded ? '' : 'none'}">
-      <td colspan="12" style="background:#0d1526;padding:.6rem 1rem">
-        <div id="sscontent-${esc(s.session_id)}" style="font-size:.8rem;color:#999">Loading\u2026</div>
-      </td>
-    </tr>`;
-  }).join('');
+
+  // Build a map of workflow_id -> workflow metadata, and session_id -> session
+  const wfMap = {};
+  for (const wf of (workflows || [])) wfMap[wf.workflow_id] = wf;
+  const sessionMap = {};
+  for (const s of sessions) sessionMap[s.session_id] = s;
+
+  // Group sessions: workflow groups first (ordered by workflow created_at desc),
+  // then standalone sessions (no workflow_id), also newest-first
+  const wfSessions = {};   // workflow_id -> [session, ...]
+  const standalone = [];
+  for (const s of sessions) {
+    if (s.workflow_id) {
+      if (!wfSessions[s.workflow_id]) wfSessions[s.workflow_id] = [];
+      wfSessions[s.workflow_id].push(s);
+    } else {
+      standalone.push(s);
+    }
+  }
+
+  // Collect workflow IDs present in sessions (some may not be in wfMap yet)
+  const wfIds = Object.keys(wfSessions);
+  // Sort by earliest created_at of member sessions, newest first
+  wfIds.sort((a, b) => {
+    const ta = Math.max(...wfSessions[a].map(s => new Date(s.created_at)));
+    const tb = Math.max(...wfSessions[b].map(s => new Date(s.created_at)));
+    return tb - ta;
+  });
+
+  let html = '';
+
+  // Table header helper
+  const tableHeader = `<table class="data-table" style="width:100%">
+    <thead><tr>
+      <th></th><th>ID</th><th>Deps</th><th>Status</th>
+      <th>Tools</th><th>Objective</th><th>Mode</th><th>Created</th><th>Duration</th><th>Result / Error</th>
+    </tr></thead><tbody>`;
+  const tableFooter = `</tbody></table>`;
+
+  // Render workflow groups
+  for (const wfId of wfIds) {
+    const wf = wfMap[wfId];
+    const members = wfSessions[wfId];
+    const runningCount = members.filter(s => s.status === 'running').length;
+    const activityNote = runningCount > 0
+      ? ' <span style="color:#6fe06f">\u25cf ' + runningCount + ' active</span>' : '';
+    const wfStatus = wf ? wf.status : (runningCount > 0 ? 'running' : 'done');
+    const isClosed = _closedWorkerGroups.has(wfId);
+    html += `
+      <div class="section-hdr${isClosed ? '' : ' open'}"
+           data-section-id="${esc(wfId)}" data-section-type="workergroup"
+           onclick="toggleSection(this)">
+        <span>
+          <span class="mono" style="font-size:.78rem">${esc(wfId)}</span>
+          ${badge(wfStatus, wfStatus)}${activityNote}
+          <span class="dim">${members.length} worker${members.length !== 1 ? 's' : ''}</span>
+          ${wf ? '<span class="dim">' + esc(wf.parent_thread_id || '') + '</span>' : ''}
+        </span>
+        <span>\u25bc</span>
+      </div>
+      <div class="section-body" style="${isClosed ? 'display:none' : ''}">
+        ${tableHeader}
+        ${members.map(s => _workerSessionRow(s, true)).join('')}
+        ${tableFooter}
+      </div>`;
+  }
+
+  // Render standalone sessions
+  if (standalone.length) {
+    html += tableHeader;
+    html += standalone.map(s => _workerSessionRow(s, false)).join('');
+    html += tableFooter;
+  }
+
+  area.innerHTML = html;
 
   // Restore expanded detail content + inner scroll; only fetch if not yet loaded
-  for (const sid of _expandedSubSessions) {
-    const contentEl = document.getElementById('sscontent-' + sid);
+  for (const sid of _expandedWorkers) {
+    const contentEl = document.getElementById('wkcontent-' + sid);
     if (!contentEl) continue;
     if (savedDetails[sid]) {
       contentEl.innerHTML = savedDetails[sid].html;
       const innerDiv = contentEl.querySelector('div[style*="overflow-y"]');
       if (innerDiv) innerDiv.scrollTop = savedDetails[sid].innerScroll;
     } else {
-      fetchSubSessionDetail(sid);
+      fetchWorkerDetail(sid);
     }
   }
 
-  if (scrollArea) scrollArea.scrollTop = outerScroll;
+  area.scrollTop = scrollTop;
 }
 
-async function loadSubSessions() {
-  const r = await fetch('/api/debug/subsessions');
-  const d = await r.json();
-  renderSubSessions(d.sessions || []);
+async function loadWorkers() {
+  const [r1, r2] = await Promise.all([
+    fetch('/api/debug/subsessions'),
+    fetch('/api/debug/workflows'),
+  ]);
+  const [d1, d2] = await Promise.all([r1.json(), r2.json()]);
+  renderWorkers(d1.sessions || [], d2.workflows || []);
 }
 
-async function toggleSubSession(sid) {
-  const detailRow = document.getElementById('ssdetail-' + sid);
+async function toggleWorker(sid) {
+  const detailRow = document.getElementById('wkdetail-' + sid);
   if (!detailRow) return;
-  if (_expandedSubSessions.has(sid)) {
-    _expandedSubSessions.delete(sid);
+  if (_expandedWorkers.has(sid)) {
+    _expandedWorkers.delete(sid);
     detailRow.style.display = 'none';
   } else {
-    _expandedSubSessions.add(sid);
+    _expandedWorkers.add(sid);
     detailRow.style.display = '';
-    fetchSubSessionDetail(sid);
+    fetchWorkerDetail(sid);
   }
-  // Update arrow
-  const tbody = document.getElementById('subsessions-body');
-  const rows = tbody.querySelectorAll('tr[onclick]');
-  rows.forEach(r => {
-    const m = r.getAttribute('onclick').match(/toggleSubSession\('([^']+)'\)/);
-    if (m) {
-      const arrow = _expandedSubSessions.has(m[1]) ? '\u25bc' : '\u25b6';
-      r.querySelector('td').textContent = arrow;
-    }
-  });
+  // Update arrow in the trigger row
+  const triggerRow = detailRow.previousElementSibling;
+  if (triggerRow) {
+    const arrowCell = triggerRow.querySelector('td');
+    if (arrowCell) arrowCell.textContent = _expandedWorkers.has(sid) ? '\u25bc' : '\u25b6';
+  }
 }
 
-async function fetchSubSessionDetail(sid) {
-  const el = document.getElementById('sscontent-' + sid);
+async function fetchWorkerDetail(sid) {
+  const el = document.getElementById('wkcontent-' + sid);
   if (!el) return;
   try {
     const r = await fetch('/api/debug/subsessions/' + encodeURIComponent(sid) + '/messages');
@@ -979,7 +1025,7 @@ async function fetchSubSessionDetail(sid) {
     }
     let html = '<div style="margin-bottom:.5rem"><strong style="color:#a8d8ea">Messages (' + msgs.length + ')</strong></div>';
     html += '<div style="max-height:400px;overflow-y:auto;border:1px solid #0f3460;border-radius:.3rem;padding:.4rem">';
-    msgs.forEach((m, i) => {
+    msgs.forEach(m => {
       const roleColor = m.role === 'assistant' ? '#a8d8ea' : m.role === 'user' ? '#90ee90' : m.role === 'tool' ? '#c9b0ff' : '#888';
       const content = (m.content || '').slice(0, 500) + ((m.content || '').length > 500 ? '\u2026' : '');
       html += '<div style="margin-bottom:.4rem;padding:.3rem .5rem;border-left:2px solid ' + roleColor + '">';
@@ -998,66 +1044,6 @@ async function fetchSubSessionDetail(sid) {
   } catch (e) {
     el.innerHTML = '<span style="color:#ff9090">Failed to load: ' + esc(String(e)) + '</span>';
   }
-}
-
-// ── Workflows ──
-function renderWorkflows(workflows) {
-  document.getElementById('cnt-workflows').textContent = workflows.length;
-  const area = document.getElementById('workflows-area');
-  const scrollTop = area.scrollTop;
-  if (!workflows.length) {
-    area.innerHTML = '<div class="empty">No workflows recorded</div>';
-    area.scrollTop = scrollTop;
-    return;
-  }
-  area.innerHTML = workflows.map(wf => {
-    const runningNodes = wf.nodes.filter(n => n.status === 'running');
-    const activityNote = runningNodes.length > 0
-      ? ' <span style="color:#6fe06f">\u25cf ' + runningNodes.length + ' active</span>'
-      : '';
-    const isClosed = _closedWorkflows.has(wf.workflow_id);
-    const nodesHtml = wf.nodes.map(n => {
-      const depsStr = n.depends_on.length ? ' \u2190 ' + n.depends_on.join(', ') : '';
-      const detail = n.error ? '\u26a0 ' + esc(n.error)
-        : (n.result_preview ? esc(n.result_preview) : '');
-      const nodeActivity = n.status === 'running'
-        ? '<span style="color:#6fe06f" title="Running">\u25cf</span> ' : '';
-      return `<tr>
-        <td class="mono">${nodeActivity}${esc(n.node_id)}</td>
-        <td>${badge(n.status, n.status)}</td>
-        <td class="trunc" title="${esc(n.objective)}">${esc(n.objective.slice(0, 80))}${n.objective.length > 80 ? '\u2026' : ''}</td>
-        <td class="mono dim">${esc(depsStr || 'none')}</td>
-        <td class="trunc dim" title="${esc(detail)}">${detail.slice(0, 100)}${detail.length > 100 ? '\u2026' : ''}</td>
-      </tr>`;
-    }).join('');
-    return `
-      <div class="section-hdr${isClosed ? '' : ' open'}"
-           data-section-id="${esc(wf.workflow_id)}" data-section-type="workflow"
-           onclick="toggleSection(this)">
-        <span>
-          <span class="mono" style="font-size:.78rem">${esc(wf.workflow_id)}</span>
-          ${badge(wf.status, wf.status)}${activityNote}
-          <span class="dim">${wf.node_count} node${wf.node_count !== 1 ? 's' : ''}</span>
-          <span class="dim">${esc(wf.parent_thread_id || 'no parent')}</span>
-        </span>
-        <span>\u25bc</span>
-      </div>
-      <div class="section-body" style="${isClosed ? 'display:none' : ''}">
-        <table class="data-table">
-          <thead><tr>
-            <th>Node ID</th><th>Status</th><th>Objective</th><th>Depends On</th><th>Result / Error</th>
-          </tr></thead>
-          <tbody>${nodesHtml}</tbody>
-        </table>
-      </div>`;
-  }).join('');
-  area.scrollTop = scrollTop;
-}
-
-async function loadWorkflows() {
-  const r = await fetch('/api/debug/workflows');
-  const d = await r.json();
-  renderWorkflows(d.workflows || []);
 }
 
 // ── Jobs ──
@@ -1191,7 +1177,7 @@ function toggleSection(hdr) {
   const id   = hdr.dataset.sectionId;
   const type = hdr.dataset.sectionType;
   if (!id) return;
-  const set = type === 'workflow' ? _closedWorkflows : _closedRoutines;
+  const set = type === 'workergroup' ? _closedWorkerGroups : _closedRoutines;
   hdr.classList.contains('open') ? set.delete(id) : set.add(id);
 }
 
