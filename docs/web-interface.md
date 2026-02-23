@@ -15,6 +15,7 @@ Available at `/debug`. Provides a live inspection and administration view with a
 | **Workflows** | Workflow DAGs with per-node status, objectives, dependencies, and result previews. Collapsible sections per workflow. |
 | **Jobs** | APScheduler jobs with trigger type, next run time, and arguments. |
 | **Routines** | Full routine management: create, edit, and delete routines. Sections for active, completed, failed, and cancelled routines. Supports all schedule types (once, daily, weekly, monthly, interval). |
+| **Outcomes** | Historical sub-session outcomes with status, duration, tool call counts, Turing Protocol verdicts, and objectives. Aggregate stats (success rate, avg duration, timeout rate) displayed at the top. Filterable by status. |
 
 ## Debug REST API
 
@@ -39,6 +40,5 @@ The debug panel is backed by a REST API:
 | GET | `/api/debug/agenda` | List current agenda items |
 | GET | `/api/debug/interaction-log` | List interaction log entries (Turing Protocol, dreaming, embedding calls, Qdrant operations) |
 | GET | `/api/debug/interaction-log/{id}` | Get a specific interaction log entry |
+| GET | `/api/debug/outcomes` | List sub-session outcomes with aggregate stats (supports `status`, `limit`, `offset` query params) |
 | GET | `/api/debug/stream` | Server-sent events stream for live panel updates |
-
-> **Planned:** Sub-session outcome statistics (success rates, average durations, common failure patterns) will be available in the debug panel in a future release.

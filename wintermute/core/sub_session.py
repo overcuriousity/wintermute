@@ -872,7 +872,7 @@ class SubSessionManager:
             state.status = "completed"
             state.result = result
             state.completed_at = datetime.now(timezone.utc).isoformat()
-            self._persist_outcome(state, "completed", _time.monotonic() - _start_time)
+            await self._persist_outcome(state, "completed", _time.monotonic() - _start_time)
             logger.info("Sub-session %s completed (%d chars)", state.session_id, len(result or ""))
             await self._report(state, f"[SUB-SESSION {state.session_id} RESULT]\n\n{result}")
             await self._resolve_dependents(state.session_id)
@@ -880,7 +880,7 @@ class SubSessionManager:
         except asyncio.TimeoutError:
             state.status = "timeout"
             state.completed_at = datetime.now(timezone.utc).isoformat()
-            self._persist_outcome(state, "timeout", _time.monotonic() - _start_time)
+            await self._persist_outcome(state, "timeout", _time.monotonic() - _start_time)
             try:
                 await database.async_call(
                     database.save_interaction_log,
@@ -973,7 +973,7 @@ class SubSessionManager:
             state.status = "failed"
             state.error = str(exc)
             state.completed_at = datetime.now(timezone.utc).isoformat()
-            self._persist_outcome(state, "failed", _time.monotonic() - _start_time)
+            await self._persist_outcome(state, "failed", _time.monotonic() - _start_time)
             try:
                 await database.async_call(
                     database.save_interaction_log,
@@ -988,17 +988,30 @@ class SubSessionManager:
             await self._report(state, msg)
             await self._resolve_dependents(state.session_id)
 
-    def _persist_outcome(self, state: SubSessionState, status: str, duration: float) -> None:
-        """Persist a sub-session outcome to the database (fire-and-forget)."""
+    async def _persist_outcome(self, state: SubSessionState, status: str, duration: float) -> None:
+        """Persist a sub-session outcome to the database (non-blocking via async_call)."""
         try:
             tools_used = list({name for name, _ in state.tool_calls_log}) if state.tool_calls_log else []
+            # Derive available tools the same way _worker_loop does.
+            if state.tool_names:
+                tools_available = list(state.tool_names)
+            elif state.system_prompt_mode in _MODE_TOOL_CATEGORIES:
+                categories = _MODE_TOOL_CATEGORIES[state.system_prompt_mode]
+                tools_available = [
+                    name for name, cat in tool_module.TOOL_CATEGORIES.items()
+                    if cat in categories
+                ]
+            else:
+                tools_available = []
             workflow_id = self._session_to_workflow.get(state.session_id)
-            database.save_sub_session_outcome(
+            await database.async_call(
+                database.save_sub_session_outcome,
                 session_id=state.session_id,
                 workflow_id=workflow_id,
                 timestamp=_time.time(),
                 objective=state.objective,
                 system_prompt_mode=state.system_prompt_mode,
+                tools_available=tools_available,
                 tools_used=tools_used,
                 tool_call_count=len(state.tool_calls_log),
                 duration_seconds=round(duration, 2),

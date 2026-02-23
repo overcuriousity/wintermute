@@ -688,8 +688,44 @@ def get_outcome_stats() -> dict:
         avg_duration = conn.execute(
             "SELECT AVG(duration_seconds) FROM sub_session_outcomes WHERE duration_seconds IS NOT NULL"
         ).fetchone()[0]
+        avg_tool_calls = conn.execute(
+            "SELECT AVG(tool_call_count) FROM sub_session_outcomes WHERE tool_call_count IS NOT NULL"
+        ).fetchone()[0]
+        timeout_rate_row = conn.execute(
+            "SELECT COUNT(*) FROM sub_session_outcomes WHERE status='timeout'"
+        ).fetchone()[0]
     return {
         "total": total,
         "by_status": {r[0]: r[1] for r in by_status},
         "avg_duration_seconds": round(avg_duration, 1) if avg_duration else None,
+        "avg_tool_calls": round(avg_tool_calls, 1) if avg_tool_calls else None,
+        "timeout_rate_pct": round(timeout_rate_row * 100 / total) if total else 0,
     }
+
+
+def get_outcomes_page(
+    limit: int = 200,
+    offset: int = 0,
+    status_filter: Optional[str] = None,
+) -> tuple[list[dict], int, dict]:
+    """Return a page of sub-session outcomes plus totals and aggregate stats."""
+    where = "WHERE status = ?" if status_filter else ""
+    params: list = [status_filter] if status_filter else []
+
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"SELECT id, session_id, workflow_id, timestamp, objective, system_prompt_mode, "
+            f"tools_used, tool_call_count, duration_seconds, timeout_value, turing_verdict, "
+            f"status, result_length, nesting_depth, continuation_count, backend_used "
+            f"FROM sub_session_outcomes {where} "
+            f"ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+            params + [limit, offset],
+        ).fetchall()
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM sub_session_outcomes {where}", params
+        ).fetchone()[0]
+
+    entries = [dict(r) for r in rows]
+    stats = get_outcome_stats()
+    return entries, total, stats
