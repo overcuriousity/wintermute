@@ -1603,8 +1603,12 @@ class SubSessionManager:
         elif mode == "minimal":
             base = prompt_loader.load("WORKER_MINIMAL.txt")
         elif mode == "full":
+            # Memory results should be pre-fetched in async context; here we
+            # pass query for the sync fallback path (sub-sessions are less
+            # latency-sensitive).
             base = prompt_assembler.assemble(
                 thread_id=thread_id, available_tools=available_tools,
+                query=objective,
             )
         else:  # "base_only"
             base_text = prompt_assembler._assemble_base(available_tools)

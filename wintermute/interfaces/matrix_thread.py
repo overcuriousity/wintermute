@@ -1355,6 +1355,33 @@ class MatrixThread:
             await self._send_verification_requests()
             return
 
+        if content is None and text == "/rebuild-index":
+            from wintermute.infra import database as db, memory_store
+            if not memory_store.is_vector_enabled():
+                await self.send_message("Vector memory is not enabled (backend: flat_file).", thread_id)
+                return
+            await self.send_message("Rebuilding memory index...", thread_id)
+            try:
+                await db.async_call(memory_store.rebuild)
+                st = await db.async_call(memory_store.stats)
+                await self.send_message(
+                    f"Memory index rebuilt.\n```json\n{_json.dumps(st, indent=2)}\n```", thread_id,
+                )
+            except Exception as exc:
+                await self.send_message(f"Rebuild failed: {exc}", thread_id)
+            return
+
+        if content is None and text == "/memory-stats":
+            from wintermute.infra import database as db, memory_store
+            try:
+                st = await db.async_call(memory_store.stats)
+                await self.send_message(
+                    f"**Memory Store**\n```json\n{_json.dumps(st, indent=2)}\n```", thread_id,
+                )
+            except Exception as exc:
+                await self.send_message(f"Failed to get memory stats: {exc}", thread_id)
+            return
+
         if content is None and text == "/commands":
             await self.send_message(
                 "**Wintermute — Slash Commands**\n\n"
@@ -1365,6 +1392,9 @@ class MatrixThread:
                 "- `/agenda` — Trigger an immediate agenda review\n"
                 "- `/dream` — Run a dream cycle (memory consolidation + agenda pruning)\n"
                 "- `/routines` — List all scheduled routines\n\n"
+                "**Memory**\n"
+                "- `/memory-stats` — Show memory store backend, entry count, and status\n"
+                "- `/rebuild-index` — Rebuild the vector memory index from MEMORIES.txt\n\n"
                 "**System**\n"
                 "- `/status` — Show runtime status: models, token budget, memory, loops, sub-sessions\n"
                 "- `/kimi-auth` — Start Kimi-Code OAuth device-code flow\n"

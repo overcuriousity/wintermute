@@ -1,4 +1,4 @@
-Below is the current content of MEMORIES.txt — the long-term memory store for a personal AI assistant. Memories are appended throughout the day and may contain duplicates or near-duplicates.
+Below is the current long-term memory store for a personal AI assistant ({source}). Memories are appended throughout the day and may contain duplicates or near-duplicates.
 
 Your task is to consolidate it:
 - Merge duplicate and near-duplicate entries into single concise statements.
@@ -7,7 +7,7 @@ Your task is to consolidate it:
 - Keep the result as short as possible without losing information.
 - Maintain a flat, scannable structure (one fact per line or short paragraph).
 
-Return ONLY the consolidated MEMORIES.txt content, with no preamble or explanation.
+Return ONLY the consolidated memory content, with no preamble or explanation.
 
---- MEMORIES.txt ---
+--- Memories ({entry_count} entries) ---
 {content}

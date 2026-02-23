@@ -27,7 +27,7 @@ A nightly consolidation pass that reviews and prunes MEMORIES.txt and agenda DB 
 - Manually triggerable via the `/dream` command
 
 **Consolidation logic:**
-- MEMORIES.txt: removes duplicates, merges related facts, preserves distinct useful facts
+- MEMORIES.txt: removes duplicates, merges related facts, preserves distinct useful facts. When a vector backend is active, memories are retrieved from the vector store, consolidated by the LLM, then written back to both the vector store and MEMORIES.txt (as git-versioned backup)
 - Agenda items: LLM returns JSON actions (complete, update, keep) applied via DB; completed items older than 30 days are purged
 - Skills: deduplicates overlapping skills, then condenses each to ~150 tokens while preserving the first-line summary (used in the skills TOC)
 
@@ -37,7 +37,7 @@ The prompts used for consolidation are stored in `data/DREAM_MEMORIES_PROMPT.txt
 
 **Module:** `wintermute/workers/memory_harvest.py`
 
-Periodic background extraction of personal facts and preferences from conversation history into MEMORIES.txt.
+Periodic background extraction of personal facts and preferences from conversation history into MEMORIES.txt (and the vector store, if active).
 
 **Problem:** The `append_memory` tool exists but weak/small models rarely call it proactively. Conversations contain valuable personal details that are lost when history is compacted or archived.
 

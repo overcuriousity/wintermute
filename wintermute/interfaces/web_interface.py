@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Debug panel SPA
 # ---------------------------------------------------------------------------
 
-_DEBUG_HTML = """\
+_DEBUG_HTML = r"""\
 <!doctype html>
 <html lang="en">
 <head>
@@ -280,6 +280,9 @@ _DEBUG_HTML = """\
     <button class="tab-btn" data-tab="agenda" onclick="showTab('agenda')">
       Agenda <span class="tab-count" id="cnt-agenda">0</span>
     </button>
+    <button class="tab-btn" data-tab="memory" onclick="showTab('memory')">
+      Memory <span class="tab-count" id="cnt-memory">0</span>
+    </button>
     <button class="tab-btn" data-tab="interactions" onclick="showTab('interactions')">
       Interactions <span class="tab-count" id="cnt-interactions">0</span>
     </button>
@@ -432,6 +435,29 @@ _DEBUG_HTML = """\
     </div>
 
     <!-- ── Interaction Log ── -->
+    <!-- ── Memory ── -->
+    <div class="tab-panel" id="panel-memory">
+      <div class="scroll-area" style="padding:1rem">
+        <div id="memory-stats" style="margin-bottom:1rem">
+          <div class="empty">Loading memory stats\u2026</div>
+        </div>
+        <div class="form-bar" style="gap:.6rem;margin-bottom:1rem">
+          <div class="form-group" style="flex:1">
+            <label>Test search query</label>
+            <input type="text" id="memory-search-q" placeholder="Enter query\u2026" style="width:100%">
+          </div>
+          <div class="form-group">
+            <label>top_k</label>
+            <input type="number" id="memory-search-k" value="5" style="width:60px" min="1" max="50">
+          </div>
+          <div class="form-group" style="align-self:flex-end">
+            <button class="action-btn" onclick="doMemorySearch()">Search</button>
+          </div>
+        </div>
+        <div id="memory-results"></div>
+      </div>
+    </div>
+
     <div class="tab-panel" id="panel-interactions">
       <div class="form-bar" style="gap:.8rem">
         <div class="form-group">
@@ -456,6 +482,13 @@ _DEBUG_HTML = """\
             <option value="turing_response">turing_response</option>
             <option value="compaction">compaction</option>
             <option value="dreaming">dreaming</option>
+            <option value="embedding">embedding</option>
+            <option value="local_vector_add">local_vector_add</option>
+            <option value="local_vector_search">local_vector_search</option>
+            <option value="local_vector_replace_all">local_vector_replace_all</option>
+            <option value="qdrant_add">qdrant_add</option>
+            <option value="qdrant_search">qdrant_search</option>
+            <option value="qdrant_replace_all">qdrant_replace_all</option>
             <option value="system_event">system_event</option>
           </select>
         </div>
@@ -543,6 +576,7 @@ async function loadTab(name) {
       case 'jobs':        await loadJobs(); break;
       case 'routines':   await loadRoutines(); break;
       case 'agenda':       await loadAgenda(); break;
+      case 'memory':       await loadMemory(); break;
       case 'interactions': await loadInteractionLog(); break;
     }
   } catch (e) {
@@ -571,6 +605,7 @@ function connectStream() {
     renderRoutines(data.routines || {});
     renderAgenda(data.agenda || []);
     updateInteractionsCount(data.interactions_total, data.interactions_max_id);
+    updateMemoryCount(data.memory_count);
   };
 }
 
@@ -1392,6 +1427,61 @@ async function toggleILDetail(row, id) {
   row.after(detail);
 }
 
+// ── Memory ──
+async function loadMemory() {
+  try {
+    const r = await fetch('/api/debug/memory');
+    const d = await r.json();
+    document.getElementById('cnt-memory').textContent = d.count || 0;
+    const el = document.getElementById('memory-stats');
+    const rows = [
+      '<table class="data-table" style="max-width:500px">',
+      '<tr><td class="dim">Backend</td><td>' + esc(d.backend || 'unknown') + '</td></tr>',
+      '<tr><td class="dim">Entries</td><td>' + (d.count || 0) + '</td></tr>',
+      '<tr><td class="dim">Vector enabled</td><td>' + (d.vector_enabled ? 'yes' : 'no') + '</td></tr>',
+      '<tr><td class="dim">top_k</td><td>' + (d.top_k || '-') + '</td></tr>',
+      '<tr><td class="dim">threshold</td><td>' + (d.threshold || '-') + '</td></tr>',
+    ];
+    if (d.stats) {
+      for (const [k, v] of Object.entries(d.stats)) {
+        if (k !== 'backend' && k !== 'count')
+          rows.push('<tr><td class="dim">' + esc(k) + '</td><td>' + esc(String(v)) + '</td></tr>');
+      }
+    }
+    rows.push('</table>');
+    el.innerHTML = rows.join('');
+  } catch(e) { console.error('loadMemory:', e); }
+}
+
+async function doMemorySearch() {
+  const q = document.getElementById('memory-search-q').value.trim();
+  if (!q) return;
+  const k = document.getElementById('memory-search-k').value || 5;
+  const el = document.getElementById('memory-results');
+  el.innerHTML = '<div class="empty">Searching\u2026</div>';
+  try {
+    const r = await fetch('/api/debug/memory?q=' + encodeURIComponent(q) + '&k=' + k);
+    const d = await r.json();
+    const results = d.results || [];
+    if (!results.length) {
+      el.innerHTML = '<div class="empty">No results</div>';
+      return;
+    }
+    const html = '<table class="data-table"><thead><tr><th>#</th><th>Score</th><th>Text</th></tr></thead><tbody>' +
+      results.map((r, i) =>
+        '<tr><td>' + (i+1) + '</td><td style="color:#6fe06f">' + (r.score != null ? r.score.toFixed(4) : '-') + '</td>' +
+        '<td style="white-space:pre-wrap;word-break:break-word">' + esc(r.text || '') + '</td></tr>'
+      ).join('') + '</tbody></table>';
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
+  }
+}
+
+function updateMemoryCount(count) {
+  if (count != null) document.getElementById('cnt-memory').textContent = count;
+}
+
 // ── Config info ──
 async function loadConfig() {
   try {
@@ -1505,6 +1595,7 @@ class WebInterface:
         app.router.add_post("/api/debug/routines",                     self._api_routine_create)
         app.router.add_delete("/api/debug/routines/{job_id}",          self._api_routine_delete)
         app.router.add_get("/api/debug/agenda",                           self._api_agenda)
+        app.router.add_get("/api/debug/memory",                           self._api_memory)
         app.router.add_get("/api/debug/interaction-log",                 self._api_interaction_log)
         app.router.add_get("/api/debug/interaction-log/{id}",            self._api_interaction_log_entry)
         app.router.add_get("/api/debug/stream",                          self._api_stream)
@@ -1681,10 +1772,17 @@ class WebInterface:
 
     async def _api_system_prompt(self, _request: web.Request) -> web.Response:
         from wintermute.infra import prompt_assembler
-        try:
-            prompt = prompt_assembler.assemble()
-        except Exception as exc:  # noqa: BLE001
-            return self._json({"error": str(exc)})
+        # Prefer the exact system prompt last sent to the LLM (includes
+        # vector-ranked memories, compaction summary, etc.).
+        thread_id = _request.query.get("thread", "default")
+        prompt = None
+        if self._llm:
+            prompt = self._llm.get_last_system_prompt(thread_id)
+        if prompt is None:
+            try:
+                prompt = prompt_assembler.assemble()
+            except Exception as exc:  # noqa: BLE001
+                return self._json({"error": str(exc)})
         from wintermute.core.llm_thread import _count_tokens
         _cfg = self._main_pool.primary if (self._main_pool and self._main_pool.enabled) else None
         model = _cfg.model if _cfg else "gpt-4"
@@ -1834,6 +1932,46 @@ class WebInterface:
         return self._json(entry)
 
     # ------------------------------------------------------------------
+    # Memory debug API
+    # ------------------------------------------------------------------
+
+    _memory_count_cache: tuple[float, int] = (0.0, 0)
+
+    def _get_memory_count(self) -> int:
+        import time
+        now = time.monotonic()
+        if now - self._memory_count_cache[0] < 30:
+            return self._memory_count_cache[1]
+        try:
+            from wintermute.infra import memory_store
+            count = memory_store.count()
+        except Exception:  # noqa: BLE001
+            count = 0
+        self._memory_count_cache = (now, count)
+        return count
+
+    async def _api_memory(self, request: web.Request) -> web.Response:
+        from wintermute.infra import memory_store
+
+        query = request.query.get("q", "")
+        top_k = int(request.query.get("k", "5"))
+
+        result: dict = {
+            "backend": memory_store.stats().get("backend", "unknown"),
+            "count": memory_store.count(),
+            "vector_enabled": memory_store.is_vector_enabled(),
+            "top_k": memory_store.get_top_k(),
+            "threshold": memory_store.get_threshold(),
+            "stats": memory_store.stats(),
+        }
+
+        if query:
+            results = memory_store.search(query, top_k=top_k)
+            result["results"] = results
+
+        return self._json(result)
+
+    # ------------------------------------------------------------------
     # SSE stream
     # ------------------------------------------------------------------
 
@@ -1901,6 +2039,7 @@ class WebInterface:
             "agenda": agenda_items,
             "interactions_total": interactions_total,
             "interactions_max_id": interactions_max_id,
+            "memory_count": self._get_memory_count(),
         }
 
     async def _api_stream(self, request: web.Request) -> web.StreamResponse:
