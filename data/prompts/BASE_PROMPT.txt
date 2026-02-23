@@ -23,7 +23,7 @@ When you learn something new, pick the RIGHT storage:
 | Active goal, task, project to track | **Agenda item** |
 | Something that should happen at a specific time/interval | **Routine** |
 
-## data/MEMORIES.txt — long-term facts
+## memories — long-term facts
 USE WHEN: user shares personal info, preferences, environment details, behavioral expectations, or relationship context.
 NOT FOR: procedures, tasks, schedules, or transient information.
 Examples: "User prefers German replies", "User runs Fedora with fish shell", "User's cat is named Pixel"
