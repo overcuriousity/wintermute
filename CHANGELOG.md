@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.4.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.3.0-alpha...v0.4.0-alpha) (2026-02-23)
+
+
+### Features
+
+* add dedicated memory_harvest LLM role for cheaper backend routing ([c25ec18](https://github.com/overcuriousity/wintermute/commit/c25ec18bca500fa6b0d1c6417b0c8b5b2dd98211))
+* add interaction logging for embedding/Qdrant ops, update docs ([0552d25](https://github.com/overcuriousity/wintermute/commit/0552d250ffb6a43e91ad2f19b9b9c55584b2072a))
+* add LocalVectorBackend (numpy+SQLite) to close [#39](https://github.com/overcuriousity/wintermute/issues/39) ([13ec0d3](https://github.com/overcuriousity/wintermute/commit/13ec0d34c86f1f369fdc24a0cfca780ba631513a))
+* add max_rounds and skip_tp_on_exit to sub-sessions ([2ad0360](https://github.com/overcuriousity/wintermute/commit/2ad0360e8bf2aa47b9b723df26231c375264f904))
+* add sectioned BASE_PROMPT and named tool profiles ([1948a3a](https://github.com/overcuriousity/wintermute/commit/1948a3a77c1598912c21662fe48fb23778ba2265))
+* add vector-indexed memory retrieval with flat_file/fts5/qdrant backends ([dd77c1f](https://github.com/overcuriousity/wintermute/commit/dd77c1fd970cfba066443789a85f1413652acc5d))
+* complete vector memory storage gaps (issue [#39](https://github.com/overcuriousity/wintermute/issues/39)) ([20c82ac](https://github.com/overcuriousity/wintermute/commit/20c82acdf03fc451f16f380180bdf60d1bf74b1d))
+
+
+### Bug Fixes
+
+* add api_key support to embeddings endpoint ([b5b6a17](https://github.com/overcuriousity/wintermute/commit/b5b6a1778121d0a1948f860ed280e2474ae645cd))
+* add fast-path for agenda list in NL translator ([43a11b3](https://github.com/overcuriousity/wintermute/commit/43a11b3f288d91e788ff20d442fcbb13d0caa846))
+* address PR [#44](https://github.com/overcuriousity/wintermute/issues/44) review comments (async I/O, race conditions, FTS5 ranking) ([e86efef](https://github.com/overcuriousity/wintermute/commit/e86efefdc697b2c42f8d3b19706332c607789195))
+* cache memory count in SSE snapshot to avoid Qdrant polling spam ([81f52dc](https://github.com/overcuriousity/wintermute/commit/81f52dc1da1557dba32ec2ae9e052f84a6d91559))
+* exclude pool_override from sub-session JSON serialization ([6688f51](https://github.com/overcuriousity/wintermute/commit/6688f51fba67b9a15a5c2515f4276112aa1b2418))
+* make dreaming memory prompt backend-agnostic ([7d1cc3c](https://github.com/overcuriousity/wintermute/commit/7d1cc3cc668534ff2203f64fdd5a95ecbde5f176))
+* merge orphan metadata in NL-translated spawn_sub_session lists ([27bc3aa](https://github.com/overcuriousity/wintermute/commit/27bc3aa7a16aa125cb37804c4d24d4b5bf6c0808))
+* missing database import in slash commands, don't send dimensions in embed request ([3f90579](https://github.com/overcuriousity/wintermute/commit/3f90579466d7077507c4521b30fceb2aa5767f8d))
+* parse Qdrant URL into host/port/https for reliable HTTPS connections ([344f72b](https://github.com/overcuriousity/wintermute/commit/344f72b8bdea8317a6d19b1e78f36d8f30aca45f))
+* use REST API instead of gRPC for Qdrant client ([85f05e5](https://github.com/overcuriousity/wintermute/commit/85f05e5eb48edc0e1b3ba7d4306c989531fd5e26))
+* use UUID format for memory entry IDs (Qdrant requires UUID or int) ([9f46d38](https://github.com/overcuriousity/wintermute/commit/9f46d38689b22c5f1465bfd4939b5cfd31337929))
+
 ## [0.3.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.2.1-alpha...v0.3.0-alpha) (2026-02-21)
 
 
