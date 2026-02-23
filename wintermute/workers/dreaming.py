@@ -39,11 +39,12 @@ class DreamingConfig:
 
 
 async def _consolidate(pool: "BackendPool",
-                        label: str, prompt_template: str, content: str) -> str:
+                        label: str, prompt_template: str, content: str,
+                        **extra_vars: str) -> str:
     """Call the LLM to consolidate a single memory component."""
     prompt = prompt_template
     if "{content}" in prompt:
-        prompt = prompt.format(content=content)
+        prompt = prompt.format(content=content, **extra_vars)
     else:
         prompt = prompt + "\n\n" + content
     response = await pool.call(
@@ -159,6 +160,7 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
                 memories_text = "\n".join(e["text"] for e in all_entries)
                 consolidated = await _consolidate(
                     pool, "MEMORIES.txt", mem_prompt, memories_text,
+                    source="vector store", entry_count=str(len(all_entries)),
                 )
                 if consolidated:
                     entries = [l.strip() for l in consolidated.strip().splitlines() if l.strip()]
@@ -178,8 +180,11 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
         if memories_snapshot:
             try:
                 mem_prompt = prompt_loader.load("DREAM_MEMORIES_PROMPT.txt")
+                _snap_lines = [l for l in memories_snapshot.splitlines() if l.strip()]
                 consolidated = await _consolidate(
                     pool, "MEMORIES.txt", mem_prompt, memories_snapshot,
+                    source="MEMORIES.txt flat file",
+                    entry_count=str(len(_snap_lines)),
                 )
                 if consolidated:
                     prompt_assembler.merge_consolidated_memories(
