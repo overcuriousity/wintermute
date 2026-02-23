@@ -115,6 +115,8 @@ class SubSessionState:
     pool_override: Optional[object] = None   # per-session BackendPool override
     max_rounds: Optional[int] = None        # None = unlimited inference rounds
     skip_tp_on_exit: bool = False           # skip TP post_inference on terminal response
+    timeout_value: int = DEFAULT_TIMEOUT    # configured timeout for this session
+    tp_verdict: str = "skipped"             # TP verdict: 'pass' | 'fail' | 'skipped'
 
 
 @dataclass
@@ -609,6 +611,7 @@ class SubSessionManager:
             pool_override=node.pool_override,
             max_rounds=node.max_rounds,
             skip_tp_on_exit=node.skip_tp_on_exit,
+            timeout_value=node.timeout,
         )
         self._states[session_id] = state
 
@@ -860,6 +863,7 @@ class SubSessionManager:
         context_blobs: list[str],
         timeout: int,
     ) -> None:
+        _start_time = _time.monotonic()
         try:
             result = await asyncio.wait_for(
                 self._worker_loop(state, context_blobs),
@@ -868,6 +872,7 @@ class SubSessionManager:
             state.status = "completed"
             state.result = result
             state.completed_at = datetime.now(timezone.utc).isoformat()
+            self._persist_outcome(state, "completed", _time.monotonic() - _start_time)
             logger.info("Sub-session %s completed (%d chars)", state.session_id, len(result or ""))
             await self._report(state, f"[SUB-SESSION {state.session_id} RESULT]\n\n{result}")
             await self._resolve_dependents(state.session_id)
@@ -875,6 +880,7 @@ class SubSessionManager:
         except asyncio.TimeoutError:
             state.status = "timeout"
             state.completed_at = datetime.now(timezone.utc).isoformat()
+            self._persist_outcome(state, "timeout", _time.monotonic() - _start_time)
             try:
                 await database.async_call(
                     database.save_interaction_log,
@@ -967,6 +973,7 @@ class SubSessionManager:
             state.status = "failed"
             state.error = str(exc)
             state.completed_at = datetime.now(timezone.utc).isoformat()
+            self._persist_outcome(state, "failed", _time.monotonic() - _start_time)
             try:
                 await database.async_call(
                     database.save_interaction_log,
@@ -980,6 +987,31 @@ class SubSessionManager:
             logger.exception("Sub-session %s failed", state.session_id)
             await self._report(state, msg)
             await self._resolve_dependents(state.session_id)
+
+    def _persist_outcome(self, state: SubSessionState, status: str, duration: float) -> None:
+        """Persist a sub-session outcome to the database (fire-and-forget)."""
+        try:
+            tools_used = list({name for name, _ in state.tool_calls_log}) if state.tool_calls_log else []
+            workflow_id = self._session_to_workflow.get(state.session_id)
+            database.save_sub_session_outcome(
+                session_id=state.session_id,
+                workflow_id=workflow_id,
+                timestamp=_time.time(),
+                objective=state.objective,
+                system_prompt_mode=state.system_prompt_mode,
+                tools_used=tools_used,
+                tool_call_count=len(state.tool_calls_log),
+                duration_seconds=round(duration, 2),
+                timeout_value=state.timeout_value,
+                turing_verdict=state.tp_verdict,
+                status=status,
+                result_length=len(state.result or ""),
+                nesting_depth=state.nesting_depth,
+                continuation_count=state.continuation_depth,
+                backend_used=self._pool.last_used,
+            )
+        except Exception:
+            logger.debug("Failed to persist outcome for %s", state.session_id, exc_info=True)
 
     _AGENDA_NO_ACTION = "[NO_ACTION]"
 
@@ -1496,6 +1528,7 @@ class SubSessionManager:
                     recent_assistant_messages=_recent_assistant,
                 )
                 if pi_result and pi_result.correction:
+                    state.tp_verdict = "fail"
                     tp_correction_depth += 1
                     logger.info(
                         "Sub-session %s: objective not met — injecting "
@@ -1525,6 +1558,8 @@ class SubSessionManager:
                     })
                     continue  # back to while True → next inference call
 
+            if tp_enabled and not state.skip_tp_on_exit:
+                state.tp_verdict = "pass"
             return final_text
 
     # ------------------------------------------------------------------

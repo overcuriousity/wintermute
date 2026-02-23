@@ -167,6 +167,12 @@ When a `full`-mode sub-session (depth 1) spawns children (depth 2), individual c
 
 This is fully deterministic — no LLM inference is involved in the routing or aggregation logic. A deduplication set prevents duplicate delivery when multiple children complete near-simultaneously.
 
+### Outcome Tracking & Historical Feedback
+
+Sub-session outcomes (completed, timeout, failed) are persisted to the `sub_session_outcomes` database table with metadata including duration, tool call counts, Turing Protocol verdict, and continuation depth. Before spawning a new sub-session, the system queries for similar past objectives and injects a historical feedback context blob — enabling workers to learn from previous execution patterns (e.g. avoiding timeouts by adjusting pacing).
+
+See [outcome-tracking.md](outcome-tracking.md) for the full reference.
+
 ## Routine-triggered Inference
 
 **Module:** `wintermute/workers/scheduler_thread.py`

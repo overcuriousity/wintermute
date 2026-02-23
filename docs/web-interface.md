@@ -40,3 +40,5 @@ The debug panel is backed by a REST API:
 | GET | `/api/debug/interaction-log` | List interaction log entries (Turing Protocol, dreaming, embedding calls, Qdrant operations) |
 | GET | `/api/debug/interaction-log/{id}` | Get a specific interaction log entry |
 | GET | `/api/debug/stream` | Server-sent events stream for live panel updates |
+
+> **Planned:** Sub-session outcome statistics (success rates, average durations, common failure patterns) will be available in the debug panel in a future release.
