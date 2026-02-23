@@ -446,6 +446,14 @@ class MatrixThread:
         except MUnknownToken:
             raise
         except Exception as exc:  # noqa: BLE001
+            # Don't wipe the crypto store for transient network errors (e.g. HTTP
+            # 5xx from the homeserver).  Only wipe when it looks like a local DB
+            # corruption / incompatibility issue.
+            exc_str = str(exc)
+            if exc_str[:3].isdigit():
+                # Exception message starts with an HTTP status code → network error,
+                # not a stale DB.  Re-raise so the outer retry loop handles it.
+                raise
             logger.warning(
                 "Crypto setup failed (%s). "
                 "Wiping stale crypto store and retrying once...", exc,
