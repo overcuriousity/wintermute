@@ -334,7 +334,7 @@ class LocalVectorBackend:
         import numpy as np
 
         t0 = time.time()
-        vectors = _embed([query], self._embed_cfg)
+        vectors = _embed([query], self._embed_cfg, task="query")
         if not vectors:
             logger.warning("LocalVector: embedding failed for query, falling back to get_all")
             return self.get_all()[:top_k]
@@ -538,7 +538,7 @@ class QdrantBackend:
         return eid
 
     def search(self, query: str, top_k: int, threshold: float) -> list[dict]:
-        vectors = _embed([query], self._embed_cfg)
+        vectors = _embed([query], self._embed_cfg, task="query")
         if not vectors:
             logger.warning("Qdrant: embedding failed for query, falling back to get_all")
             return self.get_all()[:top_k]
@@ -663,10 +663,14 @@ class QdrantBackend:
 # Embedding helper (used by QdrantBackend)
 # ---------------------------------------------------------------------------
 
-def _embed(texts: list[str], embed_cfg: dict) -> list[list[float]]:
+def _embed(texts: list[str], embed_cfg: dict, task: str = "document") -> list[list[float]]:
     """Call an OpenAI-compatible embeddings endpoint.
 
     Uses httpx (sync) — callers in async context should run via executor.
+
+    *task* is ``"query"`` (search) or ``"document"`` (upsert/index).
+    Prefix is auto-detected for known models (e.g. EmbeddingGemma) or
+    can be overridden via ``query_prefix`` / ``document_prefix`` in config.
     """
     import httpx
 
@@ -675,6 +679,23 @@ def _embed(texts: list[str], embed_cfg: dict) -> list[list[float]]:
     api_key = embed_cfg.get("api_key", "") or None
     if not endpoint:
         raise RuntimeError("memory.embeddings.endpoint is not configured")
+
+    # --- task-type prefix handling ---
+    _AUTO_PREFIXES: dict[str, dict[str, str]] = {
+        "gemma": {"query": "search_query: ", "document": "search_document: "},
+    }
+    query_prefix = embed_cfg.get("query_prefix", "")
+    document_prefix = embed_cfg.get("document_prefix", "")
+    if not query_prefix and not document_prefix:
+        model_lower = model.lower()
+        for key, prefixes in _AUTO_PREFIXES.items():
+            if key in model_lower:
+                query_prefix = prefixes["query"]
+                document_prefix = prefixes["document"]
+                break
+    prefix = query_prefix if task == "query" else document_prefix
+    if prefix:
+        texts = [f"{prefix}{t}" for t in texts]
 
     url = f"{endpoint}/embeddings"
     payload = {"input": texts, "model": model}
