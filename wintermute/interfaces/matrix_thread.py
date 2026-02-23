@@ -1273,6 +1273,13 @@ class MatrixThread:
             our_key_id, f"{info_pfx}|KEY_IDS",
         )
 
+        logger.debug(
+            "SAS MAC debug: our_user=%s our_device=%s their_user=%s their_dev=%s "
+            "ed25519_key=%s key_id=%s key_mac=%s keys_mac=%s",
+            our_user, our_device, their_user, their_dev,
+            our_ed25519, our_key_id, key_mac, keys_mac,
+        )
+
         await self._send_to_device(_VERIFY_MAC, their_user, their_dev, {
             "transaction_id": txn_id,
             "mac":  {our_key_id: key_mac},
