@@ -665,7 +665,11 @@ class LLMThread:
         # Pre-fetch memories off the event loop to avoid blocking I/O.
         from wintermute.infra import memory_store
         if memory_store.is_vector_enabled() and _memory_query:
-            _memory_results = await asyncio.to_thread(memory_store.search, _memory_query)
+            try:
+                _memory_results = await asyncio.to_thread(memory_store.search, _memory_query)
+            except Exception as e:
+                logger.warning("Vector memory search failed, continuing without memory context: %s", e)
+                _memory_results = None
         else:
             _memory_results = None
 
