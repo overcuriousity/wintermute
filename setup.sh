@@ -224,7 +224,7 @@ if $DRY_RUN; then
   echo -e "  ${C_DIM}Would run: uv sync${C_RESET}"
   echo -e "  ${C_DIM}Would write: config.yaml (matrix, whisper, web, inference backends,${C_RESET}"
   echo -e "  ${C_DIM}  role mapping, turing protocol, nl translation, seed, agenda,${C_RESET}"
-  echo -e "  ${C_DIM}  context, dreaming, memory harvest, scheduler, logging)${C_RESET}"
+  echo -e "  ${C_DIM}  context, dreaming, memory storage, memory harvest, scheduler, logging)${C_RESET}"
   echo ""
   echo -e "  ${C_BOLD}No changes made.${C_RESET}"
   exit 0
@@ -879,6 +879,60 @@ print(json.dumps({
     fi
   fi
 
+  # ── Memory (vector storage) ────────────────────────────────────
+  echo ""
+  echo -e "  ${C_BOLD}── Memory storage ──${C_RESET}"
+  echo -e "  ${C_DIM}  Wintermute can use vector embeddings for semantic memory search.${C_RESET}"
+  echo -e "  ${C_DIM}  Requires an OpenAI-compatible /v1/embeddings endpoint.${C_RESET}"
+  echo -e "  ${C_DIM}  Without it, memories are stored as a flat text file.${C_RESET}"
+  echo ""
+
+  MEMORY_EMBEDDINGS_ENDPOINT=""
+  MEMORY_EMBEDDINGS_KEY=""
+  MEMORY_EMBEDDINGS_MODEL="text-embedding-3-small"
+  MEMORY_EMBEDDINGS_DIMS="1536"
+  MEMORY_BACKEND="local_vector"
+  MEMORY_QDRANT_URL=""
+  MEMORY_QDRANT_KEY=""
+  MEMORY_QDRANT_COLLECTION="wintermute_memories"
+
+  ask MEMORY_EMBEDDINGS_ENDPOINT "Embeddings endpoint URL (empty to skip)" ""
+  if [[ -n "$MEMORY_EMBEDDINGS_ENDPOINT" ]]; then
+    ask_secret MEMORY_EMBEDDINGS_KEY "Embeddings API key (empty for unauthenticated)"
+    [[ -z "$MEMORY_EMBEDDINGS_KEY" ]] && MEMORY_EMBEDDINGS_KEY=""
+    ask MEMORY_EMBEDDINGS_MODEL "Embedding model name" "text-embedding-3-small"
+    ask MEMORY_EMBEDDINGS_DIMS "Embedding dimensions" "1536"
+
+    # One-shot test
+    info "Testing embeddings endpoint..."
+    _embed_headers=""
+    [[ -n "$MEMORY_EMBEDDINGS_KEY" ]] && _embed_headers="-H \"Authorization: Bearer ${MEMORY_EMBEDDINGS_KEY}\""
+    if curl -sf --connect-timeout 10 -X POST "${MEMORY_EMBEDDINGS_ENDPOINT}/embeddings" \
+         -H "Content-Type: application/json" \
+         ${_embed_headers:+-H "Authorization: Bearer ${MEMORY_EMBEDDINGS_KEY}"} \
+         -d "{\"input\":\"test\",\"model\":\"${MEMORY_EMBEDDINGS_MODEL}\"}" \
+         2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'data' in d" 2>/dev/null; then
+      ok "Embeddings endpoint responding."
+    else
+      warn "Embeddings endpoint test failed — check the URL and credentials."
+      warn "Continuing anyway. Memory will fall back to flat_file if embedding fails at startup."
+    fi
+
+    echo ""
+    if ask_yn "Do you have a Qdrant instance for vector storage?" "n"; then
+      MEMORY_BACKEND="qdrant"
+      ask MEMORY_QDRANT_URL "Qdrant URL" "http://localhost:6333"
+      ask_secret MEMORY_QDRANT_KEY "Qdrant API key (empty for unauthenticated)"
+      [[ -z "$MEMORY_QDRANT_KEY" ]] && MEMORY_QDRANT_KEY=""
+      ask MEMORY_QDRANT_COLLECTION "Qdrant collection name" "wintermute_memories"
+      ok "Qdrant backend configured."
+    else
+      ok "Using local_vector backend (SQLite + numpy, no external services)."
+    fi
+  else
+    info "No embeddings endpoint — memory will use flat_file backend."
+  fi
+
   # ── write config.yaml ────────────────────────────────────────
   # Escape values that may contain YAML-special characters (: # { } ' " etc.)
   _yaml_escape() {
@@ -1138,7 +1192,55 @@ dreaming:
   minute: 0
 YAML
 
-    # ── 12. Memory Harvest ──
+    # ── 12. Memory (vector storage) ──
+    if [[ -n "${MEMORY_EMBEDDINGS_ENDPOINT:-}" ]]; then
+      if [[ "${MEMORY_BACKEND}" == "qdrant" ]]; then
+        cat <<YAML
+memory:
+  backend: "qdrant"
+  top_k: 10
+  score_threshold: 0.3
+  embeddings:
+    endpoint: $(_yaml_escape "${MEMORY_EMBEDDINGS_ENDPOINT}")
+    api_key: $(_yaml_escape "${MEMORY_EMBEDDINGS_KEY}")
+    model: $(_yaml_escape "${MEMORY_EMBEDDINGS_MODEL}")
+    dimensions: ${MEMORY_EMBEDDINGS_DIMS}
+  qdrant:
+    url: $(_yaml_escape "${MEMORY_QDRANT_URL}")
+    api_key: $(_yaml_escape "${MEMORY_QDRANT_KEY}")
+    collection: $(_yaml_escape "${MEMORY_QDRANT_COLLECTION}")
+YAML
+      else
+        cat <<YAML
+memory:
+  backend: "local_vector"
+  top_k: 10
+  score_threshold: 0.3
+  embeddings:
+    endpoint: $(_yaml_escape "${MEMORY_EMBEDDINGS_ENDPOINT}")
+    api_key: $(_yaml_escape "${MEMORY_EMBEDDINGS_KEY}")
+    model: $(_yaml_escape "${MEMORY_EMBEDDINGS_MODEL}")
+    dimensions: ${MEMORY_EMBEDDINGS_DIMS}
+YAML
+      fi
+    else
+      cat <<YAML
+# Memory vector storage (disabled — no embeddings endpoint configured)
+# Falling back to flat_file. Configure an embeddings endpoint to enable
+# semantic memory search (local_vector or qdrant backend).
+# memory:
+#   backend: "local_vector"
+#   top_k: 10
+#   score_threshold: 0.3
+#   embeddings:
+#     endpoint: "http://localhost:8080/v1"
+#     api_key: ""
+#     model: "text-embedding-3-small"
+#     dimensions: 1536
+YAML
+    fi
+
+    # ── 13. Memory Harvest (was 12) ──
     echo ""
     cat <<YAML
 memory_harvest:

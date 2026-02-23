@@ -264,6 +264,8 @@ class LLMThread:
         # time a non-system-event item is processed.  Used to detect stale
         # Turing Protocol corrections that arrived after the conversation moved on.
         self._thread_seq: dict[str, int] = {}
+        # Per-thread cache of the last system prompt actually sent to the LLM.
+        self._last_system_prompt: dict[str, str] = {}
 
     def inject_sub_session_manager(self, manager: "SubSessionManager") -> None:
         """Called after construction once SubSessionManager is built."""
@@ -324,16 +326,23 @@ class LLMThread:
         """Return the current in-memory compaction summary for a thread, or None."""
         return self._compaction_summaries.get(thread_id)
 
+    def get_last_system_prompt(self, thread_id: str = "default") -> Optional[str]:
+        """Return the last system prompt actually sent to the LLM for *thread_id*."""
+        return self._last_system_prompt.get(thread_id)
+
     def get_token_budget(self, thread_id: str = "default") -> dict:
         """Return precise token accounting for a thread."""
         total_limit = max(self._cfg.context_size - self._cfg.max_tokens, 1)
         model = self._cfg.model
 
-        summary = self._compaction_summaries.get(thread_id)
-        try:
-            sp_text = prompt_assembler.assemble(extra_summary=summary)
-        except Exception:  # noqa: BLE001
-            sp_text = ""
+        # Prefer the cached prompt that was actually sent to the LLM.
+        sp_text = self._last_system_prompt.get(thread_id)
+        if sp_text is None:
+            summary = self._compaction_summaries.get(thread_id)
+            try:
+                sp_text = prompt_assembler.assemble(extra_summary=summary)
+            except Exception:  # noqa: BLE001
+                sp_text = ""
         sp_tokens = _count_tokens(sp_text, model)
 
         nl_enabled = self._nl_translation_config.get("enabled", False)
@@ -681,6 +690,8 @@ class LLMThread:
             # Reassemble with the updated compaction summary.
             summary = self._compaction_summaries.get(thread_id)
             system_prompt = prompt_assembler.assemble(extra_summary=summary, query=_memory_query)
+
+        self._last_system_prompt[thread_id] = system_prompt
 
         is_sub_session_result = item.is_system_event and "[SUB-SESSION " in item.text
         if not item.is_system_event:

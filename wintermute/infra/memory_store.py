@@ -315,6 +315,7 @@ class LocalVectorBackend:
         if not vectors:
             raise RuntimeError("Embedding call returned no vectors")
         blob = self._vec_to_blob(vectors[0])
+        t0 = time.time()
         with self._lock:
             conn = self._connect()
             try:
@@ -326,11 +327,13 @@ class LocalVectorBackend:
                 conn.commit()
             finally:
                 conn.close()
+        _log_interaction(t0, "local_vector_add", entry[:200], f"id={eid}", llm="local_vector")
         return eid
 
     def search(self, query: str, top_k: int, threshold: float) -> list[dict]:
         import numpy as np
 
+        t0 = time.time()
         vectors = _embed([query], self._embed_cfg)
         if not vectors:
             logger.warning("LocalVector: embedding failed for query, falling back to get_all")
@@ -364,7 +367,13 @@ class LocalVectorBackend:
                 results.append({"id": entry_id, "text": text, "score": score})
 
         results.sort(key=lambda x: x["score"], reverse=True)
-        return results[:top_k]
+        hits = results[:top_k]
+        _log_interaction(
+            t0, "local_vector_search", query[:200],
+            f"{len(hits)} hits (top_k={top_k}, threshold={threshold})",
+            llm="local_vector",
+        )
+        return hits
 
     def get_all(self) -> list[dict]:
         with self._lock:
@@ -378,6 +387,7 @@ class LocalVectorBackend:
         return [{"id": r[0], "text": r[1], "score": 1.0} for r in rows]
 
     def replace_all(self, entries: list[str]) -> None:
+        t0 = time.time()
         entries = [e.strip() for e in entries if e.strip()]
         if not entries:
             with self._lock:
@@ -387,6 +397,7 @@ class LocalVectorBackend:
                     conn.commit()
                 finally:
                     conn.close()
+            _log_interaction(t0, "local_vector_replace_all", "0 entries", "cleared", llm="local_vector")
             return
 
         vectors = _embed(entries, self._embed_cfg)
@@ -414,6 +425,10 @@ class LocalVectorBackend:
             finally:
                 conn.close()
         logger.info("LocalVector: replaced all entries (%d)", len(entries))
+        _log_interaction(
+            t0, "local_vector_replace_all", f"{len(entries)} entries",
+            f"upserted {len(entries)} rows", llm="local_vector",
+        )
 
     def delete(self, entry_id: str) -> bool:
         with self._lock:
@@ -731,7 +746,7 @@ def init(config: dict) -> None:
     """
     global _backend, _config
     _config = dict(config)
-    backend_name = config.get("backend", "flat_file")
+    backend_name = config.get("backend", "local_vector")
 
     try:
         if backend_name == "fts5":

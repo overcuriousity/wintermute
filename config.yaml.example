@@ -430,7 +430,7 @@ scheduler:
 # warns and falls back to flat_file automatically.
 #
 memory:
-  backend: "flat_file"                  # "flat_file" | "fts5" | "local_vector" | "qdrant"
+  backend: "local_vector"               # "flat_file" | "fts5" | "local_vector" | "qdrant"
   top_k: 10                            # Max memories to inject per turn
   score_threshold: 0.3                  # Min relevance score (local_vector and qdrant only)
 

@@ -316,6 +316,23 @@ device flow and broadcasts the verification URL to connected interfaces.
 
 You can also authenticate manually via the `/kimi-auth` command in Matrix or the web UI.
 
+## Memory Storage (Vector Search)
+
+By default, Wintermute uses `local_vector` for semantic memory search. This requires only an OpenAI-compatible embeddings endpoint (no external database).
+
+- **`local_vector`** — SQLite + numpy. No external services beyond an embeddings endpoint. Recommended for most deployments.
+- **`qdrant`** — Qdrant vector database. Only needed if you want a dedicated vector DB for larger-scale deployments.
+
+To run Qdrant locally via Docker:
+
+```bash
+docker run -d --name qdrant -p 6333:6333 qdrant/qdrant
+```
+
+See the [Qdrant documentation](https://qdrant.tech/documentation/quick-start/) for more options.
+
+If no embeddings endpoint is configured, Wintermute falls back to `flat_file` (plain text, no ranking).
+
 ## Timezone Configuration
 
 Wintermute injects the current local time into every system prompt so the LLM has accurate time awareness. This relies on the `scheduler.timezone` setting in `config.yaml`:
