@@ -1935,12 +1935,20 @@ class WebInterface:
     # Memory debug API
     # ------------------------------------------------------------------
 
+    _memory_count_cache: tuple[float, int] = (0.0, 0)
+
     def _get_memory_count(self) -> int:
+        import time
+        now = time.monotonic()
+        if now - self._memory_count_cache[0] < 30:
+            return self._memory_count_cache[1]
         try:
             from wintermute.infra import memory_store
-            return memory_store.count()
+            count = memory_store.count()
         except Exception:  # noqa: BLE001
-            return 0
+            count = 0
+        self._memory_count_cache = (now, count)
+        return count
 
     async def _api_memory(self, request: web.Request) -> web.Response:
         from wintermute.infra import memory_store
