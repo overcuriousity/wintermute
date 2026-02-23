@@ -9,6 +9,7 @@ up to 5 seconds under write contention).
 """
 
 import asyncio
+import json
 import sqlite3
 import time
 import logging
@@ -92,6 +93,26 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             output     TEXT    NOT NULL,
             status     TEXT    NOT NULL DEFAULT 'ok',
             raw_output TEXT
+        );
+        CREATE TABLE IF NOT EXISTS sub_session_outcomes (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id          TEXT NOT NULL,
+            workflow_id         TEXT,
+            timestamp           REAL NOT NULL,
+            objective           TEXT NOT NULL,
+            system_prompt_mode  TEXT NOT NULL,
+            tools_available     TEXT,
+            tools_used          TEXT,
+            tool_call_count     INTEGER,
+            duration_seconds    REAL,
+            timeout_value       INTEGER,
+            turing_verdict      TEXT,
+            status              TEXT NOT NULL,
+            result_length       INTEGER,
+            nesting_depth       INTEGER,
+            continuation_count  INTEGER,
+            backend_used        TEXT,
+            objective_embedding BLOB
         );
     """)
     conn.commit()
@@ -496,3 +517,215 @@ def count_interaction_log(session_filter: Optional[str] = None,
             f"SELECT COUNT(*) FROM interaction_log {where}", params
         ).fetchone()
     return row[0]
+
+
+# ---------------------------------------------------------------------------
+# Sub-session Outcome Tracking
+# ---------------------------------------------------------------------------
+
+_STOPWORDS = frozenset({
+    "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "is", "it", "as", "be", "was", "are",
+    "this", "that", "not", "has", "had", "have", "will", "can", "do",
+    "does", "did", "its", "all", "into", "also", "than", "then",
+})
+
+
+def save_sub_session_outcome(**fields) -> int:
+    """Insert a sub-session outcome row and return its row id.
+
+    Optionally embeds the objective for vector similarity search if the
+    memory store's vector backend is active.
+    """
+    objective = fields.get("objective", "")
+
+    # Try to embed the objective for vector search.
+    embedding_blob = None
+    try:
+        from wintermute.infra import memory_store
+        if memory_store.is_vector_enabled() and memory_store._config:
+            embed_cfg = memory_store._config.get("embeddings", {})
+            if embed_cfg.get("endpoint"):
+                vectors = memory_store._embed([objective], embed_cfg)
+                if vectors and vectors[0]:
+                    import struct
+                    embedding_blob = struct.pack(f"{len(vectors[0])}f", *vectors[0])
+    except Exception as exc:
+        logger.debug("Could not embed outcome objective: %s", exc)
+
+    with _connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO sub_session_outcomes "
+            "(session_id, workflow_id, timestamp, objective, system_prompt_mode, "
+            "tools_available, tools_used, tool_call_count, duration_seconds, "
+            "timeout_value, turing_verdict, status, result_length, nesting_depth, "
+            "continuation_count, backend_used, objective_embedding) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                fields.get("session_id"),
+                fields.get("workflow_id"),
+                fields.get("timestamp", time.time()),
+                objective,
+                fields.get("system_prompt_mode", "minimal"),
+                json.dumps(fields["tools_available"]) if fields.get("tools_available") else None,
+                json.dumps(fields["tools_used"]) if fields.get("tools_used") else None,
+                fields.get("tool_call_count"),
+                fields.get("duration_seconds"),
+                fields.get("timeout_value"),
+                fields.get("turing_verdict"),
+                fields.get("status", "unknown"),
+                fields.get("result_length"),
+                fields.get("nesting_depth"),
+                fields.get("continuation_count"),
+                fields.get("backend_used"),
+                embedding_blob,
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def get_similar_outcomes(objective: str, limit: int = 5) -> list[dict]:
+    """Find past sub-session outcomes similar to the given objective.
+
+    Uses vector similarity if available, falls back to keyword LIKE matching.
+    """
+    # Try vector search first.
+    try:
+        from wintermute.infra import memory_store
+        if memory_store.is_vector_enabled() and memory_store._config:
+            embed_cfg = memory_store._config.get("embeddings", {})
+            if embed_cfg.get("endpoint"):
+                results = _vector_search_outcomes(objective, embed_cfg, limit)
+                if results:
+                    return results
+    except Exception as exc:
+        logger.debug("Vector outcome search failed, falling back to keyword: %s", exc)
+
+    return _keyword_search_outcomes(objective, limit)
+
+
+def _vector_search_outcomes(objective: str, embed_cfg: dict, limit: int) -> list[dict]:
+    """Search outcomes by cosine similarity of objective embeddings."""
+    import struct
+    from wintermute.infra.memory_store import _embed
+
+    query_vec = _embed([objective], embed_cfg, task="query")
+    if not query_vec or not query_vec[0]:
+        return []
+    qv = query_vec[0]
+
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM sub_session_outcomes WHERE objective_embedding IS NOT NULL "
+            "ORDER BY timestamp DESC LIMIT 200"
+        ).fetchall()
+
+    if not rows:
+        return []
+
+    scored = []
+    dim = len(qv)
+    for row in rows:
+        blob = row["objective_embedding"]
+        if not blob or len(blob) != dim * 4:
+            continue
+        vec = struct.unpack(f"{dim}f", blob)
+        # Cosine similarity.
+        dot = sum(a * b for a, b in zip(qv, vec))
+        mag_q = sum(a * a for a in qv) ** 0.5
+        mag_v = sum(a * a for a in vec) ** 0.5
+        if mag_q == 0 or mag_v == 0:
+            continue
+        sim = dot / (mag_q * mag_v)
+        if sim > 0.5:
+            scored.append((sim, dict(row)))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    results = []
+    for sim, row_dict in scored[:limit]:
+        row_dict.pop("objective_embedding", None)
+        row_dict["similarity"] = round(sim, 3)
+        results.append(row_dict)
+    return results
+
+
+def _keyword_search_outcomes(objective: str, limit: int) -> list[dict]:
+    """Search outcomes by keyword LIKE matching on objective text."""
+    words = [w.lower() for w in objective.split() if len(w) > 3 and w.lower() not in _STOPWORDS]
+    if not words:
+        return []
+
+    # Use at most 5 keywords to keep the query reasonable.
+    words = words[:5]
+    conditions = " OR ".join("objective LIKE ?" for _ in words)
+    params = [f"%{w}%" for w in words]
+
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"SELECT * FROM sub_session_outcomes WHERE {conditions} "
+            "ORDER BY timestamp DESC LIMIT ?",
+            params + [limit],
+        ).fetchall()
+
+    results = []
+    for row in rows:
+        d = dict(row)
+        d.pop("objective_embedding", None)
+        results.append(d)
+    return results
+
+
+def get_outcome_stats() -> dict:
+    """Return aggregate sub-session outcome statistics."""
+    with _connect() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM sub_session_outcomes").fetchone()[0]
+        by_status = conn.execute(
+            "SELECT status, COUNT(*) FROM sub_session_outcomes GROUP BY status"
+        ).fetchall()
+        avg_duration = conn.execute(
+            "SELECT AVG(duration_seconds) FROM sub_session_outcomes WHERE duration_seconds IS NOT NULL"
+        ).fetchone()[0]
+        avg_tool_calls = conn.execute(
+            "SELECT AVG(tool_call_count) FROM sub_session_outcomes WHERE tool_call_count IS NOT NULL"
+        ).fetchone()[0]
+        timeout_rate_row = conn.execute(
+            "SELECT COUNT(*) FROM sub_session_outcomes WHERE status='timeout'"
+        ).fetchone()[0]
+    return {
+        "total": total,
+        "by_status": {r[0]: r[1] for r in by_status},
+        "avg_duration_seconds": round(avg_duration, 1) if avg_duration else None,
+        "avg_tool_calls": round(avg_tool_calls, 1) if avg_tool_calls else None,
+        "timeout_rate_pct": round(timeout_rate_row * 100 / total) if total else 0,
+    }
+
+
+def get_outcomes_page(
+    limit: int = 200,
+    offset: int = 0,
+    status_filter: Optional[str] = None,
+) -> tuple[list[dict], int, dict]:
+    """Return a page of sub-session outcomes plus totals and aggregate stats."""
+    where = "WHERE status = ?" if status_filter else ""
+    params: list = [status_filter] if status_filter else []
+
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"SELECT id, session_id, workflow_id, timestamp, objective, system_prompt_mode, "
+            f"tools_used, tool_call_count, duration_seconds, timeout_value, turing_verdict, "
+            f"status, result_length, nesting_depth, continuation_count, backend_used "
+            f"FROM sub_session_outcomes {where} "
+            f"ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+            params + [limit, offset],
+        ).fetchall()
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM sub_session_outcomes {where}", params
+        ).fetchone()[0]
+
+    entries = [dict(r) for r in rows]
+    stats = get_outcome_stats()
+    return entries, total, stats

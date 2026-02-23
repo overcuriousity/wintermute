@@ -559,9 +559,46 @@ def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
     if _sub_session_spawn is None:
         return json.dumps({"error": "Sub-session manager not ready yet."})
     try:
+        context_blobs = list(inputs.get("context_blobs") or [])
+
+        # Query historical outcomes for similar objectives.
+        try:
+            similar = database.get_similar_outcomes(inputs["objective"], limit=5)
+            if similar:
+                lines = []
+                total_dur = 0
+                dur_count = 0
+                success_count = 0
+                for o in similar:
+                    dur = o.get("duration_seconds")
+                    tov = o.get("timeout_value")
+                    tc = o.get("tool_call_count", 0)
+                    st = o.get("status", "?")
+                    obj_short = (o.get("objective") or "")[:60]
+                    dur_str = f"{dur:.0f}s" if dur is not None else "?"
+                    tov_str = f"{tov}s timeout" if tov is not None else "no timeout"
+                    cont = o.get("continuation_count", 0)
+                    extra = f", continued {cont}x" if cont else ""
+                    lines.append(f"- \"{obj_short}\" ({tov_str}): {st} in {dur_str}, {tc} tool calls{extra}")
+                    if dur is not None:
+                        total_dur += dur
+                        dur_count += 1
+                    if st == "completed":
+                        success_count += 1
+                avg_dur = f"{total_dur / dur_count:.0f}s" if dur_count else "N/A"
+                rate = f"{success_count * 100 / len(similar):.0f}%"
+                blob = (
+                    "[Historical Feedback] Similar past sub-sessions:\n"
+                    + "\n".join(lines)
+                    + f"\nAverage duration: {avg_dur} | Success rate: {rate}"
+                )
+                context_blobs.insert(0, blob)
+        except Exception as exc:
+            logger.debug("Historical feedback lookup failed: %s", exc, exc_info=True)
+
         kwargs = dict(
             objective=inputs["objective"],
-            context_blobs=inputs.get("context_blobs") or [],
+            context_blobs=context_blobs,
             parent_thread_id=thread_id,
             system_prompt_mode=inputs.get("system_prompt_mode", "minimal"),
             nesting_depth=nesting_depth + 1,

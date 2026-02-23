@@ -286,6 +286,9 @@ _DEBUG_HTML = r"""\
     <button class="tab-btn" data-tab="interactions" onclick="showTab('interactions')">
       Interactions <span class="tab-count" id="cnt-interactions">0</span>
     </button>
+    <button class="tab-btn" data-tab="outcomes" onclick="showTab('outcomes')">
+      Outcomes <span class="tab-count" id="cnt-outcomes">0</span>
+    </button>
   </nav>
 
   <div id="main">
@@ -458,6 +461,35 @@ _DEBUG_HTML = r"""\
       </div>
     </div>
 
+    <!-- ── Outcomes ── -->
+    <div class="tab-panel" id="panel-outcomes">
+      <div class="form-bar" style="gap:.8rem">
+        <div class="form-group">
+          <label>Filter by status</label>
+          <select id="oc-filter-status" onchange="loadOutcomes()" style="min-width:160px">
+            <option value="">All statuses</option>
+            <option value="completed">completed</option>
+            <option value="timeout">timeout</option>
+            <option value="failed">failed</option>
+          </select>
+        </div>
+      </div>
+      <div id="outcomes-stats" style="padding:.5rem 1rem;font-size:.8rem;color:#888;display:flex;gap:2rem;border-bottom:1px solid #0f3460"></div>
+      <div class="scroll-area">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Time</th><th>Status</th><th>Session</th><th>Mode</th>
+              <th>Duration</th><th>Tools used</th><th>TP verdict</th><th>Objective</th>
+            </tr>
+          </thead>
+          <tbody id="outcomes-body">
+            <tr><td colspan="8" class="empty">Loading\u2026</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="tab-panel" id="panel-interactions">
       <div class="form-bar" style="gap:.8rem">
         <div class="form-group">
@@ -578,6 +610,7 @@ async function loadTab(name) {
       case 'agenda':       await loadAgenda(); break;
       case 'memory':       await loadMemory(); break;
       case 'interactions': await loadInteractionLog(); break;
+      case 'outcomes':     await loadOutcomes(); break;
     }
   } catch (e) {
     console.error('loadTab error:', e);
@@ -1482,6 +1515,55 @@ function updateMemoryCount(count) {
   if (count != null) document.getElementById('cnt-memory').textContent = count;
 }
 
+// ── Outcomes ──
+async function loadOutcomes() {
+  const status = document.getElementById('oc-filter-status').value;
+  const params = new URLSearchParams({limit: 200, offset: 0});
+  if (status) params.set('status', status);
+  try {
+    const r = await fetch('/api/debug/outcomes?' + params);
+    const d = await r.json();
+    const entries = d.entries || [];
+    document.getElementById('cnt-outcomes').textContent = d.total || 0;
+    const st = d.stats || {};
+    const byStatus = st.by_status || {};
+    const statsEl = document.getElementById('outcomes-stats');
+    statsEl.innerHTML = [
+      '<span>Total: <strong>' + (st.total || 0) + '</strong></span>',
+      Object.entries(byStatus).map(([k,v]) => '<span>' + esc(k) + ': <strong>' + v + '</strong></span>').join(''),
+      st.avg_duration_seconds != null ? '<span>Avg duration: <strong>' + st.avg_duration_seconds + 's</strong></span>' : '',
+      st.avg_tool_calls != null ? '<span>Avg tool calls: <strong>' + st.avg_tool_calls + '</strong></span>' : '',
+      st.timeout_rate_pct != null ? '<span>Timeout rate: <strong>' + st.timeout_rate_pct + '%</strong></span>' : '',
+    ].flat().filter(Boolean).join(' \u2502 ');
+    const tbody = document.getElementById('outcomes-body');
+    if (!entries.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty">No outcomes recorded yet</td></tr>';
+      return;
+    }
+    tbody.innerHTML = entries.map(o => {
+      const ts = o.timestamp ? new Date(o.timestamp * 1000).toLocaleString() : '-';
+      const dur = o.duration_seconds != null ? o.duration_seconds.toFixed(1) + 's' : '-';
+      const tc = o.tool_call_count != null ? o.tool_call_count : '-';
+      let toolsUsed = '-';
+      try { toolsUsed = o.tools_used ? JSON.parse(o.tools_used).join(', ') || '-' : '-'; } catch(e) {}
+      const verdict = o.turing_verdict || '-';
+      const verdictColor = verdict === 'pass' ? '#6fe06f' : verdict === 'fail' ? '#e06f6f' : '#888';
+      const statusColor = o.status === 'completed' ? '#6fe06f' : o.status === 'timeout' ? '#f0c040' : '#e06f6f';
+      const obj = (o.objective || '').slice(0, 80);
+      return '<tr>' +
+        '<td style="white-space:nowrap;color:#888">' + esc(ts) + '</td>' +
+        '<td style="color:' + statusColor + '">' + esc(o.status || '') + '</td>' +
+        '<td style="font-family:monospace;font-size:.75rem;color:#888">' + esc((o.session_id || '').slice(0,12)) + '</td>' +
+        '<td>' + esc(o.system_prompt_mode || '') + '</td>' +
+        '<td style="color:#a8d8ea">' + esc(dur) + '</td>' +
+        '<td style="font-size:.75rem;color:#999">' + esc(tc) + (toolsUsed !== '-' ? ' (' + esc(toolsUsed) + ')' : '') + '</td>' +
+        '<td style="color:' + verdictColor + '">' + esc(verdict) + '</td>' +
+        '<td style="white-space:pre-wrap;word-break:break-word;font-size:.8rem">' + esc(obj) + (o.objective && o.objective.length > 80 ? '\u2026' : '') + '</td>' +
+        '</tr>';
+    }).join('');
+  } catch(e) { console.error('loadOutcomes:', e); }
+}
+
 // ── Config info ──
 async function loadConfig() {
   try {
@@ -1598,6 +1680,7 @@ class WebInterface:
         app.router.add_get("/api/debug/memory",                           self._api_memory)
         app.router.add_get("/api/debug/interaction-log",                 self._api_interaction_log)
         app.router.add_get("/api/debug/interaction-log/{id}",            self._api_interaction_log_entry)
+        app.router.add_get("/api/debug/outcomes",                        self._api_outcomes)
         app.router.add_get("/api/debug/stream",                          self._api_stream)
 
         runner = web.AppRunner(app, access_log=None)
@@ -1930,6 +2013,20 @@ class WebInterface:
         if not entry:
             return web.json_response({"error": "not found"}, status=404)
         return self._json(entry)
+
+    # ------------------------------------------------------------------
+    # Outcomes API
+    # ------------------------------------------------------------------
+
+    async def _api_outcomes(self, request: web.Request) -> web.Response:
+        from wintermute.infra import database
+        limit = int(request.query.get("limit", "200"))
+        offset = int(request.query.get("offset", "0"))
+        status_filter = request.query.get("status") or None
+        rows, total, stats = await database.async_call(
+            database.get_outcomes_page, limit=limit, offset=offset, status_filter=status_filter
+        )
+        return self._json({"entries": rows, "total": total, "stats": stats})
 
     # ------------------------------------------------------------------
     # Memory debug API

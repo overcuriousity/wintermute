@@ -18,7 +18,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **NL Translator** | `nl_translator.py` | Expands natural-language tool descriptions into structured arguments via a translator LLM |
 | **MemoryStore** | `memory_store.py` | Vector-indexed memory retrieval (flat_file / FTS5 / Qdrant backends) |
 | **PromptAssembler** | `prompt_assembler.py` | Builds system prompts from file components |
-| **Database** | `database.py` | SQLite message persistence, thread management, and agenda storage |
+| **Database** | `database.py` | SQLite message persistence, thread management, agenda storage, and sub-session outcome tracking |
 
 ## System Diagram
 
@@ -109,6 +109,7 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
    - **Direct children** (depth 1): result enters the parent thread via `enqueue_system_event`
    - **Nested children** (depth 2): individual reports are suppressed; when all siblings finish, an aggregated result is delivered to the root (user-facing) thread
 9. If the worker times out, a continuation is auto-spawned (up to 3 hops)
+10. Outcome metadata (duration, tool calls, TP verdict, status) is persisted to `sub_session_outcomes` for historical feedback on future spawns
 
 ## Workflow DAG
 
@@ -151,6 +152,7 @@ data/
   MEMORIES.txt               -- Long-term user facts (updated via append_memory; git-versioned backup when vector backend is active)
   memory_index.db            -- FTS5 keyword index (only when backend=fts5)
   conversation.db (agenda)    -- Active goals / working memory (managed via agenda tool, stored in SQLite)
+  conversation.db (outcomes)  -- Sub-session outcome tracking (duration, status, TP verdict; used for historical feedback)
   skills/                    -- Learned procedures as *.md files (updated via add_skill tool)
   DREAM_MEMORIES_PROMPT.txt  -- Customisable dreaming prompt for MEMORIES consolidation
   DREAM_AGENDA_PROMPT.txt     -- Customisable dreaming prompt for agenda consolidation
