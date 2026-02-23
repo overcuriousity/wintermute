@@ -32,7 +32,7 @@ The `sub_session_outcomes` table in `data/conversation.db`:
 
 Outcomes are persisted at three exit points in the sub-session lifecycle:
 
-1. **Completed** — Worker produced a final response and passed TP validation
+1. **Completed** — Worker produced a final response (and passed TP validation if enabled)
 2. **Timeout** — Worker exceeded its timeout budget (before continuation spawning)
 3. **Failed** — Worker raised an unhandled exception
 

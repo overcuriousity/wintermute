@@ -575,26 +575,26 @@ def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
                     tc = o.get("tool_call_count", 0)
                     st = o.get("status", "?")
                     obj_short = (o.get("objective") or "")[:60]
-                    dur_str = f"{dur:.0f}s" if dur else "?"
-                    tov_str = f"{tov}s timeout" if tov else "no timeout"
+                    dur_str = f"{dur:.0f}s" if dur is not None else "?"
+                    tov_str = f"{tov}s timeout" if tov is not None else "no timeout"
                     cont = o.get("continuation_count", 0)
                     extra = f", continued {cont}x" if cont else ""
                     lines.append(f"- \"{obj_short}\" ({tov_str}): {st} in {dur_str}, {tc} tool calls{extra}")
-                    if dur:
+                    if dur is not None:
                         total_dur += dur
                         dur_count += 1
                     if st == "completed":
                         success_count += 1
                 avg_dur = f"{total_dur / dur_count:.0f}s" if dur_count else "N/A"
-                rate = f"{success_count * 100 // len(similar)}%"
+                rate = f"{success_count * 100 / len(similar):.0f}%"
                 blob = (
                     "[Historical Feedback] Similar past sub-sessions:\n"
                     + "\n".join(lines)
                     + f"\nAverage duration: {avg_dur} | Success rate: {rate}"
                 )
                 context_blobs.insert(0, blob)
-        except Exception:
-            pass  # Non-critical — don't block spawning.
+        except Exception as exc:
+            logger.debug("Historical feedback lookup failed: %s", exc, exc_info=True)
 
         kwargs = dict(
             objective=inputs["objective"],
