@@ -549,7 +549,8 @@ async def main() -> None:
         interfaces.append("Matrix")
     if web_enabled:
         interfaces.append(f"web http://{web_cfg.get('host','127.0.0.1')}:{web_cfg.get('port',8080)}")
-    logger.info("All components started. Interfaces: %s", ", ".join(interfaces))
+    # Feature branch: enhanced logging
+    logger.info("✨ All components started successfully. Interfaces: %s", ", ".join(interfaces))
 
     # Auto-trigger Kimi-Code device auth if credentials are missing.
     kimi_client_instance = client_cache.get(("kimi-code",))
