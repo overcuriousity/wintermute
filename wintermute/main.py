@@ -53,11 +53,19 @@ LOG_DIR = Path("logs")
 # ---------------------------------------------------------------------------
 
 def load_config(path: Path = CONFIG_FILE) -> dict:
+    """Load configuration from YAML file with enhanced validation."""
     if not path.exists():
         print(f"ERROR: {path} not found. Copy config.yaml.example and fill in your settings.")
         sys.exit(1)
-    with path.open(encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
+    try:
+        with path.open(encoding="utf-8") as fh:
+            config = yaml.safe_load(fh)
+            if not isinstance(config, dict):
+                raise ValueError("Config must be a dictionary")
+            return config
+    except yaml.YAMLError as e:
+        print(f"ERROR: Failed to parse {path}: {e}")
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
