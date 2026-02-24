@@ -471,6 +471,9 @@ _task_scheduler_list = None     # Callable[[], list[dict]]
 # This will be injected by the SubSessionManager at startup.
 _sub_session_spawn = None  # Callable[[dict, str], str]
 
+# Event bus — injected by main.py at startup.
+_event_bus = None  # Optional[EventBus]
+
 
 def register_task_scheduler(ensure_fn, remove_fn, list_fn) -> None:
     """Called once by the scheduler thread to provide task schedule management."""
@@ -484,6 +487,12 @@ def register_sub_session_manager(fn) -> None:
     """Called once by SubSessionManager to provide the spawn hook."""
     global _sub_session_spawn
     _sub_session_spawn = fn
+
+
+def register_event_bus(bus) -> None:
+    """Called once by main.py to provide the event bus."""
+    global _event_bus
+    _event_bus = bus
 
 
 def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
@@ -628,6 +637,10 @@ def _tool_task(inputs: dict, thread_id: Optional[str] = None,
                 )
                 database.update_task(task_id, apscheduler_job_id=task_id)
 
+            if _event_bus:
+                _event_bus.emit("task.created", task_id=task_id,
+                                content=content[:200],
+                                schedule_type=schedule_type)
             result = {"status": "ok", "task_id": task_id}
             if schedule_desc:
                 result["schedule"] = schedule_desc
@@ -645,6 +658,8 @@ def _tool_task(inputs: dict, thread_id: Optional[str] = None,
             if task and task.get("apscheduler_job_id") and _task_scheduler_remove:
                 _task_scheduler_remove(task_id)
             ok = database.complete_task(task_id, reason=reason, thread_id=effective_scope)
+            if ok and _event_bus:
+                _event_bus.emit("task.completed", task_id=task_id, reason=reason[:200])
             return json.dumps({"status": "ok" if ok else "not_found", "reason": reason})
 
         elif action == "pause":
@@ -730,6 +745,8 @@ def _tool_task(inputs: dict, thread_id: Optional[str] = None,
 def _tool_append_memory(inputs: dict, **_kw) -> str:
     try:
         total_len = prompt_assembler.append_memory(inputs["entry"])
+        if _event_bus:
+            _event_bus.emit("memory.appended", entry=inputs["entry"][:200])
         return json.dumps({"status": "ok", "total_chars": total_len})
     except Exception as exc:  # noqa: BLE001
         logger.exception("append_memory failed")
@@ -745,6 +762,8 @@ def _tool_add_skill(inputs: dict, **_kw) -> str:
             inputs["documentation"],
             summary=inputs.get("summary"),
         )
+        if _event_bus:
+            _event_bus.emit("skill.added", skill_name=inputs["skill_name"])
         return json.dumps({"status": "ok", "skill": inputs["skill_name"]})
     except Exception as exc:  # noqa: BLE001
         logger.exception("add_skill failed")

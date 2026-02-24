@@ -27,6 +27,7 @@ from wintermute.infra import prompt_loader
 
 if TYPE_CHECKING:
     from wintermute.core.llm_thread import BackendPool
+    from wintermute.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -263,14 +264,34 @@ class DreamingLoop:
     then — no APScheduler dependency, no persistence needed.
     """
 
+    # Number of memory appends before considering an early consolidation.
+    _EARLY_TRIGGER_THRESHOLD = 50
+
     def __init__(self, config: DreamingConfig,
-                 pool: "BackendPool") -> None:
+                 pool: "BackendPool",
+                 event_bus: "Optional[EventBus]" = None) -> None:
         self._cfg = config
         self._pool = pool
+        self._event_bus = event_bus
         self._running = False
+        self._memory_append_count = 0
+        self._event_bus_subs: list[str] = []
+
+    async def _on_memory_appended(self, event) -> None:
+        """Track memory appends; trigger early consolidation if threshold exceeded."""
+        self._memory_append_count += 1
+        if self._memory_append_count >= self._EARLY_TRIGGER_THRESHOLD:
+            logger.info("Dreaming: %d memory appends — triggering early consolidation",
+                         self._memory_append_count)
+            self._memory_append_count = 0
+            await self._fire()
 
     async def run(self) -> None:
         self._running = True
+        if self._event_bus:
+            sub_id = self._event_bus.subscribe("memory.appended", self._on_memory_appended,
+                                                debounce_ms=5000)
+            self._event_bus_subs.append(sub_id)
         target = dt_time(self._cfg.hour, self._cfg.minute)
         logger.info("Dreaming loop started (target=%02d:%02d %s, model=%s)",
                      target.hour, target.minute, self._cfg.timezone,
@@ -285,6 +306,10 @@ class DreamingLoop:
 
     def stop(self) -> None:
         self._running = False
+        if self._event_bus:
+            for sub_id in self._event_bus_subs:
+                self._event_bus.unsubscribe(sub_id)
+            self._event_bus_subs.clear()
 
     async def _fire(self) -> None:
         if not self._pool.enabled:
@@ -292,8 +317,12 @@ class DreamingLoop:
             return
         logger.info("Dreaming: starting nightly consolidation (model=%s)",
                      self._pool.primary.model)
+        if self._event_bus:
+            self._event_bus.emit("dreaming.started")
         try:
             await run_dream_cycle(pool=self._pool)
+            if self._event_bus:
+                self._event_bus.emit("dreaming.completed")
             logger.info("Dreaming: nightly consolidation complete")
         except Exception as exc:  # noqa: BLE001
             logger.exception("Dreaming: nightly consolidation failed: %s", exc)

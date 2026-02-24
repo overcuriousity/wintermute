@@ -74,6 +74,10 @@ from wintermute.core import nl_translator
 from wintermute import tools as tool_module
 from wintermute.core.llm_thread import BackendPool, ContextTooLargeError
 
+from typing import TYPE_CHECKING as _TYPE_CHECKING
+if _TYPE_CHECKING:
+    from wintermute.infra.event_bus import EventBus
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 300       # seconds per hop
@@ -180,6 +184,7 @@ class SubSessionManager:
         turing_protocol_validators: Optional[dict] = None,
         nl_translation_pool: Optional[BackendPool] = None,
         nl_translation_config: Optional[dict] = None,
+        event_bus: "Optional[EventBus]" = None,
     ) -> None:
         # Capture the running event loop so that spawn() (which is synchronous
         # and may be called from a thread-pool worker via run_in_executor) can
@@ -192,6 +197,7 @@ class SubSessionManager:
         self._tp_validators = turing_protocol_validators
         self._nl_translation_pool = nl_translation_pool
         self._nl_translation_config = nl_translation_config or {}
+        self._event_bus = event_bus
         self._states: dict[str, SubSessionState] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         # DAG workflow tracking
@@ -632,6 +638,10 @@ class SubSessionManager:
 
         self._loop.call_soon_threadsafe(_create_task)
 
+        if self._event_bus:
+            self._event_bus.emit("sub_session.started", session_id=session_id,
+                                 objective=node.objective[:200],
+                                 parent_thread_id=node.parent_thread_id)
         logger.info(
             "Sub-session %s spawned (parent=%s mode=%s timeout=%ds depth=%d nest=%d)",
             session_id, node.parent_thread_id, node.system_prompt_mode,
@@ -873,6 +883,9 @@ class SubSessionManager:
             state.result = result
             state.completed_at = datetime.now(timezone.utc).isoformat()
             await self._persist_outcome(state, "completed", _time.monotonic() - _start_time)
+            if self._event_bus:
+                self._event_bus.emit("sub_session.completed", session_id=state.session_id,
+                                     objective=state.objective[:200])
             logger.info("Sub-session %s completed (%d chars)", state.session_id, len(result or ""))
             await self._report(state, f"[SUB-SESSION {state.session_id} RESULT]\n\n{result}")
             await self._resolve_dependents(state.session_id)
@@ -983,6 +996,9 @@ class SubSessionManager:
                 )
             except Exception:
                 pass
+            if self._event_bus:
+                self._event_bus.emit("sub_session.failed", session_id=state.session_id,
+                                     error=str(exc)[:200])
             msg = f"[SUB-SESSION {state.session_id} FAILED] {exc}"
             logger.exception("Sub-session %s failed", state.session_id)
             await self._report(state, msg)
@@ -1493,6 +1509,9 @@ class SubSessionManager:
                         pass
                     # Track progress on state so the timeout handler can report
                     # and continue from it.
+                    if self._event_bus:
+                        self._event_bus.emit("tool.executed", tool=name,
+                                             thread_id=state.session_id, scope="sub_session")
                     result_preview = result[:120].replace("\n", " ")
                     state.tool_calls_log.append((name, result_preview))
                     logger.debug("Sub-session %s tool %s -> %s",

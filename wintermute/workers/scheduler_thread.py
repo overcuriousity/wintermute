@@ -34,6 +34,7 @@ from wintermute.infra import database
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager
+    from wintermute.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -88,11 +89,14 @@ class TaskScheduler:
     """
 
     def __init__(self, config: SchedulerConfig, broadcast_fn, llm_enqueue_fn,
-                 sub_session_manager: "Optional[SubSessionManager]" = None) -> None:
+                 sub_session_manager: "Optional[SubSessionManager]" = None,
+                 event_bus: "Optional[EventBus]" = None) -> None:
         self._cfg = config
         self._broadcast = broadcast_fn
         self._llm_enqueue = llm_enqueue_fn
         self._sub_sessions = sub_session_manager
+        self._event_bus = event_bus
+        self._event_bus_subs: list[str] = []
         self._scheduler: Optional[AsyncIOScheduler] = None
 
     # ------------------------------------------------------------------
@@ -119,9 +123,26 @@ class TaskScheduler:
         tool_module.register_task_scheduler(self.ensure_job, self.remove_job, self.list_jobs)
 
         self._recover_missed()
+
+        # Subscribe to task.created events to schedule new jobs immediately.
+        if self._event_bus:
+            sub_id = self._event_bus.subscribe("task.created", self._on_task_created)
+            self._event_bus_subs.append(sub_id)
+
         logger.info("[scheduler] started (timezone=%s)", self._cfg.timezone)
 
+    async def _on_task_created(self, event) -> None:
+        """React to task.created events — log for visibility."""
+        task_id = event.data.get("task_id")
+        schedule_type = event.data.get("schedule_type")
+        if task_id and schedule_type:
+            logger.info("[scheduler] Notified of new scheduled task %s (%s)", task_id, schedule_type)
+
     def stop(self) -> None:
+        if self._event_bus:
+            for sub_id in self._event_bus_subs:
+                self._event_bus.unsubscribe(sub_id)
+            self._event_bus_subs.clear()
         if self._scheduler and self._scheduler.running:
             self._scheduler.shutdown(wait=False)
             logger.info("[scheduler] stopped")
@@ -189,6 +210,8 @@ class TaskScheduler:
                           thread_id: Optional[str] = None,
                           background: bool = False) -> None:
         logger.info("Firing task %s (thread=%s, background=%s)", task_id, thread_id, background)
+        if self._event_bus:
+            self._event_bus.emit("task.fired", task_id=task_id, thread_id=thread_id)
         try:
             if ai_prompt:
                 if background:

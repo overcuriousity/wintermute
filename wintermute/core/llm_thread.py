@@ -33,6 +33,7 @@ from wintermute import tools as tool_module
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager
+    from wintermute.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +245,8 @@ class LLMThread:
                  turing_protocol_validators: "Optional[dict[str, bool]]" = None,
                  nl_translation_pool: "Optional[BackendPool]" = None,
                  nl_translation_config: "Optional[dict]" = None,
-                 seed_language: str = "en") -> None:
+                 seed_language: str = "en",
+                 event_bus: "Optional[EventBus]" = None) -> None:
         self._main_pool = main_pool
         self._compaction_pool = compaction_pool
         self._turing_protocol_pool = turing_protocol_pool
@@ -252,6 +254,7 @@ class LLMThread:
         self._nl_translation_pool = nl_translation_pool
         self._nl_translation_config = nl_translation_config or {}
         self._seed_language = seed_language
+        self._event_bus = event_bus
         # Convenience: primary config for context_size / model name lookups.
         self._cfg = main_pool.primary
         self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)
@@ -712,6 +715,8 @@ class LLMThread:
             await database.async_call(
                 database.save_message, "user", db_text, thread_id,
                 token_count=_count_tokens(db_text, self._cfg.model))
+            if self._event_bus:
+                self._event_bus.emit("message.received", thread_id=thread_id, text=db_text)
         elif is_sub_session_result:
             _se_text = f"[SYSTEM EVENT] {item.text}"
             await database.async_call(
@@ -773,6 +778,8 @@ class LLMThread:
         await database.async_call(
             database.save_message, "assistant", _assistant_text, thread_id,
             token_count=_count_tokens(_assistant_text, self._cfg.model))
+        if self._event_bus:
+            self._event_bus.emit("message.sent", thread_id=thread_id, text=_assistant_text)
 
         # Turing correction cleanup: if the re-check (at depth+1) confirms
         # the model STILL violated after the correction, the failed exchange
@@ -1090,6 +1097,8 @@ class LLMThread:
                         "arguments": tc.function.arguments,
                         "result": result,
                     })
+                    if self._event_bus:
+                        self._event_bus.emit("tool.executed", tool=name, thread_id=thread_id, scope="main")
                     try:
                         await database.async_call(
                             database.save_interaction_log,

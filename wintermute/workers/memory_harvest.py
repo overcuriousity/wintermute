@@ -30,6 +30,7 @@ from wintermute.infra import prompt_loader
 if TYPE_CHECKING:
     from wintermute.core.llm_thread import BackendPool
     from wintermute.core.sub_session import SubSessionManager
+    from wintermute.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -58,26 +59,63 @@ class MemoryHarvestLoop:
         config: MemoryHarvestConfig,
         sub_session_manager: Optional[SubSessionManager] = None,
         pool: Optional[BackendPool] = None,
+        event_bus: "Optional[EventBus]" = None,
     ) -> None:
         self._cfg = config
         self._sub_sessions = sub_session_manager
         self._pool = pool
+        self._event_bus = event_bus
         self._running = False
         # Per-thread: last harvested message id — restored from DB on startup
         self._last_harvested_id: dict[str, int] = database.load_harvest_state()
         # Threads currently being harvested (prevent overlapping runs)
         self._in_flight: set[str] = set()
+        # Per-thread message counter (incremented by event bus, reset on harvest)
+        self._msg_counts: dict[str, int] = {}
+        self._event_bus_subs: list[str] = []
+        # Pending harvest check triggered by event bus
+        self._check_event = asyncio.Event()
+
+    async def _on_message_received(self, event) -> None:
+        """Increment per-thread counter and trigger immediate check."""
+        thread_id = event.data.get("thread_id", "")
+        if thread_id.startswith("sub_"):
+            return
+        self._msg_counts[thread_id] = self._msg_counts.get(thread_id, 0) + 1
+        if self._msg_counts.get(thread_id, 0) >= self._cfg.message_threshold:
+            self._check_event.set()
+
+    async def _on_harvest_session_completed(self, event) -> None:
+        """Direct callback when a harvest sub-session finishes."""
+        # The _await_harvest coroutine handles the actual logic;
+        # this just logs for visibility.
+        session_id = event.data.get("session_id", "")
+        if session_id:
+            logger.debug("Memory harvest: notified of sub_session.completed %s", session_id)
 
     async def run(self) -> None:
         self._running = True
+        # Subscribe to events for near-immediate harvest triggering.
+        if self._event_bus:
+            sub_id = self._event_bus.subscribe("message.received", self._on_message_received)
+            self._event_bus_subs.append(sub_id)
+            sub_id = self._event_bus.subscribe("sub_session.completed", self._on_harvest_session_completed)
+            self._event_bus_subs.append(sub_id)
+        # With event bus, increase fallback poll to 300s (events trigger checks sooner).
+        fallback_poll = 300 if self._event_bus else self._cfg.poll_interval_seconds
         logger.info(
             "Memory harvest loop started (threshold=%d msgs, inactivity=%d min, poll=%ds)",
             self._cfg.message_threshold,
             self._cfg.inactivity_timeout_minutes,
-            self._cfg.poll_interval_seconds,
+            fallback_poll,
         )
         while self._running:
-            await asyncio.sleep(self._cfg.poll_interval_seconds)
+            # Wait for either the fallback poll or an event-driven trigger.
+            try:
+                await asyncio.wait_for(self._check_event.wait(), timeout=fallback_poll)
+            except asyncio.TimeoutError:
+                pass
+            self._check_event.clear()
             if not self._running:
                 break
             try:
@@ -87,6 +125,11 @@ class MemoryHarvestLoop:
 
     def stop(self) -> None:
         self._running = False
+        self._check_event.set()  # unblock the wait
+        if self._event_bus:
+            for sub_id in self._event_bus_subs:
+                self._event_bus.unsubscribe(sub_id)
+            self._event_bus_subs.clear()
 
     # ------------------------------------------------------------------
     # Core logic
@@ -197,6 +240,11 @@ class MemoryHarvestLoop:
         )
 
         self._in_flight.add(thread_id)
+        # Reset event-bus message counter for this thread.
+        self._msg_counts.pop(thread_id, None)
+
+        if self._event_bus:
+            self._event_bus.emit("harvest.started", thread_id=thread_id)
 
         session_id = self._sub_sessions.spawn(
             objective=prompt,
@@ -238,6 +286,9 @@ class MemoryHarvestLoop:
 
             if status == "completed":
                 self._last_harvested_id[thread_id] = max_id
+                if self._event_bus:
+                    self._event_bus.emit("harvest.completed", thread_id=thread_id,
+                                         session_id=session_id)
                 logger.info(
                     "Memory harvest %s completed — committed max_id=%d for thread %s",
                     session_id, max_id, thread_id,

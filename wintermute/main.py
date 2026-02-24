@@ -30,6 +30,7 @@ import yaml
 from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
+from wintermute.infra.event_bus import EventBus
 from wintermute import tools as tool_module
 from openai import AsyncOpenAI
 
@@ -379,6 +380,9 @@ async def main() -> None:
 
     shutdown = ShutdownCoordinator()
 
+    # Event bus — shared infrastructure for all components.
+    event_bus = EventBus()
+
     # Build Matrix (may be a no-op stub if not configured).
     if matrix_enabled:
         matrix_cfg = MatrixConfig(
@@ -422,7 +426,8 @@ async def main() -> None:
                     turing_protocol_validators=tp_validators,
                     nl_translation_pool=nl_translation_pool,
                     nl_translation_config=nl_translation_config,
-                    seed_language=seed_language)
+                    seed_language=seed_language,
+                    event_bus=event_bus)
 
     # Build SubSessionManager — shares the LLM backend pool, reports back via
     # enqueue_system_event so results enter the parent thread's queue.
@@ -435,9 +440,11 @@ async def main() -> None:
         turing_protocol_validators=tp_validators,
         nl_translation_pool=nl_translation_pool,
         nl_translation_config=nl_translation_config,
+        event_bus=event_bus,
     )
     llm.inject_sub_session_manager(sub_sessions)
     tool_module.register_sub_session_manager(sub_sessions.spawn)
+    tool_module.register_event_bus(event_bus)
 
     # Inject LLM into interfaces.
     if matrix:
@@ -471,6 +478,7 @@ async def main() -> None:
         broadcast_fn=broadcast,
         llm_enqueue_fn=llm.enqueue_system_event,
         sub_session_manager=sub_sessions,
+        event_bus=event_bus,
     )
 
     # Inject debug dependencies into web interface (after scheduler is built).
@@ -487,6 +495,7 @@ async def main() -> None:
             config=harvest_config,
             sub_session_manager=sub_sessions,
             pool=memory_harvest_pool,
+            event_bus=event_bus,
         )
     else:
         logger.info("Memory harvest disabled by config")
@@ -494,6 +503,7 @@ async def main() -> None:
     dreaming_loop = DreamingLoop(
         config=dreaming_cfg,
         pool=dreaming_pool,
+        event_bus=event_bus,
     )
 
     # Update checker
