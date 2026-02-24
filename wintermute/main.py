@@ -57,7 +57,11 @@ def load_config(path: Path = CONFIG_FILE) -> dict:
         print(f"ERROR: {path} not found. Copy config.yaml.example and fill in your settings.")
         sys.exit(1)
     with path.open(encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
+        config = yaml.safe_load(fh)
+        # Validate required fields
+        if not config or not isinstance(config, dict):
+            raise ValueError("Config must be a non-empty dict")
+        return config
 
 
 # ---------------------------------------------------------------------------
