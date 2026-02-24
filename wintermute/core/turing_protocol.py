@@ -152,8 +152,8 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         detection_prompt=(
             '- **phantom_tool_result**: The assistant\'s text presents specific data '
             'or claims a concrete action was completed — e.g. file contents, search '
-            'results, command output, a routine being set/scheduled, a routine '
-            'being cancelled/deleted, memory being saved, a skill being created — '
+            'results, command output, a task being created/scheduled, a task '
+            'being paused/deleted, memory being saved, a skill being created — '
             'as if **already done** during THIS exchange, AND the corresponding tool '
             '(`read_file`, `write_file`, `search_web`, `fetch_url`, `execute_shell`, '
             '`task`, `append_memory`, `add_skill`) is NOT in tool_calls_made. '
@@ -166,7 +166,7 @@ _BUILTIN_HOOKS: list[TuringHook] = [
             'its own previous errors or fabricated data — self-criticism about past '
             'turns is not a new phantom tool result. '
             'Include a "tool" field naming the specific tool that should have been '
-            'called (e.g. "agenda", "add_skill", "read_file").'
+            'called (e.g. "task", "add_skill", "read_file").'
         ),
         validator_type="programmatic",
         validator_fn_name="validate_phantom_tool_result",

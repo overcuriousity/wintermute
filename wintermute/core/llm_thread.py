@@ -491,7 +491,7 @@ class LLMThread:
                 item.future.set_result(reply)
             elif item.is_system_event and not item.future and item.turing_depth == 0:
                 # System events without a future (sub-session results,
-                # routines, /agenda commands) have no caller waiting for
+                # scheduled tasks, /tasks commands) have no caller waiting for
                 # the reply.  Broadcast the LLM's response directly so
                 # it reaches the user.
                 text_to_send = reply.text or item.text  # fallback to raw event
