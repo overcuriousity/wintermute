@@ -70,9 +70,10 @@ def setup_logging(cfg: dict) -> None:
     level = getattr(logging, level_name, logging.INFO)
 
     fmt = logging.Formatter(
-        "%(asctime)s %(levelname)-8s %(name)-20s %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S",
+        "[%(asctime)s] %(levelname)s [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
+    # Main branch uses bracket-based format
 
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(fmt)
