@@ -2,7 +2,7 @@
 Web Interface
 
 Debug panel available at /debug.  Provides a read/write inspection view of all
-running sessions, sub-sessions, scheduled jobs, and routines.
+running sessions, sub-sessions, scheduled jobs, and tasks.
 REST API under /api/debug/* is consumed by the embedded SPA.
 """
 
@@ -224,7 +224,7 @@ _DEBUG_HTML = r"""\
   .form-group select:focus,
   .form-group textarea:focus { border-color: #a8d8ea; }
   .form-group textarea { resize: vertical; min-height: 48px; }
-  /* Section headers for routines */
+  /* Section headers */
   .section-hdr {
     padding: .4rem .6rem;
     background: #0d1526;
@@ -271,11 +271,8 @@ _DEBUG_HTML = r"""\
     <button class="tab-btn" data-tab="jobs" onclick="showTab('jobs')">
       Jobs <span class="tab-count" id="cnt-jobs">0</span>
     </button>
-    <button class="tab-btn" data-tab="routines" onclick="showTab('routines')">
-      Routines <span class="tab-count" id="cnt-routines">0</span>
-    </button>
-    <button class="tab-btn" data-tab="agenda" onclick="showTab('agenda')">
-      Agenda <span class="tab-count" id="cnt-agenda">0</span>
+    <button class="tab-btn" data-tab="tasks" onclick="showTab('tasks')">
+      Tasks <span class="tab-count" id="cnt-tasks">0</span>
     </button>
     <button class="tab-btn" data-tab="memory" onclick="showTab('memory')">
       Memory <span class="tab-count" id="cnt-memory">0</span>
@@ -334,83 +331,17 @@ _DEBUG_HTML = r"""\
       </div>
     </div>
 
-    <!-- ── Routines ── -->
-    <div class="tab-panel" id="panel-routines">
-      <form id="routine-form" class="form-bar" onsubmit="createRoutine(event)">
-        <div class="form-group">
-          <label>Type</label>
-          <select name="schedule_type" onchange="onScheduleTypeChange(this.value)" required>
-            <option value="once">Once</option>
-            <option value="daily">Daily</option>
-            <option value="weekly">Weekly</option>
-            <option value="monthly">Monthly</option>
-            <option value="interval">Interval</option>
-          </select>
-        </div>
-        <div class="form-group" id="fg-at">
-          <label id="lbl-at">At (HH:MM or &ldquo;in 2 hours&rdquo;)</label>
-          <input name="at" placeholder="e.g. 09:00 / tomorrow 09:00" style="width:190px">
-        </div>
-        <div class="form-group" id="fg-dow" style="display:none">
-          <label>Day of week</label>
-          <select name="day_of_week">
-            <option value="mon">Mon</option><option value="tue">Tue</option>
-            <option value="wed">Wed</option><option value="thu">Thu</option>
-            <option value="fri">Fri</option><option value="sat">Sat</option>
-            <option value="sun">Sun</option>
-          </select>
-        </div>
-        <div class="form-group" id="fg-dom" style="display:none">
-          <label>Day of month</label>
-          <input name="day_of_month" type="number" min="1" max="31" style="width:70px" placeholder="1">
-        </div>
-        <div class="form-group" id="fg-interval" style="display:none">
-          <label>Interval (seconds)</label>
-          <input name="interval_seconds" type="number" min="1" style="width:100px" placeholder="3600">
-        </div>
-        <div class="form-group" id="fg-window" style="display:none">
-          <label>Window start (HH:MM)</label>
-          <input name="window_start" placeholder="08:00" style="width:70px">
-        </div>
-        <div class="form-group" id="fg-window-end" style="display:none">
-          <label>Window end (HH:MM)</label>
-          <input name="window_end" placeholder="20:00" style="width:70px">
-        </div>
-        <div class="form-group">
-          <label>Message</label>
-          <input name="message" placeholder="Routine text" style="width:180px" required>
-        </div>
-        <div class="form-group">
-          <label>AI prompt (optional)</label>
-          <input name="ai_prompt" placeholder="Prompt for AI when it fires" style="width:200px">
-        </div>
-        <div class="form-group" style="justify-content:flex-end">
-          <label>&nbsp;</label>
-          <label style="display:flex;align-items:center;gap:.3rem;cursor:pointer">
-            <input type="checkbox" name="background" style="width:auto"> Background
-          </label>
-        </div>
-        <div class="form-group" style="justify-content:flex-end">
-          <label>&nbsp;</label>
-          <button type="submit" class="btn btn-primary">+ Create</button>
-        </div>
-      </form>
-      <div class="scroll-area" id="routines-area">
-        <div class="empty">Loading\u2026</div>
-      </div>
-    </div>
-
-    <!-- ── Agenda ── -->
-    <div class="tab-panel" id="panel-agenda">
+    <!-- ── Tasks ── -->
+    <div class="tab-panel" id="panel-tasks">
       <div class="scroll-area">
         <table class="data-table">
           <thead>
             <tr>
-              <th>ID</th><th>Priority</th><th>Status</th><th>Content</th><th>Thread</th><th>Created</th><th>Updated</th>
+              <th>ID</th><th>Priority</th><th>Status</th><th>Content</th><th>Schedule</th><th>Thread</th><th>Created</th><th>Last Run</th><th>Runs</th>
             </tr>
           </thead>
-          <tbody id="agenda-body">
-            <tr><td colspan="7" class="empty">Loading\u2026</td></tr>
+          <tbody id="tasks-body">
+            <tr><td colspan="9" class="empty">Loading\u2026</td></tr>
           </tbody>
         </table>
       </div>
@@ -526,7 +457,6 @@ _DEBUG_HTML = r"""\
 let currentTab = 'sessions';
 let selectedSession = null;
 const _closedWorkerGroups = new Set();
-const _closedRoutines = new Set();
 let ilMaxId = 0;
 let ilMinId = null;
 let ilAllLoaded = false;
@@ -584,8 +514,7 @@ async function loadTab(name) {
       case 'sessions':    await loadSessions(); break;
       case 'workers':     await loadWorkers(); break;
       case 'jobs':        await loadJobs(); break;
-      case 'routines':   await loadRoutines(); break;
-      case 'agenda':       await loadAgenda(); break;
+      case 'tasks':      await loadTasks(); break;
       case 'memory':       await loadMemory(); break;
       case 'interactions': await loadInteractionLog(); break;
       case 'outcomes':     await loadOutcomes(); break;
@@ -612,8 +541,7 @@ function connectStream() {
     renderSessions(data.sessions || []);
     renderWorkers(data.subsessions || [], data.workflows || []);
     renderJobs(data.jobs || []);
-    renderRoutines(data.routines || {});
-    renderAgenda(data.agenda || []);
+    renderTasks(data.tasks || []);
     updateInteractionsCount(data.interactions_total, data.interactions_max_id);
     updateMemoryCount(data.memory_count);
   };
@@ -1074,100 +1002,35 @@ async function loadJobs() {
   renderJobs(d.jobs || []);
 }
 
-// ── Routines ──
-function renderRoutines(data) {
-  const active = data.active || [];
-  const completed = data.completed || [];
-  const failed = data.failed || [];
-  const cancelled = data.cancelled || [];
-  document.getElementById('cnt-routines').textContent = active.length;
-
-  const area = document.getElementById('routines-area');
-  const scrollTop = area.scrollTop;
-  area.innerHTML =
-    renderRoutineSection('active-body',    'active',    'Active',    active,    true)  +
-    renderRoutineSection('completed-body', 'completed', 'Completed', completed, false) +
-    renderRoutineSection('failed-body',    'failed',    'Failed',    failed,    false) +
-    (cancelled.length ? renderRoutineSection('cancelled-body', 'cancelled', 'Cancelled', cancelled, false) : '');
-  area.scrollTop = scrollTop;
-}
-
-async function loadRoutines() {
-  const r = await fetch('/api/debug/routines');
-  const d = await r.json();
-  renderRoutines(d);
-}
-
-function renderRoutineSection(id, sectionKey, label, routines, showActions) {
-  const isClosed = _closedRoutines.has(sectionKey);
-  return `
-    <div class="section-hdr${isClosed ? '' : ' open'}"
-         data-section-id="${esc(sectionKey)}" data-section-type="routine"
-         onclick="toggleSection(this)">
-      <span>${label} <small>(${routines.length})</small></span>
-      <span>&#9660;</span>
-    </div>
-    <div class="section-body" style="${isClosed ? 'display:none' : ''}">
-      <table class="data-table">
-        <thead><tr>
-          <th>ID</th><th>Schedule</th><th>Message</th>
-          <th>Next run</th><th>Thread</th><th>AI prompt</th>
-          ${showActions ? '<th colspan="2"></th>' : ''}
-        </tr></thead>
-        <tbody id="${id}">
-          ${routineRows(routines, showActions)}
-        </tbody>
-      </table>
-    </div>`;
-}
-
-function routineRows(routines, showActions) {
-  if (!routines.length) return `<tr><td colspan="${showActions ? 8 : 6}" class="empty">None</td></tr>`;
-  return routines.map(rem => {
-    // Store serialised routine on a data attribute to avoid inline JS quoting issues.
-    const dataRem = esc(JSON.stringify(rem));
-    return `<tr>
-    <td class="mono">${esc(rem.id)}</td>
-    <td class="dim">${esc(rem.schedule)}</td>
-    <td class="trunc" title="${esc(rem.message)}">${esc(rem.message.slice(0, 60))}${rem.message.length > 60 ? '\u2026' : ''}</td>
-    <td class="dim" style="white-space:nowrap">${rem.next_run ? fmtTime(rem.next_run) : '\u2014'}</td>
-    <td class="mono dim">${esc(rem.thread_id || 'system')}</td>
-    <td class="trunc dim" title="${esc(rem.ai_prompt || '')}">${esc((rem.ai_prompt || '\u2014').slice(0, 40))}</td>
-    ${showActions ? `
-    <td><button class="btn btn-sm" data-rem="${dataRem}" onclick="editRoutine(JSON.parse(this.dataset.rem))">Edit</button></td>
-    <td><button class="btn btn-danger btn-sm" data-id="${esc(rem.id)}" onclick="deleteRoutine(this.dataset.id)">Delete</button></td>
-    ` : ''}
-  </tr>`;
-  }).join('');
-}
-
-// ── Agenda ──
-function renderAgenda(items) {
-  document.getElementById('cnt-agenda').textContent = items.filter(i => i.status === 'active').length;
-  const tbody = document.getElementById('agenda-body');
+// ── Tasks ──
+function renderTasks(items) {
+  document.getElementById('cnt-tasks').textContent = items.filter(i => i.status === 'active').length;
+  const tbody = document.getElementById('tasks-body');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty">No agenda items</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty">No tasks</td></tr>';
     return;
   }
   const priorityLabel = p => p <= 1 ? 'P1 \u2605\u2605\u2605' : p <= 2 ? 'P2 \u2605\u2605' : p <= 3 ? 'P3 \u2605' : 'P' + p;
   tbody.innerHTML = items.map(it => {
-    const statusColor = it.status === 'active' ? '#4caf8a' : '#888';
+    const statusColor = it.status === 'active' ? '#4caf8a' : it.status === 'paused' ? '#f0ad4e' : '#888';
     return `<tr>
       <td class="mono">${esc(String(it.id))}</td>
       <td class="dim">${esc(priorityLabel(it.priority))}</td>
       <td style="color:${statusColor}">${esc(it.status)}</td>
-      <td class="trunc" title="${esc(it.content)}">${esc(it.content.slice(0, 120))}${it.content.length > 120 ? '\u2026' : ''}</td>
+      <td class="trunc" title="${esc(it.content)}">${esc(it.content.slice(0, 100))}${it.content.length > 100 ? '\u2026' : ''}</td>
+      <td class="dim">${esc(it.schedule_desc || '\u2014')}</td>
       <td class="mono dim">${esc(it.thread_id || '\u2014')}</td>
       <td class="dim" style="white-space:nowrap">${it.created ? new Date(it.created * 1000).toLocaleString() : '\u2014'}</td>
-      <td class="dim" style="white-space:nowrap">${it.updated ? new Date(it.updated * 1000).toLocaleString() : '\u2014'}</td>
+      <td class="dim" style="white-space:nowrap">${it.last_run_at ? new Date(it.last_run_at * 1000).toLocaleString() : '\u2014'}</td>
+      <td class="dim">${it.run_count || 0}</td>
     </tr>`;
   }).join('');
 }
 
-async function loadAgenda() {
-  const r = await fetch('/api/debug/agenda');
+async function loadTasks() {
+  const r = await fetch('/api/debug/tasks');
   const d = await r.json();
-  renderAgenda(d.items || []);
+  renderTasks(d.items || []);
 }
 
 function toggleSection(hdr) {
@@ -1177,112 +1040,8 @@ function toggleSection(hdr) {
   const id   = hdr.dataset.sectionId;
   const type = hdr.dataset.sectionType;
   if (!id) return;
-  const set = type === 'workergroup' ? _closedWorkerGroups : _closedRoutines;
+  const set = _closedWorkerGroups;
   hdr.classList.contains('open') ? set.delete(id) : set.add(id);
-}
-
-async function deleteRoutine(jobId) {
-  if (!confirm('Delete routine ' + jobId + '?')) return;
-  const r = await fetch('/api/debug/routines/' + encodeURIComponent(jobId), {method: 'DELETE'});
-  const data = await r.json();
-  if (data.ok) await loadRoutines();
-  else alert('Error: ' + (data.error || JSON.stringify(data)));
-}
-
-// Show/hide fields based on schedule type.
-function onScheduleTypeChange(val) {
-  document.getElementById('fg-at').style.display         = val === 'interval' ? 'none' : '';
-  document.getElementById('fg-dow').style.display        = val === 'weekly'   ? '' : 'none';
-  document.getElementById('fg-dom').style.display        = val === 'monthly'  ? '' : 'none';
-  document.getElementById('fg-interval').style.display   = val === 'interval' ? '' : 'none';
-  document.getElementById('fg-window').style.display     = val === 'interval' ? '' : 'none';
-  document.getElementById('fg-window-end').style.display = val === 'interval' ? '' : 'none';
-  const lbl = document.getElementById('lbl-at');
-  if (lbl) lbl.textContent = val === 'once'
-    ? 'At (HH:MM or \u201cin 2 hours\u201d)'
-    : 'Time (HH:MM)';
-}
-
-// Fill the create form with existing values so the user can edit and re-submit.
-// Stores the old job_id; on submit the old routine is deleted after creating the new one.
-let _editReplaceId = null;
-
-function editRoutine(rem) {
-  const form = document.getElementById('routine-form');
-  const stype = rem.type || 'once';
-  form.schedule_type.value    = stype;
-  form.message.value          = rem.message   || '';
-  form.ai_prompt.value        = rem.ai_prompt || '';
-  form.background.checked = !rem.thread_id;
-  onScheduleTypeChange(stype);
-
-  // Populate type-specific fields from the registry schedule string where possible.
-  // The schedule field is a human-readable string built by _describe_schedule().
-  if (stype === 'interval') {
-    // "every 3600s from 08:00 to 20:00"
-    const mSec = (rem.schedule || '').match(/every\s+(\d+)s/);
-    if (mSec) form.interval_seconds.value = mSec[1];
-    const mWin = (rem.schedule || '').match(/from\s+(\d{1,2}:\d{2})\s+to\s+(\d{1,2}:\d{2})/);
-    if (mWin) { form.window_start.value = mWin[1]; form.window_end.value = mWin[2]; }
-  } else {
-    // "daily at 09:00" / "weekly on mon at 09:00" / "monthly on day 1 at 09:00" / "once at ..."
-    const mAt = (rem.schedule || '').match(/at\s+(.+)$/);
-    if (mAt) form.at.value = mAt[1].trim();
-    if (stype === 'weekly') {
-      const mDow = (rem.schedule || '').match(/on\s+(mon|tue|wed|thu|fri|sat|sun)/);
-      if (mDow) form.day_of_week.value = mDow[1];
-    }
-    if (stype === 'monthly') {
-      const mDom = (rem.schedule || '').match(/on day\s+(\d+)/);
-      if (mDom) form.day_of_month.value = mDom[1];
-    }
-  }
-
-  _editReplaceId = rem.id;
-  form.querySelector('[type=submit]').textContent = 'Save (replaces ' + rem.id + ')';
-  form.scrollIntoView({behavior: 'smooth'});
-}
-
-async function createRoutine(e) {
-  e.preventDefault();
-  const form = e.target;
-  const stype = form.schedule_type.value;
-  const payload = {
-    schedule_type: stype,
-    message:       form.message.value.trim(),
-  };
-  const at = form.at.value.trim();
-  if (at && stype !== 'interval') payload.at = at;
-  if (stype === 'weekly')   payload.day_of_week   = form.day_of_week.value;
-  if (stype === 'monthly')  payload.day_of_month  = parseInt(form.day_of_month.value, 10) || 1;
-  if (stype === 'interval') {
-    payload.interval_seconds = parseInt(form.interval_seconds.value, 10);
-    const ws = form.window_start.value.trim();
-    const we = form.window_end.value.trim();
-    if (ws) payload.window_start = ws;
-    if (we) payload.window_end   = we;
-  }
-  const aiPrompt = form.ai_prompt.value.trim();
-  if (aiPrompt) payload.ai_prompt = aiPrompt;
-  if (form.background.checked) payload.background = true;
-
-  const r = await fetch('/api/debug/routines', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(payload),
-  });
-  const data = await r.json();
-  if (data.error) { alert('Error: ' + data.error); return; }
-
-  // If editing an existing routine, delete the old one now.
-  if (_editReplaceId) {
-    await fetch('/api/debug/routines/' + encodeURIComponent(_editReplaceId), {method: 'DELETE'});
-    _editReplaceId = null;
-    form.querySelector('[type=submit]').textContent = '+ Create';
-  }
-  form.reset();
-  onScheduleTypeChange('once');
-  await loadRoutines();
 }
 // ── Interaction Log ──
 function _makeILRow(e) {
@@ -1659,10 +1418,7 @@ class WebInterface:
         app.router.add_get("/api/debug/jobs",                           self._api_jobs)
         app.router.add_get("/api/debug/config",                          self._api_config)
         app.router.add_get("/api/debug/system-prompt",                  self._api_system_prompt)
-        app.router.add_get("/api/debug/routines",                      self._api_routines)
-        app.router.add_post("/api/debug/routines",                     self._api_routine_create)
-        app.router.add_delete("/api/debug/routines/{job_id}",          self._api_routine_delete)
-        app.router.add_get("/api/debug/agenda",                           self._api_agenda)
+        app.router.add_get("/api/debug/tasks",                          self._api_tasks)
         app.router.add_get("/api/debug/memory",                           self._api_memory)
         app.router.add_get("/api/debug/interaction-log",                 self._api_interaction_log)
         app.router.add_get("/api/debug/interaction-log/{id}",            self._api_interaction_log_entry)
@@ -1929,44 +1685,12 @@ class WebInterface:
         return self._json({"jobs": self._scheduler.list_jobs()})
 
     # ------------------------------------------------------------------
-    # Debug REST API — routines
+    # Debug REST API — tasks
     # ------------------------------------------------------------------
 
-    async def _api_routines(self, _request: web.Request) -> web.Response:
-        raw = tool_module.execute_tool("list_routines", {})
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            data = {"active": [], "completed": [], "failed": []}
-        return self._json(data)
-
-    async def _api_routine_create(self, request: web.Request) -> web.Response:
-        try:
-            payload = await request.json()
-        except Exception as exc:  # noqa: BLE001
-            return self._json({"error": f"Invalid JSON: {exc}"})
-        raw = tool_module.execute_tool("set_routine", payload)
-        try:
-            result = json.loads(raw)
-        except json.JSONDecodeError:
-            result = {"raw": raw}
-        return self._json(result)
-
-    async def _api_routine_delete(self, request: web.Request) -> web.Response:
-        job_id = request.match_info["job_id"]
-        if self._scheduler is None:
-            return self._json({"error": "Scheduler not available"})
-        ok = self._scheduler.delete_routine(job_id)
-        return self._json({"ok": ok, "job_id": job_id})
-
-
-    # ------------------------------------------------------------------
-    # Agenda
-    # ------------------------------------------------------------------
-
-    async def _api_agenda(self, _request: web.Request) -> web.Response:
+    async def _api_tasks(self, _request: web.Request) -> web.Response:
         from wintermute.infra import database
-        items = await database.async_call(database.list_agenda_items, "all")
+        items = await database.async_call(database.list_tasks, "all")
         return self._json({"items": items, "count": len(items)})
 
     # ------------------------------------------------------------------
@@ -2099,15 +1823,8 @@ class WebInterface:
         # Scheduled jobs
         jobs = self._scheduler.list_jobs() if self._scheduler else []
 
-        # Routines
-        raw = tool_module.execute_tool("list_routines", {})
-        try:
-            routines = json.loads(raw)
-        except json.JSONDecodeError:
-            routines = {"active": [], "completed": [], "failed": []}
-
-        # Agenda items (all statuses for the debug view)
-        agenda_items = await database.async_call(database.list_agenda_items, "all")
+        # Tasks (all statuses for the debug view)
+        task_items = await database.async_call(database.list_tasks, "all")
 
         # Interaction log counts
         interactions_total = await database.async_call(database.count_interaction_log)
@@ -2118,8 +1835,7 @@ class WebInterface:
             "subsessions": subsessions,
             "workflows": workflows,
             "jobs": jobs,
-            "routines": routines,
-            "agenda": agenda_items,
+            "tasks": task_items,
             "interactions_total": interactions_total,
             "interactions_max_id": interactions_max_id,
             "memory_count": self._get_memory_count(),

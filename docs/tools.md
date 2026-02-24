@@ -10,7 +10,7 @@ Tools are grouped into three categories that control which tools are available i
 |----------|-------------|-------|
 | **execution** | All agents | `execute_shell`, `read_file`, `write_file` |
 | **research** | All agents | `search_web`, `fetch_url` |
-| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `set_routine`, `append_memory`, `agenda`, `add_skill`, `list_routines`, `delete_routine` |
+| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `task`, `append_memory`, `add_skill` |
 
 ## Tool Filtering by Sub-session Mode
 
@@ -32,7 +32,7 @@ Named tool profiles provide config-driven presets for common sub-session worker 
 | `researcher` | `search_web`, `fetch_url` | `minimal` |
 | `file_worker` | `execute_shell`, `read_file`, `write_file` | `minimal` |
 | `full_worker` | `execute_shell`, `read_file`, `write_file`, `search_web`, `fetch_url` | `minimal` |
-| `orchestrator` | `spawn_sub_session`, `agenda`, `append_memory`, `set_routine`, `add_skill`, `list_routines`, `delete_routine` | `full` |
+| `orchestrator` | `spawn_sub_session`, `task`, `append_memory`, `add_skill` | `full` |
 
 ### Custom Profiles
 
@@ -130,24 +130,29 @@ Maximum nesting depth: 2 (main -> sub -> sub-sub).
 
 **Dependency safety:** Unknown session IDs in `depends_on` are automatically stripped with a warning log, preventing permanent deadlocks from hallucinated or mistyped IDs.
 
-#### `set_routine`
+#### `task`
 
-Schedule a routine with optional AI inference on trigger.
+Manage tasks — tracked goals and scheduled actions. Tasks are stored in SQLite. Tasks can optionally have schedules — scheduled tasks with `ai_prompt` run autonomous sub-sessions when the schedule fires.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `message` | string | yes | Human-readable routine text |
-| `ai_prompt` | string | no | Prompt for AI inference when routine fires |
-| `schedule_type` | enum | yes | `"once"`, `"daily"`, `"weekly"`, `"monthly"`, `"interval"` |
+| `action` | enum | yes | `"add"`, `"update"`, `"complete"`, `"pause"`, `"resume"`, `"delete"`, `"list"` |
+| `content` | string | no | Task text (for add/update) |
+| `task_id` | integer | no | Task ID (for update/complete/pause/resume/delete) |
+| `priority` | integer | no | 1 (urgent) to 10 (low), default 5 |
+| `status` | enum | no | Filter for list: `"active"` (default), `"completed"`, `"paused"`, `"all"` |
+| `reason` | string | no | Required for `complete`: evidence that the task is genuinely finished |
+| `schedule_type` | enum | no | `"once"`, `"daily"`, `"weekly"`, `"monthly"`, `"interval"` |
 | `at` | string | no | ISO-8601 datetime, natural language, or HH:MM |
 | `day_of_week` | enum | no | Required for `weekly`: `mon`-`sun` |
 | `day_of_month` | integer | no | Required for `monthly`: 1-31 |
 | `interval_seconds` | integer | no | Required for `interval` |
 | `window_start` | string | no | For `interval`: earliest fire time (HH:MM) |
 | `window_end` | string | no | For `interval`: latest fire time (HH:MM) |
+| `ai_prompt` | string | no | Prompt for AI inference when schedule fires |
 | `background` | boolean | no | Only valid with `ai_prompt`. When true, the AI task runs silently without delivering results to chat. Use for autonomous maintenance tasks. |
 
-Returns: `status`, `job_id`
+Returns vary by action. `add` returns `status`, `task_id`. `list` returns tasks grouped by status.
 
 #### `append_memory`
 
@@ -158,19 +163,6 @@ Append a new fact to MEMORIES.txt. Preferred for day-to-day memory storage — n
 | `entry` | string | yes | The fact or note to append (one logical entry) |
 
 Returns: `status`, `total_chars`
-
-#### `agenda`
-
-Manage active agenda items (working memory for ongoing tasks). Agenda items are stored in SQLite — no file rewrites needed.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `action` | enum | yes | `"add"`, `"complete"`, `"list"`, `"update"` |
-| `content` | string | no | Item text (for add/update) |
-| `item_id` | integer | no | Item ID (for complete/update) |
-| `priority` | integer | no | 1 (urgent) to 10 (low), default 5 |
-| `status` | enum | no | Filter for list: `"active"` (default), `"completed"`, `"all"` |
-| `reason` | string | no | Required for `complete`: evidence that the item is genuinely finished |
 
 #### `add_skill`
 
@@ -184,8 +176,8 @@ Create or overwrite a skill documentation file in `data/skills/`. A summary appe
 
 ## NL Translation Mode
 
-When `nl_translation.enabled: true` in config, `set_routine`,
-`spawn_sub_session`, `add_skill`, and `agenda` are presented to the main LLM with
+When `nl_translation.enabled: true` in config, `task`,
+`spawn_sub_session`, and `add_skill` are presented to the main LLM with
 simplified single-field schemas. Instead of filling in all structured
 parameters, the LLM writes a plain-English description:
 
@@ -194,14 +186,13 @@ parameters, the LLM writes a plain-English description:
 ```
 
 A dedicated translator LLM then expands this into the full structured
-arguments (`schedule_type`, `at`, `message`, etc. for routines;
-`skill_name`, `summary`, `documentation` for skills;
-`action`, `item_id`, `content`, etc. for agenda) before execution.
+arguments (`action`, `content`, `schedule_type`, `at`, etc. for tasks;
+`skill_name`, `summary`, `documentation` for skills) before execution.
 The tool result includes a `[Translated to: ...]` prefix showing the
 expanded arguments.
 
 The translator can return JSON arrays for multi-item requests (e.g.
-"set three routines" or "research X then summarize it") — each item
+"add three tasks" or "research X then summarize it") — each item
 is executed separately and results are combined.
 
 If the description is ambiguous, the translator returns a clarification
@@ -209,19 +200,3 @@ request that the main LLM relays to the user.
 
 This feature is complementary to the Turing Protocol's validation hooks,
 which validate the *translated* structured arguments.
-
-#### `list_routines`
-
-Returns active, completed, and failed routines. No parameters. History is capped at the 200 most recent entries per category.
-
-Returns: `active[]`, `completed[]`, `failed[]`
-
-#### `delete_routine`
-
-Cancel and remove a scheduled routine by its job ID.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `job_id` | string | yes | The job ID returned by `set_routine` or `list_routines` |
-
-Returns: `status`, `job_id`

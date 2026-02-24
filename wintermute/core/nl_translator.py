@@ -2,10 +2,10 @@
 Natural-Language Tool Call Translator.
 
 Small/weak LLMs frequently produce malformed arguments for complex tools
-like ``set_routine`` (11 properties) and ``spawn_sub_session`` (DAG
-semantics).  This module presents those tools as single-field "describe
-in English" schemas to the main LLM, then uses a dedicated translator
-LLM to expand the description into structured arguments.
+like ``task`` (many properties) and ``spawn_sub_session`` (DAG semantics).
+This module presents those tools as single-field "describe in English"
+schemas to the main LLM, then uses a dedicated translator LLM to expand
+the description into structured arguments.
 
 Complementary to the existing ``tool_schema_validation`` Turing Protocol
 hook — the Turing hook validates the *translated* args, not the raw
@@ -27,54 +27,57 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Tools that have NL translation variants.
-NL_TOOLS: frozenset[str] = frozenset({"set_routine", "spawn_sub_session", "add_skill", "agenda"})
+NL_TOOLS: frozenset[str] = frozenset({"task", "spawn_sub_session", "add_skill"})
 
 # Maps tool name -> prompt template filename.
 _PROMPT_MAP: dict[str, str] = {
-    "set_routine": "NL_TRANSLATOR_SET_ROUTINE.txt",
+    "task": "NL_TRANSLATOR_TASK.txt",
     "spawn_sub_session": "NL_TRANSLATOR_SPAWN_SUB_SESSION.txt",
     "add_skill": "NL_TRANSLATOR_ADD_SKILL.txt",
-    "agenda": "NL_TRANSLATOR_AGENDA.txt",
 }
 
 
-_AGENDA_LIST_PATTERNS: dict[str, "dict | None"] = {
+_TASK_LIST_PATTERNS: dict[str, "dict | None"] = {
     # Maps normalised description → structured args.
     # Value None means "default list" (active items).
     "list": None,
     "show": None,
     "show items": None,
     "list items": None,
+    "show tasks": None,
+    "list tasks": None,
     "show active": None,
     "list active": None,
-    "show active items": None,
-    "list active items": None,
-    "show all active items": None,
-    "show me all active items": None,
-    "show me all agenda items": {"action": "list", "status": "all"},
+    "show active tasks": None,
+    "list active tasks": None,
+    "show all active tasks": None,
+    "show me all active tasks": None,
+    "show me all tasks": {"action": "list", "status": "all"},
     "list all": {"action": "list", "status": "all"},
     "show all": {"action": "list", "status": "all"},
-    "show all items": {"action": "list", "status": "all"},
-    "list all items": {"action": "list", "status": "all"},
+    "show all tasks": {"action": "list", "status": "all"},
+    "list all tasks": {"action": "list", "status": "all"},
     "show everything": {"action": "list", "status": "all"},
     "list everything": {"action": "list", "status": "all"},
     "show completed": {"action": "list", "status": "completed"},
     "list completed": {"action": "list", "status": "completed"},
-    "show completed items": {"action": "list", "status": "completed"},
-    "list completed items": {"action": "list", "status": "completed"},
+    "show completed tasks": {"action": "list", "status": "completed"},
+    "list completed tasks": {"action": "list", "status": "completed"},
+    "show paused": {"action": "list", "status": "paused"},
+    "list paused": {"action": "list", "status": "paused"},
 }
 
-_AGENDA_LIST_DEFAULT: dict = {"action": "list"}
+_TASK_LIST_DEFAULT: dict = {"action": "list"}
 
 
-def _agenda_list_fastpath(description: str) -> "dict | None":
-    """Return structured args if *description* matches a known agenda-list
+def _task_list_fastpath(description: str) -> "dict | None":
+    """Return structured args if *description* matches a known task-list
     pattern, or ``None`` to fall through to the LLM translator."""
     normalised = re.sub(r"[.!?]+$", "", description.strip()).strip().lower()
-    result = _AGENDA_LIST_PATTERNS.get(normalised, _SENTINEL)
+    result = _TASK_LIST_PATTERNS.get(normalised, _SENTINEL)
     if result is _SENTINEL:
         return None
-    return result if result is not None else _AGENDA_LIST_DEFAULT.copy()
+    return result if result is not None else _TASK_LIST_DEFAULT.copy()
 
 
 _SENTINEL = object()
@@ -158,11 +161,11 @@ async def translate_nl_tool_call(
     A dict with an ``"error"`` key signals ambiguity that needs user
     clarification.
     """
-    # Fast-path: agenda list patterns bypass the LLM entirely.
-    if tool_name == "agenda":
-        fast = _agenda_list_fastpath(description)
+    # Fast-path: task list patterns bypass the LLM entirely.
+    if tool_name == "task":
+        fast = _task_list_fastpath(description)
         if fast is not None:
-            logger.debug("NL translator fast-path for agenda: %r -> %s", description, fast)
+            logger.debug("NL translator fast-path for task: %r -> %s", description, fast)
             return fast
 
     prompt_file = _PROMPT_MAP.get(tool_name)

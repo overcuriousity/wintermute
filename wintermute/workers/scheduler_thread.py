@@ -1,27 +1,22 @@
 """
-Routine Scheduler
+Task Schedule Engine
 
-Uses APScheduler with a persistent SQLite job store so routines survive
+Uses APScheduler with a persistent SQLite job store so scheduled tasks survive
 restarts.  At startup it detects missed executions and runs them immediately.
 
-The ``set_routine`` and ``list_routines`` functions are injected into the
-tools module so the LLM can schedule and query jobs through the normal tool
-interface.
+The ``ensure_job``, ``remove_job``, and ``list_jobs`` functions are injected
+into the tools module so the unified ``task`` tool can manage schedules.
 
 APScheduler's SQLite store is the single source of truth for active jobs.
-A separate JSON file (data/routine_history.json) keeps an append-only log
-of completed and failed routines for display purposes only.
+Inline execution tracking (last_run_at, run_count, last_result_summary) is
+stored in the tasks table in conversation.db.
 
 Natural-language time parsing is handled by a simple heuristic + dateutil.
-For production use you might replace this with a dedicated NLP parser.
 """
 
 import json
 import logging
 import re
-import threading
-import uuid
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -35,6 +30,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from dateutil import parser as dateutil_parser
 
 from wintermute import tools as tool_module
+from wintermute.infra import database
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager
@@ -42,7 +38,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path("data")
-HISTORY_FILE = DATA_DIR / "routine_history.json"
 SCHEDULER_DB = "data/scheduler.db"
 
 # Module-level reference so the job function below can be pickled by APScheduler.
@@ -50,25 +45,32 @@ SCHEDULER_DB = "data/scheduler.db"
 _instance: Optional["RoutineScheduler"] = None
 
 
+async def _fire_task_job(task_id: str, message: str, ai_prompt: Optional[str],
+                          thread_id: Optional[str] = None,
+                          **_extra) -> None:
+    """
+    Module-level coroutine used as the APScheduler job callable.
+    Must be at module level so pickle can serialize it by reference.
+
+    **_extra absorbs metadata kwargs stored alongside the job.
+    """
+    if _instance is not None:
+        await _instance._fire_task(task_id, message, ai_prompt, thread_id)
+
+
+# Backward-compat aliases: jobs persisted in scheduler.db before the
+# routine→task rename reference these names. APScheduler resolves
+# callables by dotted name at load time, so the aliases must exist.
 async def _fire_routine_job(job_id: str, message: str, ai_prompt: Optional[str],
                              thread_id: Optional[str] = None,
                              **_extra) -> None:
-    """
-    Module-level coroutine used as the APScheduler job callable.
-    Must be at module level so pickle can serialize it by reference
-    (pickle only stores the dotted name, not the function body).
-
-    **_extra absorbs metadata kwargs (schedule, created, schedule_type)
-    stored alongside the job for query purposes.
-    """
     if _instance is not None:
-        await _instance._fire_routine(job_id, message, ai_prompt, thread_id)
+        await _instance._fire_task(job_id, message, ai_prompt, thread_id)
 
-
-# Backward-compat alias: jobs persisted in scheduler.db before the
-# reminder→routine rename reference this name. APScheduler resolves
-# callables by dotted name at load time, so the alias must exist.
 _fire_reminder_job = _fire_routine_job
+
+
+from dataclasses import dataclass
 
 
 @dataclass
@@ -77,20 +79,18 @@ class SchedulerConfig:
 
 
 class RoutineScheduler:
-    """Wraps APScheduler and manages routines.
+    """Wraps APScheduler and manages task schedules.
 
     APScheduler's persistent SQLite store is the single source of truth for
-    active routines.  Metadata (schedule description, creation time) is
-    stored in the job's kwargs so it can be retrieved without a second store.
-
-    Completed/failed history is appended to a JSON log for display only.
+    active jobs.  Metadata is stored in the job's kwargs so it can be
+    retrieved without a second store.
     """
 
     def __init__(self, config: SchedulerConfig, broadcast_fn, llm_enqueue_fn,
                  sub_session_manager: "Optional[SubSessionManager]" = None) -> None:
         self._cfg = config
-        self._broadcast = broadcast_fn     # async callable(text, thread_id=None)
-        self._llm_enqueue = llm_enqueue_fn  # async callable(text, thread_id) for thread-bound events
+        self._broadcast = broadcast_fn
+        self._llm_enqueue = llm_enqueue_fn
         self._sub_sessions = sub_session_manager
         self._scheduler: Optional[AsyncIOScheduler] = None
 
@@ -111,49 +111,60 @@ class RoutineScheduler:
         )
         self._scheduler.start()
 
-        # Expose this instance so the module-level job function can reach it.
         global _instance
         _instance = self
 
-        # Register tool callables into the tools module.
-        tool_module.register_scheduler(self._schedule_routine)
-        tool_module.register_routine_lister(self.list_routines)
-        tool_module.register_routine_deleter(self.delete_routine)
+        # Register into the tools module.
+        tool_module.register_task_scheduler(self.ensure_job, self.remove_job, self.list_jobs)
 
         self._recover_missed()
-        self._migrate_legacy_registry()
-        logger.info("Routine scheduler started (timezone=%s)", self._cfg.timezone)
+        logger.info("Task scheduler started (timezone=%s)", self._cfg.timezone)
 
     def stop(self) -> None:
         if self._scheduler and self._scheduler.running:
             self._scheduler.shutdown(wait=False)
-            logger.info("Routine scheduler stopped")
+            logger.info("Task scheduler stopped")
 
     # ------------------------------------------------------------------
-    # Querying
+    # Job management (called by tools.py _tool_task)
     # ------------------------------------------------------------------
 
-    def list_routines(self) -> dict:
-        """Return a combined view: active from APScheduler + history from JSON."""
-        active = []
-        for job in self._scheduler.get_jobs():
-            kw = job.kwargs or {}
-            active.append({
-                "id":        kw.get("job_id", job.id),
-                "created":   kw.get("created"),
-                "type":      kw.get("schedule_type"),
-                "schedule":  kw.get("schedule"),
-                "message":   kw.get("message"),
-                "ai_prompt": kw.get("ai_prompt"),
-                "thread_id": kw.get("thread_id"),
-                "next_run":  job.next_run_time.isoformat() if job.next_run_time else None,
-            })
-        history = _load_history()
-        return {
-            "active":    active,
-            "completed": history.get("completed", []),
-            "failed":    history.get("failed", []),
-        }
+    def ensure_job(self, task_id: str, schedule_config: dict,
+                   ai_prompt: Optional[str] = None,
+                   thread_id: Optional[str] = None,
+                   background: bool = False) -> None:
+        """Create or update an APScheduler job for a task."""
+        trigger = self._parse_trigger(schedule_config)
+        message = database.get_task(task_id) or {}
+        content = message.get("content", task_id)
+
+        self._scheduler.add_job(
+            _fire_task_job,
+            trigger=trigger,
+            id=task_id,
+            kwargs={
+                "task_id": task_id,
+                "message": content,
+                "ai_prompt": ai_prompt,
+                "thread_id": thread_id,
+                "schedule_type": schedule_config.get("schedule_type"),
+                "schedule": _describe_schedule(schedule_config),
+                "created": datetime.now(timezone.utc).isoformat(),
+            },
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+
+        next_run = self._scheduler.get_job(task_id)
+        if next_run:
+            logger.info("Task job scheduled: %s at %s (thread=%s)",
+                        task_id, next_run.next_run_time, thread_id)
+
+    def remove_job(self, task_id: str) -> None:
+        """Remove an APScheduler job for a task."""
+        if self._scheduler.get_job(task_id) is not None:
+            self._scheduler.remove_job(task_id)
+            logger.info("Task job removed: %s", task_id)
 
     def list_jobs(self) -> list[dict]:
         """Return serialisable info about all APScheduler jobs."""
@@ -168,112 +179,64 @@ class RoutineScheduler:
             })
         return result
 
-    def delete_routine(self, job_id: str) -> bool:
-        """Remove a routine by job_id.  Returns True if found and removed."""
-        if self._scheduler.get_job(job_id) is None:
-            return False
-        self._scheduler.remove_job(job_id)
-        _append_history("cancelled", {
-            "id": job_id,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-        })
-        return True
-
-    # ------------------------------------------------------------------
-    # Scheduling
-    # ------------------------------------------------------------------
-
-    def _schedule_routine(self, inputs: dict) -> str:
-        """Called by the tools module. Parses inputs and creates the job."""
-        message       = inputs["message"]
-        ai_prompt     = inputs.get("ai_prompt")
-        schedule_type = inputs.get("schedule_type", "once")
-        thread_id     = inputs.get("thread_id")  # None for system routines
-
-        job_id = f"routine_{uuid.uuid4().hex[:8]}"
-        trigger = self._parse_trigger(inputs)
-
-        self._scheduler.add_job(
-            _fire_routine_job,
-            trigger=trigger,
-            id=job_id,
-            kwargs={
-                "job_id":        job_id,
-                "message":       message,
-                "ai_prompt":     ai_prompt,
-                "thread_id":     thread_id,
-                "schedule_type": schedule_type,
-                "schedule":      _describe_schedule(inputs),
-                "created":       datetime.now(timezone.utc).isoformat(),
-            },
-            replace_existing=True,
-            misfire_grace_time=3600,  # allow up to 1h late execution
-        )
-
-        next_run = self._scheduler.get_job(job_id).next_run_time
-        logger.info("Routine scheduled: %s at %s (thread=%s)", job_id, next_run, thread_id)
-        return job_id
-
     # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
 
-    async def _fire_routine(self, job_id: str, message: str, ai_prompt: Optional[str],
-                             thread_id: Optional[str] = None) -> None:
-        logger.info("Firing routine %s (thread=%s)", job_id, thread_id)
+    async def _fire_task(self, task_id: str, message: str, ai_prompt: Optional[str],
+                          thread_id: Optional[str] = None) -> None:
+        logger.info("Firing task %s (thread=%s)", task_id, thread_id)
         try:
             if ai_prompt:
                 if thread_id:
                     await self._llm_enqueue(
-                        f"[ROUTINE {job_id}] {ai_prompt}\n\n"
-                        f"(Original routine message: {message})",
+                        f"[TASK {task_id}] {ai_prompt}\n\n"
+                        f"(Task: {message})",
                         thread_id,
                     )
                 else:
                     if self._sub_sessions is not None:
                         self._sub_sessions.spawn(
                             objective=(
-                                f"[ROUTINE {job_id}] {ai_prompt}\n\n"
-                                f"(Original routine message: {message})"
+                                f"[TASK {task_id}] {ai_prompt}\n\n"
+                                f"(Task: {message})"
                             ),
                             parent_thread_id=None,
                             system_prompt_mode="base_only",
                         )
                     else:
                         logger.warning(
-                            "System routine %s has ai_prompt but SubSessionManager "
-                            "is not available — skipping AI execution", job_id
+                            "Task %s has ai_prompt but SubSessionManager "
+                            "is not available — skipping", task_id
                         )
             else:
                 if thread_id:
-                    await self._broadcast(f"\u23f0 Routine: {message}", thread_id)
+                    await self._broadcast(f"\u23f0 Task: {message}", thread_id)
                 else:
-                    # No thread_id and no ai_prompt — should not happen after
-                    # the tool-level fix that always injects thread_id at
-                    # creation time.  Log loudly so it's visible in the journal.
                     logger.warning(
-                        "Routine %s has no thread_id and no ai_prompt — "
-                        "message was NOT delivered: %s", job_id, message
+                        "Task %s has no thread_id and no ai_prompt — "
+                        "message was NOT delivered: %s", task_id, message
                     )
 
+            # Record execution in the tasks table.
+            try:
+                database.record_task_run(task_id, summary="executed")
+            except Exception:  # noqa: BLE001
+                logger.debug("Failed to record task run for %s", task_id)
+
             # If the job is no longer in APScheduler (one-time, now done), log it.
-            if self._scheduler.get_job(job_id) is None:
-                _append_history("completed", {
-                    "id": job_id,
-                    "message": message,
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                })
+            if self._scheduler.get_job(task_id) is None:
+                logger.info("One-time task %s completed", task_id)
+
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Routine %s failed", job_id)
-            _append_history("failed", {
-                "id": job_id,
-                "message": message,
-                "error": str(exc),
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-            })
+            logger.exception("Task %s failed", task_id)
+            try:
+                database.record_task_run(task_id, summary=f"failed: {exc}")
+            except Exception:  # noqa: BLE001
+                pass
             try:
                 if thread_id:
-                    await self._broadcast(f"\u274c Routine {job_id} failed: {exc}", thread_id)
+                    await self._broadcast(f"\u274c Task {task_id} failed: {exc}", thread_id)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -287,35 +250,6 @@ class RoutineScheduler:
             if job.next_run_time is None:
                 continue
             logger.debug("Loaded job %s, next_run=%s", job.id, job.next_run_time)
-
-    # ------------------------------------------------------------------
-    # Legacy migration
-    # ------------------------------------------------------------------
-
-    def _migrate_legacy_registry(self) -> None:
-        """One-time migration from the old dual-write routines.json.
-
-        Moves completed/failed entries to the new history file and removes
-        the legacy file.
-        """
-        legacy = DATA_DIR / "routines.json"
-        if not legacy.exists():
-            return
-        try:
-            old = json.loads(legacy.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return
-        migrated = False
-        for bucket in ("completed", "failed", "cancelled"):
-            entries = old.get(bucket, [])
-            if entries:
-                history = _load_history()
-                history.setdefault(bucket, []).extend(entries)
-                _save_history(history)
-                migrated = True
-        if migrated:
-            legacy.unlink(missing_ok=True)
-            logger.info("Migrated legacy routines.json to routine_history.json")
 
     # ------------------------------------------------------------------
     # Time parsing
@@ -433,41 +367,3 @@ def _describe_schedule(inputs: dict) -> str:
             desc += f" from {ws} to {we}"
         return desc
     return str(inputs)
-
-
-# ---------------------------------------------------------------------------
-# History log (append-only, for completed/failed/cancelled)
-# ---------------------------------------------------------------------------
-
-def _load_history() -> dict:
-    try:
-        return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {"completed": [], "failed": []}
-
-
-def _save_history(history: dict) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    HISTORY_FILE.write_text(
-        json.dumps(history, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-
-
-MAX_HISTORY_PER_BUCKET = 200
-
-_history_lock = threading.Lock()
-
-
-def _append_history(bucket: str, entry: dict) -> None:
-    """Append an entry to the history log under the given bucket.
-
-    Keeps only the most recent MAX_HISTORY_PER_BUCKET entries per bucket
-    to prevent unbounded growth over long-running deployments.
-    """
-    with _history_lock:
-        history = _load_history()
-        items = history.setdefault(bucket, [])
-        items.append(entry)
-        if len(items) > MAX_HISTORY_PER_BUCKET:
-            history[bucket] = items[-MAX_HISTORY_PER_BUCKET:]
-        _save_history(history)

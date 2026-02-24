@@ -1,5 +1,5 @@
 """
-SQLite database operations for conversation history and agenda.
+SQLite database operations for conversation history and tasks.
 The APScheduler job store uses its own SQLite file (scheduler.db).
 
 All public functions are synchronous (they use sqlite3 directly).
@@ -83,6 +83,26 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             updated   REAL,
             thread_id TEXT
         );
+        CREATE TABLE IF NOT EXISTS tasks (
+            id                  TEXT PRIMARY KEY,
+            thread_id           TEXT,
+            content             TEXT NOT NULL,
+            priority            INTEGER DEFAULT 5,
+            status              TEXT DEFAULT 'active',
+            created             REAL NOT NULL,
+            updated             REAL,
+            completed_at        REAL,
+            reason              TEXT,
+            schedule_type       TEXT,
+            schedule_desc       TEXT,
+            schedule_config     TEXT,
+            ai_prompt           TEXT,
+            background          INTEGER DEFAULT 0,
+            apscheduler_job_id  TEXT,
+            last_run_at         REAL,
+            last_result_summary TEXT,
+            run_count           INTEGER DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS interaction_log (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp  REAL    NOT NULL,
@@ -124,6 +144,7 @@ def init_db() -> None:
     with _connect() as conn:
         run_migrations(conn)
     _migrate_agenda_from_file()
+    _migrate_agenda_to_tasks()
     logger.debug("Database initialised at %s", CONVERSATION_DB)
 
 
@@ -247,131 +268,37 @@ def get_thread_stats(thread_id: str = "default") -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Agenda CRUD
+# Agenda CRUD (legacy — kept for dreaming consolidation backward compat)
 # ---------------------------------------------------------------------------
 
-def add_agenda_item(content: str, priority: int = 5, thread_id: str | None = None) -> int:
-    """Insert a new active agenda item. Returns the row id."""
-    with _connect() as conn:
-        cur = conn.execute(
-            "INSERT INTO agenda (content, status, priority, created, thread_id) "
-            "VALUES (?, 'active', ?, ?, ?)",
-            (content, priority, time.time(), thread_id),
-        )
-        conn.commit()
-        return cur.lastrowid
+def list_agenda_items(status: str = "active", thread_id: Optional[str] = None) -> list[dict]:
+    """Return agenda items filtered by status (legacy compat).
+
+    Delegates to list_tasks for active queries.
+    """
+    return list_tasks(status=status, thread_id=thread_id)
 
 
 def complete_agenda_item(item_id: int, thread_id: Optional[str] = None) -> bool:
-    """Mark a agenda item as completed. Returns True if a row was updated.
-
-    When *thread_id* is given the item must belong to that thread (ownership guard).
-    """
-    with _connect() as conn:
-        if thread_id:
-            n = conn.execute(
-                "UPDATE agenda SET status='completed', updated=? WHERE id=? AND thread_id=?",
-                (time.time(), item_id, thread_id),
-            ).rowcount
-        else:
-            n = conn.execute(
-                "UPDATE agenda SET status='completed', updated=? WHERE id=?",
-                (time.time(), item_id),
-            ).rowcount
-        conn.commit()
-    return n > 0
+    """Legacy compat — complete a task by numeric id."""
+    task_id = f"task_{item_id}"
+    return complete_task(task_id, reason="Completed via dreaming consolidation", thread_id=thread_id)
 
 
 def update_agenda_item(item_id: int, thread_id: Optional[str] = None, **kwargs) -> bool:
-    """Update fields on a agenda item. Supported: content, priority, status.
-
-    When *thread_id* is given the item must belong to that thread (ownership guard).
-    """
-    allowed = {"content", "priority", "status"}
-    updates = {k: v for k, v in kwargs.items() if k in allowed}
-    if not updates:
-        return False
-    updates["updated"] = time.time()
-    set_clause = ", ".join(f"{k}=?" for k in updates)
-    if thread_id:
-        values = list(updates.values()) + [item_id, thread_id]
-        where = "WHERE id=? AND thread_id=?"
-    else:
-        values = list(updates.values()) + [item_id]
-        where = "WHERE id=?"
-    with _connect() as conn:
-        n = conn.execute(f"UPDATE agenda SET {set_clause} {where}", values).rowcount
-        conn.commit()
-    return n > 0
-
-
-def list_agenda_items(status: str = "active", thread_id: Optional[str] = None) -> list[dict]:
-    """Return agenda items filtered by status, ordered by priority then id.
-
-    When *thread_id* is given, only items belonging to that thread are returned.
-    """
-    with _connect() as conn:
-        conn.row_factory = sqlite3.Row
-        if status == "all" and not thread_id:
-            rows = conn.execute(
-                "SELECT id, content, status, priority, created, updated, thread_id "
-                "FROM agenda ORDER BY priority ASC, id ASC"
-            ).fetchall()
-        elif status == "all" and thread_id:
-            rows = conn.execute(
-                "SELECT id, content, status, priority, created, updated, thread_id "
-                "FROM agenda WHERE thread_id=? ORDER BY priority ASC, id ASC",
-                (thread_id,),
-            ).fetchall()
-        elif thread_id:
-            rows = conn.execute(
-                "SELECT id, content, status, priority, created, updated, thread_id "
-                "FROM agenda WHERE status=? AND thread_id=? ORDER BY priority ASC, id ASC",
-                (status, thread_id),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT id, content, status, priority, created, updated, thread_id "
-                "FROM agenda WHERE status=? ORDER BY priority ASC, id ASC",
-                (status,),
-            ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def get_active_agenda_text(thread_id: Optional[str] = None) -> str:
-    """Compact formatted string of active agenda items for system prompt injection.
-
-    When *thread_id* is given, only items belonging to that thread are included.
-    """
-    items = list_agenda_items("active", thread_id=thread_id)
-    if not items:
-        return ""
-    return "\n".join(f"[P{it['priority']}] #{it['id']}: {it['content']}" for it in items)
-
-
-def get_agenda_thread_ids() -> list[tuple[str, int]]:
-    """Return (thread_id, count) pairs for active agenda items with non-NULL thread_id."""
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT thread_id, COUNT(*) FROM agenda "
-            "WHERE status='active' AND thread_id IS NOT NULL "
-            "GROUP BY thread_id",
-        ).fetchall()
-    return [(r[0], r[1]) for r in rows]
+    """Legacy compat — update a task by numeric id."""
+    task_id = f"task_{item_id}"
+    return update_task(task_id, thread_id=thread_id, **kwargs)
 
 
 def delete_old_completed_agenda(days: int = 30) -> int:
-    """Delete completed agenda items older than *days*. Returns count deleted."""
-    cutoff = time.time() - days * 86400
-    with _connect() as conn:
-        n = conn.execute(
-            "DELETE FROM agenda WHERE status='completed' AND created < ?",
-            (cutoff,),
-        ).rowcount
-        conn.commit()
-    if n:
-        logger.info("Purged %d completed agenda items older than %d days", n, days)
-    return n
+    """Legacy compat — delegates to delete_old_completed_tasks."""
+    return delete_old_completed_tasks(days)
+
+
+def get_active_agenda_text(thread_id: Optional[str] = None) -> str:
+    """Legacy compat — delegates to get_active_tasks_text."""
+    return get_active_tasks_text(thread_id=thread_id)
 
 
 def _migrate_agenda_from_file() -> None:
@@ -411,6 +338,226 @@ def _migrate_agenda_from_file() -> None:
         conn.commit()
     agenda_file.rename(agenda_file.with_suffix(".txt.migrated"))
     logger.info("Migrated %d agenda items from AGENDA.txt to DB", len(items))
+
+
+def _migrate_agenda_to_tasks() -> None:
+    """One-time migration: copy rows from agenda table to tasks table."""
+    with _connect() as conn:
+        # Check if agenda table has rows and tasks table is empty
+        try:
+            agenda_count = conn.execute("SELECT COUNT(*) FROM agenda").fetchone()[0]
+        except sqlite3.OperationalError:
+            return  # No agenda table
+        if agenda_count == 0:
+            return
+        tasks_count = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+        if tasks_count > 0:
+            return  # Already migrated
+
+        rows = conn.execute(
+            "SELECT id, content, status, priority, created, updated, thread_id FROM agenda"
+        ).fetchall()
+        for r in rows:
+            task_id = f"task_{r[0]}"
+            conn.execute(
+                "INSERT OR IGNORE INTO tasks (id, content, status, priority, created, updated, thread_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (task_id, r[1], r[2], r[3], r[4], r[5], r[6]),
+            )
+        conn.commit()
+        logger.info("Migrated %d agenda items to tasks table", len(rows))
+
+
+# ---------------------------------------------------------------------------
+# Tasks CRUD
+# ---------------------------------------------------------------------------
+
+import uuid as _uuid
+
+
+def _new_task_id() -> str:
+    return f"task_{_uuid.uuid4().hex[:8]}"
+
+
+def add_task(content: str, priority: int = 5, thread_id: Optional[str] = None,
+             schedule_type: Optional[str] = None, schedule_desc: Optional[str] = None,
+             schedule_config: Optional[str] = None, ai_prompt: Optional[str] = None,
+             background: bool = False) -> str:
+    """Insert a new active task. Returns the task_id."""
+    task_id = _new_task_id()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO tasks (id, thread_id, content, priority, status, created, "
+            "schedule_type, schedule_desc, schedule_config, ai_prompt, background) "
+            "VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)",
+            (task_id, thread_id, content, priority, time.time(),
+             schedule_type, schedule_desc, schedule_config, ai_prompt,
+             1 if background else 0),
+        )
+        conn.commit()
+    return task_id
+
+
+def get_task(task_id: str) -> Optional[dict]:
+    """Return a single task by id, or None."""
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def update_task(task_id: str, thread_id: Optional[str] = None, **kwargs) -> bool:
+    """Update fields on a task. Supported: content, priority, status, ai_prompt,
+    schedule_type, schedule_desc, schedule_config, background, apscheduler_job_id.
+
+    When *thread_id* is given the task must belong to that thread (ownership guard).
+    """
+    allowed = {"content", "priority", "status", "ai_prompt", "schedule_type",
+               "schedule_desc", "schedule_config", "background", "apscheduler_job_id"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return False
+    updates["updated"] = time.time()
+    set_clause = ", ".join(f"{k}=?" for k in updates)
+    if thread_id:
+        values = list(updates.values()) + [task_id, thread_id]
+        where = "WHERE id=? AND thread_id=?"
+    else:
+        values = list(updates.values()) + [task_id]
+        where = "WHERE id=?"
+    with _connect() as conn:
+        n = conn.execute(f"UPDATE tasks SET {set_clause} {where}", values).rowcount
+        conn.commit()
+    return n > 0
+
+
+def complete_task(task_id: str, reason: str = "", thread_id: Optional[str] = None) -> bool:
+    """Mark a task as completed. Returns True if a row was updated."""
+    now = time.time()
+    with _connect() as conn:
+        if thread_id:
+            n = conn.execute(
+                "UPDATE tasks SET status='completed', completed_at=?, updated=?, reason=?, "
+                "schedule_type=NULL, schedule_desc=NULL, schedule_config=NULL "
+                "WHERE id=? AND thread_id=?",
+                (now, now, reason, task_id, thread_id),
+            ).rowcount
+        else:
+            n = conn.execute(
+                "UPDATE tasks SET status='completed', completed_at=?, updated=?, reason=?, "
+                "schedule_type=NULL, schedule_desc=NULL, schedule_config=NULL "
+                "WHERE id=?",
+                (now, now, reason, task_id),
+            ).rowcount
+        conn.commit()
+    return n > 0
+
+
+def pause_task(task_id: str) -> bool:
+    """Pause a task (stops schedule, keeps config). Returns True if updated."""
+    with _connect() as conn:
+        n = conn.execute(
+            "UPDATE tasks SET status='paused', updated=? WHERE id=? AND status='active'",
+            (time.time(), task_id),
+        ).rowcount
+        conn.commit()
+    return n > 0
+
+
+def resume_task(task_id: str) -> bool:
+    """Resume a paused task. Returns True if updated."""
+    with _connect() as conn:
+        n = conn.execute(
+            "UPDATE tasks SET status='active', updated=? WHERE id=? AND status='paused'",
+            (time.time(), task_id),
+        ).rowcount
+        conn.commit()
+    return n > 0
+
+
+def delete_task(task_id: str) -> bool:
+    """Soft-delete a task by setting status='deleted'. Returns True if updated."""
+    with _connect() as conn:
+        n = conn.execute(
+            "UPDATE tasks SET status='deleted', updated=? WHERE id=?",
+            (time.time(), task_id),
+        ).rowcount
+        conn.commit()
+    return n > 0
+
+
+def list_tasks(status: str = "active", thread_id: Optional[str] = None) -> list[dict]:
+    """Return tasks filtered by status, ordered by priority then id."""
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        if status == "all" and not thread_id:
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE status != 'deleted' ORDER BY priority ASC, id ASC"
+            ).fetchall()
+        elif status == "all" and thread_id:
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE status != 'deleted' AND thread_id=? "
+                "ORDER BY priority ASC, id ASC",
+                (thread_id,),
+            ).fetchall()
+        elif thread_id:
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE status=? AND thread_id=? "
+                "ORDER BY priority ASC, id ASC",
+                (status, thread_id),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE status=? ORDER BY priority ASC, id ASC",
+                (status,),
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_active_tasks_text(thread_id: Optional[str] = None) -> str:
+    """Compact formatted string of active tasks for system prompt injection."""
+    items = list_tasks("active", thread_id=thread_id)
+    if not items:
+        return ""
+    lines = []
+    for it in items:
+        line = f"[P{it['priority']}] #{it['id']}: {it['content']}"
+        if it.get("schedule_desc"):
+            next_info = ""
+            if it.get("last_run_at"):
+                from datetime import datetime as _dt, timezone as _tz
+                last = _dt.fromtimestamp(it['last_run_at'], tz=_tz.utc).strftime("%Y-%m-%d %H:%M")
+                next_info = f", last: {last}"
+                if it.get("run_count"):
+                    next_info += f", runs: {it['run_count']}"
+            line += f" [{it['schedule_desc']}{next_info}]"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def record_task_run(task_id: str, summary: str = "") -> None:
+    """Update inline execution tracking fields after a scheduled task fires."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE tasks SET last_run_at=?, last_result_summary=?, "
+            "run_count=COALESCE(run_count, 0)+1, updated=? WHERE id=?",
+            (time.time(), summary[:500] if summary else None, time.time(), task_id),
+        )
+        conn.commit()
+
+
+def delete_old_completed_tasks(days: int = 30) -> int:
+    """Delete completed tasks older than *days*. Returns count deleted."""
+    cutoff = time.time() - days * 86400
+    with _connect() as conn:
+        n = conn.execute(
+            "DELETE FROM tasks WHERE status='completed' AND created < ?",
+            (cutoff,),
+        ).rowcount
+        conn.commit()
+    if n:
+        logger.info("Purged %d completed tasks older than %d days", n, days)
+    return n
 
 
 # ---------------------------------------------------------------------------

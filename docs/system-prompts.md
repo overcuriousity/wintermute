@@ -13,11 +13,11 @@ The foundation of every prompt. Shipped with the repository and editable by the 
 Content covers:
 
 - Role definition (personal AI assistant via Matrix chat)
-- Memory system: clear boundary between MEMORIES (long-term facts) and AGENDA (active working memory)
-- Background process awareness (agenda reviews, nightly dreaming, context compaction)
+- Memory system: clear boundary between MEMORIES (long-term facts) and TASKS (active working memory)
+- Background process awareness (scheduled tasks, nightly dreaming, context compaction)
 - Tool usage patterns and categories
 - Sub-session delegation and workflow DAGs with `depends_on`
-- System event handling (sub-session results, routines, errors, timeouts)
+- System event handling (sub-session results, scheduled tasks, errors, timeouts)
 - Behavioural guidelines (concise responses, credential policy, confidence)
 
 #### Sectioned BASE_PROMPT
@@ -25,7 +25,7 @@ Content covers:
 BASE_PROMPT.txt is divided into named sections using HTML comment markers:
 
 ```
-<!-- section: knowledge_routing requires: append_memory,agenda,add_skill -->
+<!-- section: knowledge_routing requires: append_memory,task,add_skill -->
 ```
 
 Each section declares which tool(s) it requires. When a sub-session is spawned with a limited tool set, only sections whose required tools are available are included. Sections marked `always` are always included.
@@ -33,9 +33,9 @@ Each section declares which tool(s) it requires. When a sub-session is spawned w
 | Section | Required Tools | Content |
 |---------|---------------|---------|
 | `core` | always | Personality, environment, prompt note |
-| `knowledge_routing` | `append_memory`, `agenda`, `add_skill` (any) | Memory/agenda/skill/routine routing |
+| `knowledge_routing` | `append_memory`, `task`, `add_skill` (any) | Memory/task/skill routing |
 | `delegation` | `spawn_sub_session` | Task delegation patterns |
-| `routines` | `set_routine` | Scheduled task instructions |
+| `scheduled_tasks` | `task` | Scheduled task instructions |
 | `system_events` | `spawn_sub_session` | System event handling |
 | `guidelines` | always | Guidelines, critical rules, personality |
 
@@ -49,11 +49,11 @@ Key rule: if information would still matter in a month with no active project ar
 
 **Vector-indexed retrieval (optional):** When a vector memory backend (`fts5` or `qdrant`) is configured, only the top-K most relevant memories are injected per turn based on the current user message and last assistant reply. This replaces the full MEMORIES.txt dump, reducing token waste on irrelevant memories. MEMORIES.txt is kept as a git-versioned backup via dual-write. See [configuration.md — memory](configuration.md#memory) for setup.
 
-### 3. Agenda (SQLite) — Working Memory
+### 3. Tasks (SQLite) — Working Memory
 
-Active goals, ongoing projects, time-sensitive tasks, and open questions. Managed via the `agenda` tool (add, complete, update, list actions). Each item has a priority (1=urgent, 10=low) and an auto-assigned ID. Reviewed autonomously every 60 minutes by the agenda loop and consolidated nightly by the dreaming loop.
+Active goals, ongoing projects, scheduled actions, and reminders. Managed via the `task` tool (add, complete, update, pause, resume, delete, list actions). Each task has a priority (1=urgent, 10=low) and an auto-assigned ID. Tasks can optionally have schedules (once/daily/weekly/monthly/interval). Consolidated nightly by the dreaming loop.
 
-Key rule: if it only matters because something is in progress right now, it belongs in Agenda.
+Key rule: if it only matters because something is in progress right now, or needs to happen at a specific time, it belongs as a Task.
 
 ### 4. skills/*.md — Learned Procedures
 
@@ -63,7 +63,7 @@ Only a table of contents (skill name + summary) is injected into the system prom
 
 ### 5. SEED_{language}.txt — Conversation Seed
 
-Injected as a system event when a new conversation starts (first user message in an empty thread or after `/new`). Prompts the LLM to introduce itself, surface relevant memories and agendas, and explain its capabilities.
+Injected as a system event when a new conversation starts (first user message in an empty thread or after `/new`). Prompts the LLM to introduce itself, surface relevant memories and tasks, and explain its capabilities.
 
 Language-specific files (`SEED_en.txt`, `SEED_de.txt`, `SEED_fr.txt`, `SEED_es.txt`, `SEED_it.txt`, `SEED_zh.txt`, `SEED_ja.txt`) are selected via the `seed.language` config option. Falls back to English if the configured language is missing. Add new languages by creating `data/prompts/SEED_{code}.txt`.
 
@@ -90,8 +90,8 @@ The `prompt_assembler.assemble()` function builds the final system prompt. It ac
 
 ---
 
-# Active Agenda
-{formatted agenda items from DB, e.g. "[P2] #3: Fix auth bug"}
+# Active Tasks
+{formatted tasks from DB, e.g. "[P2] #task_abc: Fix auth bug [daily at 09:00]"}
 
 ---
 
@@ -128,12 +128,12 @@ Each component has a configurable character limit (set in `config.yaml` under `c
 | Component | Default Limit | Action When Exceeded |
 |-----------|---------------|---------------------|
 | MEMORIES.txt | 10,000 chars | AI is asked to condense and prioritise |
-| Agenda (DB) | 5,000 chars | AI is asked to condense and prioritise |
+| Tasks (DB) | 5,000 chars | AI is asked to condense and prioritise |
 | skills/ (TOC) | 2,000 chars | AI is asked to reorganise |
 
 When a component exceeds its limit after any inference, a system event is enqueued asking the AI to read the component, condense it, and update it using the appropriate tool.
 
-The nightly dreaming loop also consolidates MEMORIES.txt and agenda items independently using a direct LLM call (no tool loop).
+The nightly dreaming loop also consolidates MEMORIES.txt and tasks independently using a direct LLM call (no tool loop).
 
 ## Customisable Prompt Templates
 
@@ -142,7 +142,7 @@ The following prompt templates are stored as editable files in `data/` and shipp
 | File | Used By | Placeholder | Purpose |
 |------|---------|-------------|---------|
 | `DREAM_MEMORIES_PROMPT.txt` | Dreaming loop | `{content}` | Instructions for consolidating MEMORIES.txt overnight |
-| `DREAM_AGENDA_PROMPT.txt` | Dreaming loop | `{content}` | Instructions for consolidating agenda items overnight (LLM returns JSON actions) |
+| `DREAM_TASK_PROMPT.txt` | Dreaming loop | `{content}` | Instructions for consolidating tasks overnight (LLM returns JSON actions) |
 | `COMPACTION_PROMPT.txt` | Context compaction | `{history}` | Instructions for summarising old conversation history |
 
 Templates support an optional placeholder (`{content}` or `{history}`). If present, the relevant text is substituted in. If absent, it is appended to the end of the prompt. This means you can write free-form instructions without worrying about placeholder syntax.

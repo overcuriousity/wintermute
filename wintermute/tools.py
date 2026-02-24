@@ -9,7 +9,7 @@ Tool categories
 ---------------
   "execution"     – shell, file I/O (available to all sub-session modes)
   "research"      – web search, URL fetching (available to all sub-session modes)
-  "orchestration" – memory, routines, skills, sub-session spawning (main agent
+  "orchestration" – memory, tasks, skills, sub-session spawning (main agent
                     and "full"-mode sub-sessions only)
 """
 
@@ -89,7 +89,7 @@ TOOL_SCHEMAS = [
                     "enum": ["minimal", "full", "base_only", "none"],
                     "description": (
                         "'minimal' (default): lightweight agent, no memories/skills. "
-                        "'full': complete context (memories + agenda + skills). "
+                        "'full': complete context (memories + tasks + skills). "
                         "'base_only': core instructions only. "
                         "'none': no system prompt."
                     ),
@@ -124,38 +124,51 @@ TOOL_SCHEMAS = [
         },
     ),
     _fn(
-        "set_routine",
+        "task",
         (
-            "Schedule a one-time or recurring routine. With ai_prompt, an autonomous AI "
-            "inference runs when it fires; without, only a text notification is sent."
+            "Manage tracked tasks — goals, reminders, and scheduled actions. "
+            "Use action 'add' to create, 'complete' to finish, 'pause'/'resume' to control schedules, "
+            "'update' to modify, 'delete' to remove, 'list' to show."
         ),
         {
             "type": "object",
             "properties": {
-                "message": {
+                "action": {
                     "type": "string",
-                    "description": "Routine text delivered to chat when it fires.",
+                    "enum": ["add", "update", "complete", "pause", "resume", "delete", "list"],
+                    "description": "Operation to perform.",
                 },
-                "ai_prompt": {
+                "content": {
                     "type": "string",
-                    "description": (
-                        "AI prompt to run when the routine fires (full tool access). "
-                        "Set whenever the user wants an action performed, not just a notification. "
-                        "Write as a complete task instruction."
-                    ),
+                    "description": "Task description (for add/update).",
+                },
+                "task_id": {
+                    "type": "string",
+                    "description": "Task ID (for update/complete/pause/resume/delete).",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Required for complete: evidence why this task is truly finished.",
+                },
+                "priority": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "description": "1 (urgent) to 10 (low), default 5.",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["active", "paused", "completed", "all"],
+                    "description": "For list: filter (default: active).",
                 },
                 "schedule_type": {
                     "type": "string",
                     "enum": ["once", "daily", "weekly", "monthly", "interval"],
-                    "description": (
-                        "once: specific time. daily: fixed time each day. "
-                        "weekly: needs day_of_week. monthly: needs day_of_month. "
-                        "interval: every N seconds, needs interval_seconds."
-                    ),
+                    "description": "Omit for unscheduled tasks.",
                 },
                 "at": {
                     "type": "string",
-                    "description": "Required except for interval. For once: ISO-8601 or natural language. For recurring: HH:MM.",
+                    "description": "Time spec. For once: ISO-8601. For recurring: HH:MM.",
                 },
                 "day_of_week": {
                     "type": "string",
@@ -171,7 +184,7 @@ TOOL_SCHEMAS = [
                 "interval_seconds": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Required for interval. Seconds between firings.",
+                    "description": "Required for interval.",
                 },
                 "window_start": {
                     "type": "string",
@@ -181,16 +194,16 @@ TOOL_SCHEMAS = [
                     "type": "string",
                     "description": "For interval: latest fire time, HH:MM.",
                 },
+                "ai_prompt": {
+                    "type": "string",
+                    "description": "AI action to run when schedule fires. Write as a complete task instruction.",
+                },
                 "background": {
                     "type": "boolean",
-                    "description": (
-                        "Only valid with ai_prompt. When true, the AI task runs "
-                        "silently without delivering results to the chat. "
-                        "Use for autonomous maintenance tasks."
-                    ),
+                    "description": "Silent execution — no chat delivery. Only valid with ai_prompt.",
                 },
             },
-            "required": ["message", "schedule_type"],
+            "required": ["action"],
         },
     ),
     _fn(
@@ -205,30 +218,6 @@ TOOL_SCHEMAS = [
                 }
             },
             "required": ["entry"],
-        },
-    ),
-    _fn(
-        "agenda",
-        "Manage agenda items (working memory for ongoing tasks).",
-        {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["add", "complete", "list", "update"],
-                    "description": "add: create item. complete: mark done. list: show items. update: modify existing.",
-                },
-                "content": {"type": "string", "description": "Item text (for add/update)."},
-                "item_id": {"type": "integer", "description": "Item ID (for complete/update)."},
-                "reason": {"type": "string", "description": "Required for complete: evidence why this item is truly finished."},
-                "priority": {"type": "integer", "description": "1 (urgent) to 10 (low), default 5."},
-                "status": {
-                    "type": "string",
-                    "enum": ["active", "completed", "all"],
-                    "description": "For list: filter (default: active). For update: new status value ('active' or 'completed').",
-                },
-            },
-            "required": ["action"],
         },
     ),
     _fn(
@@ -304,25 +293,6 @@ TOOL_SCHEMAS = [
         },
     ),
     _fn(
-        "list_routines",
-        "Returns active, completed, and failed routines.",
-        {"type": "object", "properties": {}},
-    ),
-    _fn(
-        "delete_routine",
-        "Cancel and remove an active routine by its ID.",
-        {
-            "type": "object",
-            "properties": {
-                "job_id": {
-                    "type": "string",
-                    "description": "Routine ID to cancel (e.g. 'routine_7735fb78').",
-                }
-            },
-            "required": ["job_id"],
-        },
-    ),
-    _fn(
         "search_web",
         "Search the web via SearXNG. Returns titles, URLs, and snippets.",
         {
@@ -372,21 +342,19 @@ TOOL_CATEGORIES: dict[str, str] = {
     "search_web":         "research",
     "fetch_url":          "research",
     "spawn_sub_session":  "orchestration",
-    "set_routine":       "orchestration",
+    "task":               "orchestration",
     "append_memory":      "orchestration",
-    "agenda":              "orchestration",
     "add_skill":          "orchestration",
-    "list_routines":     "orchestration",
-    "delete_routine":    "orchestration",
 }
 
 
 NL_TOOL_SCHEMAS = [
     _fn(
-        "set_routine",
+        "task",
         (
-            "Schedule a one-time or recurring routine. Describe what you want "
-            "in plain English — the system will translate it into structured arguments."
+            "Manage tasks — tracked goals, reminders, and scheduled actions. "
+            "Describe what you want in plain English — the system will translate "
+            "it into structured arguments."
         ),
         {
             "type": "object",
@@ -394,8 +362,12 @@ NL_TOOL_SCHEMAS = [
                 "description": {
                     "type": "string",
                     "description": (
-                        "Plain-English description of the routine: what, when, "
-                        "how often, and any action to perform when it fires."
+                        "Plain-English description of the task operation. "
+                        "Examples: 'add a high-priority task to fix the login bug', "
+                        "'remind me daily at 9am to check email', "
+                        "'every morning at 8 search for news and summarize', "
+                        "'complete task_abc because the server is fixed', "
+                        "'pause task_def', 'list all tasks'."
                     ),
                 },
             },
@@ -450,29 +422,6 @@ NL_TOOL_SCHEMAS = [
             "required": ["description"],
         },
     ),
-    _fn(
-        "agenda",
-        (
-            "Manage agenda items (working memory for ongoing tasks). "
-            "Describe what you want to do in plain English — the system "
-            "will translate it into structured arguments."
-        ),
-        {
-            "type": "object",
-            "properties": {
-                "description": {
-                    "type": "string",
-                    "description": (
-                        "Plain-English description of what to do with the agenda. "
-                        "Examples: 'add a high-priority item to fix the login bug', "
-                        "'mark item 3 as done because the patch was deployed', "
-                        "'show all active items', 'update item 5 priority to urgent'."
-                    ),
-                },
-            },
-            "required": ["description"],
-        },
-    ),
 ]
 
 _NL_SCHEMA_MAP: dict[str, dict] = {
@@ -515,30 +464,20 @@ def get_tool_schemas(categories: set[str] | None = None,
 # ---------------------------------------------------------------------------
 
 # These will be injected by the scheduler thread at startup.
-_scheduler_set_routine = None    # Callable[[dict], str]
-_scheduler_list_routines = None  # Callable[[], dict]
-_scheduler_delete_routine = None # Callable[[str], bool]
+_task_scheduler_ensure = None   # Callable[[str, dict, str|None, str|None, bool], None]
+_task_scheduler_remove = None   # Callable[[str], None]
+_task_scheduler_list = None     # Callable[[], list[dict]]
 
 # This will be injected by the SubSessionManager at startup.
 _sub_session_spawn = None  # Callable[[dict, str], str]
 
 
-def register_scheduler(fn) -> None:
-    """Called once by the scheduler thread to provide the set_routine hook."""
-    global _scheduler_set_routine
-    _scheduler_set_routine = fn
-
-
-def register_routine_lister(fn) -> None:
-    """Called once by the scheduler thread to provide the list_routines hook."""
-    global _scheduler_list_routines
-    _scheduler_list_routines = fn
-
-
-def register_routine_deleter(fn) -> None:
-    """Called once by the scheduler thread to provide the delete_routine hook."""
-    global _scheduler_delete_routine
-    _scheduler_delete_routine = fn
+def register_task_scheduler(ensure_fn, remove_fn, list_fn) -> None:
+    """Called once by the scheduler thread to provide task schedule management."""
+    global _task_scheduler_ensure, _task_scheduler_remove, _task_scheduler_list
+    _task_scheduler_ensure = ensure_fn
+    _task_scheduler_remove = remove_fn
+    _task_scheduler_list = list_fn
 
 
 def register_sub_session_manager(fn) -> None:
@@ -642,22 +581,155 @@ def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
         return json.dumps({"error": str(exc)})
 
 
-def _tool_set_routine(inputs: dict, thread_id: Optional[str] = None, **_kw) -> str:
-    if _scheduler_set_routine is None:
-        return json.dumps({"error": "Scheduler not ready yet."})
+def _tool_task(inputs: dict, thread_id: Optional[str] = None,
+               parent_thread_id: Optional[str] = None, **_kw) -> str:
+    """Unified task tool — handles add/update/complete/pause/resume/delete/list."""
+    effective_scope = parent_thread_id or thread_id
     try:
-        # Bind the calling thread for delivery routing.
-        # For sub-sessions, prefer parent_thread_id (the real user thread).
-        effective_thread = _kw.get("parent_thread_id") or thread_id
-        background = inputs.pop("background", False)
-        if effective_thread and not (inputs.get("ai_prompt") and background):
-            # Inject thread_id for delivery unless this is an explicit
-            # background task (ai_prompt + background=true → fire-and-forget).
-            inputs["thread_id"] = effective_thread
-        job_id = _scheduler_set_routine(inputs)
-        return json.dumps({"status": "scheduled", "job_id": job_id})
+        action = inputs.get("action", "list")
+
+        if action == "add":
+            content = inputs.get("content")
+            if not content:
+                return json.dumps({"error": "content is required for add action"})
+            add_thread = inputs.get("thread_id") or effective_scope
+            schedule_type = inputs.get("schedule_type")
+            ai_prompt = inputs.get("ai_prompt")
+            background = bool(inputs.get("background", False))
+
+            # Build schedule config and description for DB storage.
+            schedule_config = None
+            schedule_desc = None
+            if schedule_type:
+                from wintermute.workers.scheduler_thread import _describe_schedule
+                sched_inputs = {k: inputs[k] for k in
+                    ("schedule_type", "at", "day_of_week", "day_of_month",
+                     "interval_seconds", "window_start", "window_end")
+                    if k in inputs}
+                schedule_config = json.dumps(sched_inputs)
+                schedule_desc = _describe_schedule(sched_inputs)
+
+            task_id = database.add_task(
+                content=content,
+                priority=int(inputs.get("priority", 5)),
+                thread_id=add_thread,
+                schedule_type=schedule_type,
+                schedule_desc=schedule_desc,
+                schedule_config=schedule_config,
+                ai_prompt=ai_prompt,
+                background=background,
+            )
+
+            # If scheduled, register with APScheduler.
+            if schedule_type and _task_scheduler_ensure is not None:
+                effective_thread = add_thread
+                if ai_prompt and background:
+                    effective_thread = None  # fire-and-forget
+                _task_scheduler_ensure(
+                    task_id, json.loads(schedule_config),
+                    ai_prompt, effective_thread, background,
+                )
+                database.update_task(task_id, apscheduler_job_id=task_id)
+
+            result = {"status": "ok", "task_id": task_id}
+            if schedule_desc:
+                result["schedule"] = schedule_desc
+            return json.dumps(result)
+
+        elif action == "complete":
+            task_id = inputs.get("task_id")
+            if not task_id:
+                return json.dumps({"error": "task_id is required for complete action"})
+            reason = (inputs.get("reason") or "").strip()
+            if not reason:
+                return json.dumps({"error": "reason is required for complete action — explain why this task is finished"})
+            # Remove schedule if any.
+            task = database.get_task(task_id)
+            if task and task.get("apscheduler_job_id") and _task_scheduler_remove:
+                _task_scheduler_remove(task_id)
+            ok = database.complete_task(task_id, reason=reason, thread_id=effective_scope)
+            return json.dumps({"status": "ok" if ok else "not_found", "reason": reason})
+
+        elif action == "pause":
+            task_id = inputs.get("task_id")
+            if not task_id:
+                return json.dumps({"error": "task_id is required for pause action"})
+            task = database.get_task(task_id)
+            if task and task.get("apscheduler_job_id") and _task_scheduler_remove:
+                _task_scheduler_remove(task_id)
+            ok = database.pause_task(task_id)
+            return json.dumps({"status": "ok" if ok else "not_found"})
+
+        elif action == "resume":
+            task_id = inputs.get("task_id")
+            if not task_id:
+                return json.dumps({"error": "task_id is required for resume action"})
+            ok = database.resume_task(task_id)
+            if ok:
+                # Re-register schedule with APScheduler.
+                task = database.get_task(task_id)
+                if task and task.get("schedule_config") and _task_scheduler_ensure:
+                    sched = json.loads(task["schedule_config"])
+                    effective_thread = task.get("thread_id")
+                    bg = bool(task.get("background"))
+                    if task.get("ai_prompt") and bg:
+                        effective_thread = None
+                    _task_scheduler_ensure(
+                        task_id, sched,
+                        task.get("ai_prompt"), effective_thread, bg,
+                    )
+            return json.dumps({"status": "ok" if ok else "not_found"})
+
+        elif action == "delete":
+            task_id = inputs.get("task_id")
+            if not task_id:
+                return json.dumps({"error": "task_id is required for delete action"})
+            task = database.get_task(task_id)
+            if task and task.get("apscheduler_job_id") and _task_scheduler_remove:
+                _task_scheduler_remove(task_id)
+            ok = database.delete_task(task_id)
+            return json.dumps({"status": "ok" if ok else "not_found"})
+
+        elif action == "update":
+            task_id = inputs.get("task_id")
+            if not task_id:
+                return json.dumps({"error": "task_id is required for update action"})
+            kwargs = {}
+            if "content" in inputs:
+                kwargs["content"] = inputs["content"]
+            if "priority" in inputs:
+                kwargs["priority"] = int(inputs["priority"])
+            ok = database.update_task(task_id, thread_id=effective_scope, **kwargs)
+            return json.dumps({"status": "ok" if ok else "not_found"})
+
+        elif action == "list":
+            status = inputs.get("status", "active")
+            items = database.list_tasks(status, thread_id=effective_scope)
+            # Format for readability
+            formatted = []
+            for it in items:
+                entry = {
+                    "id": it["id"],
+                    "content": it["content"],
+                    "priority": it["priority"],
+                    "status": it["status"],
+                }
+                if it.get("schedule_desc"):
+                    entry["schedule"] = it["schedule_desc"]
+                if it.get("ai_prompt"):
+                    entry["ai_prompt"] = it["ai_prompt"][:100]
+                if it.get("last_run_at"):
+                    entry["last_run_at"] = it["last_run_at"]
+                    entry["run_count"] = it.get("run_count", 0)
+                if it.get("last_result_summary"):
+                    entry["last_result"] = it["last_result_summary"][:200]
+                formatted.append(entry)
+            return json.dumps({"tasks": formatted, "count": len(formatted)})
+
+        else:
+            return json.dumps({"error": f"Unknown action: {action}"})
     except Exception as exc:  # noqa: BLE001
-        logger.exception("set_routine failed")
+        logger.exception("task tool failed")
         return json.dumps({"error": str(exc)})
 
 
@@ -670,55 +742,6 @@ def _tool_append_memory(inputs: dict, **_kw) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _tool_agenda(inputs: dict, thread_id: Optional[str] = None,
-                parent_thread_id: Optional[str] = None, **_kw) -> str:
-    # For agenda operations, scope to the real chat thread, not the sub-session id.
-    effective_scope = parent_thread_id or thread_id
-    if not effective_scope:
-        return json.dumps({"error": "agenda operations require a thread context (no thread_id available)"})
-    try:
-        action = inputs.get("action", "list")
-        if action == "add":
-            content = inputs.get("content")
-            if not content:
-                return json.dumps({"error": "content is required for add action"})
-            add_thread_id = inputs.get("thread_id") or effective_scope
-            item_id = database.add_agenda_item(
-                content, priority=int(inputs.get("priority", 5)),
-                thread_id=add_thread_id,
-            )
-            return json.dumps({"status": "ok", "item_id": item_id})
-        elif action == "complete":
-            item_id = inputs.get("item_id")
-            if item_id is None:
-                return json.dumps({"error": "item_id is required for complete action"})
-            reason = inputs.get("reason", "").strip()
-            if not reason:
-                return json.dumps({"error": "reason is required for complete action — explain why this item is finished"})
-            ok = database.complete_agenda_item(int(item_id), thread_id=effective_scope)
-            return json.dumps({"status": "ok" if ok else "not_found", "reason": reason})
-        elif action == "update":
-            item_id = inputs.get("item_id")
-            if item_id is None:
-                return json.dumps({"error": "item_id is required for update action"})
-            kwargs = {}
-            if "content" in inputs:
-                kwargs["content"] = inputs["content"]
-            if "priority" in inputs:
-                kwargs["priority"] = int(inputs["priority"])
-            if "status" in inputs:
-                kwargs["status"] = inputs["status"]
-            ok = database.update_agenda_item(int(item_id), thread_id=effective_scope, **kwargs)
-            return json.dumps({"status": "ok" if ok else "not_found"})
-        elif action == "list":
-            status = inputs.get("status", "active")
-            items = database.list_agenda_items(status, thread_id=effective_scope)
-            return json.dumps({"items": items, "count": len(items)})
-        else:
-            return json.dumps({"error": f"Unknown action: {action}"})
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("agenda tool failed")
-        return json.dumps({"error": str(exc)})
 
 
 def _tool_add_skill(inputs: dict, **_kw) -> str:
@@ -778,24 +801,6 @@ def _tool_write_file(inputs: dict, **_kw) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _tool_list_routines(_inputs: dict, **_kw) -> str:
-    if _scheduler_list_routines is not None:
-        return json.dumps(_scheduler_list_routines(), indent=2, ensure_ascii=False)
-    return json.dumps({"active": [], "completed": [], "failed": []})
-
-
-def _tool_delete_routine(inputs: dict, **_kw) -> str:
-    if _scheduler_delete_routine is None:
-        return json.dumps({"error": "Scheduler not ready yet."})
-    try:
-        job_id = inputs["job_id"]
-        found = _scheduler_delete_routine(job_id)
-        if found:
-            return json.dumps({"status": "cancelled", "job_id": job_id})
-        return json.dumps({"error": f"Routine not found: {job_id}"})
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("delete_routine failed")
-        return json.dumps({"error": str(exc)})
 
 
 # ---------------------------------------------------------------------------
@@ -957,15 +962,12 @@ def _tool_fetch_url(inputs: dict, **_kw) -> str:
 
 _DISPATCH: dict[str, Any] = {
     "spawn_sub_session":  _tool_spawn_sub_session,
-    "set_routine":       _tool_set_routine,
+    "task":               _tool_task,
     "append_memory":      _tool_append_memory,
-    "agenda":              _tool_agenda,
     "add_skill":          _tool_add_skill,
     "execute_shell":      _tool_execute_shell,
     "read_file":          _tool_read_file,
     "write_file":         _tool_write_file,
-    "list_routines":     _tool_list_routines,
-    "delete_routine":    _tool_delete_routine,
     "search_web":         _tool_search_web,
     "fetch_url":          _tool_fetch_url,
 }

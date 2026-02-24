@@ -4,7 +4,7 @@
 
 **Module:** `wintermute/core/llm_thread.py`
 
-When a new conversation starts (first user message in an empty thread, `/new` in Matrix, or session reset in the web UI), a seed system event is automatically injected before the user's message is processed. The seed prompts the LLM to introduce itself, mention relevant active goals from memories and agendas, and briefly explain its capabilities.
+When a new conversation starts (first user message in an empty thread, `/new` in Matrix, or session reset in the web UI), a seed system event is automatically injected before the user's message is processed. The seed prompts the LLM to introduce itself, mention relevant active goals from memories and tasks, and briefly explain its capabilities.
 
 - Language-specific: configured via `seed.language` in `config.yaml` (default: `"en"`)
 - Prompt files: `data/prompts/SEED_{language}.txt` (shipped: `en`, `de`, `fr`, `es`, `it`, `zh`, `ja`)
@@ -18,7 +18,7 @@ Wintermute includes several autonomous background systems that operate without u
 
 **Module:** `wintermute/workers/dreaming.py`
 
-A nightly consolidation pass that reviews and prunes MEMORIES.txt and agenda DB items.
+A nightly consolidation pass that reviews and prunes MEMORIES.txt and tasks.
 
 - Fires at a configurable hour (default: 01:00 UTC)
 - Uses a direct LLM API call — no tool loop, no conversation side effects
@@ -28,10 +28,10 @@ A nightly consolidation pass that reviews and prunes MEMORIES.txt and agenda DB 
 
 **Consolidation logic:**
 - MEMORIES.txt: removes duplicates, merges related facts, preserves distinct useful facts. When a vector backend is active, memories are retrieved from the vector store, consolidated by the LLM, then written back to both the vector store and MEMORIES.txt (as git-versioned backup)
-- Agenda items: LLM returns JSON actions (complete, update, keep) applied via DB; completed items older than 30 days are purged
+- Tasks: LLM returns JSON actions (complete, update, keep) applied via DB; completed tasks older than 30 days are purged
 - Skills: deduplicates overlapping skills, then condenses each to ~150 tokens while preserving the first-line summary (used in the skills TOC)
 
-The prompts used for consolidation are stored in `data/DREAM_MEMORIES_PROMPT.txt` and `data/DREAM_AGENDA_PROMPT.txt` and can be customised. See [system-prompts.md](system-prompts.md#customisable-prompt-templates).
+The prompts used for consolidation are stored in `data/DREAM_MEMORIES_PROMPT.txt` and `data/DREAM_TASKS_PROMPT.txt` and can be customised. See [system-prompts.md](system-prompts.md#customisable-prompt-templates).
 
 ## Memory Harvest
 
@@ -67,20 +67,6 @@ Periodic background extraction of personal facts and preferences from conversati
 
 **Configuration:** See `memory_harvest:` section in `config.yaml`.
 
-## Agenda Reviews
-
-**Module:** `wintermute/workers/agenda.py`
-
-Periodic autonomous reviews of active agenda items.
-
-- Runs at a configurable interval (default: every 60 minutes)
-- Spawns one sub-session per thread that has active agenda items bound to it (via `thread_id`)
-- Each sub-session runs in `full` mode with `parent_thread_id` set to the originating thread, so results are delivered back to that room
-- The sub-session lists agenda items via the `agenda` tool and takes appropriate actions (complete items, add new ones, set routines, update memories, run commands, etc.)
-- If nothing needs attention the worker responds with `[NO_ACTION]` and the result is suppressed — no message is sent
-- Agenda items without a `thread_id` (legacy/unbound items) are skipped by the review loop
-- New agenda items automatically inherit the `thread_id` of the thread that created them
-
 ## Sub-sessions and Workflow DAG
 
 **Module:** `wintermute/core/sub_session.py`
@@ -92,7 +78,7 @@ Background workers for complex, multi-step tasks.
 | Mode | System Prompt | Tools | Use Case |
 |------|--------------|-------|----------|
 | `minimal` | Lightweight execution instructions | execution + research | Default, fast and cheap |
-| `full` | Sectioned BASE + MEMORIES + AGENDA + SKILLS TOC | all including orchestration | When worker needs full context or must spawn further workers |
+| `full` | Sectioned BASE + MEMORIES + TASKS + SKILLS TOC | all including orchestration | When worker needs full context or must spawn further workers |
 | `base_only` | Sectioned BASE_PROMPT.txt only | execution + research | Core instructions without memory overhead |
 | `none` | Empty | execution + research | Purely mechanical tasks |
 
@@ -173,17 +159,17 @@ Sub-session outcomes (completed, timeout, failed) are persisted to the `sub_sess
 
 See [outcome-tracking.md](outcome-tracking.md) for the full reference.
 
-## Routine-triggered Inference
+## Schedule-triggered Inference
 
 **Module:** `wintermute/workers/scheduler_thread.py`
 
-Routines can optionally trigger AI inference when they fire:
+Tasks with schedules can optionally trigger AI inference when they fire:
 
-- If `ai_prompt` is set on a routine, an isolated AI inference runs with that prompt
-- Thread-bound routines deliver the response to the originating chat thread
-- System routines (no thread) fire as system events
+- If `ai_prompt` is set on a scheduled task, an isolated AI inference runs with that prompt
+- Thread-bound tasks deliver the response to the originating chat thread
+- System tasks (no thread) fire as system events
 - Supports one-time, daily, weekly, monthly, and interval schedules
-- Interval routines can be restricted to time windows (e.g. 08:00-20:00)
+- Interval tasks can be restricted to time windows (e.g. 08:00-20:00)
 
 ## Context Compaction
 
@@ -208,7 +194,7 @@ After every inference, Wintermute checks if any memory component exceeds its siz
 | Component | Default Limit |
 |-----------|---------------|
 | MEMORIES.txt | 10,000 chars |
-| Agenda (DB) | 5,000 chars |
+| Tasks (DB) | 5,000 chars |
 | skills/ (TOC) | 2,000 chars |
 
 When exceeded, a system event is enqueued asking the AI to read, condense, and update the component.

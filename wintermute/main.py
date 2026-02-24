@@ -9,13 +9,12 @@ Startup sequence:
   2. Configure logging
   3. Initialise SQLite databases
   4. Ensure data/ files exist
-  5. Restore APScheduler jobs (and execute missed routines)
+  5. Restore APScheduler jobs (and execute missed tasks)
   6. Build shared broadcast function (Matrix + web)
   7. Start LLM inference task
   8. Start web interface task (if enabled)
   9. Start Matrix task (if configured)
-  10. Start agenda review task
-  11. Await shutdown signals
+  10. Await shutdown signals
 """
 
 import asyncio
@@ -32,7 +31,6 @@ from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 from wintermute import tools as tool_module
-from wintermute.workers.agenda import AgendaLoop
 from openai import AsyncOpenAI
 
 from wintermute.core.llm_thread import BackendPool, LLMThread, MultiProviderConfig, ProviderConfig
@@ -316,7 +314,7 @@ async def main() -> None:
     csl = cfg.get("context", {}).get("component_size_limits", {})
     prompt_assembler.set_component_limits(
         memories=csl.get("memories", 10_000),
-        agenda=csl.get("agenda", 5_000),
+        tasks=csl.get("tasks", csl.get("agenda", 5_000)),
         skills=csl.get("skills_total", 2_000),
     )
 
@@ -339,7 +337,7 @@ async def main() -> None:
     nl_raw = cfg.get("nl_translation", {}) or {}
     nl_translation_config = {
         "enabled": nl_raw.get("enabled", False) and nl_translation_pool.enabled,
-        "tools": set(nl_raw.get("tools", ["set_routine", "spawn_sub_session", "add_skill", "agenda"])),
+        "tools": set(nl_raw.get("tools", ["task", "spawn_sub_session", "add_skill"])),
     }
     if nl_translation_config["enabled"]:
         prompt_loader.validate_nl_translation()
@@ -355,10 +353,6 @@ async def main() -> None:
     scheduler_cfg = SchedulerConfig(
         timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
     )
-    agenda_cfg = cfg.get("agenda", {})
-    agenda_enabled = agenda_cfg.get("enabled", True)
-    agenda_interval = agenda_cfg.get("review_interval_minutes", 60)
-
     harvest_cfg_raw = cfg.get("memory_harvest", {})
     harvest_config = MemoryHarvestConfig(
         enabled=harvest_cfg_raw.get("enabled", True),
@@ -486,15 +480,6 @@ async def main() -> None:
         web_iface._main_pool = main_pool
         web_iface._multi_cfg = multi_cfg
 
-    agenda_loop: Optional[AgendaLoop] = None
-    if agenda_enabled:
-        agenda_loop = AgendaLoop(
-            interval_minutes=agenda_interval,
-            sub_session_manager=sub_sessions,
-        )
-    else:
-        logger.info("Agenda loop disabled by config")
-
     harvest_loop: Optional[MemoryHarvestLoop] = None
     if harvest_config.enabled:
         harvest_loop = MemoryHarvestLoop(
@@ -535,11 +520,9 @@ async def main() -> None:
     # Inject remaining references for /status and /dream commands.
     if matrix:
         matrix._scheduler = scheduler
-        matrix._agenda_loop = agenda_loop
         matrix._dreaming_loop = dreaming_loop
         matrix._update_checker = update_checker
     if web_iface:
-        web_iface._agenda_loop = agenda_loop
         web_iface._dreaming_loop = dreaming_loop
 
     scheduler.start()
@@ -552,8 +535,6 @@ async def main() -> None:
         asyncio.create_task(llm.run(),              name="llm"),
         asyncio.create_task(dreaming_loop.run(),     name="dreaming"),
     ]
-    if agenda_loop:
-        tasks.append(asyncio.create_task(agenda_loop.run(), name="agenda"))
     if harvest_loop:
         tasks.append(asyncio.create_task(harvest_loop.run(), name="memory_harvest"))
     if update_checker:
@@ -613,8 +594,6 @@ async def main() -> None:
     await shutdown.wait()
     logger.info("Shutdown requested - stopping components gracefully")
 
-    if agenda_loop:
-        agenda_loop.stop()
     if harvest_loop:
         harvest_loop.stop()
     if update_checker:

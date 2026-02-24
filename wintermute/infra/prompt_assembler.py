@@ -5,7 +5,7 @@ Order:
   1. BASE_PROMPT.txt   – immutable core
   2. Current datetime   – local time + timezone
   3. MEMORIES.txt      – long-term user facts
-  4. Agenda (from DB)   – active goals / working memory
+  4. Tasks (from DB)    – active goals, reminders, scheduled actions
   5. skills/*.md       – capability documentation
 """
 
@@ -30,7 +30,7 @@ SKILLS_DIR        = DATA_DIR / "skills"
 # Size thresholds (characters) that trigger AI summarisation.
 # Defaults — overridden at startup via set_component_limits() from config.yaml.
 MEMORIES_LIMIT = 10_000
-AGENDA_LIMIT   = 5_000
+TASKS_LIMIT    = 5_000
 SKILLS_LIMIT   = 2_000  # TOC-only; individual skills loaded on demand
 
 # Configured timezone — set by main.py at startup via set_timezone().
@@ -46,15 +46,15 @@ _tool_profiles: dict[str, dict] = {}
 _cached_sections: list[tuple[str, set[str], str]] | None = None
 
 
-def set_component_limits(memories: int = 10_000, agenda: int = 5_000,
-                         skills: int = 2_000) -> None:
+def set_component_limits(memories: int = 10_000, tasks: int = 5_000,
+                         skills: int = 2_000, **_compat) -> None:
     """Override component size limits from config.yaml."""
-    global MEMORIES_LIMIT, AGENDA_LIMIT, SKILLS_LIMIT
+    global MEMORIES_LIMIT, TASKS_LIMIT, SKILLS_LIMIT
     MEMORIES_LIMIT = memories
-    AGENDA_LIMIT = agenda
+    TASKS_LIMIT = tasks
     SKILLS_LIMIT = skills
-    logger.info("Component size limits: memories=%d, agenda=%d, skills=%d",
-                memories, agenda, skills)
+    logger.info("Component size limits: memories=%d, tasks=%d, skills=%d",
+                memories, tasks, skills)
 
 
 def set_timezone(tz: str) -> None:
@@ -247,9 +247,9 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
         if memories:
             sections.append(f"# User Memories\n\n{memories}")
 
-    agenda = database.get_active_agenda_text(thread_id=thread_id)
-    if agenda:
-        sections.append(f"# Active Agenda\n\n{agenda}")
+    tasks_text = database.get_active_tasks_text(thread_id=thread_id)
+    if tasks_text:
+        sections.append(f"# Active Tasks\n\n{tasks_text}")
 
     if extra_summary:
         sections.append(f"# Conversation Summary\n\n{extra_summary}")
@@ -263,14 +263,14 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
 def check_component_sizes() -> dict[str, bool]:
     """
     Return a dict indicating which components exceed their size thresholds.
-    Keys: 'memories', 'agenda', 'skills'
+    Keys: 'memories', 'tasks', 'skills'
     """
     memories_len = len(_read(MEMORIES_FILE))
-    agenda_len    = len(database.get_active_agenda_text())
+    tasks_len     = len(database.get_active_tasks_text())
     skills_toc_len = len(_read_skills_toc())
     return {
         "memories": memories_len > MEMORIES_LIMIT,
-        "agenda":    agenda_len    > AGENDA_LIMIT,
+        "tasks":    tasks_len    > TASKS_LIMIT,
         "skills":   skills_toc_len > SKILLS_LIMIT,
     }
 

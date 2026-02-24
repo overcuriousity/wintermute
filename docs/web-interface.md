@@ -14,7 +14,7 @@ Available at `/debug`. Provides a live inspection and administration view with a
 | **Sub-sessions** | All background workers with ID, workflow, dependencies, parent thread, status, objective, system prompt mode, creation time, duration, and result/error preview. Click a sub-session to inspect its full message history. |
 | **Workflows** | Workflow DAGs with per-node status, objectives, dependencies, and result previews. Collapsible sections per workflow. |
 | **Jobs** | APScheduler jobs with trigger type, next run time, and arguments. |
-| **Routines** | Full routine management: create, edit, and delete routines. Sections for active, completed, failed, and cancelled routines. Supports all schedule types (once, daily, weekly, monthly, interval). |
+| **Tasks** | Full task management: create, edit, pause, resume, and delete tasks. Sections for active, paused, completed, and scheduled tasks. Supports all schedule types (once, daily, weekly, monthly, interval). |
 | **Outcomes** | Historical sub-session outcomes with status, duration, tool call counts, Turing Protocol verdicts, and objectives. Aggregate stats (success rate, avg duration, timeout rate) displayed at the top. Filterable by status. |
 
 ## Debug REST API
@@ -34,10 +34,10 @@ The debug panel is backed by a REST API:
 | GET | `/api/debug/jobs` | List all scheduler jobs |
 | GET | `/api/debug/config` | Dump the current (sanitised) runtime config |
 | GET | `/api/debug/system-prompt` | Get the assembled system prompt + tool schemas with token counts |
-| GET | `/api/debug/routines` | List all routines |
-| POST | `/api/debug/routines` | Create a new routine |
-| DELETE | `/api/debug/routines/{job_id}` | Delete a routine |
-| GET | `/api/debug/agenda` | List current agenda items |
+| GET | `/api/debug/tasks` | List all tasks |
+| POST | `/api/debug/tasks` | Create a new task |
+| PUT | `/api/debug/tasks/{task_id}` | Update a task |
+| DELETE | `/api/debug/tasks/{task_id}` | Delete a task |
 | GET | `/api/debug/interaction-log` | List interaction log entries (Turing Protocol, dreaming, embedding calls, Qdrant operations) |
 | GET | `/api/debug/interaction-log/{id}` | Get a specific interaction log entry |
 | GET | `/api/debug/outcomes` | List sub-session outcomes with aggregate stats (supports `status`, `limit`, `offset` query params) |

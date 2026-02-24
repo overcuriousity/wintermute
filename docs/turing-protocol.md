@@ -124,13 +124,13 @@ turing_protocol:
 
 ---
 
-### `agenda_complete` — Agenda item completion guard
+### `task_complete` — Task completion guard
 
 **Phase:** `pre_execution` | **Scope:** `sub_session` | **Type:** programmatic
 
-Always-on. Fires when the model calls `agenda(action='complete')` without a substantive `reason` field (missing or fewer than 10 characters). Prevents the model from blindly marking tasks as done without evidence.
+Always-on. Fires when the model calls `task(action='complete')` without a substantive `reason` field (missing or fewer than 10 characters). Prevents the model from blindly marking tasks as done without evidence.
 
-Correction: instructs the model to provide concrete, verifiable proof the task is finished before completing the item.
+Correction: instructs the model to provide concrete, verifiable proof the task is finished before completing it.
 
 Not configurable via the `validators` map. Always active in sub-session scope.
 

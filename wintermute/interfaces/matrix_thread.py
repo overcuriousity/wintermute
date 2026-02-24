@@ -18,8 +18,7 @@ device shows as verified (green shield) in Element.
 Special commands handled directly (before reaching the LLM):
   /new            - reset the conversation for the current room
   /compact        - force context compaction for the current room
-  /routines       - list active routines
-  /agenda         - manually trigger agenda review
+  /tasks          - list active tasks
   /status         - show system status
   /dream          - trigger a dream cycle
   /kimi-auth      - authenticate Kimi-Code backend
@@ -1333,19 +1332,10 @@ class MatrixThread:
             )
             return
 
-        if content is None and text == "/routines":
+        if content is None and text == "/tasks":
             from wintermute import tools as tool_module
-            result = tool_module.execute_tool("list_routines", {})
-            await self.send_message(f"Routines:\n```json\n{result}\n```", thread_id)
-            return
-
-        if content is None and text == "/agenda":
-            await self._llm.enqueue_system_event(
-                "The user manually triggered an agenda review. "
-                "Review your active agenda items using the agenda tool and report what actions, if any, you take.",
-                thread_id,
-            )
-            await self.send_message("Agenda review triggered.", thread_id)
+            result = tool_module.execute_tool("task", {"action": "list"})
+            await self.send_message(f"Tasks:\n```json\n{result}\n```", thread_id)
             return
 
         if content is None and text == "/status":
@@ -1404,9 +1394,8 @@ class MatrixThread:
                 "- `/new` — Wipe history and start a fresh session (also cancels running sub-sessions)\n"
                 "- `/compact` — Force context compaction now; shows before/after token counts\n\n"
                 "**Autonomy**\n"
-                "- `/agenda` — Trigger an immediate agenda review\n"
-                "- `/dream` — Run a dream cycle (memory consolidation + agenda pruning)\n"
-                "- `/routines` — List all scheduled routines\n\n"
+                "- `/tasks` — List all active tasks\n"
+                "- `/dream` — Run a dream cycle (memory consolidation + task pruning)\n\n"
                 "**Memory**\n"
                 "- `/memory-stats` — Show memory store backend, entry count, and status\n"
                 "- `/rebuild-index` — Rebuild the vector memory index from MEMORIES.txt\n\n"
@@ -1492,25 +1481,23 @@ class MatrixThread:
         else:
             lines.append("Skills: none")
 
-        # Active agenda items
+        # Active tasks
         try:
-            agenda_items = db.list_agenda_items("active")
-            if agenda_items:
-                lines.append(f"Agenda items ({len(agenda_items)} active):")
-                for item in agenda_items:
+            task_items = db.list_tasks("active")
+            if task_items:
+                lines.append(f"Tasks ({len(task_items)} active):")
+                for item in task_items:
                     content = (item["content"] or "")[:80]
                     prio = item.get("priority", "?")
-                    lines.append(f"- [P{prio}] #{item['id']}: {content}")
+                    sched = f" [{item['schedule_desc']}]" if item.get("schedule_desc") else ""
+                    lines.append(f"- [P{prio}] #{item['id']}: {content}{sched}")
             else:
-                lines.append("Agenda items: none")
+                lines.append("Tasks: none")
         except Exception:  # noqa: BLE001
             pass
 
         # --- Background loops ---
         lines.append("\n**Background Loops**")
-        if hasattr(self, "_agenda_loop") and self._agenda_loop:
-            state = "running" if self._agenda_loop._running else "stopped"
-            lines.append(f"Agenda: {state} (every {self._agenda_loop._interval // 60}m)")
         if hasattr(self, "_dreaming_loop") and self._dreaming_loop:
             state = "running" if self._dreaming_loop._running else "stopped"
             dl_cfg = self._dreaming_loop._cfg
@@ -1524,18 +1511,13 @@ class MatrixThread:
             extra = f" (every {interval // 60}m)" if interval else ""
             lines.append(f"Memory harvest: {state}{extra}")
         if hasattr(self, "_scheduler") and self._scheduler:
-            routines = self._scheduler.list_routines()
-            active_routines = routines.get("active", [])
-            if active_routines:
-                lines.append(f"Scheduler routines ({len(active_routines)} active):")
-                for r in active_routines:
-                    msg = r.get("ai_prompt") or r.get("message") or ""
-                    msg = msg[:60]
-                    sched = r.get("schedule", "")
-                    nxt = r.get("next_run", "")
-                    lines.append(f"- {r.get('id', '?')}: \"{msg}\" ({sched}, next: {nxt})")
+            jobs = self._scheduler.list_jobs()
+            if jobs:
+                lines.append(f"Scheduler jobs ({len(jobs)} active):")
+                for j in jobs:
+                    lines.append(f"- {j.get('id', '?')}: next {j.get('next_run', '?')}")
             else:
-                lines.append("Scheduler routines: none")
+                lines.append("Scheduler jobs: none")
 
         # --- Update checker ---
         if hasattr(self, "_update_checker") and self._update_checker:
@@ -1588,7 +1570,7 @@ class MatrixThread:
         dl = self._dreaming_loop
         from wintermute.infra import database as db
         mem_before = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
-        agenda_before = len(db.list_agenda_items("active"))
+        tasks_before = len(db.list_tasks("active"))
         skills_before = sorted(prompt_assembler.SKILLS_DIR.glob("*.md")) if prompt_assembler.SKILLS_DIR.exists() else []
         skills_size_before = sum(f.stat().st_size for f in skills_before)
 
@@ -1600,14 +1582,14 @@ class MatrixThread:
             return
 
         mem_after = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
-        agenda_after = len(db.list_agenda_items("active"))
+        tasks_after = len(db.list_tasks("active"))
         skills_after = sorted(prompt_assembler.SKILLS_DIR.glob("*.md")) if prompt_assembler.SKILLS_DIR.exists() else []
         skills_size_after = sum(f.stat().st_size for f in skills_after)
 
         await self.send_message(
             f"Dream cycle complete.\n"
             f"MEMORIES.txt: {mem_before} -> {mem_after} chars\n"
-            f"Agenda items: {agenda_before} -> {agenda_after} active\n"
+            f"Tasks: {tasks_before} -> {tasks_after} active\n"
             f"Skills: {len(skills_before)} -> {len(skills_after)} files, "
             f"{skills_size_before} -> {skills_size_after} bytes",
             thread_id,

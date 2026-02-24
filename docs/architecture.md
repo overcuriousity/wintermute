@@ -11,14 +11,13 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **MatrixThread** | `matrix_thread.py` | Matrix client with E2E encryption (optional) |
 | **SubSessionManager** | `sub_session.py` | Manages background worker sub-sessions and workflow DAGs |
 | **Turing Protocol** | `turing_protocol.py` | Three-stage post-inference validation framework (detect, validate, correct) |
-| **RoutineScheduler** | `scheduler_thread.py` | APScheduler-based routine system |
-| **AgendaLoop** | `agenda.py` | Periodic autonomous agenda item reviews |
+| **SchedulerThread** | `scheduler_thread.py` | APScheduler-based scheduled task execution |
 | **DreamingLoop** | `dreaming.py` | Nightly memory consolidation |
 | **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
 | **NL Translator** | `nl_translator.py` | Expands natural-language tool descriptions into structured arguments via a translator LLM |
 | **MemoryStore** | `memory_store.py` | Vector-indexed memory retrieval (flat_file / FTS5 / Qdrant backends) |
 | **PromptAssembler** | `prompt_assembler.py` | Builds system prompts from file components |
-| **Database** | `database.py` | SQLite message persistence, thread management, agenda storage, and sub-session outcome tracking |
+| **Database** | `database.py` | SQLite message persistence, thread management, task storage, and sub-session outcome tracking |
 
 ## System Diagram
 
@@ -26,14 +25,13 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 User (Matrix / Browser)
         |
         v
-  LLMThread  <--- system prompt (BASE + MEMORIES + AGENDA + SKILLS TOC)
+  LLMThread  <--- system prompt (BASE + MEMORIES + TASKS + SKILLS TOC)
   (asyncio)        assembled fresh each turn; memories via vector search
                    (if configured) or full file; skills loaded on demand
         |
         |-- tool calls --> execute_shell / read_file / write_file
         |                  search_web / fetch_url
-        |                  append_memory / agenda / add_skill
-        |                  set_routine / list_routines
+        |                  append_memory / task / add_skill
         |
         +-- spawn_sub_session --> SubSessionManager
                                         |
@@ -53,8 +51,7 @@ User (Matrix / Browser)
                                         +-- result --> enqueue_system_event
                                                         (back to LLMThread)
 
-AgendaLoop --------------------------------> per-thread sub-session (full mode, result → originating room)
-RoutineScheduler ------------------------> LLMThread queue / sub-session
+SchedulerThread -------------------------> LLMThread queue / sub-session (scheduled tasks with ai_prompt)
 DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 ```
 
@@ -65,21 +62,20 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 3. Initialise SQLite databases
 4. Initialise memory store (vector backend or flat-file fallback; cold-boot import if needed)
 5. Bootstrap `data/` directories (skills/, scripts/, archive/)
-6. Restore APScheduler jobs (and execute missed routines)
+6. Restore APScheduler jobs (and execute missed scheduled tasks)
 7. Build shared broadcast function (routes to Matrix rooms or web clients)
 8. Start LLM inference task
 9. Start web interface task (if enabled)
 10. Start Matrix task (if configured)
-11. Start agenda review loop
-12. Start dreaming loop
-13. Await shutdown signals (SIGTERM / SIGINT)
+11. Start dreaming loop
+12. Await shutdown signals (SIGTERM / SIGINT)
 
 ## Data Flow: User Message
 
 1. User sends a message via Matrix or WebSocket
 2. Message enters the LLMThread queue
 3. LLMThread builds the message list from the SQLite DB
-4. System prompt is assembled fresh (BASE + MEMORIES + AGENDA + SKILLS TOC + compaction summary). When a vector memory backend is active, only the top-K relevant memories are retrieved (via embedding search) instead of the full MEMORIES.txt
+4. System prompt is assembled fresh (BASE + MEMORIES + TASKS + SKILLS TOC + compaction summary). When a vector memory backend is active, only the top-K relevant memories are retrieved (via embedding search) instead of the full MEMORIES.txt
 5. If history tokens exceed the compaction threshold, context is compacted first
 6. Message is saved to the DB, then inference runs
 7. If the model returns tool calls:
@@ -131,11 +127,11 @@ Wintermute is explicitly designed to work with small, quantised models (3B–8B 
 
 **Turing Protocol.** A three-stage (detect → validate → correct) post-inference validation pipeline that catches the hallucination patterns small models are most prone to — claiming to have done things they didn't, fabricating tool output, or making promises without acting. Rather than requiring a stronger model, corrections are injected automatically so the model can self-correct. See [turing-protocol.md](turing-protocol.md) for the full reference.
 
-**NL Translation (optional).** For models that struggle with multi-field structured JSON schemas, complex tool calls (`set_routine`, `spawn_sub_session`, `add_skill`, `agenda`) can be exposed as a single plain-English `description` field. A dedicated small translator LLM expands the description into structured arguments. See [tools.md — NL Translation Mode](tools.md#nl-translation-mode).
+**NL Translation (optional).** For models that struggle with multi-field structured JSON schemas, complex tool calls (`task`, `spawn_sub_session`, `add_skill`) can be exposed as a single plain-English `description` field. A dedicated small translator LLM expands the description into structured arguments. See [tools.md — NL Translation Mode](tools.md#nl-translation-mode).
 
-**Lean system prompt.** The system prompt is assembled from independent file-based components (`BASE_PROMPT.txt`, `MEMORIES.txt`, agenda, skills TOC). Skills inject only a one-line-per-skill table of contents; full procedures are loaded on demand via `read_file`. Components have configurable character caps with auto-summarisation when exceeded. No framework boilerplate is injected — the prompt contains only what you wrote and what the model genuinely needs.
+**Lean system prompt.** The system prompt is assembled from independent file-based components (`BASE_PROMPT.txt`, `MEMORIES.txt`, tasks, skills TOC). Skills inject only a one-line-per-skill table of contents; full procedures are loaded on demand via `read_file`. Components have configurable character caps with auto-summarisation when exceeded. No framework boilerplate is injected — the prompt contains only what you wrote and what the model genuinely needs.
 
-**Sectioned system prompt.** BASE_PROMPT sections are conditionally included based on available tools. Sub-sessions with only execution tools don't receive instructions about delegation, routines, or knowledge routing — saving ~800 tokens per worker invocation.
+**Sectioned system prompt.** BASE_PROMPT sections are conditionally included based on available tools. Sub-sessions with only execution tools don't receive instructions about delegation, tasks, or knowledge routing — saving ~800 tokens per worker invocation.
 
 **Tool profiles.** Named presets (e.g. `researcher`, `file_worker`) reduce cognitive load on the orchestrating model when spawning focused workers. Instead of reasoning about which individual tools to include, the model selects a profile name.
 
@@ -151,11 +147,11 @@ data/
   BASE_PROMPT.txt            -- Immutable core instructions
   MEMORIES.txt               -- Long-term user facts (updated via append_memory; git-versioned backup when vector backend is active)
   memory_index.db            -- FTS5 keyword index (only when backend=fts5)
-  conversation.db (agenda)    -- Active goals / working memory (managed via agenda tool, stored in SQLite)
+  conversation.db (tasks)     -- Active goals / working memory (managed via task tool, stored in SQLite)
   conversation.db (outcomes)  -- Sub-session outcome tracking (duration, status, TP verdict; used for historical feedback)
   skills/                    -- Learned procedures as *.md files (updated via add_skill tool)
   DREAM_MEMORIES_PROMPT.txt  -- Customisable dreaming prompt for MEMORIES consolidation
-  DREAM_AGENDA_PROMPT.txt     -- Customisable dreaming prompt for agenda consolidation
+  DREAM_TASKS_PROMPT.txt      -- Customisable dreaming prompt for task consolidation
   COMPACTION_PROMPT.txt      -- Customisable prompt for context compaction summarisation
   matrix_crypto.db           -- Matrix E2E encryption keys
   matrix_recovery.key        -- Cross-signing recovery key

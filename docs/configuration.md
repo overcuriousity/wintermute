@@ -224,7 +224,7 @@ Currently available validators:
 | `phantom_tool_result` | post_inference | main | programmatic | Detects when the model presents fabricated tool output ("I checked and found…") without having called the tool |
 | `empty_promise` | post_inference | main | programmatic | Detects when the model commits to an action ("I'll do X") as a final response without calling any tool. Excludes responses that end with a question (seeking confirmation) |
 | `objective_completion` | post_inference | sub_session | LLM | Gates sub-session exit: uses a dedicated LLM call to evaluate whether the worker's response genuinely satisfies its objective before allowing it to finish |
-| `agenda_complete` | pre_execution | sub_session | programmatic | Blocks `agenda(action='complete')` calls that lack a substantive `reason`. Always-on; not configurable via the `validators` map |
+| `task_complete` | pre_execution | sub_session | programmatic | Blocks `task(action='complete')` calls that lack a substantive `reason`. Always-on; not configurable via the `validators` map |
 | `tool_schema_validation` | pre_execution | main + sub_session | programmatic | Validates tool arguments against the tool's JSON Schema before execution (required fields, types, enums, constraints). Always-on; not configurable via the `validators` map |
 
 For a detailed explanation of each hook, phases, scopes, and how to write custom hooks, see [turing-protocol.md](turing-protocol.md).
@@ -246,7 +246,7 @@ turing_protocol:
 ### `nl_translation`
 
 Natural-language tool call translation for weak/small LLMs. When enabled,
-complex tools (`set_routine`, `spawn_sub_session`, `add_skill`, `agenda`) are
+complex tools (`task`, `spawn_sub_session`, `add_skill`) are
 presented to the main LLM as a single "describe in English" field. A
 dedicated translator LLM expands the description into structured arguments.
 
@@ -254,9 +254,9 @@ dedicated translator LLM expands the description into structured arguments.
 |-----|----------|---------|-------------|
 | `enabled` | no | `false` | Enable NL translation (opt-in) |
 | `backends` | no | turing_protocol backends | Ordered list of backend names for the translator LLM |
-| `tools` | no | `[set_routine, spawn_sub_session, add_skill, agenda]` | Which tools use simplified NL schemas |
+| `tools` | no | `[task, spawn_sub_session, add_skill]` | Which tools use simplified NL schemas |
 
-The translator can return JSON arrays to schedule multiple routines or
+The translator can return JSON arrays to add multiple tasks or
 spawn multiple sub-sessions from a single description. Ambiguous input
 triggers a clarification request back to the user.
 
@@ -297,13 +297,6 @@ Transcribes Matrix voice messages using an OpenAI-compatible `/v1/audio/transcri
 | `enabled` | no | `true` | Enable/disable the web interface |
 | `host` | no | `"127.0.0.1"` | Bind address |
 | `port` | no | `8080` | Listen port |
-
-### `agenda`
-
-| Key | Required | Default | Description |
-|-----|----------|---------|-------------|
-| `enabled` | no | `true` | Enable/disable periodic agenda reviews |
-| `review_interval_minutes` | no | `60` | Minutes between automatic agenda reviews |
 
 ### `dreaming`
 
@@ -387,7 +380,7 @@ Triggers when **either** condition is met:
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `timezone` | no | `"UTC"` | IANA timezone for all routine scheduling (also affects `dreaming` schedule). Examples: `Europe/Berlin`, `America/New_York` |
+| `timezone` | no | `"UTC"` | IANA timezone for all task scheduling (also affects `dreaming` schedule). Examples: `Europe/Berlin`, `America/New_York` |
 
 ### `logging`
 
@@ -412,7 +405,7 @@ tool_profiles:
     tools: [execute_shell, read_file, write_file, search_web, fetch_url]
     prompt_mode: minimal
   orchestrator:
-    tools: [spawn_sub_session, agenda, append_memory, set_routine, add_skill, list_routines, delete_routine]
+    tools: [spawn_sub_session, task, append_memory, add_skill]
     prompt_mode: full
 ```
 
@@ -425,7 +418,7 @@ Profiles are used via `spawn_sub_session(profile="researcher")`. Available profi
 
 ### `seed`
 
-Controls the conversation seed — an automatic system event injected when a new conversation starts (first message in an empty thread or after `/new`). The seed prompts the LLM to introduce itself, mention relevant memories/agendas, and explain its capabilities.
+Controls the conversation seed — an automatic system event injected when a new conversation starts (first message in an empty thread or after `/new`). The seed prompts the LLM to introduce itself, mention relevant memories/tasks, and explain its capabilities.
 
 Seed prompts are language-specific files in `data/prompts/SEED_{language}.txt`. Shipped languages: `en`, `de`, `fr`, `es`, `it`, `zh`, `ja`. Add your own by creating a `SEED_{code}.txt` file. Falls back to English if the configured language file is missing.
 
@@ -438,5 +431,5 @@ Seed prompts are language-specific files in `data/prompts/SEED_{language}.txt`. 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `memories` | `10000` | Char limit before MEMORIES.txt auto-summarisation |
-| `agenda` | `5000` | Char limit before agenda auto-summarisation |
+| `tasks` | `5000` | Char limit before tasks auto-summarisation |
 | `skills_total` | `2000` | Char limit for the skills TOC (summaries only; full skills are loaded on demand) |

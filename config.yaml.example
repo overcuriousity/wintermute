@@ -240,7 +240,7 @@ turing_protocol:
     # The following hooks are always enabled by default and rarely need
     # configuration. Set to false to disable if needed.
 
-    #agenda_complete: true                 # Blocks agenda(action='complete') without a
+    #task_complete: true                   # Blocks task(action='complete') without a
                                            # substantive reason. Prevents models from
                                            # blindly marking tasks as done. (pre_execution,
                                            # sub_session scope only)
@@ -272,10 +272,9 @@ nl_translation:
   enabled: false                          # Opt-in; default off
   backends: ["local_small"]               # Translator LLM (small/fast recommended)
   tools:                                  # Which tools get NL-simplified schemas
-    - set_routine                         # Routine scheduling (complex cron + params)
+    - task                                # Task management (add/complete/schedule/pause/resume)
     - spawn_sub_session                   # Background worker spawning (DAG dependencies)
     - add_skill                           # Skill creation (summary + documentation formatting)
-    - agenda                              # Agenda management (add/complete/list/update)
 
 
 # ── Tool Profiles (Named Sub-session Presets) ────────────────────────
@@ -300,7 +299,7 @@ tool_profiles:
     tools: [execute_shell, read_file, write_file, search_web, fetch_url]
     prompt_mode: minimal
   orchestrator:
-    tools: [spawn_sub_session, agenda, append_memory, set_routine, add_skill, list_routines, delete_routine]
+    tools: [spawn_sub_session, task, append_memory, add_skill]
     prompt_mode: full
 
 
@@ -327,20 +326,6 @@ seed:
 # The compaction model (llm.compaction) generates the summaries.
 
 
-# ── Agenda (Working Memory) ─────────────────────────────────────────
-# The agenda is Wintermute's short-term working memory: tasks, reminders,
-# and items that need periodic attention. Wintermute reviews the agenda
-# autonomously at the configured interval using a background sub-session.
-#
-# Agenda items are stored in SQLite and included in every system prompt.
-#
-agenda:
-  enabled: true                           # Set false to disable autonomous reviews
-  review_interval_minutes: 60             # Minutes between automatic agenda reviews
-                                          # Lower = more responsive but more API calls
-                                          # Recommended: 30-120
-
-
 # ── Component Size Limits ───────────────────────────────────────────
 # Maximum characters for system prompt components before auto-summarisation
 # kicks in. When a component exceeds its limit, the AI summarises it to
@@ -353,7 +338,7 @@ agenda:
 context:
   component_size_limits:
     memories: 10000                       # MEMORIES.txt — long-term personal facts
-    agenda: 5000                          # Active agenda items from database
+    tasks: 5000                           # Active tasks from database
     skills_total: 20000                   # Total across all data/skills/*.md files
 
 
@@ -401,8 +386,8 @@ memory_harvest:
 
 
 # ── Scheduler ────────────────────────────────────────────────────────
-# APScheduler-based routine execution. Routines can be one-shot or
-# recurring (cron-style). Routines with an ai_prompt field trigger
+# APScheduler-based schedule execution. Tasks with a schedule fire
+# at the configured time. Tasks with an ai_prompt field trigger
 # autonomous sub-sessions at the scheduled time.
 #
 scheduler:
