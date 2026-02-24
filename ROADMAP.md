@@ -14,7 +14,7 @@ OpenClaw (formerly Clawdbot, by Peter Steinberger) is the current reference poin
 | **Multi-channel reach** | 50+ integrations (WhatsApp, Telegram, Signal, Discord, iMessage, Slack) | Matrix + Web UI only |
 | **Skill ecosystem** | ClawHub registry with install gating; agents auto-discover and pull skills | Local-only `data/skills/*.md`; no discovery or sharing |
 | **Multi-agent routing** | `AGENTS.md` routes channels/peers to isolated agent instances with separate memory | Single agent instance; sub-sessions are workers, not independent agents |
-| **Cron + wakeups + webhooks** | Three autonomous trigger types built into the Gateway | Timer-based polling only (agenda loop, memory harvest, scheduler) |
+| **Cron + wakeups + webhooks** | Three autonomous trigger types built into the Gateway | Event-driven + cron scheduling |
 | **Community & ecosystem** | MIT license, massive contributor base, plugin marketplace | Single-developer project |
 
 ### Where Wintermute Already Leads
@@ -28,6 +28,7 @@ OpenClaw (formerly Clawdbot, by Peter Steinberger) is the current reference poin
 | **Memory consolidation** | Nightly dreaming cycle: memory dedup, agenda review, skill condensation | Persistent markdown files; no automated consolidation |
 | **Outcome tracking** | Structured recording of sub-session outcomes with historical feedback for future spawns | No documented outcome tracking |
 | **E2E encryption** | Native Matrix E2E via mautrix | Channel-dependent; no universal encryption |
+| **Event-driven architecture** | Async pub/sub event bus with debounce, history ring-buffer; memory harvest and dreaming are event-triggered | No documented event system |
 
 ### The Gap That Matters
 
@@ -39,18 +40,64 @@ Wintermute's autonomy is **narrow but deeper**: fewer interfaces, but the Turing
 
 ---
 
-## Current Architectural Problems
+## Completed Work
 
-### 1. Agenda vs. Routines: A False Dichotomy
+### ~~Phase A: Unified Task System~~ ✅ DONE
 
-An agenda item is "something that should be done" (SQLite). A routine is "something that fires on a schedule" (APScheduler). But:
-- An agenda review *is* a routine (fixed interval timer)
-- A routine with `ai_prompt` *is* a task that should track completion — i.e., an agenda item
-- Neither system knows about the other's state
+The former agenda/routine split has been resolved. A single `tasks` table in SQLite now handles both tracked items and scheduled actions:
 
-They are the same concept split across two storage backends with incompatible semantics.
+- `task` tool with actions: `add`, `update`, `complete`, `pause`, `resume`, `delete`, `list`
+- Schedule types: `once`, `daily`, `weekly`, `monthly`, `interval`
+- `ai_prompt` + `background` flag enables autonomous sub-session execution on schedule
+- APScheduler persists jobs; `schedule_config` JSON survives pause/resume
+- Operational metrics tracked per-task: `run_count`, `last_run_at`, `last_result_summary`
 
-### 2. No Feedback Loops
+**Remaining minor enhancement (not blocking):** Computed metrics from `interaction_log` + `sub_session_outcomes` could be surfaced in task list output (success rate, avg duration). This is a query, not a schema change.
+
+### ~~Phase B: Event Bus~~ ✅ DONE
+
+Full async pub/sub event bus (`wintermute/infra/event_bus.py`) wired into all components:
+
+- `emit()`, `subscribe()`, `unsubscribe()`, `history()` with 1000-event ring-buffer
+- Per-subscriber `debounce_ms` support for coalescing rapid-fire events
+- Error isolation per subscriber
+
+**Events emitted:**
+- `message.received`, `message.sent` (LLMThread)
+- `sub_session.started`, `sub_session.completed`, `sub_session.failed` (sub_session)
+- `tool.executed` (main + sub-session scope)
+- `task.created`, `task.completed`, `task.fired` (tools + scheduler)
+- `memory.appended`, `skill.added` (tools)
+- `dreaming.started`, `dreaming.completed` (dreaming)
+- `harvest.started`, `harvest.completed` (memory_harvest)
+
+**Event-driven behavior (replaces timer-based polling):**
+- Memory harvest wakes on `message.received` count threshold
+- Dreaming reacts to `memory.appended` (with 5-min debounce)
+- Scheduler observes `task.created`
+
+New events (e.g. `inference.completed` with token telemetry) can be added incrementally as later phases need them.
+
+### ~~Phase C: Audit Infrastructure~~ ✅ DONE (via existing systems)
+
+The `interaction_log` table comprehensively records every autonomous action post-hoc:
+
+- Every LLM inference call (action, session, model, input, output, status, raw tool_calls)
+- Every tool execution (tool name, arguments, result)
+- Every Turing Protocol verdict (detection, validation, correction stages)
+- Every sub-session round, dreaming cycle, memory harvest, compaction
+
+The `sub_session_outcomes` table provides structured metrics per sub-session: status, tools_used, tool_call_count, duration, turing_verdict, continuation_count, backend_used, objective embedding for similarity search.
+
+The `/debug` web panel surfaces sub-sessions, jobs, tasks, interaction log, and an SSE stream.
+
+Pre-execution approval gating, if ever needed, is covered by extending the Turing Protocol (which already has `pre_execution` phase and scope-based filtering).
+
+---
+
+## Current Architectural Problems (Remaining)
+
+### 1. No Feedback Loops
 
 Sub-sessions complete, results are delivered, done. The system never asks:
 - "Did that actually work?"
@@ -59,19 +106,14 @@ Sub-sessions complete, results are delivered, done. The system never asks:
 
 Outcome tracking records data, but nothing consumes it for adaptation. It is write-only telemetry.
 
-### 3. No Introspection
+### 2. No Introspection
 
 The system cannot query its own operational state:
 - What sub-sessions failed today and why?
 - Which memories were loaded but never relevant?
-- How many NO_ACTION agenda reviews ran (wasted tokens)?
 - What's my success rate by task type?
 
-### 4. Timer-Based Everything
-
-Agenda reviews, memory harvesting, and dreaming all run on fixed timers regardless of whether there's anything to do. This wastes tokens on weak/local models where every inference call is expensive.
-
-### 5. Skills Are Static Documentation
+### 3. Skills Are Static Documentation
 
 Skills are `.md` files the LLM reads. The system can't:
 - Track which skills are actually used
@@ -83,107 +125,33 @@ Skills are `.md` files the LLM reads. The system can't:
 
 ## Roadmap Phases
 
-### Phase 1: Intent Log & Audit Infrastructure
+### Phase 1: Reflection Cycle
 
-**Priority: Highest — prerequisite for all autonomy increases**
-
-Every autonomous action (agenda review, routine execution, memory consolidation, skill modification) produces an **intent record** before execution:
-
-```
-IntentRecord:
-  id, timestamp, actor (agenda_review | reflection | goal_pursuit | dreaming)
-  action: structured description of what it wants to do
-  reasoning: LLM-generated explanation
-  status: proposed → approved → executed | vetoed
-  approval_policy: auto | user_required
-  cost_estimate: estimated token spend
-```
-
-**Approval tiers** (configurable):
-- **Auto-approve:** read_file, search_web, append_memory (low risk, reversible)
-- **Auto-approve + log:** set_routine, agenda complete, update skill (medium risk, git-reversible)
-- **Require approval:** delete_skill, external-facing actions, self-schedule modification (high risk)
-
-**Audit UI:** Extend the existing `/debug` web panel with an Intent Feed — chronological log of all autonomous decisions with reasoning, outcome, and cost.
-
-**Weak-LLM optimization:** Intent records are generated by the acting sub-session as structured tool output, not by a separate evaluation call. Zero additional inference cost.
-
-### Phase 2: Unified Goal System
-
-**Replace both agenda items and routines with a single Goal abstraction:**
-
-```
-Goal:
-  id, description, status (active | paused | completed | failed | abandoned)
-  strategy: nullable — can be discovered through reflection
-  trigger: cron | event | condition | manual
-  success_criteria: how to verify completion
-  parent_goal_id: nullable (hierarchical decomposition)
-  priority: integer
-  metrics: {attempts, successes, failures, avg_duration, last_outcome}
-  thread_id: nullable (scoped to a conversation, or global)
-```
-
-**Migration path:**
-- Existing agenda items become Goals with `trigger: manual` or `trigger: condition`
-- Existing routines become Goals with `trigger: cron`
-- The `set_routine` and `agenda` tools merge into a single `goal` tool with actions: `create`, `update`, `complete`, `pause`, `list`, `decompose`
-- APScheduler remains the execution backend for cron-triggered goals, but goal state lives in SQLite
-
-**Why this matters for weak LLMs:** Currently the LLM must decide at creation time whether something is an "agenda item" or a "routine" — a premature classification that small models get wrong. A Goal is just "something to be done" with optional scheduling. The LLM's cognitive load decreases.
-
-### Phase 3: Event Bus
-
-**Replace timer-based polling with in-process async pub/sub:**
-
-```python
-class EventBus:
-    async def emit(self, event: str, payload: dict)
-    def subscribe(self, event: str, handler: Callable)
-```
-
-**Core events:**
-- `message.received`, `message.sent`
-- `sub_session.completed`, `sub_session.failed`
-- `goal.created`, `goal.completed`, `goal.stalled`
-- `memory.appended`, `memory.consolidated`
-- `skill.loaded`, `skill.updated`
-- `inference.completed` (with token count, duration)
-
-**What changes:**
-- Memory harvest triggers on `message.received` count threshold instead of polling every 60s
-- Agenda review triggers on `goal.created` or `goal.stalled` instead of fixed interval
-- Dreaming still runs on cron (it's genuinely time-based) but can also trigger on `memory.appended` count threshold
-- Goals with `trigger: event` subscribe to specific events
-
-**Weak-LLM optimization:** Eliminates wasted inference on empty polling cycles. A local 8B model running on CPU should only fire when there's actual work to do.
-
-### Phase 4: Reflection Cycle
+**Priority: Highest — the single most differentiating capability**
 
 **Close the feedback loop: Execute → Observe → Reflect → Adapt**
 
-A new periodic process (event-triggered, not timer-based) that:
+A new event-triggered worker (`reflection.py`) that:
 
-1. **Reads recent outcomes** from the intent log and goal metrics
-2. **Identifies patterns:** repeated failures, unused skills, goals that stall
+1. **Reads recent outcomes** from `interaction_log`, `sub_session_outcomes`, and `event_bus.history()`
+2. **Identifies patterns:** repeated failures, unused skills, tasks that stall
 3. **Proposes adaptations:**
-   - Update a Goal's strategy
-   - Adjust a Goal's cron schedule (back off on repeated NO_ACTION)
-   - Pause a Goal that keeps failing
+   - Adjust a task's cron schedule (back off on repeated NO_ACTION)
+   - Pause a task that keeps failing
    - Update a skill based on what worked
-   - Create a new sub-goal to unblock a stalled parent
-4. **Records proposals as intent records** (subject to approval policy)
+   - Flag skills with high failure correlation
+4. **Executes adaptations** via existing tools (task update/pause, skill edit) — all mutations are git-versioned in `data/`
 
 **Trigger conditions:**
 - `sub_session.failed` → immediate reflection on that failure
-- `goal.stalled` (no progress in N cycles) → strategy review
-- Batch reflection after every N completed goals
+- Batch reflection after every N completed sub-sessions
+- Periodic sweep (daily, during dreaming window)
 
-**Weak-LLM optimization:** The reflection prompt is tightly scoped — it receives only the specific outcomes and goal context, not the full conversation. Uses the `compaction` backend pool (typically a cheaper/faster model). Reflection frequency auto-adjusts: fewer events = fewer reflection calls.
+**Weak-LLM optimization:** The reflection prompt is tightly scoped — it receives only the specific outcomes and context, not the full conversation. Uses the `compaction` backend pool (typically a cheaper/faster model). Reflection frequency auto-adjusts: fewer events = fewer reflection calls.
 
 **Comparison to OpenClaw:** OpenClaw has no reflection mechanism. Its agents execute tasks and move on. This is the single most differentiating capability Wintermute can build.
 
-### Phase 5: Self-Model
+### Phase 2: Self-Model
 
 **Structured self-knowledge maintained by the reflection cycle:**
 
@@ -211,7 +179,7 @@ skills:
   most_used: ["calendar.md", "deploy-docker.md"]
   never_used: ["legacy-backup.md"]
 
-goals:
+tasks:
   active: 12
   completion_rate_30d: 0.68
   avg_attempts_to_complete: 2.1
@@ -221,7 +189,9 @@ The reflection cycle updates this file. The prompt assembler includes a compact 
 
 **Weak-LLM optimization:** The self-model is injected as structured YAML, not prose. Small models parse structured data more reliably than narrative self-descriptions. The self-model also enables the system to auto-tune its own parameters (compaction threshold, sub-session timeout defaults) without requiring the user to configure them.
 
-### Phase 6: Skill Evolution
+**Prerequisite:** Phase 1 (reflection cycle generates self-model updates). Also requires adding `inference.completed` events with token count/duration to the event bus (incremental addition to existing infrastructure).
+
+### Phase 3: Skill Evolution
 
 **Transform skills from static docs to living, tested procedures:**
 
@@ -231,26 +201,30 @@ The reflection cycle updates this file. The prompt assembler includes a compact 
 - **Retirement:** Skills unused for 90 days are auto-archived (moved to `data/skills/.archive/`). The reflection cycle can propose this; dreaming can execute it.
 - **Skill synthesis:** When the reflection cycle observes a pattern across multiple successful sessions that isn't captured in any skill, it can propose a new skill. This is genuine self-improvement — the system learns procedures from its own experience.
 
+**Prerequisite:** Phase 1 (reflection cycle drives all skill evolution decisions).
+
 ---
 
 ## Implementation Order & Dependencies
 
 ```
-Phase 1: Intent Log ──────────────────────────────┐
-                                                   │
-Phase 2: Unified Goals ───────┐                    │
-                              ├─→ Phase 4: Reflection Cycle ─→ Phase 5: Self-Model
-Phase 3: Event Bus ───────────┘                    │
-                                                   │
-                                        Phase 6: Skill Evolution
+Completed:
+  ✅ Unified Task System
+  ✅ Event Bus
+  ✅ Audit Infrastructure (interaction_log + sub_session_outcomes + /debug)
+
+Remaining:
+  Phase 1: Reflection Cycle ─→ Phase 2: Self-Model
+                             ─→ Phase 3: Skill Evolution
 ```
 
-Phases 1-3 can be developed in parallel. Phase 4 requires all three. Phases 5-6 build on Phase 4.
+Phase 1 is the critical path. Phases 2 and 3 can be developed in parallel once Phase 1 is operational.
 
 ## Design Principles
 
 1. **Autonomy increases monotonically with auditability.** Every new capability comes with a corresponding visibility mechanism.
 2. **Optimize for token poverty.** Every architectural decision should reduce, not increase, the number of inference calls needed. If a feature requires an extra LLM call, it must justify its cost.
 3. **Structured over narrative.** Small models handle YAML, JSON, and schemas better than prose instructions. Prefer structured data formats for all system-internal communication.
-4. **Fail gracefully, not silently.** Failed sub-sessions, stalled goals, and broken skills should surface — not disappear into logs.
+4. **Fail gracefully, not silently.** Failed sub-sessions, stalled tasks, and broken skills should surface — not disappear into logs.
 5. **Git is the undo button.** All autonomous mutations to `data/` are auto-committed. The user can always `cd data && git log` to see what changed and revert.
+6. **Don't increase LLM cognitive load.** New capabilities should be backend features that enrich existing tool outputs, not new tool schemas the LLM must learn. The task tool schema stays simple; computed metrics are injected into responses.
