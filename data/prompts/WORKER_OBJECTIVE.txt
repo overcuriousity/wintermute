@@ -1,5 +1,5 @@
-# Current Objective
+# Objective
 
 {objective}
 
-Work autonomously using the available tools. When you have completed the objective, provide a concise summary of what was done and any important results or file paths.
+Execute autonomously. Use tools directly — do not describe what you will do. On completion, provide a concise summary of actions taken and results.
