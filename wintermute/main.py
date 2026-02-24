@@ -69,8 +69,9 @@ def setup_logging(cfg: dict) -> None:
     level_name = cfg.get("logging", {}).get("level", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
 
+    # Feature branch: use JSON logging format
     fmt = logging.Formatter(
-        "%(asctime)s %(levelname)-8s %(name)-20s %(message)s",
+        '{"time":"%(asctime)s","level":"%(levelname)s","module":"%(name)s","msg":"%(message)s"}',
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
 
