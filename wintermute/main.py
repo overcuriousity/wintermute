@@ -49,15 +49,21 @@ LOG_DIR = Path("logs")
 
 
 # ---------------------------------------------------------------------------
-# Configuration loading
+# Configuration loading (Feature Branch Version)
 # ---------------------------------------------------------------------------
 
 def load_config(path: Path = CONFIG_FILE) -> dict:
+    """Load and validate configuration from YAML."""
     if not path.exists():
-        print(f"ERROR: {path} not found. Copy config.yaml.example and fill in your settings.")
-        sys.exit(1)
-    with path.open(encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
+        raise FileNotFoundError(f"Config file not found: {path}")
+
+    config = yaml.safe_load(path.read_text())
+
+    required_keys = {"inference_backends"}
+    if not all(k in config for k in required_keys):
+        raise ValueError(f"Missing required keys: {required_keys - set(config.keys())}")
+
+    return config
 
 
 # ---------------------------------------------------------------------------
