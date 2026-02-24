@@ -223,7 +223,7 @@ if $DRY_RUN; then
   echo -e "  ${C_DIM}Would install: Python 3.12+, curl, uv, build tools, libolm-dev, ffmpeg${C_RESET}"
   echo -e "  ${C_DIM}Would run: uv sync${C_RESET}"
   echo -e "  ${C_DIM}Would write: config.yaml (matrix, whisper, web, inference backends,${C_RESET}"
-  echo -e "  ${C_DIM}  role mapping, turing protocol, nl translation, seed, agenda,${C_RESET}"
+  echo -e "  ${C_DIM}  role mapping, turing protocol, nl translation, seed, tasks,${C_RESET}"
   echo -e "  ${C_DIM}  context, dreaming, memory storage, memory harvest, scheduler, logging)${C_RESET}"
   echo ""
   echo -e "  ${C_BOLD}No changes made.${C_RESET}"
@@ -1139,10 +1139,9 @@ nl_translation:
   enabled: true
   backends: ${_nl_backend}
   tools:
-    - set_routine
+    - task
     - spawn_sub_session
     - add_skill
-    - agenda
 YAML
     else
       cat <<YAML
@@ -1151,10 +1150,9 @@ YAML
 #   enabled: true
 #   backends: ["small"]
 #   tools:
-#     - set_routine
+#     - task
 #     - spawn_sub_session
 #     - add_skill
-#     - agenda
 YAML
     fi
 
@@ -1166,21 +1164,13 @@ seed:
   language: $(_yaml_escape "${SEED_LANG}")
 YAML
 
-    # ── 9. Agenda ──
-    echo ""
-    cat <<YAML
-agenda:
-  enabled: true
-  review_interval_minutes: 60
-YAML
-
-    # ── 10. Context ──
+    # ── 9. Context ──
     echo ""
     cat <<YAML
 context:
   component_size_limits:
     memories: 10000
-    agenda: 5000
+    tasks: 5000
     skills_total: 20000
 YAML
 

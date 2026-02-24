@@ -26,6 +26,7 @@ _GITIGNORE_CONTENT = """\
 conversation.db
 scheduler.db
 routine_history.json
+task_history.json
 matrix_store/
 matrix_crypto.db*
 matrix_signed.marker

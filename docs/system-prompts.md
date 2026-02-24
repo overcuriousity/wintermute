@@ -115,7 +115,7 @@ When spawning sub-sessions, the system prompt varies by mode:
 | Mode | System Prompt Content |
 |------|----------------------|
 | `minimal` | Lightweight execution agent instructions (default) |
-| `full` | Full assembled prompt (sectioned BASE + MEMORIES + AGENDA + SKILLS) |
+| `full` | Full assembled prompt (sectioned BASE + MEMORIES + TASKS + SKILLS) |
 | `base_only` | Sectioned BASE_PROMPT.txt only |
 | `none` | No system prompt (bare tool-use loop) |
 

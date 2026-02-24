@@ -1355,7 +1355,7 @@ class WebInterface:
 
     Optional debug dependencies (injected post-construction in main.py):
       _sub_sessions  – SubSessionManager
-      _scheduler     – RoutineScheduler
+      _scheduler     – TaskScheduler
       _matrix        – MatrixThread
       _main_pool     – BackendPool (for context_size / max_tokens)
     """

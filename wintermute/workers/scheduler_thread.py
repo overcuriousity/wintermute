@@ -41,12 +41,13 @@ DATA_DIR = Path("data")
 SCHEDULER_DB = "data/scheduler.db"
 
 # Module-level reference so the job function below can be pickled by APScheduler.
-# Set by RoutineScheduler.start().
-_instance: Optional["RoutineScheduler"] = None
+# Set by TaskScheduler.start().
+_instance: Optional["TaskScheduler"] = None
 
 
 async def _fire_task_job(task_id: str, message: str, ai_prompt: Optional[str],
                           thread_id: Optional[str] = None,
+                          background: bool = False,
                           **_extra) -> None:
     """
     Module-level coroutine used as the APScheduler job callable.
@@ -55,7 +56,7 @@ async def _fire_task_job(task_id: str, message: str, ai_prompt: Optional[str],
     **_extra absorbs metadata kwargs stored alongside the job.
     """
     if _instance is not None:
-        await _instance._fire_task(task_id, message, ai_prompt, thread_id)
+        await _instance._fire_task(task_id, message, ai_prompt, thread_id, background)
 
 
 # Backward-compat aliases: jobs persisted in scheduler.db before the
@@ -78,7 +79,7 @@ class SchedulerConfig:
     timezone: str = "UTC"
 
 
-class RoutineScheduler:
+class TaskScheduler:
     """Wraps APScheduler and manages task schedules.
 
     APScheduler's persistent SQLite store is the single source of truth for
@@ -118,12 +119,12 @@ class RoutineScheduler:
         tool_module.register_task_scheduler(self.ensure_job, self.remove_job, self.list_jobs)
 
         self._recover_missed()
-        logger.info("Task scheduler started (timezone=%s)", self._cfg.timezone)
+        logger.info("[scheduler] started (timezone=%s)", self._cfg.timezone)
 
     def stop(self) -> None:
         if self._scheduler and self._scheduler.running:
             self._scheduler.shutdown(wait=False)
-            logger.info("Task scheduler stopped")
+            logger.info("[scheduler] stopped")
 
     # ------------------------------------------------------------------
     # Job management (called by tools.py _tool_task)
@@ -147,6 +148,7 @@ class RoutineScheduler:
                 "message": content,
                 "ai_prompt": ai_prompt,
                 "thread_id": thread_id,
+                "background": background,
                 "schedule_type": schedule_config.get("schedule_type"),
                 "schedule": _describe_schedule(schedule_config),
                 "created": datetime.now(timezone.utc).isoformat(),
@@ -184,31 +186,46 @@ class RoutineScheduler:
     # ------------------------------------------------------------------
 
     async def _fire_task(self, task_id: str, message: str, ai_prompt: Optional[str],
-                          thread_id: Optional[str] = None) -> None:
-        logger.info("Firing task %s (thread=%s)", task_id, thread_id)
+                          thread_id: Optional[str] = None,
+                          background: bool = False) -> None:
+        logger.info("Firing task %s (thread=%s, background=%s)", task_id, thread_id, background)
         try:
             if ai_prompt:
-                if thread_id:
-                    await self._llm_enqueue(
-                        f"[TASK {task_id}] {ai_prompt}\n\n"
-                        f"(Task: {message})",
-                        thread_id,
-                    )
-                else:
+                if background:
+                    # Background task: spawn an isolated sub-session with full
+                    # orchestration tools.  Results are delivered back to the
+                    # originating thread; [NO_ACTION] suppression prevents
+                    # noise when there's nothing to report.
                     if self._sub_sessions is not None:
                         self._sub_sessions.spawn(
                             objective=(
                                 f"[TASK {task_id}] {ai_prompt}\n\n"
-                                f"(Task: {message})"
+                                f"(Task: {message})\n\n"
+                                f"If you have nothing actionable to report, "
+                                f"respond with exactly: [NO_ACTION]"
                             ),
-                            parent_thread_id=None,
-                            system_prompt_mode="base_only",
+                            parent_thread_id=thread_id,
+                            system_prompt_mode="full",
                         )
                     else:
                         logger.warning(
                             "Task %s has ai_prompt but SubSessionManager "
                             "is not available — skipping", task_id
                         )
+                elif thread_id:
+                    # Foreground task: enqueue into the main LLM thread
+                    # as if the user typed it.
+                    await self._llm_enqueue(
+                        f"[TASK {task_id}] {ai_prompt}\n\n"
+                        f"(Task: {message})",
+                        thread_id,
+                    )
+                else:
+                    logger.warning(
+                        "Task %s has ai_prompt but no thread_id and not "
+                        "background — message was NOT delivered: %s",
+                        task_id, message
+                    )
             else:
                 if thread_id:
                     await self._broadcast(f"\u23f0 Task: {message}", thread_id)
@@ -300,6 +317,10 @@ class RoutineScheduler:
         # Default: once.
         fire_at = _parse_once_at(inputs.get("at", ""), tz_name=self._cfg.timezone)
         return DateTrigger(run_date=fire_at)
+
+
+# Backward-compat alias so existing imports keep working.
+RoutineScheduler = TaskScheduler
 
 
 # ---------------------------------------------------------------------------

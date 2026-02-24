@@ -37,7 +37,7 @@ from wintermute.core.llm_thread import BackendPool, LLMThread, MultiProviderConf
 from wintermute.interfaces.matrix_thread import MatrixConfig, MatrixThread
 from wintermute.workers.dreaming import DreamingConfig, DreamingLoop
 from wintermute.workers.memory_harvest import MemoryHarvestConfig, MemoryHarvestLoop
-from wintermute.workers.scheduler_thread import RoutineScheduler, SchedulerConfig
+from wintermute.workers.scheduler_thread import TaskScheduler, SchedulerConfig
 from wintermute.core.sub_session import SubSessionManager
 from wintermute.update_checker import UpdateCheckerConfig, UpdateCheckerLoop
 from wintermute.interfaces.web_interface import WebInterface
@@ -315,7 +315,7 @@ async def main() -> None:
     csl = cfg.get("context", {}).get("component_size_limits", {})
     prompt_assembler.set_component_limits(
         memories=csl.get("memories", 10_000),
-        tasks=csl.get("tasks", csl.get("agenda", 5_000)),
+        tasks=csl.get("tasks", 5_000),
         skills=csl.get("skills_total", 2_000),
     )
 
@@ -466,7 +466,7 @@ async def main() -> None:
         web_iface._llm = llm
         web_iface._kimi_client = client_cache.get(("kimi-code",))
 
-    scheduler = RoutineScheduler(
+    scheduler = TaskScheduler(
         config=scheduler_cfg,
         broadcast_fn=broadcast,
         llm_enqueue_fn=llm.enqueue_system_event,

@@ -269,7 +269,7 @@ IMPORTANT RULES:
      if using a small/mid model, suggest defaults)
   6. NL Translation (only mention if main model is small, <14B — otherwise skip)
   7. Scheduler timezone (auto-detect from system if possible, confirm)
-  8. Remaining settings: agenda, dreaming, memory harvest, context limits,
+  8. Remaining settings: tasks, dreaming, memory harvest, context limits,
      logging — apply sensible defaults, briefly list what was set, ask if
      they want to change anything
   9. Systemd service installation

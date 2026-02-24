@@ -622,12 +622,9 @@ def _tool_task(inputs: dict, thread_id: Optional[str] = None,
 
             # If scheduled, register with APScheduler.
             if schedule_type and _task_scheduler_ensure is not None:
-                effective_thread = add_thread
-                if ai_prompt and background:
-                    effective_thread = None  # fire-and-forget
                 _task_scheduler_ensure(
                     task_id, json.loads(schedule_config),
-                    ai_prompt, effective_thread, background,
+                    ai_prompt, add_thread, background,
                 )
                 database.update_task(task_id, apscheduler_job_id=task_id)
 
@@ -670,13 +667,10 @@ def _tool_task(inputs: dict, thread_id: Optional[str] = None,
                 task = database.get_task(task_id)
                 if task and task.get("schedule_config") and _task_scheduler_ensure:
                     sched = json.loads(task["schedule_config"])
-                    effective_thread = task.get("thread_id")
-                    bg = bool(task.get("background"))
-                    if task.get("ai_prompt") and bg:
-                        effective_thread = None
                     _task_scheduler_ensure(
                         task_id, sched,
-                        task.get("ai_prompt"), effective_thread, bg,
+                        task.get("ai_prompt"), task.get("thread_id"),
+                        bool(task.get("background")),
                     )
             return json.dumps({"status": "ok" if ok else "not_found"})
 

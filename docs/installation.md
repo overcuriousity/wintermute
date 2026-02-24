@@ -30,7 +30,7 @@ The script works in two phases:
 - Whisper voice transcription
 - Turing Protocol validators
 - NL Translation
-- Agenda, dreaming, memory harvest, scheduler, logging
+- Tasks, dreaming, memory harvest, scheduler, logging
 - Systemd service installation
 
 The AI gives recommendations, explains trade-offs, and runs in-flight validation (probing endpoints, testing Matrix login, triggering OAuth flows for Gemini/Kimi). Config values are written incrementally, so partial progress is preserved if you abort.

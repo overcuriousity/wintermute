@@ -74,15 +74,6 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             content   TEXT    NOT NULL,
             thread_id TEXT    NOT NULL DEFAULT 'default'
         );
-        CREATE TABLE IF NOT EXISTS agenda (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            content   TEXT    NOT NULL,
-            status    TEXT    NOT NULL DEFAULT 'active',
-            priority  INTEGER NOT NULL DEFAULT 5,
-            created   REAL    NOT NULL,
-            updated   REAL,
-            thread_id TEXT
-        );
         CREATE TABLE IF NOT EXISTS tasks (
             id                  TEXT PRIMARY KEY,
             thread_id           TEXT,
@@ -143,8 +134,6 @@ def init_db() -> None:
     CONVERSATION_DB.parent.mkdir(parents=True, exist_ok=True)
     with _connect() as conn:
         run_migrations(conn)
-    _migrate_agenda_from_file()
-    _migrate_agenda_to_tasks()
     logger.debug("Database initialised at %s", CONVERSATION_DB)
 
 
@@ -265,107 +254,6 @@ def get_thread_stats(thread_id: str = "default") -> dict:
             (thread_id,),
         ).fetchone()
     return {"msg_count": row[0], "token_used": int(row[1])}
-
-
-# ---------------------------------------------------------------------------
-# Agenda CRUD (legacy — kept for dreaming consolidation backward compat)
-# ---------------------------------------------------------------------------
-
-def list_agenda_items(status: str = "active", thread_id: Optional[str] = None) -> list[dict]:
-    """Return agenda items filtered by status (legacy compat).
-
-    Delegates to list_tasks for active queries.
-    """
-    return list_tasks(status=status, thread_id=thread_id)
-
-
-def complete_agenda_item(item_id: int, thread_id: Optional[str] = None) -> bool:
-    """Legacy compat — complete a task by numeric id."""
-    task_id = f"task_{item_id}"
-    return complete_task(task_id, reason="Completed via dreaming consolidation", thread_id=thread_id)
-
-
-def update_agenda_item(item_id: int, thread_id: Optional[str] = None, **kwargs) -> bool:
-    """Legacy compat — update a task by numeric id."""
-    task_id = f"task_{item_id}"
-    return update_task(task_id, thread_id=thread_id, **kwargs)
-
-
-def delete_old_completed_agenda(days: int = 30) -> int:
-    """Legacy compat — delegates to delete_old_completed_tasks."""
-    return delete_old_completed_tasks(days)
-
-
-def get_active_agenda_text(thread_id: Optional[str] = None) -> str:
-    """Legacy compat — delegates to get_active_tasks_text."""
-    return get_active_tasks_text(thread_id=thread_id)
-
-
-def _migrate_agenda_from_file() -> None:
-    """One-time migration: import AGENDA.txt content into the DB."""
-    agenda_file = Path("data/AGENDA.txt")
-    if not agenda_file.exists():
-        return
-    try:
-        text = agenda_file.read_text(encoding="utf-8").strip()
-    except OSError:
-        return
-    if not text:
-        agenda_file.rename(agenda_file.with_suffix(".txt.migrated"))
-        return
-    # Skip if it's just the default placeholder
-    if "no active agenda" in text.lower():
-        agenda_file.rename(agenda_file.with_suffix(".txt.migrated"))
-        logger.info("AGENDA.txt was empty placeholder, renamed to .migrated")
-        return
-    # Parse line by line — each non-empty, non-header line becomes an item
-    now = time.time()
-    items = []
-    for line in text.splitlines():
-        line = line.strip().lstrip("-•*").strip()
-        if not line or line.startswith("#"):
-            continue
-        items.append(line)
-    if not items:
-        # Single blob
-        items = [text]
-    with _connect() as conn:
-        for item in items:
-            conn.execute(
-                "INSERT INTO agenda (content, status, priority, created) VALUES (?, 'active', 5, ?)",
-                (item, now),
-            )
-        conn.commit()
-    agenda_file.rename(agenda_file.with_suffix(".txt.migrated"))
-    logger.info("Migrated %d agenda items from AGENDA.txt to DB", len(items))
-
-
-def _migrate_agenda_to_tasks() -> None:
-    """One-time migration: copy rows from agenda table to tasks table."""
-    with _connect() as conn:
-        # Check if agenda table has rows and tasks table is empty
-        try:
-            agenda_count = conn.execute("SELECT COUNT(*) FROM agenda").fetchone()[0]
-        except sqlite3.OperationalError:
-            return  # No agenda table
-        if agenda_count == 0:
-            return
-        tasks_count = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
-        if tasks_count > 0:
-            return  # Already migrated
-
-        rows = conn.execute(
-            "SELECT id, content, status, priority, created, updated, thread_id FROM agenda"
-        ).fetchall()
-        for r in rows:
-            task_id = f"task_{r[0]}"
-            conn.execute(
-                "INSERT OR IGNORE INTO tasks (id, content, status, priority, created, updated, thread_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (task_id, r[1], r[2], r[3], r[4], r[5], r[6]),
-            )
-        conn.commit()
-        logger.info("Migrated %d agenda items to tasks table", len(rows))
 
 
 # ---------------------------------------------------------------------------
@@ -515,13 +403,31 @@ def list_tasks(status: str = "active", thread_id: Optional[str] = None) -> list[
 
 
 def get_active_tasks_text(thread_id: Optional[str] = None) -> str:
-    """Compact formatted string of active tasks for system prompt injection."""
+    """Compact formatted string of active tasks for system prompt injection.
+
+    Includes both thread-scoped tasks and all background tasks so the
+    LLM maintains awareness of all active processes regardless of which
+    thread they were created from.
+    """
+    # Fetch thread-scoped tasks.
     items = list_tasks("active", thread_id=thread_id)
+    # Also include background tasks from ALL threads so the LLM is aware
+    # of all autonomous processes regardless of originating thread.
+    if thread_id:
+        all_active = list_tasks("active")
+        seen = {it["id"] for it in items}
+        for t in all_active:
+            if t["id"] not in seen and t.get("background"):
+                items.append(t)
     if not items:
         return ""
     lines = []
     for it in items:
-        line = f"[P{it['priority']}] #{it['id']}: {it['content']}"
+        tags = []
+        if it.get("background"):
+            tags.append("background")
+        tag_str = " " + " ".join(f"[{t}]" for t in tags) if tags else ""
+        line = f"[P{it['priority']}] #{it['id']}: {it['content']}{tag_str}"
         if it.get("schedule_desc"):
             next_info = ""
             if it.get("last_run_at"):

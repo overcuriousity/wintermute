@@ -203,7 +203,7 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     Build and return the full system prompt string.
 
     ``extra_summary`` is an optional compaction summary injected between
-    Agenda and SKILLS when context has been compacted.
+    TASKS and SKILLS when context has been compacted.
 
     ``available_tools``, when provided, filters BASE_PROMPT sections to only
     include those relevant to the given tool set.  When None (default), all

@@ -179,7 +179,7 @@ inference_backends:
 #   compaction     Summarises old messages when context fills up. Ideally use
 #                  the same model (or same context_size) as base to preserve
 #                  quality. A smaller model works but may lose nuance.
-#   sub_sessions   Background workers (agenda reviews, user-spawned tasks).
+#   sub_sessions   Background workers (task reviews, user-spawned tasks).
 #                  Can use a smaller model to save resources.
 #   memory_harvest Background memory extraction from conversations. Fire-and-forget,
 #                  not latency-sensitive. A small/CPU-only model works well here.
@@ -306,7 +306,7 @@ tool_profiles:
 # ── Seed (Conversation Starter) ──────────────────────────────────────
 # When a new conversation starts (first message or /new), Wintermute
 # injects a seed system event that prompts the LLM to introduce itself,
-# surface relevant memories/agendas, and explain its capabilities.
+# surface relevant memories/tasks, and explain its capabilities.
 #
 # Seed prompts are stored as data/prompts/SEED_{language}.txt.
 # Shipped languages: en, de, fr, es, it, zh, ja. Add your own by creating SEED_{code}.txt.

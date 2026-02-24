@@ -5,6 +5,7 @@ config.yaml
 data/conversation.db
 data/scheduler.db
 data/routine_history.json
+data/task_history.json
 data/matrix_store/
 data/matrix_crypto.db
 data/matrix_crypto.db-wal

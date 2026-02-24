@@ -155,7 +155,7 @@ async def translate_nl_tool_call(
 
     Returns:
       - ``dict``  — single tool call arguments
-      - ``list[dict]`` — multiple calls (multi-routine / multi-spawn)
+      - ``list[dict]`` — multiple calls (multi-task / multi-spawn)
       - ``None`` — translation failed (LLM error, unparseable output)
 
     A dict with an ``"error"`` key signals ambiguity that needs user

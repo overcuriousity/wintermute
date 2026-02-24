@@ -11,7 +11,7 @@
 
 ## Concept
 
-Wintermute accumulates knowledge about you over time, maintains an active working memory (*Agenda*), and learns reusable procedures as *skills*. A nightly *dreaming* pass consolidates memories autonomously.
+Wintermute accumulates knowledge about you over time, maintains active *tasks* (goals, reminders, scheduled actions), and learns reusable procedures as *skills*. A nightly *dreaming* pass consolidates memories autonomously.
 
 For long-running or complex tasks, Wintermute spawns isolated background workers (*sub-sessions*) so the main conversation stays responsive. Multi-step requests are expressed as workflow DAGs: the orchestrator defines all stages upfront with `depends_on` dependencies, and downstream tasks auto-start when their prerequisites complete — no human nudging required. Workers can themselves spawn further workers up to a configurable nesting depth.
 
@@ -26,17 +26,17 @@ Two architectural choices make this concrete:
 
 ## Features
 
-- **Persistent memory** — `MEMORIES.txt` (long-term facts, append-based), agenda items in SQLite (active goals / working memory with priorities), and `skills/*.md` (reusable procedures) survive restarts and are injected into every prompt
+- **Persistent memory** — `MEMORIES.txt` (long-term facts, append-based), tasks in SQLite (active goals / working memory with priorities and optional schedules), and `skills/*.md` (reusable procedures) survive restarts and are injected into every prompt
 - **Sub-session workers** — long-running tasks are delegated to autonomous background agents that report back when done; the main agent stays responsive during execution; workers auto-resume after timeouts (nesting possible)
 - **Workflow DAG** — multi-step tasks are expressed as dependency graphs via `depends_on`; downstream tasks auto-start when their dependencies complete, with results passed as context
 - **Tool-filtered workers** — minimal workers receive only execution + research tools; `full`-mode workers get orchestration tools too. Named tool profiles (`researcher`, `file_worker`, etc.) and conditional system prompt sections keep context lean
 - **Web search** — `search_web` queries a local SearXNG instance and falls back to DuckDuckGo when SearXNG is unavailable
-- **Routines & scheduler** — one-time and recurring routines with optional AI inference on trigger; per-timezone scheduling
-- **Nightly dreaming** — automatic overnight consolidation of MEMORIES.txt and agenda items via a direct LLM call (no tool loop, no conversation side effects)
-- **Agenda reviews** — periodic autonomous reviews of active agenda items via an isolated sub-session (no conversation pollution)
+- **Task scheduler** — one-time and recurring tasks with optional AI inference on trigger; per-timezone scheduling
+- **Nightly dreaming** — automatic overnight consolidation of MEMORIES.txt and tasks via a direct LLM call (no tool loop, no conversation side effects)
+- **Task reviews** — periodic autonomous reviews of active tasks via an isolated sub-session (no conversation pollution)
 - **Context compaction** — when conversation history approaches the model's context window, older messages are summarised and chained into a rolling summary that preserves context across compaction cycles
 - **Turing Protocol** — three-stage validation pipeline (detect → validate → correct) that automatically corrects hallucinations and unfulfilled commitments
-- **Audit trail** — every inference call, tool execution, and Turing Protocol decision is logged to SQLite. A web interface provides a live inspection panel for sessions, sub-sessions, jobs, routines, agenda items, and assembled system prompts
+- **Audit trail** — every inference call, tool execution, and Turing Protocol decision is logged to SQLite. A web interface provides a live inspection panel for sessions, sub-sessions, jobs, tasks, and assembled system prompts
 - **Any OpenAI-compatible backend** — llama-server, vLLM, LM Studio, OpenAI or any compatible endpoint. Working towards integrating subscription-based providers, kimi-code currently functional
 
 ---
@@ -92,9 +92,9 @@ Run it in a dedicated LXC container or VM — something you can reset without re
 | [Turing Protocol](docs/turing-protocol.md) | Validation pipeline: hooks, phases, scopes, configuration |
 | [System Prompts](docs/system-prompts.md) | Prompt assembly, components, size limits |
 | [Tools](docs/tools.md) | All 12 tools with parameters and categories |
-| [Commands](docs/commands.md) | Slash commands (`/new`, `/compact`, `/agenda`, etc.) |
+| [Commands](docs/commands.md) | Slash commands (`/new`, `/compact`, `/tasks`, etc.) |
 | [Web Interface](docs/web-interface.md) | Debug panel, REST API |
-| [Autonomy](docs/autonomy.md) | Dreaming, agenda reviews, sub-sessions, workflows |
+| [Autonomy](docs/autonomy.md) | Dreaming, task reviews, sub-sessions, workflows |
 | [Best Practices](docs/best-practices.md) | Deployment, model selection, security |
 
 ---
