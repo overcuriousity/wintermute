@@ -54,7 +54,7 @@ LOG_DIR = Path("logs")
 
 def load_config(path: Path = CONFIG_FILE) -> dict:
     if not path.exists():
-        print(f"ERROR: {path} not found. Copy config.yaml.example and fill in your settings.")
+        print(f"CRITICAL: Configuration file '{path}' is missing! Please copy config.yaml.example to config.yaml and configure.")
         sys.exit(1)
     with path.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh)
