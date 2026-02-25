@@ -1280,6 +1280,27 @@ if ! $SKIP_SYSTEMD; then
   echo -e "  ${C_DIM}No root privileges required.${C_RESET}"
   echo ""
   if ask_yn "Install systemd user service?" "y"; then
+
+    # Ensure XDG_RUNTIME_DIR is set (needed in containers / SSH sessions)
+    if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+      export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    fi
+
+    # Verify the user D-Bus session bus is reachable (required for systemctl --user)
+    if ! systemctl --user status >/dev/null 2>&1; then
+      warn "Cannot connect to the systemd user session bus."
+      echo -e "  ${C_DIM}This is common in LXC/LXD containers and minimal environments.${C_RESET}"
+      echo ""
+      echo -e "  ${C_DIM}To fix, run as root on the container:${C_RESET}"
+      echo -e "    ${C_CYAN}apt install -y dbus-user-session${C_RESET}  ${C_DIM}(or dnf equivalent)${C_RESET}"
+      echo -e "    ${C_CYAN}systemctl start user@\$(id -u ${USER})${C_RESET}"
+      echo -e "  ${C_DIM}Then re-run this setup or start manually with:${C_RESET}"
+      echo -e "    ${C_CYAN}uv run wintermute${C_RESET}"
+      echo ""
+      info "Skipping systemd service installation for now."
+      info "The service unit file will still be written so you can enable it later."
+    fi
+
     SYSTEMD_INSTALLED=true
     SYSTEMD_DIR="$HOME/.config/systemd/user"
     SYSTEMD_FILE="$SYSTEMD_DIR/wintermute.service"
@@ -1305,16 +1326,21 @@ StandardError=journal
 WantedBy=default.target
 SERVICE
 
-    systemctl --user daemon-reload
+    # Only attempt systemctl commands if the user bus is reachable
+    if systemctl --user status >/dev/null 2>&1; then
+      systemctl --user daemon-reload
 
-    # Enable lingering so user services start at boot (not just at login)
-    if command -v loginctl &>/dev/null; then
-      loginctl enable-linger "$USER" 2>/dev/null || true
+      # Enable lingering so user services start at boot (not just at login)
+      if command -v loginctl &>/dev/null; then
+        loginctl enable-linger "$USER" 2>/dev/null || true
+      fi
+
+      systemctl --user enable wintermute.service 2>/dev/null
+      systemctl --user start wintermute.service 2>/dev/null
+      ok "Service installed, enabled, and started."
+    else
+      info "Service unit written but not activated (no user bus)."
     fi
-
-    systemctl --user enable wintermute.service 2>/dev/null
-    systemctl --user start wintermute.service 2>/dev/null
-    ok "Service installed, enabled, and started."
     info "Service file: ${C_WHITE}${SYSTEMD_FILE}${C_RESET}"
     echo -e "  ${C_DIM}I will be here when the machine returns.${C_RESET}"
   fi
