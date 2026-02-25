@@ -344,13 +344,24 @@ scheduler:
 
 If running in a container, ensure the container's system clock is accurate (e.g. via NTP). The timezone does **not** need to match the host's `/etc/localtime` — Wintermute uses the configured timezone from `config.yaml` regardless of the system timezone.
 
-## Systemd User Service
+## Systemd Service
 
-Both `onboarding.sh` and `setup.sh` install a systemd **user** service automatically (no sudo required). It also enables lingering via `loginctl enable-linger` so the service starts at boot, not just at login.
+Both `onboarding.sh` and `setup.sh` install a systemd service automatically. The scripts probe the user D-Bus session bus at runtime and choose the appropriate mode:
 
-If you prefer to set it up manually, create `~/.config/systemd/user/wintermute.service`:
+| Environment | Mode installed | Requires sudo |
+|---|---|---|
+| Standard Linux (desktop / VPS) | User service (`~/.config/systemd/user/`) | No |
+| LXC container, FreeIPA/SSSD, minimal SSH | System service (`/etc/systemd/system/`) with `User=` | Yes (once) |
 
-```ini
+### User service (standard environments)
+
+Lingering is enabled automatically via `loginctl enable-linger` so the service starts at boot without a login session.
+
+Manual setup:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cat > ~/.config/systemd/user/wintermute.service <<EOF
 [Unit]
 Description=Wintermute AI Assistant
 After=network-online.target
@@ -362,24 +373,67 @@ WorkingDirectory=/path/to/wintermute
 ExecStart=/path/to/uv run wintermute
 Restart=on-failure
 RestartSec=15
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=default.target
-```
+EOF
 
-Then enable and start:
-
-```bash
-systemctl --user daemon-reload
 loginctl enable-linger $USER
+systemctl --user daemon-reload
 systemctl --user enable --now wintermute
 ```
 
-Control the service:
+Control:
 
 ```bash
 systemctl --user start wintermute
 systemctl --user stop wintermute
 systemctl --user restart wintermute
 journalctl --user -u wintermute -f
+```
+
+### System service (LXC containers, FreeIPA/SSSD environments)
+
+In environments where the systemd user D-Bus session bus is unavailable — typically LXC containers managed by FreeIPA/SSSD, or other constrained environments — `systemctl --user` fails with:
+
+```
+Failed to connect to user scope bus via local transport: No such file or directory
+```
+
+The setup and onboarding scripts detect this automatically and fall back to a system service. Manual setup (requires sudo):
+
+```bash
+sudo tee /etc/systemd/system/wintermute.service <<EOF
+[Unit]
+Description=Wintermute AI Assistant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/wintermute
+ExecStart=/path/to/uv run wintermute
+Restart=on-failure
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now wintermute
+```
+
+Control:
+
+```bash
+sudo systemctl start wintermute
+sudo systemctl stop wintermute
+sudo systemctl restart wintermute
+journalctl -u wintermute -f
 ```

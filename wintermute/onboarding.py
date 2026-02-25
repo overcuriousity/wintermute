@@ -183,9 +183,12 @@ TOOLS = [
         "function": {
             "name": "install_systemd",
             "description": (
-                "Install a systemd user service for Wintermute. Writes the unit file, "
-                "reloads systemd, enables the service, enables lingering (so it starts "
-                "at boot), and starts the service. No root required."
+                "Install a systemd service for Wintermute. Prefers a user service "
+                "(no root required, starts at boot via loginctl linger). Falls back "
+                "automatically to a system service with User= if the user D-Bus session "
+                "bus is unavailable (common in LXC containers and FreeIPA/SSSD "
+                "environments). Returns the exact control commands for whichever mode "
+                "was installed."
             ),
             "parameters": {
                 "type": "object",
@@ -561,79 +564,151 @@ async def _tool_run_kimi_auth(args: dict, config: dict) -> str:
         return json.dumps({"success": False, "error": str(exc)})
 
 
-async def _tool_install_systemd(args: dict, config: dict) -> str:
-    _status("Installing systemd user service ...")
+def _user_bus_available() -> bool:
+    """Return True if the systemd user D-Bus session bus is reachable."""
+    env = os.environ.copy()
+    if "XDG_RUNTIME_DIR" not in env:
+        env["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
+    result = subprocess.run(
+        ["systemctl", "--user", "status"],
+        capture_output=True,
+        env=env,
+    )
+    return result.returncode in (0, 3)  # 3 = degraded, still reachable
 
+
+async def _tool_install_systemd(args: dict, config: dict) -> str:
     uv_bin = shutil.which("uv")
     if not uv_bin:
         _err("uv not found in PATH")
         return json.dumps({"success": False, "error": "uv not found"})
 
-    systemd_dir = Path.home() / ".config" / "systemd" / "user"
-    systemd_dir.mkdir(parents=True, exist_ok=True)
-    unit_file = systemd_dir / "wintermute.service"
+    # Ensure XDG_RUNTIME_DIR is set (needed in containers / SSH sessions)
+    if "XDG_RUNTIME_DIR" not in os.environ:
+        os.environ["XDG_RUNTIME_DIR"] = f"/run/user/{os.getuid()}"
 
-    unit_content = textwrap.dedent(f"""\
-        [Unit]
-        Description=Wintermute AI Assistant
-        After=network-online.target
-        Wants=network-online.target
+    if _user_bus_available():
+        # ── Happy path: user service ───────────────────────────
+        _status("Installing systemd user service ...")
+        systemd_dir = Path.home() / ".config" / "systemd" / "user"
+        systemd_dir.mkdir(parents=True, exist_ok=True)
+        unit_file = systemd_dir / "wintermute.service"
 
-        [Service]
-        Type=simple
-        WorkingDirectory={SCRIPT_DIR}
-        ExecStart={uv_bin} run wintermute
-        Restart=on-failure
-        RestartSec=15
-        StandardOutput=journal
-        StandardError=journal
+        unit_content = textwrap.dedent(f"""\
+            [Unit]
+            Description=Wintermute AI Assistant
+            After=network-online.target
+            Wants=network-online.target
 
-        [Install]
-        WantedBy=default.target
-    """)
+            [Service]
+            Type=simple
+            WorkingDirectory={SCRIPT_DIR}
+            ExecStart={uv_bin} run wintermute
+            Restart=on-failure
+            RestartSec=15
+            StandardOutput=journal
+            StandardError=journal
 
-    unit_file.write_text(unit_content)
+            [Install]
+            WantedBy=default.target
+        """)
+        unit_file.write_text(unit_content)
 
-    try:
-        subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, capture_output=True)
-        subprocess.run(
-            ["systemctl", "--user", "enable", "wintermute.service"],
-            check=True, capture_output=True,
-        )
-        # Enable lingering
-        user = os.environ.get("USER", "")
-        if user:
+        try:
+            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, capture_output=True)
             subprocess.run(
-                ["loginctl", "enable-linger", user],
-                capture_output=True,
+                ["systemctl", "--user", "enable", "wintermute.service"],
+                check=True, capture_output=True,
             )
+            user = os.environ.get("USER", "")
+            if user:
+                # Try without sudo first, fall back silently
+                if subprocess.run(["loginctl", "enable-linger", user], capture_output=True).returncode != 0:
+                    subprocess.run(["sudo", "loginctl", "enable-linger", user], capture_output=True)
+            _ok(f"Service installed: {unit_file}")
+            _status("Starting service ...")
+            subprocess.run(["systemctl", "--user", "start", "wintermute.service"], check=True, capture_output=True)
+            _ok("Wintermute service started.")
+            return json.dumps({
+                "success": True,
+                "mode": "user",
+                "unit_file": str(unit_file),
+                "commands": {
+                    "start": "systemctl --user start wintermute",
+                    "stop": "systemctl --user stop wintermute",
+                    "restart": "systemctl --user restart wintermute",
+                    "logs": "journalctl --user -u wintermute -f",
+                },
+            })
+        except subprocess.CalledProcessError as exc:
+            _err(f"systemctl --user failed: {exc}")
+            return json.dumps({
+                "success": False,
+                "error": exc.stderr.decode() if exc.stderr else str(exc),
+                "unit_file": str(unit_file),
+                "note": "Unit file was written. You can start manually.",
+            })
 
-        _ok(f"Service installed: {unit_file}")
-        _status("Starting service ...")
-        subprocess.run(
-            ["systemctl", "--user", "start", "wintermute.service"],
-            check=True, capture_output=True,
-        )
-        _ok("Wintermute service started.")
+    else:
+        # ── Fallback: system service (LXC / FreeIPA / SSSD environments) ──
+        _status("User D-Bus session bus unavailable — installing system service ...")
+        unit_file = Path("/etc/systemd/system/wintermute.service")
+        user = os.environ.get("USER", os.environ.get("LOGNAME", ""))
+        if not user:
+            _err("Cannot determine current user for system service User= field")
+            return json.dumps({"success": False, "error": "Could not determine USER"})
 
-        return json.dumps({
-            "success": True,
-            "unit_file": str(unit_file),
-            "commands": {
-                "start": "systemctl --user start wintermute",
-                "stop": "systemctl --user stop wintermute",
-                "restart": "systemctl --user restart wintermute",
-                "logs": "journalctl --user -u wintermute -f",
-            },
-        })
-    except subprocess.CalledProcessError as exc:
-        _err(f"systemctl failed: {exc}")
-        return json.dumps({
-            "success": False,
-            "error": exc.stderr.decode() if exc.stderr else str(exc),
-            "unit_file": str(unit_file),
-            "note": "Unit file was written. You can start manually.",
-        })
+        unit_content = textwrap.dedent(f"""\
+            [Unit]
+            Description=Wintermute AI Assistant
+            After=network-online.target
+            Wants=network-online.target
+
+            [Service]
+            Type=simple
+            User={user}
+            WorkingDirectory={SCRIPT_DIR}
+            ExecStart={uv_bin} run wintermute
+            Restart=on-failure
+            RestartSec=15
+            StandardOutput=journal
+            StandardError=journal
+
+            [Install]
+            WantedBy=multi-user.target
+        """)
+
+        try:
+            write_proc = subprocess.run(
+                ["sudo", "tee", str(unit_file)],
+                input=unit_content.encode(),
+                capture_output=True,
+                check=True,
+            )
+            subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True, capture_output=True)
+            subprocess.run(["sudo", "systemctl", "enable", "wintermute.service"], check=True, capture_output=True)
+            _ok(f"System service installed: {unit_file}")
+            _status("Starting service ...")
+            subprocess.run(["sudo", "systemctl", "start", "wintermute.service"], check=True, capture_output=True)
+            _ok("Wintermute system service started.")
+            return json.dumps({
+                "success": True,
+                "mode": "system",
+                "unit_file": str(unit_file),
+                "commands": {
+                    "start": "sudo systemctl start wintermute",
+                    "stop": "sudo systemctl stop wintermute",
+                    "restart": "sudo systemctl restart wintermute",
+                    "logs": "journalctl -u wintermute -f",
+                },
+            })
+        except subprocess.CalledProcessError as exc:
+            _err(f"System service installation failed: {exc}")
+            return json.dumps({
+                "success": False,
+                "error": exc.stderr.decode() if exc.stderr else str(exc),
+                "note": "sudo may not be available. Start manually: uv run wintermute",
+            })
 
 
 async def _tool_finish_onboarding(args: dict, config: dict) -> str:
