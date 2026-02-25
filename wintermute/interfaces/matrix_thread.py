@@ -271,6 +271,14 @@ class MatrixThread:
                         html=_markdown_to_html(text),
                     )
                     return  # success
+                except MUnknownToken:
+                    logger.error(
+                        "Matrix send to %s: token expired — stopping sync loop for re-auth",
+                        room_id,
+                    )
+                    if self._client is not None:
+                        self._client.stop()
+                    return
                 except Exception as exc:  # noqa: BLE001
                     last_exc = exc
                     logger.warning(
@@ -1255,21 +1263,22 @@ class MatrixThread:
         their_user = state.their_user_id
         their_dev  = state.their_device_id
 
-        # MAC info prefix — we are the sender of this MAC message
+        # MAC info prefix — we are the sender of this MAC message.
+        # Per the Matrix spec the info is a plain concatenation (no separators).
         info_pfx = (
             f"MATRIX_KEY_VERIFICATION_MAC"
-            f"|{our_user}|{our_device}"
-            f"|{their_user}|{their_dev}"
-            f"|{txn_id}"
+            f"{our_user}{our_device}"
+            f"{their_user}{their_dev}"
+            f"{txn_id}"
         )
         our_ed25519 = olm_m.account.signing_key
         our_key_id  = f"ed25519:{our_device}"
 
         key_mac  = state.sas.calculate_mac_fixed_base64(
-            our_ed25519, f"{info_pfx}|{our_key_id}",
+            our_ed25519, f"{info_pfx}{our_key_id}",
         )
         keys_mac = state.sas.calculate_mac_fixed_base64(
-            our_key_id, f"{info_pfx}|KEY_IDS",
+            our_key_id, f"{info_pfx}KEY_IDS",
         )
 
         logger.debug(
