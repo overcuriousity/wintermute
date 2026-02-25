@@ -199,6 +199,7 @@ llm:
   memory_harvest: ["local_small"]
   dreaming: ["local_small"]
   turing_protocol: ["local_small"]
+  # reflection: ["local_small"]           # LLM for reflection analysis. Defaults to compaction.
 
 
 # ── Turing Protocol (Post-Inference Validation) ─────────────────────
@@ -363,6 +364,25 @@ update_checker:
   check_on_startup: true                  # Run a check immediately on startup
   interval_hours: 24                      # Hours between periodic checks (default: 24)
   remote_url: ""                          # Git remote URL; empty = use 'origin'
+
+
+# ── Reflection Cycle (Feedback Loop) ────────────────────────────────
+# Closes the observe→reflect→adapt feedback loop.  After each batch of
+# sub-session completions (or on immediate failure), a rule engine checks
+# for patterns (repeated failures, stale tasks, skill correlation) and
+# auto-applies simple fixes (pause failing tasks).  When something
+# interesting is found, a one-shot LLM analysis produces observations
+# and may spawn a skill-update sub-session.
+#
+# All findings are logged to the interaction_log (visible in /debug).
+# Set enabled: false to disable entirely (zero overhead).
+#
+reflection:
+  enabled: true                           # Set false to disable entirely
+  batch_threshold: 10                     # Trigger batch analysis every N sub-session completions
+  consecutive_failure_limit: 3            # Auto-pause tasks after N consecutive failures
+  lookback_seconds: 86400                 # 24h window for pattern detection
+  min_result_length: 50                   # Below this = "no meaningful output" (stale task check)
 
 
 # ── Memory Harvest (Automatic Memory Extraction) ────────────────────

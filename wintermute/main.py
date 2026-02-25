@@ -38,6 +38,7 @@ from wintermute.core.llm_thread import BackendPool, LLMThread, MultiProviderConf
 from wintermute.interfaces.matrix_thread import MatrixConfig, MatrixThread
 from wintermute.workers.dreaming import DreamingConfig, DreamingLoop
 from wintermute.workers.memory_harvest import MemoryHarvestConfig, MemoryHarvestLoop
+from wintermute.workers.reflection import ReflectionConfig, ReflectionLoop
 from wintermute.workers.scheduler_thread import TaskScheduler, SchedulerConfig
 from wintermute.core.sub_session import SubSessionManager
 from wintermute.update_checker import UpdateCheckerConfig, UpdateCheckerLoop
@@ -236,14 +237,30 @@ def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
         print(f"ERROR: llm.memory_harvest must be a list of backend names (got {type(mh_raw).__name__})")
         sys.exit(1)
 
+    # -- Reflection backends --
+    # Falls back to compaction backends when omitted.
+    refl_raw = llm_raw.get("reflection")
+    compaction_configs = _get_role("compaction")
+    if refl_raw is None:
+        refl_configs = list(compaction_configs)
+    elif isinstance(refl_raw, list):
+        if not refl_raw:
+            refl_configs = list(compaction_configs)  # empty list → fallback
+        else:
+            refl_configs = _resolve_role("reflection", refl_raw, backends)
+    else:
+        print(f"ERROR: llm.reflection must be a list of backend names (got {type(refl_raw).__name__})")
+        sys.exit(1)
+
     return MultiProviderConfig(
         main=_get_role("base"),
-        compaction=_get_role("compaction"),
+        compaction=compaction_configs,
         sub_sessions=sub_sessions_configs,
         dreaming=_get_role("dreaming"),
         turing_protocol=tp_configs,
         memory_harvest=mh_configs,
         nl_translation=nl_configs,
+        reflection=refl_configs,
     )
 
 
@@ -334,6 +351,7 @@ async def main() -> None:
     turing_protocol_pool = _build_pool(multi_cfg.turing_protocol, client_cache)
     memory_harvest_pool = _build_pool(multi_cfg.memory_harvest, client_cache)
     nl_translation_pool = _build_pool(multi_cfg.nl_translation, client_cache)
+    reflection_pool = _build_pool(multi_cfg.reflection, client_cache)
 
     # Parse NL translation config.
     nl_raw = cfg.get("nl_translation", {}) or {}
@@ -500,6 +518,21 @@ async def main() -> None:
     else:
         logger.info("Memory harvest disabled by config")
 
+    reflection_raw = cfg.get("reflection", {}) or {}
+    reflection_cfg = ReflectionConfig(
+        enabled=reflection_raw.get("enabled", True),
+        batch_threshold=reflection_raw.get("batch_threshold", 10),
+        consecutive_failure_limit=reflection_raw.get("consecutive_failure_limit", 3),
+        lookback_seconds=reflection_raw.get("lookback_seconds", 86400),
+        min_result_length=reflection_raw.get("min_result_length", 50),
+    )
+    reflection_loop = ReflectionLoop(
+        config=reflection_cfg,
+        sub_session_manager=sub_sessions,
+        pool=reflection_pool,
+        event_bus=event_bus,
+    )
+
     dreaming_loop = DreamingLoop(
         config=dreaming_cfg,
         pool=dreaming_pool,
@@ -545,6 +578,7 @@ async def main() -> None:
     tasks = [
         asyncio.create_task(llm.run(),              name="llm"),
         asyncio.create_task(dreaming_loop.run(),     name="dreaming"),
+        asyncio.create_task(reflection_loop.run(),   name="reflection"),
     ]
     if harvest_loop:
         tasks.append(asyncio.create_task(harvest_loop.run(), name="memory_harvest"))
@@ -611,6 +645,7 @@ async def main() -> None:
     if update_checker:
         update_checker.stop()
     dreaming_loop.stop()
+    reflection_loop.stop()
     if matrix:
         matrix.stop()
     llm.stop()

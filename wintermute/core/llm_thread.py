@@ -208,6 +208,7 @@ class MultiProviderConfig:
     turing_protocol: list[ProviderConfig]
     memory_harvest: list[ProviderConfig] = field(default_factory=list)
     nl_translation: list[ProviderConfig] = field(default_factory=list)
+    reflection: list[ProviderConfig] = field(default_factory=list)
 
 
 @dataclass

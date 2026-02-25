@@ -229,6 +229,7 @@ class TaskScheduler:
                             ),
                             parent_thread_id=thread_id,
                             system_prompt_mode="full",
+                            task_id=task_id,
                         )
                     else:
                         logger.warning(

@@ -1,0 +1,17 @@
+You are reviewing the recent operational history of an AI assistant system.
+
+## Rule Engine Findings
+{findings}
+
+## Recent Failed Sub-Sessions
+{failed_sessions}
+
+## Active Tasks
+{active_tasks}
+
+Based on this data, provide brief observations:
+1. What patterns do you see in the failures?
+2. Are any tasks misconfigured or need adjustment?
+3. Should any skills be updated or retired?
+
+If you recommend updating or creating a skill, start the relevant paragraph with "SKILL_ACTION:" followed by your recommendation. Keep your response concise.

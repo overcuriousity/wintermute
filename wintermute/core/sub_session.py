@@ -121,6 +121,7 @@ class SubSessionState:
     skip_tp_on_exit: bool = False           # skip TP post_inference on terminal response
     timeout_value: int = DEFAULT_TIMEOUT    # configured timeout for this session
     tp_verdict: str = "skipped"             # TP verdict: 'pass' | 'fail' | 'skipped'
+    task_id: Optional[str] = None          # originating scheduled task id (for reflection)
 
 
 @dataclass
@@ -143,6 +144,7 @@ class TaskNode:
     pool_override: Optional[object] = None   # per-session BackendPool override
     max_rounds: Optional[int] = None        # None = unlimited inference rounds
     skip_tp_on_exit: bool = False           # skip TP post_inference on terminal response
+    task_id: Optional[str] = None          # originating scheduled task id (for reflection)
 
 
 @dataclass
@@ -233,6 +235,7 @@ class SubSessionManager:
         max_rounds: Optional[int] = None,
         skip_tp_on_exit: bool = False,
         profile: Optional[str] = None,
+        task_id: Optional[str] = None,
     ) -> str:
         """
         Register a sub-session and start it immediately (or defer if deps pending).
@@ -341,6 +344,7 @@ class SubSessionManager:
             pool_override=pool,
             max_rounds=max_rounds,
             skip_tp_on_exit=skip_tp_on_exit,
+            task_id=task_id,
         )
 
         if deps:
@@ -618,6 +622,7 @@ class SubSessionManager:
             max_rounds=node.max_rounds,
             skip_tp_on_exit=node.skip_tp_on_exit,
             timeout_value=node.timeout,
+            task_id=node.task_id,
         )
         self._states[session_id] = state
 
@@ -1038,6 +1043,7 @@ class SubSessionManager:
                 nesting_depth=state.nesting_depth,
                 continuation_count=state.continuation_depth,
                 backend_used=self._pool.last_used,
+                task_id=state.task_id,
             )
         except Exception:
             logger.debug("Failed to persist outcome for %s", state.session_id, exc_info=True)
