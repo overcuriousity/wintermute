@@ -44,17 +44,24 @@ class DreamingConfig:
 
 async def _consolidate(pool: "BackendPool",
                         label: str, prompt_template: str, content: str,
+                        json_mode: bool = False,
                         **extra_vars: str) -> str:
-    """Call the LLM to consolidate a single memory component."""
+    """Call the LLM to consolidate a single memory component.
+
+    When *json_mode* is True, passes ``response_format={"type": "json_object"}``
+    to the API so the model is constrained to output valid JSON rather than
+    relying solely on prompt instructions.
+    """
     prompt = prompt_template
     if "{content}" in prompt:
         prompt = prompt.format(content=content, **extra_vars)
     else:
         prompt = prompt + "\n\n" + content
-    response = await pool.call(
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens_override=2048,
-    )
+    call_kwargs: dict = {"messages": [{"role": "user", "content": prompt}],
+                         "max_tokens_override": 2048}
+    if json_mode:
+        call_kwargs["response_format"] = {"type": "json_object"}
+    response = await pool.call(**call_kwargs)
     if not response.choices:
         logger.warning("Dreaming (%s): LLM returned empty choices", label)
         logger.debug("Empty choices raw response: %s", response)
