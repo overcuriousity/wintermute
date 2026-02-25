@@ -1272,42 +1272,32 @@ fi  # end SKIP_CONFIG
 #  STAGE 4 — Systemd service (optional)
 # ══════════════════════════════════════════════════════════════
 SYSTEMD_INSTALLED=false
+SERVICE_MODE=none   # "user" | "system" | "none"
+
+# Probe user D-Bus session bus (requires XDG_RUNTIME_DIR)
+if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
+  export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+fi
+_user_bus_ok=false
+systemctl --user status >/dev/null 2>&1 && _user_bus_ok=true
 
 if ! $SKIP_SYSTEMD; then
   stage 4 "$TOTAL_STAGES" "Persistence layer (systemd)"
   echo ""
-  echo -e "  ${C_DIM}A user service ensures I survive reboots without your intervention.${C_RESET}"
-  echo -e "  ${C_DIM}No root privileges required.${C_RESET}"
-  echo ""
-  if ask_yn "Install systemd user service?" "y"; then
+  UV_BIN="$(command -v uv)"
 
-    # Ensure XDG_RUNTIME_DIR is set (needed in containers / SSH sessions)
-    if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
-      export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-    fi
-
-    # Verify the user D-Bus session bus is reachable (required for systemctl --user)
-    if ! systemctl --user status >/dev/null 2>&1; then
-      warn "Cannot connect to the systemd user session bus."
-      echo -e "  ${C_DIM}This is common in LXC/LXD containers and minimal environments.${C_RESET}"
-      echo ""
-      echo -e "  ${C_DIM}To fix, run as root on the container:${C_RESET}"
-      echo -e "    ${C_CYAN}apt install -y dbus-user-session${C_RESET}  ${C_DIM}(or dnf equivalent)${C_RESET}"
-      echo -e "    ${C_CYAN}systemctl start user@\$(id -u ${USER})${C_RESET}"
-      echo -e "  ${C_DIM}Then re-run this setup or start manually with:${C_RESET}"
-      echo -e "    ${C_CYAN}uv run wintermute${C_RESET}"
-      echo ""
-      info "Skipping systemd service installation for now."
-      info "The service unit file will still be written so you can enable it later."
-    fi
-
-    SYSTEMD_INSTALLED=true
-    SYSTEMD_DIR="$HOME/.config/systemd/user"
-    SYSTEMD_FILE="$SYSTEMD_DIR/wintermute.service"
-    UV_BIN="$(command -v uv)"
-
-    mkdir -p "$SYSTEMD_DIR"
-    cat > "$SYSTEMD_FILE" <<SERVICE
+  if $_user_bus_ok; then
+    # ── Happy path: user service ──────────────────────────────
+    echo -e "  ${C_DIM}A user service ensures I survive reboots without your intervention.${C_RESET}"
+    echo -e "  ${C_DIM}No root privileges required.${C_RESET}"
+    echo ""
+    if ask_yn "Install systemd user service?" "y"; then
+      SYSTEMD_INSTALLED=true
+      SERVICE_MODE=user
+      SYSTEMD_DIR="$HOME/.config/systemd/user"
+      SYSTEMD_FILE="$SYSTEMD_DIR/wintermute.service"
+      mkdir -p "$SYSTEMD_DIR"
+      cat > "$SYSTEMD_FILE" <<SERVICE
 [Unit]
 Description=Wintermute AI Assistant
 After=network-online.target
@@ -1325,24 +1315,58 @@ StandardError=journal
 [Install]
 WantedBy=default.target
 SERVICE
-
-    # Only attempt systemctl commands if the user bus is reachable
-    if systemctl --user status >/dev/null 2>&1; then
       systemctl --user daemon-reload
-
-      # Enable lingering so user services start at boot (not just at login)
-      if command -v loginctl &>/dev/null; then
-        loginctl enable-linger "$USER" 2>/dev/null || true
-      fi
-
-      systemctl --user enable wintermute.service 2>/dev/null
-      systemctl --user start wintermute.service 2>/dev/null
-      ok "Service installed, enabled, and started."
-    else
-      info "Service unit written but not activated (no user bus)."
+      # Enable lingering so service starts at boot without a login session
+      loginctl enable-linger "$USER" 2>/dev/null || \
+        sudo loginctl enable-linger "$USER" 2>/dev/null || true
+      systemctl --user enable wintermute.service
+      systemctl --user start wintermute.service
+      ok "User service installed, enabled, and started."
+      info "Service file: ${C_WHITE}${SYSTEMD_FILE}${C_RESET}"
+      echo -e "  ${C_DIM}I will be here when the machine returns.${C_RESET}"
     fi
-    info "Service file: ${C_WHITE}${SYSTEMD_FILE}${C_RESET}"
-    echo -e "  ${C_DIM}I will be here when the machine returns.${C_RESET}"
+
+  else
+    # ── Fallback: system service ──────────────────────────────
+    warn "User D-Bus session bus unavailable (common in LXC / FreeIPA / SSH environments)."
+    echo -e "  ${C_DIM}Falling back to a system-level service that runs as ${C_WHITE}${USER}${C_DIM}.${C_RESET}"
+    echo -e "  ${C_DIM}This requires sudo once for installation.${C_RESET}"
+    echo ""
+    if ask_yn "Install systemd system service (requires sudo)?" "y"; then
+      if ! sudo -v 2>/dev/null; then
+        warn "sudo not available or access denied — skipping service installation."
+        warn "Start manually with: ${C_CYAN}cd ${SCRIPT_DIR} && uv run wintermute${C_RESET}"
+      else
+        SYSTEMD_INSTALLED=true
+        SERVICE_MODE=system
+        SYSTEMD_FILE="/etc/systemd/system/wintermute.service"
+        sudo tee "$SYSTEMD_FILE" > /dev/null <<SERVICE
+[Unit]
+Description=Wintermute AI Assistant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${USER}
+WorkingDirectory=${SCRIPT_DIR}
+ExecStart=${UV_BIN} run wintermute
+Restart=on-failure
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+        sudo systemctl daemon-reload
+        sudo systemctl enable wintermute.service
+        sudo systemctl start wintermute.service
+        ok "System service installed, enabled, and started."
+        info "Service file: ${C_WHITE}${SYSTEMD_FILE}${C_RESET}"
+        echo -e "  ${C_DIM}I will be here when the machine returns.${C_RESET}"
+      fi
+    fi
   fi
 else
   stage 4 "$TOTAL_STAGES" "Persistence layer (systemd) — skipped"
@@ -1494,7 +1518,7 @@ fi
 if $MATRIX_ENABLED; then
   _has_next_steps=true
   _next_steps+=("Log in to the ${C_WHITE}bot account${C_RESET} in a browser (e.g. Element) and accept any verification request")
-  _next_steps+=("Watch the logs: ${C_CYAN}journalctl --user -u wintermute -f${C_RESET}")
+  _next_steps+=("Watch the logs: ${C_CYAN}${_svc_log:-journalctl --user -u wintermute -f}${C_RESET}")
   _next_steps+=("  If you see a cross-signing approval URL, open it and approve, then restart")
   _next_steps+=("Invite the bot (${C_WHITE}${MATRIX_USER:-}${C_RESET}) to a Matrix room from your personal account")
 fi
@@ -1511,18 +1535,33 @@ fi
 if $SYSTEMD_INSTALLED; then
   echo ""
   sleep 2
-  if systemctl --user is-active wintermute.service &>/dev/null; then
+  if [[ "$SERVICE_MODE" == "user" ]]; then
+    _svc_is_active() { systemctl --user is-active wintermute.service &>/dev/null; }
+    _svc_start="systemctl --user start wintermute"
+    _svc_stop="systemctl --user stop wintermute"
+    _svc_restart="systemctl --user restart wintermute"
+    _svc_log="journalctl --user -u wintermute -f"
+    _svc_log_n="journalctl --user -u wintermute -n 30"
+  else
+    _svc_is_active() { systemctl is-active wintermute.service &>/dev/null; }
+    _svc_start="sudo systemctl start wintermute"
+    _svc_stop="sudo systemctl stop wintermute"
+    _svc_restart="sudo systemctl restart wintermute"
+    _svc_log="journalctl -u wintermute -f"
+    _svc_log_n="journalctl -u wintermute -n 30"
+  fi
+  if _svc_is_active; then
     ok "Wintermute is running."
   else
     warn "Service did not start cleanly. Check logs:"
-    echo -e "    ${C_CYAN}journalctl --user -u wintermute -n 30${C_RESET}"
+    echo -e "    ${C_CYAN}${_svc_log_n}${C_RESET}"
   fi
   echo ""
   echo -e "  ${C_BOLD}Control:${C_RESET}"
-  echo -e "    ${C_CYAN}systemctl --user start wintermute${C_RESET}"
-  echo -e "    ${C_CYAN}systemctl --user stop wintermute${C_RESET}"
-  echo -e "    ${C_CYAN}systemctl --user restart wintermute${C_RESET}"
-  echo -e "    ${C_CYAN}journalctl --user -u wintermute -f${C_RESET}"
+  echo -e "    ${C_CYAN}${_svc_start}${C_RESET}"
+  echo -e "    ${C_CYAN}${_svc_stop}${C_RESET}"
+  echo -e "    ${C_CYAN}${_svc_restart}${C_RESET}"
+  echo -e "    ${C_CYAN}${_svc_log}${C_RESET}"
 else
   echo -e "  ${C_BOLD}Start:${C_RESET}   ${C_CYAN}cd ${SCRIPT_DIR} && uv run wintermute${C_RESET}"
 fi
