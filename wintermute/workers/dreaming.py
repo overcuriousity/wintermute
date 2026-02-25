@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
+import re as _re
 import time as _time
 from dataclasses import dataclass
 from datetime import datetime, time as dt_time, timedelta, timezone
@@ -72,6 +73,76 @@ async def _consolidate(pool: "BackendPool",
     return result
 
 
+def _extract_json_object(text: str) -> dict:
+    """Extract the first JSON object from text, tolerating prose wrappers."""
+    text = text.strip()
+    try:
+        result = _json.loads(text)
+        if isinstance(result, dict):
+            return result
+        if isinstance(result, list) and result and isinstance(result[0], dict):
+            return result[0]
+    except _json.JSONDecodeError:
+        pass
+    fenced = _re.sub(r"^```(?:json)?\s*", "", text, flags=_re.MULTILINE)
+    fenced = _re.sub(r"```\s*$", "", fenced, flags=_re.MULTILINE).strip()
+    try:
+        result = _json.loads(fenced)
+        if isinstance(result, dict):
+            return result
+    except _json.JSONDecodeError:
+        pass
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        try:
+            result = _json.loads(text[start:end + 1])
+            if isinstance(result, dict):
+                return result
+        except _json.JSONDecodeError:
+            pass
+    raise ValueError(f"No JSON object found in response: {text[:200]!r}")
+
+
+def _extract_json_array(text: str) -> list:
+    """Extract the first JSON array from text, tolerating prose wrappers.
+
+    Tries in order:
+    1. Direct parse (model returned clean JSON)
+    2. Strip ```json ... ``` or ``` ... ``` fences
+    3. Find the first '[' ... last ']' substring and parse that
+    Raises ValueError if nothing parses.
+    """
+    text = text.strip()
+    # 1. Direct parse
+    try:
+        result = _json.loads(text)
+        if isinstance(result, list):
+            return result
+    except _json.JSONDecodeError:
+        pass
+    # 2. Strip markdown code fences
+    fenced = _re.sub(r"^```(?:json)?\s*", "", text, flags=_re.MULTILINE)
+    fenced = _re.sub(r"```\s*$", "", fenced, flags=_re.MULTILINE).strip()
+    try:
+        result = _json.loads(fenced)
+        if isinstance(result, list):
+            return result
+    except _json.JSONDecodeError:
+        pass
+    # 3. Grab outermost [...] span
+    start = text.find("[")
+    end = text.rfind("]")
+    if start != -1 and end > start:
+        try:
+            result = _json.loads(text[start:end + 1])
+            if isinstance(result, list):
+                return result
+        except _json.JSONDecodeError:
+            pass
+    raise ValueError(f"No JSON array found in response: {text[:200]!r}")
+
+
 async def _consolidate_skills(pool: "BackendPool") -> None:
     """Deduplicate and condense all skill .md files in data/skills/."""
     skills_dir = prompt_assembler.SKILLS_DIR
@@ -103,7 +174,7 @@ async def _consolidate_skills(pool: "BackendPool") -> None:
                 for name, (_, content) in skills.items()
             )
             raw = await _consolidate(pool, "skills_dedup", dedup_prompt, formatted)
-            actions = _json.loads(raw)
+            actions = _extract_json_array(raw)
             for act in actions:
                 action = act.get("action")
                 name = act.get("file", "")
@@ -128,8 +199,8 @@ async def _consolidate_skills(pool: "BackendPool") -> None:
                     if name != target and name in skills:
                         skills[name][0].unlink()
                         del skills[name]
-        except _json.JSONDecodeError:
-            logger.warning("Dreaming: skill dedup returned non-JSON, skipping dedup")
+        except (ValueError, _json.JSONDecodeError) as exc:
+            logger.warning("Dreaming: skill dedup returned non-JSON, skipping dedup: %s", exc)
         except Exception:  # noqa: BLE001
             logger.exception("Dreaming: skill dedup failed")
 
@@ -308,7 +379,7 @@ async def _vector_dream_cycle(pool: "BackendPool") -> None:
                         contra_prompt.replace("{entry_1}", texts[i]).replace("{entry_2}", texts[j]),
                         "",
                     )
-                    decision = _json.loads(raw)
+                    decision = _extract_json_object(raw)
                     action = decision.get("action", "")
                     if action == "keep_first":
                         await asyncio.to_thread(memory_store.delete, ids[j])
@@ -404,9 +475,9 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
             raw = await _consolidate(pool, "tasks", task_prompt, formatted)
             if raw:
                 try:
-                    actions = _json.loads(raw)
-                except _json.JSONDecodeError:
-                    logger.warning("Dreaming: tasks LLM returned non-JSON, skipping")
+                    actions = _extract_json_array(raw)
+                except (ValueError, _json.JSONDecodeError) as exc:
+                    logger.warning("Dreaming: tasks LLM returned non-JSON, skipping: %s", exc)
                     actions = []
                 applied = 0
                 for act in actions:
