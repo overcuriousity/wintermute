@@ -77,12 +77,21 @@ TOOL_SCHEMAS = [
             "properties": {
                 "objective": {
                     "type": "string",
-                    "description": "Task description. Worker has no conversation access — be specific.",
+                    "description": (
+                        "Task description. Worker has NO conversation access — "
+                        "include ALL concrete values (URLs, tokens, credentials, IDs, "
+                        "parameters) verbatim. Never say 'the provided token'; "
+                        "paste the actual token into the objective or context_blobs."
+                    ),
                 },
                 "context_blobs": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Context snippets for the worker. Unneeded when using depends_on.",
+                    "description": (
+                        "Context snippets passed verbatim to the worker. "
+                        "Use this for large data: API tokens, request bodies, "
+                        "file contents, credentials. Unneeded when using depends_on."
+                    ),
                 },
                 "system_prompt_mode": {
                     "type": "string",
@@ -508,6 +517,19 @@ def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
         return json.dumps({"error": "Sub-session manager not ready yet."})
     try:
         context_blobs = list(inputs.get("context_blobs") or [])
+
+        # Auto-inject last user message from parent thread so the worker
+        # has access to concrete values (tokens, URLs, IDs) the user provided
+        # even if the LLM forgot to copy them into the objective/context_blobs.
+        if thread_id:
+            try:
+                last_user_msg = database.get_last_user_message(thread_id)
+                if last_user_msg:
+                    context_blobs.append(
+                        f"[Parent conversation — last user message]\n{last_user_msg}"
+                    )
+            except Exception:
+                logger.debug("Failed to fetch parent user message", exc_info=True)
 
         # Query historical outcomes for similar objectives.
         try:

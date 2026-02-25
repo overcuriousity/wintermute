@@ -161,6 +161,18 @@ def save_message(role: str, content: str, thread_id: str = "default",
         return cur.lastrowid
 
 
+def get_last_user_message(thread_id: str = "default") -> str | None:
+    """Return the content of the most recent user message in a thread."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT content FROM messages "
+            "WHERE archived=0 AND thread_id=? AND role='user' "
+            "ORDER BY id DESC LIMIT 1",
+            (thread_id,),
+        ).fetchone()
+    return row[0] if row else None
+
+
 def load_active_messages(thread_id: str = "default") -> list[dict]:
     """Return all non-archived messages for a thread, ordered by id."""
     with _connect() as conn:
