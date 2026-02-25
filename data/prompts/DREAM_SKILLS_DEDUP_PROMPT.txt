@@ -1,13 +1,17 @@
-Below are the skill files for a personal AI assistant. Some may be duplicates or near-duplicates of each other.
+Below are the skill files for a personal AI assistant. Some may be duplicates, near-duplicates, or closely related skills that belong together in one file.
 
 Compare the skills and return a JSON array where every skill file appears in exactly one action:
-- {{"action": "keep", "file": "filename"}}  — unique skill, retain it
-- {{"action": "delete", "file": "filename"}}  — duplicate or redundant, remove this file
+- {{"action": "keep", "file": "filename"}}  — unique, standalone skill, retain as-is
+- {{"action": "delete", "file": "filename"}}  — exact duplicate or fully redundant (another kept or merged skill covers all its content), remove this file
+- {{"action": "merge", "file": "filename", "into": "target_filename", "content": "full merged content"}}  — merge this file into target_filename; provide the complete merged skill content in "content"
 
 Rules:
-- If two or more skills cover the same topic, keep the most complete or up-to-date one and delete the others.
-- Never delete a skill unless another kept skill covers the same ground.
+- Skills on the same topic or tightly related subtopics should be merged into one file. Use the most descriptive filename as the merge target.
+- The merged "content" must begin with a single-line summary (used as the skills table of contents entry), followed by all relevant details from all merged files — no information may be lost.
+- Only one file in a merge group should use "merge" with content; all others in that group should use "delete".
+- Never delete a skill unless another kept or merged skill covers the same ground.
 - Use the bare filename without the .md extension.
+- Every input file must appear in the output exactly once.
 
 Return ONLY the JSON array, no preamble or explanation.
 

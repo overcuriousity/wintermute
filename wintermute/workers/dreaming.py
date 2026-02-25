@@ -105,11 +105,28 @@ async def _consolidate_skills(pool: "BackendPool") -> None:
             raw = await _consolidate(pool, "skills_dedup", dedup_prompt, formatted)
             actions = _json.loads(raw)
             for act in actions:
-                if act.get("action") == "delete":
-                    name = act.get("file", "")
+                action = act.get("action")
+                name = act.get("file", "")
+                if action == "delete":
                     if name in skills:
                         skills[name][0].unlink()
                         logger.info("Dreaming: deleted duplicate skill '%s'", name)
+                        del skills[name]
+                elif action == "merge":
+                    target = act.get("into", "")
+                    content = act.get("content", "").strip()
+                    if not target or not content:
+                        logger.warning("Dreaming: merge action missing 'into' or 'content' for '%s'", name)
+                        continue
+                    # Write merged content to the target file.
+                    target_path = skills_dir / f"{target}.md"
+                    target_path.write_text(content, encoding="utf-8")
+                    logger.info("Dreaming: merged skill '%s' into '%s'", name, target)
+                    # Update in-memory entry for the target so condensation uses merged content.
+                    skills[target] = (target_path, content)
+                    # Remove the source file if it differs from the target.
+                    if name != target and name in skills:
+                        skills[name][0].unlink()
                         del skills[name]
         except _json.JSONDecodeError:
             logger.warning("Dreaming: skill dedup returned non-JSON, skipping dedup")
