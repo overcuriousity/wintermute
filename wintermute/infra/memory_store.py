@@ -710,24 +710,52 @@ def _embed(texts: list[str], embed_cfg: dict, task: str = "document") -> list[li
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    max_retries = 3
     t0 = time.time()
     status = "ok"
-    try:
-        resp = httpx.post(url, json=payload, headers=headers, timeout=60.0)
-        resp.raise_for_status()
-        data = resp.json()
-        # Sort by index to preserve order.
-        items = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
-        result = [item["embedding"] for item in items]
-        output_summary = f"{len(result)} vectors, {len(result[0])} dims" if result else "empty"
-    except Exception as exc:
-        status = f"error: {exc}"
-        output_summary = status
-        raise
-    finally:
-        input_summary = f"{len(texts)} texts, model={model}"
-        _log_interaction(t0, "embedding", input_summary, output_summary, status, llm=model)
-    return result
+    last_exc: Exception | None = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = httpx.post(url, json=payload, headers=headers, timeout=60.0)
+            resp.raise_for_status()
+            data = resp.json()
+            # Sort by index to preserve order.
+            items = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
+            result = [item["embedding"] for item in items]
+            output_summary = f"{len(result)} vectors, {len(result[0])} dims" if result else "empty"
+            if attempt > 1:
+                status = f"ok (retry {attempt - 1})"
+            input_summary = f"{len(texts)} texts, model={model}"
+            _log_interaction(t0, "embedding", input_summary, output_summary, status, llm=model)
+            return result
+        except (httpx.HTTPStatusError, httpx.ConnectError, httpx.ReadTimeout,
+                httpx.WriteTimeout, httpx.PoolTimeout, ConnectionError, OSError) as exc:
+            # Only retry on transient errors (5xx, timeouts, connection issues).
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
+                status = f"error: {exc}"
+                output_summary = status
+                input_summary = f"{len(texts)} texts, model={model}"
+                _log_interaction(t0, "embedding", input_summary, output_summary, status, llm=model)
+                raise
+            last_exc = exc
+            if attempt < max_retries:
+                backoff = 0.5 * (2 ** (attempt - 1))  # 0.5s, 1s, 2s
+                logger.warning("Embedding attempt %d/%d failed (%s), retrying in %.1fs",
+                               attempt, max_retries, exc, backoff)
+                time.sleep(backoff)
+            else:
+                status = f"error: {exc}"
+                output_summary = status
+                input_summary = f"{len(texts)} texts, model={model}"
+                _log_interaction(t0, "embedding", input_summary, output_summary, status, llm=model)
+                raise
+        except Exception as exc:
+            status = f"error: {exc}"
+            output_summary = status
+            input_summary = f"{len(texts)} texts, model={model}"
+            _log_interaction(t0, "embedding", input_summary, output_summary, status, llm=model)
+            raise
+    raise last_exc  # type: ignore[misc]  # unreachable, satisfies type checker
 
 
 # ---------------------------------------------------------------------------
