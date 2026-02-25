@@ -394,7 +394,7 @@ Triggers when **either** condition is met:
 
 ### `reflection`
 
-Event-driven feedback loop that observes sub-session outcomes, detects patterns (repeated failures, stale tasks, skill correlations), and adapts the system. Uses a three-tier architecture: rule engine (zero LLM cost) → LLM analysis (one-shot) → sub-session mutations (rare). See [autonomy.md — Reflection Cycle](autonomy.md#reflection-cycle) for details.
+Event-driven feedback loop that observes sub-session outcomes, detects patterns (repeated failures, stale tasks, skill correlations), and adapts the system. Uses a three-tier architecture: rule engine (zero LLM cost) → LLM analysis (one-shot) → sub-session mutations (rare). Each cycle also triggers the self-model update. See [autonomy.md — Reflection Cycle](autonomy.md#reflection-cycle) for details.
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
@@ -403,6 +403,17 @@ Event-driven feedback loop that observes sub-session outcomes, detects patterns 
 | `consecutive_failure_limit` | no | `3` | Auto-pause tasks after N consecutive failures |
 | `lookback_seconds` | no | `86400` | Time window (seconds) for pattern detection (default: 24h) |
 | `min_result_length` | no | `50` | Results shorter than this are flagged as "no meaningful output" (stale task check) |
+
+### `self_model`
+
+Operational self-awareness profiler that runs inside the reflection cycle. Aggregates metrics from sub-session outcomes, interaction log, and event bus, then auto-tunes internal parameters and injects a cached prose summary into the system prompt. See [autonomy.md — Self-Model](autonomy.md#self-model) for details.
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `enabled` | no | `true` | Set `false` to disable entirely |
+| `sub_session_timeout_range` | no | `[120, 900]` | `[min, max]` seconds for sub-session timeout auto-tuning |
+| `memory_harvest_threshold_range` | no | `[5, 50]` | `[min, max]` message count for harvest threshold auto-tuning |
+| `summary_max_chars` | no | `300` | Maximum characters for the generated prose summary |
 
 ### `scheduler`
 

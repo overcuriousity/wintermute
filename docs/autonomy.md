@@ -108,9 +108,41 @@ An event-driven feedback loop that closes the observe→reflect→adapt cycle. T
 
 - Rule engine findings: `action=reflection_rule` in the interaction log (`/debug`)
 - LLM analysis results: `action=reflection_analysis` in the interaction log
-- Events: `reflection.finding`, `reflection.skill_flagged`, `reflection.analysis_completed` on the event bus (visible in `/debug` SSE stream)
+- Inference timing: `action=inference_completed` in the interaction log (duration, tool calls, model)
+- Events: `reflection.finding`, `reflection.skill_flagged`, `reflection.analysis_completed`, `inference.completed` on the event bus (visible in `/debug` SSE stream)
+- Manually triggerable via the `/reflect` command
 
 **Configuration:** See `reflection:` section in `config.yaml` and the `llm.reflection` role in `config.yaml`.
+
+## Self-Model
+
+**Module:** `wintermute/workers/self_model.py`
+
+Runs inside the reflection cycle (no separate asyncio task) and builds an operational self-awareness profile from existing data sources.
+
+**What it collects:**
+- Sub-session success / timeout / failure rates and average duration (from `sub_session_outcomes`)
+- Top 5 most-used tools in the last 24h (from `tools_used` JSON in outcomes)
+- Compaction, harvest, and inference counts (from `interaction_log`)
+
+**Auto-tuning** adjusts two live parameters within configured safe bounds each cycle:
+
+| Signal | Action |
+|--------|--------|
+| Timeout rate > 30% | Increase sub-session timeout +60s (max: 900s) |
+| Timeout rate < 5% and avg duration < 40% of timeout | Decrease sub-session timeout −60s (min: 120s) |
+| Harvest in-flight while messages backlogged ≥ threshold | Decrease harvest `message_threshold` −5 (min: 5) |
+| Last 3+ harvests produced < 50 chars output (low yield) | Increase harvest `message_threshold` +5 (max: 50) |
+
+Changes are applied immediately to the live `SubSessionManager` and `MemoryHarvestLoop` objects — no restart required.
+
+**Summary injection:** After each cycle a one-shot LLM call generates a 2–3 sentence prose summary (prompt: `data/prompts/SELF_MODEL_SUMMARY.txt`). This summary is injected into the main-thread system prompt as a `# Self-Assessment` section so the assistant has passive awareness of its own performance. The summary is cached and served without LLM cost on subsequent turns.
+
+**Persistence:** State is written to `data/self_model.yaml` after every update and auto-committed to the data git repo. The summary survives restarts.
+
+**Visibility:** `/status` shows the self-model summary, last-updated timestamp, and any tuning changes from the last cycle. `/reflect` triggers an immediate cycle and prints the updated self-assessment inline.
+
+**Configuration:** See `self_model:` section in `config.yaml`.
 
 ## Sub-sessions and Workflow DAG
 

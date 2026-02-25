@@ -14,6 +14,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **SchedulerThread** | `scheduler_thread.py` | APScheduler-based scheduled task execution |
 | **DreamingLoop** | `dreaming.py` | Nightly memory consolidation |
 | **ReflectionLoop** | `reflection.py` | Event-driven feedback loop: rule engine + LLM analysis + skill mutations |
+| **SelfModelProfiler** | `self_model.py` | Operational metrics aggregator, parameter auto-tuner, and system-prompt self-assessment injector (runs inside reflection cycle) |
 | **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
 | **NL Translator** | `nl_translator.py` | Expands natural-language tool descriptions into structured arguments via a translator LLM |
 | **MemoryStore** | `memory_store.py` | Vector-indexed memory retrieval (flat_file / FTS5 / local_vector / Qdrant backends) with access tracking and source tagging |
@@ -56,6 +57,7 @@ SchedulerThread -------------------------> LLMThread queue / sub-session (schedu
 DreamingLoop (nightly) ------------------> vector-native 4-phase pipeline (vector backends)
                                            or direct LLM API call (flat-file fallback)
 ReflectionLoop (event-driven) -----------> rule engine + LLM analysis + sub-session mutations
+SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + summary → system prompt
 ```
 
 ## Startup Flow
@@ -71,7 +73,7 @@ ReflectionLoop (event-driven) -----------> rule engine + LLM analysis + sub-sess
 9. Start web interface task (if enabled)
 10. Start Matrix task (if configured)
 11. Start dreaming loop
-12. Start reflection loop
+12. Start reflection loop (and attach self-model profiler if enabled)
 13. Await shutdown signals (SIGTERM / SIGINT)
 
 ## Data Flow: User Message
@@ -160,6 +162,8 @@ data/
   DREAM_CONTRADICTION_PROMPT.txt -- Dreaming contradiction resolution prompt (vector-native path)
   DREAM_TASKS_PROMPT.txt      -- Customisable dreaming prompt for task consolidation
   COMPACTION_PROMPT.txt      -- Customisable prompt for context compaction summarisation
+  self_model.yaml            -- Persisted self-model state: metrics, summary, last tuning changes
+  SELF_MODEL_SUMMARY.txt     -- Prompt template for generating the self-assessment prose summary
   matrix_crypto.db           -- Matrix E2E encryption keys
   matrix_recovery.key        -- Cross-signing recovery key
 ```
