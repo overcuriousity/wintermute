@@ -67,6 +67,41 @@ Periodic background extraction of personal facts and preferences from conversati
 
 **Configuration:** See `memory_harvest:` section in `config.yaml`.
 
+## Reflection Cycle
+
+**Module:** `wintermute/workers/reflection.py`
+
+An event-driven feedback loop that closes the observe→reflect→adapt cycle. The reflection cycle watches sub-session outcomes and periodically analyzes patterns — repeated failures, stale tasks, skill correlations — then adapts the system by pausing broken tasks, flagging problematic skills, or spawning skill-update workers.
+
+### Three-Tier Architecture (optimized for token poverty)
+
+1. **Rule engine (zero LLM cost):** Programmatic pattern detection on DB and event data. Auto-applies simple actions (pause failing tasks, flag stale skills). Runs on every trigger event.
+2. **LLM analysis (cheap, one-shot):** A direct `pool.call()` with a prose prompt summarizing recent findings. Only runs when the rule engine finds something interesting.
+3. **Sub-session mutations (expensive, rare):** A constrained sub-session is spawned only when the LLM analysis recommends a creative change (e.g. rewriting a skill). Limited to `read_file`, `add_skill`, and `append_memory` tools with a 5-round cap.
+
+### Trigger Conditions (event-driven, no polling)
+
+- `sub_session.failed` → immediate rule-engine check on that failure
+- `sub_session.completed` count reaches `batch_threshold` (default: 10) → batch analysis
+- 6-hour fallback poll if no events fire
+
+### Rule Engine Checks
+
+| Rule | Detects | Action |
+|------|---------|--------|
+| `consecutive_failures` | Task with N+ consecutive failed sub-sessions | Auto-pauses the task |
+| `timeout_pattern` | Task with 3+ consecutive timeouts | Warning (suggests longer timeout or simpler prompt) |
+| `stale_task` | Scheduled task producing very short output | Warning (may need better `ai_prompt`) |
+| `skill_correlation` | Skill loaded in 3+ failed sub-sessions | Warning + event (flags skill for review) |
+
+### Visibility
+
+- Rule engine findings: `action=reflection_rule` in the interaction log (`/debug`)
+- LLM analysis results: `action=reflection_analysis` in the interaction log
+- Events: `reflection.finding`, `reflection.skill_flagged`, `reflection.analysis_completed` on the event bus (visible in `/debug` SSE stream)
+
+**Configuration:** See `reflection:` section in `config.yaml` and the `llm.reflection` role in `config.yaml`.
+
 ## Sub-sessions and Workflow DAG
 
 **Module:** `wintermute/core/sub_session.py`

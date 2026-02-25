@@ -93,18 +93,25 @@ The `/debug` web panel surfaces sub-sessions, jobs, tasks, interaction log, and 
 
 Pre-execution approval gating, if ever needed, is covered by extending the Turing Protocol (which already has `pre_execution` phase and scope-based filtering).
 
+### ~~Phase 1: Reflection Cycle~~ ✅ DONE
+
+Event-driven feedback loop (`wintermute/workers/reflection.py`) that closes the observe→reflect→adapt cycle:
+
+- **Three-tier architecture:** rule engine (zero LLM cost) → LLM analysis (one-shot) → sub-session mutations (rare, constrained)
+- **Trigger conditions:** `sub_session.failed` (immediate), `sub_session.completed` batch threshold, 6h fallback
+- **Rule engine checks:** consecutive failures (auto-pause), timeout patterns, stale tasks, skill failure correlation
+- **LLM analysis:** one-shot prompt with findings summary; extracts structured `skill_actions` from JSON block
+- **Constrained mutations:** spawns sub-sessions limited to `read_file`, `add_skill`, `append_memory` with 5-round cap
+- **Visibility:** `reflection_rule` / `reflection_analysis` actions in interaction log; events on the event bus
+- **Config:** `reflection:` section + `llm.reflection` role (defaults to `compaction` backends)
+
 ---
 
 ## Current Architectural Problems (Remaining)
 
-### 1. No Feedback Loops
+### ~~1. No Feedback Loops~~ ✅ RESOLVED (Phase 1)
 
-Sub-sessions complete, results are delivered, done. The system never asks:
-- "Did that actually work?"
-- "Should I try a different approach next time?"
-- "This skill led to failure 3 times — is it outdated?"
-
-Outcome tracking records data, but nothing consumes it for adaptation. It is write-only telemetry.
+The reflection cycle now consumes outcome tracking data, detects failure patterns, and adapts the system (pausing tasks, flagging skills, spawning skill-update workers).
 
 ### 2. No Introspection
 
@@ -124,32 +131,6 @@ Skills are `.md` files the LLM reads. The system can't:
 ---
 
 ## Roadmap Phases
-
-### Phase 1: Reflection Cycle
-
-**Priority: Highest — the single most differentiating capability**
-
-**Close the feedback loop: Execute → Observe → Reflect → Adapt**
-
-A new event-triggered worker (`reflection.py`) that:
-
-1. **Reads recent outcomes** from `interaction_log`, `sub_session_outcomes`, and `event_bus.history()`
-2. **Identifies patterns:** repeated failures, unused skills, tasks that stall
-3. **Proposes adaptations:**
-   - Adjust a task's cron schedule (back off on repeated NO_ACTION)
-   - Pause a task that keeps failing
-   - Update a skill based on what worked
-   - Flag skills with high failure correlation
-4. **Executes adaptations** via existing tools (task update/pause, skill edit) — all mutations are git-versioned in `data/`
-
-**Trigger conditions:**
-- `sub_session.failed` → immediate reflection on that failure
-- Batch reflection after every N completed sub-sessions
-- Periodic sweep (daily, during dreaming window)
-
-**Weak-LLM optimization:** The reflection prompt is tightly scoped — it receives only the specific outcomes and context, not the full conversation. Uses the `compaction` backend pool (typically a cheaper/faster model). Reflection frequency auto-adjusts: fewer events = fewer reflection calls.
-
-**Comparison to OpenClaw:** OpenClaw has no reflection mechanism. Its agents execute tasks and move on. This is the single most differentiating capability Wintermute can build.
 
 ### Phase 2: Self-Model
 
@@ -212,13 +193,14 @@ Completed:
   ✅ Unified Task System
   ✅ Event Bus
   ✅ Audit Infrastructure (interaction_log + sub_session_outcomes + /debug)
+  ✅ Phase 1: Reflection Cycle
 
 Remaining:
-  Phase 1: Reflection Cycle ─→ Phase 2: Self-Model
-                             ─→ Phase 3: Skill Evolution
+  Phase 2: Self-Model        (depends on Phase 1 ✅)
+  Phase 3: Skill Evolution   (depends on Phase 1 ✅)
 ```
 
-Phase 1 is the critical path. Phases 2 and 3 can be developed in parallel once Phase 1 is operational.
+Phases 2 and 3 can be developed in parallel — both depend on the now-operational reflection cycle.
 
 ## Design Principles
 

@@ -13,6 +13,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **Turing Protocol** | `turing_protocol.py` | Three-stage post-inference validation framework (detect, validate, correct) |
 | **SchedulerThread** | `scheduler_thread.py` | APScheduler-based scheduled task execution |
 | **DreamingLoop** | `dreaming.py` | Nightly memory consolidation |
+| **ReflectionLoop** | `reflection.py` | Event-driven feedback loop: rule engine + LLM analysis + skill mutations |
 | **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
 | **NL Translator** | `nl_translator.py` | Expands natural-language tool descriptions into structured arguments via a translator LLM |
 | **MemoryStore** | `memory_store.py` | Vector-indexed memory retrieval (flat_file / FTS5 / Qdrant backends) |
@@ -53,6 +54,7 @@ User (Matrix / Browser)
 
 SchedulerThread -------------------------> LLMThread queue / sub-session (scheduled tasks with ai_prompt)
 DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
+ReflectionLoop (event-driven) -----------> rule engine + LLM analysis + sub-session mutations
 ```
 
 ## Startup Flow
@@ -68,7 +70,8 @@ DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
 9. Start web interface task (if enabled)
 10. Start Matrix task (if configured)
 11. Start dreaming loop
-12. Await shutdown signals (SIGTERM / SIGINT)
+12. Start reflection loop
+13. Await shutdown signals (SIGTERM / SIGINT)
 
 ## Data Flow: User Message
 
