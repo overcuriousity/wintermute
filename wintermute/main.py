@@ -543,17 +543,22 @@ async def main() -> None:
         memory_harvest_threshold_range=tuple(sm_raw.get("memory_harvest_threshold_range", [5, 50])),
         summary_max_chars=sm_raw.get("summary_max_chars", 300),
     )
+    self_model = None
     if sm_cfg.enabled:
-        self_model = SelfModelProfiler(
-            config=sm_cfg,
-            pool=reflection_pool,
-            event_bus=event_bus,
-            sub_session_manager=sub_sessions,
-            memory_harvest_loop=harvest_loop,
-        )
-        reflection_loop.inject_self_model(self_model)
-        prompt_assembler.set_self_model(self_model)
-        logger.info("Self-model profiler enabled")
+        try:
+            self_model = SelfModelProfiler(
+                config=sm_cfg,
+                pool=reflection_pool,
+                event_bus=event_bus,
+                sub_session_manager=sub_sessions,
+                memory_harvest_loop=harvest_loop,
+            )
+            reflection_loop.inject_self_model(self_model)
+            prompt_assembler.set_self_model(self_model)
+            logger.info("Self-model profiler enabled")
+        except Exception:
+            logger.exception("Self-model profiler failed to initialise — disabling")
+            self_model = None
     else:
         logger.info("Self-model profiler disabled by config")
 
@@ -592,7 +597,7 @@ async def main() -> None:
         matrix._update_checker = update_checker
         matrix._memory_harvest = harvest_loop
         matrix._reflection_loop = reflection_loop
-        matrix._self_model = self_model if sm_cfg.enabled else None
+        matrix._self_model = self_model
     if web_iface:
         web_iface._dreaming_loop = dreaming_loop
 
