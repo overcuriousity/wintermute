@@ -9,10 +9,11 @@ Order:
   5. skills/*.md       – capability documentation
 """
 
+import json
 import logging
 import re
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -165,6 +166,43 @@ def _assemble_base(available_tools: set[str] | None = None) -> str:
     return "\n\n".join(parts)
 
 
+def _get_reflection_observations() -> str:
+    """Return recent reflection findings (last 24h) for the main thread prompt."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    lines: list[str] = []
+    for action in ("reflection_rule", "reflection_analysis"):
+        try:
+            entries = database.get_interaction_log(limit=10, action_filter=action)
+        except Exception:
+            continue
+        for e in entries:
+            ts_str = e.get("timestamp", "")
+            try:
+                ts = datetime.fromisoformat(ts_str)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                if ts < cutoff:
+                    continue
+            except (ValueError, TypeError):
+                continue
+            if action == "reflection_rule":
+                rule = e.get("input", "unknown")
+                detail = e.get("output", "")
+                try:
+                    parsed = json.loads(detail)
+                    detail = parsed.get("summary", detail)
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+                lines.append(f"- Rule '{rule}': {detail[:120]}")
+            else:
+                text = e.get("output", "")[:200]
+                lines.append(f"- Analysis: {text}")
+    if not lines:
+        return ""
+    combined = "\n".join(lines[:8])
+    return combined[:500]
+
+
 def _read(path: Path, default: str = "") -> str:
     try:
         return path.read_text(encoding="utf-8").strip()
@@ -250,6 +288,12 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     tasks_text = database.get_active_tasks_text(thread_id=thread_id)
     if tasks_text:
         sections.append(f"# Active Tasks\n\n{tasks_text}")
+
+    # Reflection observations — main thread only
+    if available_tools is None:
+        reflection = _get_reflection_observations()
+        if reflection:
+            sections.append(f"# System Observations\n\n{reflection}")
 
     if extra_summary:
         sections.append(f"# Conversation Summary\n\n{extra_summary}")

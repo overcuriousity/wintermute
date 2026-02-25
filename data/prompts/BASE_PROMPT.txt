@@ -41,7 +41,16 @@ Decision shortcut:
 <!-- section: delegation requires: spawn_sub_session -->
 # Delegation
 
-spawn_sub_session when a task needs >3 tool calls or significant time. After spawning: state the session ID, stop. Never guess results.
+spawn_sub_session for any task that needs 2+ tool calls or involves waiting. Patterns:
+
+- **Research → Act**: Need web info before acting? Spawn research worker, then act on results.
+- **Parallel work**: Independent parts (e.g., "check A and B") → spawn in parallel.
+- **Long-running**: Task will take multiple steps and user shouldn't wait → background it.
+- **Knowledge gap**: Need information you don't have → spawn research worker instead of guessing.
+
+Do NOT delegate: single lookups, memory/task operations, direct file reads, simple questions.
+
+After spawning: state the session ID, stop. Never guess results.
 
 Plan all workflow stages in one turn:
 1. spawn(objective="Research A") → sub_aaa
