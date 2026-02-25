@@ -58,9 +58,35 @@ Based on this data, provide brief observations:
 2. Are any tasks misconfigured or need adjustment?
 3. Should any skills be updated or retired?
 
-If you recommend updating or creating a skill, start the relevant paragraph \
-with "SKILL_ACTION:" followed by your recommendation. Keep your response concise.\
+After your observations, end your response with this JSON block on its own line:
+{{"skill_actions": []}}
+
+If you recommend a skill change, add a brief English instruction per action:
+{{"skill_actions": ["Review and update data/skills/example.md - correlates with 3 failures"]}}\
 """
+
+
+def _extract_skill_actions(text: str) -> list[str]:
+    """Extract skill_actions from a JSON block appended to the LLM response.
+
+    Looks for the last ``{"skill_actions": [...]}`` object in the text.
+    Returns an empty list if none is found or the JSON is malformed.
+    Language-neutral: works regardless of the prose language.
+    """
+    import re as _re
+    # Match the last JSON object containing skill_actions anywhere in the text.
+    # The block may appear at the end with preceding whitespace/newlines.
+    matches = _re.findall(r'\{[^{}]*"skill_actions"\s*:\s*\[[^\]]*\][^{}]*\}', text)
+    if not matches:
+        return []
+    try:
+        parsed = json.loads(matches[-1])
+        actions = parsed.get("skill_actions", [])
+        if isinstance(actions, list):
+            return [str(a) for a in actions if a]
+    except (json.JSONDecodeError, ValueError):
+        pass
+    return []
 
 
 @dataclass
@@ -315,7 +341,7 @@ class ReflectionLoop:
                 log_entries = await database.async_call(
                     database.get_interaction_log,
                     limit=1000,
-                    action_filter="tool_execution",
+                    action_filter="tool_call",
                 )
             except Exception:
                 log_entries = []
@@ -472,30 +498,22 @@ class ReflectionLoop:
         except Exception:
             logger.debug("[reflection] Failed to log analysis", exc_info=True)
 
+        # Extract structured skill_actions from the JSON block at the end of
+        # the response.  Language-neutral: the JSON structure is always the
+        # same regardless of what language the prose observations are in.
+        skill_actions = _extract_skill_actions(analysis_text)
+
         if self._event_bus:
-            # Count SKILL_ACTION: markers as recommended actions.
-            actions_count = analysis_text.count("SKILL_ACTION:")
             self._event_bus.emit(
                 "reflection.analysis_completed",
                 findings_count=len(findings),
-                actions_recommended=actions_count,
+                actions_recommended=len(skill_actions),
             )
 
-        # Tier 3: spawn mutation sub-session if SKILL_ACTION: is found.
-        if "SKILL_ACTION:" in analysis_text and self._sub_sessions:
-            lines = analysis_text.split("\n")
-            for i, line in enumerate(lines):
-                if "SKILL_ACTION:" in line:
-                    # Collect this paragraph (current line + next up to blank).
-                    para_lines = [line]
-                    for j in range(i + 1, min(i + 10, len(lines))):
-                        if lines[j].strip():
-                            para_lines.append(lines[j])
-                        else:
-                            break
-                    skill_action_text = "\n".join(para_lines)
-                    await self._spawn_mutation(skill_action_text)
-                    break  # one mutation per analysis cycle
+        # Tier 3: spawn one mutation sub-session per recommended action
+        # (capped at 1 per cycle to avoid runaway mutations).
+        if skill_actions and self._sub_sessions:
+            await self._spawn_mutation(skill_actions[0])
 
     # ------------------------------------------------------------------
     # Tier 3: Sub-session mutation
