@@ -1,0 +1,5 @@
+The following memory entries are semantically similar and likely redundant.
+Merge them into a single concise entry that preserves ALL unique information.
+Return ONLY the merged text, nothing else.
+
+{content}

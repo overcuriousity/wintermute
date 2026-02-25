@@ -39,7 +39,7 @@ _config: dict = {}
 @runtime_checkable
 class MemoryBackend(Protocol):
     def init(self) -> None: ...
-    def add(self, entry: str, entry_id: str | None = None) -> str: ...
+    def add(self, entry: str, entry_id: str | None = None, source: str = "unknown") -> str: ...
     def search(self, query: str, top_k: int, threshold: float) -> list[dict]: ...
     def get_all(self) -> list[dict]: ...
     def replace_all(self, entries: list[str]) -> None: ...
@@ -47,6 +47,10 @@ class MemoryBackend(Protocol):
     def count(self) -> int: ...
     def stats(self) -> dict: ...
     def rebuild(self) -> None: ...
+    def get_all_with_vectors(self) -> list[dict]: ...
+    def get_stale(self, max_age_days: int, min_access: int) -> list[dict]: ...
+    def bulk_delete(self, entry_ids: list[str]) -> int: ...
+    def get_top_accessed(self, limit: int) -> list[dict]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +63,7 @@ class FlatFileBackend:
     def init(self) -> None:
         logger.info("Memory backend: flat_file (no vector indexing)")
 
-    def add(self, entry: str, entry_id: str | None = None) -> str:
+    def add(self, entry: str, entry_id: str | None = None, source: str = "unknown") -> str:
         # File writes are handled by prompt_assembler; this is a no-op.
         return entry_id or _make_id(entry)
 
@@ -97,6 +101,18 @@ class FlatFileBackend:
 
     def rebuild(self) -> None:
         pass  # Nothing to rebuild.
+
+    def get_all_with_vectors(self) -> list[dict]:
+        return []
+
+    def get_stale(self, max_age_days: int, min_access: int) -> list[dict]:
+        return []
+
+    def bulk_delete(self, entry_ids: list[str]) -> int:
+        return 0
+
+    def get_top_accessed(self, limit: int) -> list[dict]:
+        return self.get_all()
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +157,16 @@ class FTS5Backend:
                     VALUES (new.rowid, new.entry_id, new.text);
                 END;
             """)
+            # Inline migrations for metadata columns.
+            for col, default in [
+                ("last_accessed REAL", "0"),
+                ("access_count INTEGER", "0"),
+                ("source TEXT", "'unknown'"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE memories_meta ADD COLUMN {col} DEFAULT {default}")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists.
             conn.commit()
             conn.close()
         logger.info("Memory backend: fts5 (SQLite FTS5 at %s)", self._db_path)
@@ -151,15 +177,17 @@ class FTS5Backend:
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
-    def add(self, entry: str, entry_id: str | None = None) -> str:
+    def add(self, entry: str, entry_id: str | None = None, source: str = "unknown") -> str:
         eid = entry_id or _make_id(entry)
+        now = time.time()
         with self._lock:
             conn = self._connect()
             try:
                 conn.execute(
-                    "INSERT OR REPLACE INTO memories_meta (entry_id, text, created_at) "
-                    "VALUES (?, ?, ?)",
-                    (eid, entry.strip(), time.time()),
+                    "INSERT OR REPLACE INTO memories_meta "
+                    "(entry_id, text, created_at, last_accessed, access_count, source) "
+                    "VALUES (?, ?, ?, ?, 0, ?)",
+                    (eid, entry.strip(), now, now, source),
                 )
                 conn.commit()
             finally:
@@ -187,18 +215,35 @@ class FTS5Backend:
                     (fts_query, top_k),
                 ).fetchall()
             except sqlite3.OperationalError:
-                # Malformed query — fall back to returning all.
                 logger.debug("FTS5 query failed, returning all memories")
                 rows = []
             finally:
                 conn.close()
         if not rows:
             return self.get_all()[:top_k]
-        # BM25 rank is negative (more negative = better match).
-        return [
+        hits = [
             {"id": r[0], "text": r[1], "score": -r[2]}
             for r in rows
         ]
+        # Track access for returned results.
+        self._track_access([h["id"] for h in hits])
+        return hits
+
+    def _track_access(self, entry_ids: list[str]) -> None:
+        if not entry_ids:
+            return
+        now = time.time()
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.executemany(
+                    "UPDATE memories_meta SET last_accessed = ?, access_count = access_count + 1 "
+                    "WHERE entry_id = ?",
+                    [(now, eid) for eid in entry_ids],
+                )
+                conn.commit()
+            finally:
+                conn.close()
 
     def get_all(self) -> list[dict]:
         with self._lock:
@@ -263,6 +308,56 @@ class FTS5Backend:
         self.replace_all(entries)
         logger.info("FTS5: rebuilt index from MEMORIES.txt (%d entries)", len(entries))
 
+    def get_all_with_vectors(self) -> list[dict]:
+        return []  # FTS5 has no vectors.
+
+    def get_stale(self, max_age_days: int, min_access: int) -> list[dict]:
+        cutoff = time.time() - (max_age_days * 86400)
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT entry_id, text, created_at, last_accessed, access_count, source "
+                    "FROM memories_meta WHERE last_accessed < ? AND access_count < ?",
+                    (cutoff, min_access),
+                ).fetchall()
+            finally:
+                conn.close()
+        return [
+            {"id": r[0], "text": r[1], "created_at": r[2],
+             "last_accessed": r[3], "access_count": r[4], "source": r[5]}
+            for r in rows
+        ]
+
+    def bulk_delete(self, entry_ids: list[str]) -> int:
+        if not entry_ids:
+            return 0
+        placeholders = ",".join("?" for _ in entry_ids)
+        with self._lock:
+            conn = self._connect()
+            try:
+                cur = conn.execute(
+                    f"DELETE FROM memories_meta WHERE entry_id IN ({placeholders})",
+                    entry_ids,
+                )
+                conn.commit()
+                return cur.rowcount
+            finally:
+                conn.close()
+
+    def get_top_accessed(self, limit: int) -> list[dict]:
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT entry_id, text FROM memories_meta "
+                    "ORDER BY access_count DESC, last_accessed DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            finally:
+                conn.close()
+        return [{"id": r[0], "text": r[1], "score": 1.0} for r in rows]
+
 
 # ---------------------------------------------------------------------------
 # Local vector backend (numpy cosine similarity, persisted in SQLite BLOBs)
@@ -294,6 +389,16 @@ class LocalVectorBackend:
                 "  created_at REAL NOT NULL"
                 ")"
             )
+            # Inline migrations for metadata columns.
+            for col, default in [
+                ("last_accessed REAL", "0"),
+                ("access_count INTEGER", "0"),
+                ("source TEXT", "'unknown'"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE local_vectors ADD COLUMN {col} DEFAULT {default}")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists.
             conn.commit()
             conn.close()
         logger.info("Memory backend: local_vector (SQLite+numpy at %s)", self._db_path)
@@ -309,20 +414,22 @@ class LocalVectorBackend:
         import numpy as np
         return np.array(vec, dtype=np.float32).tobytes()
 
-    def add(self, entry: str, entry_id: str | None = None) -> str:
+    def add(self, entry: str, entry_id: str | None = None, source: str = "unknown") -> str:
         eid = entry_id or _make_id(entry)
         vectors = _embed([entry], self._embed_cfg)
         if not vectors:
             raise RuntimeError("Embedding call returned no vectors")
         blob = self._vec_to_blob(vectors[0])
         t0 = time.time()
+        now = time.time()
         with self._lock:
             conn = self._connect()
             try:
                 conn.execute(
                     "INSERT OR REPLACE INTO local_vectors "
-                    "(entry_id, text, vector, created_at) VALUES (?, ?, ?, ?)",
-                    (eid, entry.strip(), blob, time.time()),
+                    "(entry_id, text, vector, created_at, last_accessed, access_count, source) "
+                    "VALUES (?, ?, ?, ?, ?, 0, ?)",
+                    (eid, entry.strip(), blob, now, now, source),
                 )
                 conn.commit()
             finally:
@@ -368,12 +475,30 @@ class LocalVectorBackend:
 
         results.sort(key=lambda x: x["score"], reverse=True)
         hits = results[:top_k]
+        # Track access for returned results.
+        self._track_access([h["id"] for h in hits])
         _log_interaction(
             t0, "local_vector_search", query[:200],
             f"{len(hits)} hits (top_k={top_k}, threshold={threshold})",
             llm="local_vector",
         )
         return hits
+
+    def _track_access(self, entry_ids: list[str]) -> None:
+        if not entry_ids:
+            return
+        now = time.time()
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.executemany(
+                    "UPDATE local_vectors SET last_accessed = ?, access_count = access_count + 1 "
+                    "WHERE entry_id = ?",
+                    [(now, eid) for eid in entry_ids],
+                )
+                conn.commit()
+            finally:
+                conn.close()
 
     def get_all(self) -> list[dict]:
         with self._lock:
@@ -467,6 +592,73 @@ class LocalVectorBackend:
         self.replace_all(entries)
         logger.info("LocalVector: rebuilt index from MEMORIES.txt (%d entries)", len(entries))
 
+    def get_all_with_vectors(self) -> list[dict]:
+        import numpy as np
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT entry_id, text, vector, created_at, last_accessed, "
+                    "access_count, source FROM local_vectors ORDER BY created_at"
+                ).fetchall()
+            finally:
+                conn.close()
+        results = []
+        for r in rows:
+            vec = np.frombuffer(r[2], dtype=np.float32).tolist()
+            results.append({
+                "id": r[0], "text": r[1], "vector": vec, "created_at": r[3],
+                "last_accessed": r[4], "access_count": r[5], "source": r[6],
+            })
+        return results
+
+    def get_stale(self, max_age_days: int, min_access: int) -> list[dict]:
+        cutoff = time.time() - (max_age_days * 86400)
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT entry_id, text, created_at, last_accessed, access_count, source "
+                    "FROM local_vectors WHERE last_accessed < ? AND access_count < ?",
+                    (cutoff, min_access),
+                ).fetchall()
+            finally:
+                conn.close()
+        return [
+            {"id": r[0], "text": r[1], "created_at": r[2],
+             "last_accessed": r[3], "access_count": r[4], "source": r[5]}
+            for r in rows
+        ]
+
+    def bulk_delete(self, entry_ids: list[str]) -> int:
+        if not entry_ids:
+            return 0
+        placeholders = ",".join("?" for _ in entry_ids)
+        with self._lock:
+            conn = self._connect()
+            try:
+                cur = conn.execute(
+                    f"DELETE FROM local_vectors WHERE entry_id IN ({placeholders})",
+                    entry_ids,
+                )
+                conn.commit()
+                return cur.rowcount
+            finally:
+                conn.close()
+
+    def get_top_accessed(self, limit: int) -> list[dict]:
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT entry_id, text FROM local_vectors "
+                    "ORDER BY access_count DESC, last_accessed DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            finally:
+                conn.close()
+        return [{"id": r[0], "text": r[1], "score": 1.0} for r in rows]
+
 
 # ---------------------------------------------------------------------------
 # Qdrant backend (vector semantic search)
@@ -517,7 +709,7 @@ class QdrantBackend:
         logger.info("Memory backend: qdrant (url=%s, collection=%s)",
                      self._url, self._collection)
 
-    def add(self, entry: str, entry_id: str | None = None) -> str:
+    def add(self, entry: str, entry_id: str | None = None, source: str = "unknown") -> str:
         from qdrant_client.models import PointStruct
 
         eid = entry_id or _make_id(entry)
@@ -525,13 +717,17 @@ class QdrantBackend:
         if not vectors:
             raise RuntimeError("Embedding call returned no vectors")
         t0 = time.time()
+        now = time.time()
         with self._lock:
             self._client.upsert(
                 collection_name=self._collection,
                 points=[PointStruct(
                     id=eid,
                     vector=vectors[0],
-                    payload={"text": entry.strip(), "created_at": time.time()},
+                    payload={
+                        "text": entry.strip(), "created_at": now,
+                        "last_accessed": now, "access_count": 0, "source": source,
+                    },
                 )],
             )
         _log_interaction(t0, "qdrant_add", entry[:200], f"id={eid}", llm="qdrant")
@@ -554,12 +750,29 @@ class QdrantBackend:
             {"id": str(r.id), "text": r.payload.get("text", ""), "score": r.score}
             for r in results
         ]
+        # Track access for returned results.
+        self._track_access([h["id"] for h in hits])
         _log_interaction(
             t0, "qdrant_search", query[:200],
             f"{len(hits)} hits (top_k={top_k}, threshold={threshold})",
             llm="qdrant",
         )
         return hits
+
+    def _track_access(self, entry_ids: list[str]) -> None:
+        if not entry_ids:
+            return
+        now = time.time()
+        for eid in entry_ids:
+            try:
+                with self._lock:
+                    self._client.set_payload(
+                        collection_name=self._collection,
+                        payload={"last_accessed": now},
+                        points=[eid],
+                    )
+            except Exception:  # noqa: BLE001
+                pass  # Best-effort access tracking.
 
     def get_all(self) -> list[dict]:
         with self._lock:
@@ -657,6 +870,82 @@ class QdrantBackend:
         entries = [l.strip() for l in text.splitlines() if l.strip()] if text else []
         self.replace_all(entries)
         logger.info("Qdrant: rebuilt index from MEMORIES.txt (%d entries)", len(entries))
+
+    def get_all_with_vectors(self) -> list[dict]:
+        with self._lock:
+            result = self._client.scroll(
+                collection_name=self._collection,
+                limit=10000,
+                with_payload=True,
+                with_vectors=True,
+            )
+        points = result[0] if result else []
+        return [
+            {
+                "id": str(p.id),
+                "text": p.payload.get("text", ""),
+                "vector": p.vector,
+                "created_at": p.payload.get("created_at", 0),
+                "last_accessed": p.payload.get("last_accessed", 0),
+                "access_count": p.payload.get("access_count", 0),
+                "source": p.payload.get("source", "unknown"),
+            }
+            for p in points
+        ]
+
+    def get_stale(self, max_age_days: int, min_access: int) -> list[dict]:
+        from qdrant_client.models import Filter, FieldCondition, Range
+        cutoff = time.time() - (max_age_days * 86400)
+        with self._lock:
+            result = self._client.scroll(
+                collection_name=self._collection,
+                scroll_filter=Filter(must=[
+                    FieldCondition(key="last_accessed", range=Range(lt=cutoff)),
+                    FieldCondition(key="access_count", range=Range(lt=min_access)),
+                ]),
+                limit=10000,
+                with_payload=True,
+            )
+        points = result[0] if result else []
+        return [
+            {
+                "id": str(p.id), "text": p.payload.get("text", ""),
+                "created_at": p.payload.get("created_at", 0),
+                "last_accessed": p.payload.get("last_accessed", 0),
+                "access_count": p.payload.get("access_count", 0),
+                "source": p.payload.get("source", "unknown"),
+            }
+            for p in points
+        ]
+
+    def bulk_delete(self, entry_ids: list[str]) -> int:
+        if not entry_ids:
+            return 0
+        from qdrant_client.models import PointIdsList
+        with self._lock:
+            self._client.delete(
+                collection_name=self._collection,
+                points_selector=PointIdsList(points=entry_ids),
+            )
+        return len(entry_ids)
+
+    def get_top_accessed(self, limit: int) -> list[dict]:
+        with self._lock:
+            result = self._client.scroll(
+                collection_name=self._collection,
+                limit=10000,
+                with_payload=True,
+            )
+        points = result[0] if result else []
+        # Sort client-side (Qdrant scroll doesn't support ORDER BY).
+        points.sort(
+            key=lambda p: (p.payload.get("access_count", 0), p.payload.get("last_accessed", 0)),
+            reverse=True,
+        )
+        return [
+            {"id": str(p.id), "text": p.payload.get("text", ""), "score": 1.0}
+            for p in points[:limit]
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -840,8 +1129,8 @@ def search(query: str, top_k: int | None = None, threshold: float | None = None)
     return _backend.search(query, top_k, threshold)
 
 
-def add(entry: str, entry_id: str | None = None) -> str:
-    return _backend.add(entry, entry_id)
+def add(entry: str, entry_id: str | None = None, source: str = "unknown") -> str:
+    return _backend.add(entry, entry_id, source=source)
 
 
 def get_all() -> list[dict]:
@@ -866,6 +1155,22 @@ def stats() -> dict:
 
 def rebuild() -> None:
     _backend.rebuild()
+
+
+def get_all_with_vectors() -> list[dict]:
+    return _backend.get_all_with_vectors()
+
+
+def get_stale(max_age_days: int, min_access: int) -> list[dict]:
+    return _backend.get_stale(max_age_days, min_access)
+
+
+def bulk_delete(entry_ids: list[str]) -> int:
+    return _backend.bulk_delete(entry_ids)
+
+
+def get_top_accessed(limit: int) -> list[dict]:
+    return _backend.get_top_accessed(limit)
 
 
 def is_vector_enabled() -> bool:

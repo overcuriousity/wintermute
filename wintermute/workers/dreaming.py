@@ -19,6 +19,8 @@ from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import yaml
+
 from wintermute.infra import database
 from wintermute.infra import data_versioning
 from wintermute.infra import memory_store
@@ -146,6 +148,200 @@ async def _consolidate_skills(pool: "BackendPool") -> None:
             logger.exception("Dreaming: failed to condense skill '%s'", name)
 
 
+def _load_dreaming_config() -> dict:
+    """Load dreaming-specific config from config.yaml with defaults."""
+    defaults = {
+        "dedup_similarity_threshold": 0.85,
+        "stale_days": 90,
+        "stale_min_access": 3,
+        "working_set_size": 50,
+    }
+    try:
+        cfg_path = Path("config.yaml")
+        if cfg_path.exists():
+            with open(cfg_path, encoding="utf-8") as f:
+                full = yaml.safe_load(f) or {}
+            dreaming_cfg = full.get("memory", {}).get("dreaming", {})
+            if dreaming_cfg:
+                defaults.update(dreaming_cfg)
+    except Exception:  # noqa: BLE001
+        logger.debug("Could not load dreaming config, using defaults")
+    return defaults
+
+
+def _union_find_clusters(similarities: list[tuple[int, int, float]],
+                         n: int, threshold: float) -> list[list[int]]:
+    """Union-find clustering from pairwise similarities above threshold."""
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for i, j, sim in similarities:
+        if sim >= threshold:
+            union(i, j)
+
+    clusters: dict[int, list[int]] = {}
+    for idx in range(n):
+        root = find(idx)
+        clusters.setdefault(root, []).append(idx)
+    return [members for members in clusters.values() if len(members) > 1]
+
+
+async def _vector_dream_cycle(pool: "BackendPool") -> None:
+    """4-phase vector-native dreaming: dedup, contradictions, stale pruning, export."""
+    cfg = _load_dreaming_config()
+    threshold = cfg["dedup_similarity_threshold"]
+
+    # ── Phase 1: Deduplication clustering ──────────────────────────────
+    logger.info("Dreaming phase 1: deduplication clustering (threshold=%.2f)", threshold)
+    all_entries = await asyncio.to_thread(memory_store.get_all_with_vectors)
+    if not all_entries:
+        logger.debug("Dreaming: vector store empty, skipping")
+        return
+
+    # Filter out entries without vectors (FTS5 backend returns []).
+    entries_with_vecs = [e for e in all_entries if e.get("vector")]
+    if not entries_with_vecs:
+        logger.info("Dreaming: no vectors available, falling back to working set export only")
+    else:
+        import numpy as np
+        texts = [e["text"] for e in entries_with_vecs]
+        ids = [e["id"] for e in entries_with_vecs]
+        vecs = np.array([e["vector"] for e in entries_with_vecs], dtype=np.float32)
+        norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        vecs_normed = vecs / norms
+
+        # Compute cosine similarity matrix.
+        sim_matrix = vecs_normed @ vecs_normed.T
+
+        # Collect above-threshold pairs for union-find.
+        pairs: list[tuple[int, int, float]] = []
+        for i in range(len(texts)):
+            for j in range(i + 1, len(texts)):
+                s = float(sim_matrix[i, j])
+                if s >= threshold:
+                    pairs.append((i, j, s))
+
+        clusters = _union_find_clusters(pairs, len(texts), threshold)
+        merged_count = 0
+        dedup_prompt = prompt_loader.load("DREAM_DEDUP_PROMPT.txt")
+
+        for cluster in clusters:
+            cluster_texts = [texts[idx] for idx in cluster]
+            cluster_ids = [ids[idx] for idx in cluster]
+            content = "\n---\n".join(cluster_texts)
+            try:
+                merged_text = await _consolidate(pool, "dedup_merge", dedup_prompt, content)
+                if merged_text:
+                    await asyncio.to_thread(memory_store.bulk_delete, cluster_ids)
+                    await asyncio.to_thread(
+                        memory_store.add, merged_text, None, "dreaming_merge"
+                    )
+                    merged_count += 1
+                    logger.debug("Dreaming: merged cluster of %d entries", len(cluster))
+            except Exception:  # noqa: BLE001
+                logger.exception("Dreaming: failed to merge cluster")
+
+        if merged_count:
+            logger.info("Dreaming phase 1: merged %d clusters", merged_count)
+
+        # ── Phase 2: Contradiction detection ───────────────────────────
+        logger.info("Dreaming phase 2: contradiction detection")
+        # Re-fetch after dedup.
+        all_entries = await asyncio.to_thread(memory_store.get_all_with_vectors)
+        entries_with_vecs = [e for e in all_entries if e.get("vector")]
+
+        if len(entries_with_vecs) >= 2:
+            texts = [e["text"] for e in entries_with_vecs]
+            ids = [e["id"] for e in entries_with_vecs]
+            vecs = np.array([e["vector"] for e in entries_with_vecs], dtype=np.float32)
+            norms = np.linalg.norm(vecs, axis=1, keepdims=True)
+            norms[norms == 0] = 1.0
+            vecs_normed = vecs / norms
+            sim_matrix = vecs_normed @ vecs_normed.T
+
+            # Find pairs in the "suspicious" similarity range.
+            contradiction_pairs: list[tuple[int, int, float]] = []
+            for i in range(len(texts)):
+                for j in range(i + 1, len(texts)):
+                    s = float(sim_matrix[i, j])
+                    if 0.5 <= s < threshold:
+                        contradiction_pairs.append((i, j, s))
+
+            # Cap at top 20 most similar.
+            contradiction_pairs.sort(key=lambda x: x[2], reverse=True)
+            contradiction_pairs = contradiction_pairs[:20]
+
+            contra_prompt = prompt_loader.load("DREAM_CONTRADICTION_PROMPT.txt")
+            resolved_count = 0
+            for i, j, _ in contradiction_pairs:
+                try:
+                    raw = await _consolidate(
+                        pool, "contradiction",
+                        contra_prompt.replace("{entry_1}", texts[i]).replace("{entry_2}", texts[j]),
+                        "",
+                    )
+                    decision = _json.loads(raw)
+                    action = decision.get("action", "")
+                    if action == "keep_first":
+                        await asyncio.to_thread(memory_store.delete, ids[j])
+                        resolved_count += 1
+                    elif action == "keep_second":
+                        await asyncio.to_thread(memory_store.delete, ids[i])
+                        resolved_count += 1
+                    elif action == "merge" and decision.get("result"):
+                        await asyncio.to_thread(memory_store.bulk_delete, [ids[i], ids[j]])
+                        await asyncio.to_thread(
+                            memory_store.add, decision["result"], None, "dreaming_merge"
+                        )
+                        resolved_count += 1
+                except (_json.JSONDecodeError, Exception):  # noqa: BLE001
+                    logger.debug("Dreaming: contradiction resolution failed for pair", exc_info=True)
+
+            if resolved_count:
+                logger.info("Dreaming phase 2: resolved %d contradictions", resolved_count)
+
+    # ── Phase 3: Stale pruning ─────────────────────────────────────────
+    logger.info("Dreaming phase 3: stale pruning (days=%d, min_access=%d)",
+                cfg["stale_days"], cfg["stale_min_access"])
+    stale = await asyncio.to_thread(
+        memory_store.get_stale, cfg["stale_days"], cfg["stale_min_access"]
+    )
+    # Protect user-explicit memories from pruning.
+    prune_ids = [e["id"] for e in stale if e.get("source") != "user_explicit"]
+    if prune_ids:
+        deleted = await asyncio.to_thread(memory_store.bulk_delete, prune_ids)
+        logger.info("Dreaming phase 3: pruned %d stale entries", deleted)
+
+    # ── Phase 4: Working set export ────────────────────────────────────
+    logger.info("Dreaming phase 4: exporting working set to MEMORIES.txt (size=%d)",
+                cfg["working_set_size"])
+    top = await asyncio.to_thread(memory_store.get_top_accessed, cfg["working_set_size"])
+    if top:
+        working_set = "\n".join(e["text"] for e in top if e.get("text"))
+        # Write MEMORIES.txt directly — do NOT call update_memories() which
+        # would replace_all() in the vector store and destroy metadata.
+        prompt_assembler.DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with prompt_assembler._memories_lock:
+            prompt_assembler.MEMORIES_FILE.write_text(working_set, encoding="utf-8")
+        import threading
+        threading.Thread(
+            target=data_versioning.auto_commit, args=("dreaming: working set export",),
+            daemon=True,
+        ).start()
+        logger.info("Dreaming: MEMORIES.txt exported as working set (%d entries)", len(top))
+
+
 async def run_dream_cycle(pool: "BackendPool") -> None:
     """
     Run a full nightly consolidation pass over MEMORIES.txt and task DB items.
@@ -154,33 +350,10 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
     consolidated independently so a failure in one does not abort the other.
     """
     if memory_store.is_vector_enabled():
-        all_entries = await asyncio.to_thread(memory_store.get_all)
-        if all_entries:
-            try:
-                mem_prompt = prompt_loader.load("DREAM_MEMORIES_PROMPT.txt")
-                memories_text = "\n".join(e["text"] for e in all_entries)
-                # Snapshot current MEMORIES.txt before the LLM call so we can
-                # use merge_consolidated_memories to preserve concurrent appends.
-                memories_snapshot = prompt_assembler._read(prompt_assembler.MEMORIES_FILE)
-                consolidated = await _consolidate(
-                    pool, "MEMORIES.txt", mem_prompt, memories_text,
-                    source="vector store", entry_count=str(len(all_entries)),
-                )
-                if consolidated:
-                    # Use the locked merge path to preserve concurrent appends.
-                    prompt_assembler.merge_consolidated_memories(
-                        memories_snapshot, consolidated,
-                    )
-                    # Sync vector store from the merged file.
-                    merged = prompt_assembler._read(prompt_assembler.MEMORIES_FILE)
-                    merged_entries = [l.strip() for l in merged.splitlines() if l.strip()]
-                    await asyncio.to_thread(memory_store.replace_all, merged_entries)
-                    logger.info("Dreaming: vector store + MEMORIES.txt updated (%d entries)",
-                                len(merged_entries))
-            except Exception:  # noqa: BLE001
-                logger.exception("Dreaming: failed to consolidate vector memories")
-        else:
-            logger.debug("Dreaming: vector store empty, skipping memory consolidation")
+        try:
+            await _vector_dream_cycle(pool)
+        except Exception:  # noqa: BLE001
+            logger.exception("Dreaming: vector dream cycle failed")
     else:
         memories_snapshot = prompt_assembler._read(prompt_assembler.MEMORIES_FILE)
         if memories_snapshot:

@@ -27,11 +27,21 @@ A nightly consolidation pass that reviews and prunes MEMORIES.txt and tasks.
 - Manually triggerable via the `/dream` command
 
 **Consolidation logic:**
-- MEMORIES.txt: removes duplicates, merges related facts, preserves distinct useful facts. When a vector backend is active, memories are retrieved from the vector store, consolidated by the LLM, then written back to both the vector store and MEMORIES.txt (as git-versioned backup)
+
+When a **vector backend** (`local_vector` or `qdrant`) is active, dreaming runs a 4-phase vector-native pipeline:
+
+1. **Deduplication clustering:** Computes a cosine similarity matrix over all stored vectors, clusters entries above a configurable threshold (default: 0.85) using union-find, and asks the LLM to merge each cluster into a single concise entry (`DREAM_DEDUP_PROMPT.txt`). Originals are bulk-deleted and replaced with the merged entry.
+2. **Contradiction detection:** Finds pairs in the "suspicious" similarity range (0.5–threshold), caps at 20 pairs, and asks the LLM to resolve each (`DREAM_CONTRADICTION_PROMPT.txt`). The LLM returns a JSON decision: keep_first, keep_second, or merge.
+3. **Stale pruning:** Removes entries not accessed in `stale_days` (default: 90) with fewer than `stale_min_access` (default: 3) accesses. Entries with `source="user_explicit"` are protected from pruning.
+4. **Working set export:** The top-N most-accessed entries (default: 50) are written to `MEMORIES.txt` as a derived working set for flat-file fallback and git versioning. The vector store is **not** replaced — it remains the primary unbounded memory.
+
+When the **flat-file backend** is active, dreaming uses the original LLM consolidation path: the LLM reads all memories, consolidates them into a shorter text, and writes back to `MEMORIES.txt`.
+
+In both cases:
 - Tasks: LLM returns JSON actions (complete, update, keep) applied via DB; completed tasks older than 30 days are purged
 - Skills: deduplicates overlapping skills, then condenses each to ~150 tokens while preserving the first-line summary (used in the skills TOC)
 
-The prompts used for consolidation are stored in `data/DREAM_MEMORIES_PROMPT.txt` and `data/DREAM_TASKS_PROMPT.txt` and can be customised. See [system-prompts.md](system-prompts.md#customisable-prompt-templates).
+Configurable via `memory.dreaming` in `config.yaml` (vector-native settings) and `dreaming` (schedule). Prompts are stored in `data/prompts/` and can be customised. See [system-prompts.md](system-prompts.md#customisable-prompt-templates).
 
 ## Memory Harvest
 
@@ -62,7 +72,7 @@ Periodic background extraction of personal facts and preferences from conversati
 
 **Relationship to other memory systems:**
 - Complements (does not replace) the `append_memory` tool — explicit user requests ("remember that I prefer X") still use the tool directly
-- Nightly dreaming consolidation deduplicates any near-duplicate entries the harvest may create
+- Nightly dreaming consolidation deduplicates any near-duplicate entries the harvest may create (vector backends use cosine similarity clustering; flat-file uses LLM consolidation)
 - The harvest worker uses the `sub_sessions` backend pool — no separate LLM role needed
 
 **Configuration:** See `memory_harvest:` section in `config.yaml`.

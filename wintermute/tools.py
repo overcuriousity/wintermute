@@ -224,7 +224,11 @@ TOOL_SCHEMAS = [
                 "entry": {
                     "type": "string",
                     "description": "Fact or note to append.",
-                }
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Origin tag for this memory (e.g. 'user_explicit', 'harvest'). Default: 'user_explicit'.",
+                },
             },
             "required": ["entry"],
         },
@@ -766,7 +770,8 @@ def _tool_task(inputs: dict, thread_id: Optional[str] = None,
 
 def _tool_append_memory(inputs: dict, **_kw) -> str:
     try:
-        total_len = prompt_assembler.append_memory(inputs["entry"])
+        source = inputs.get("source", "user_explicit")
+        total_len = prompt_assembler.append_memory(inputs["entry"], source=source)
         if _event_bus:
             _event_bus.emit("memory.appended", entry=inputs["entry"][:200])
         return json.dumps({"status": "ok", "total_chars": total_len})

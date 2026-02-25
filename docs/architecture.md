@@ -16,7 +16,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **ReflectionLoop** | `reflection.py` | Event-driven feedback loop: rule engine + LLM analysis + skill mutations |
 | **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
 | **NL Translator** | `nl_translator.py` | Expands natural-language tool descriptions into structured arguments via a translator LLM |
-| **MemoryStore** | `memory_store.py` | Vector-indexed memory retrieval (flat_file / FTS5 / Qdrant backends) |
+| **MemoryStore** | `memory_store.py` | Vector-indexed memory retrieval (flat_file / FTS5 / local_vector / Qdrant backends) with access tracking and source tagging |
 | **PromptAssembler** | `prompt_assembler.py` | Builds system prompts from file components |
 | **Database** | `database.py` | SQLite message persistence, thread management, task storage, and sub-session outcome tracking |
 
@@ -53,7 +53,8 @@ User (Matrix / Browser)
                                                         (back to LLMThread)
 
 SchedulerThread -------------------------> LLMThread queue / sub-session (scheduled tasks with ai_prompt)
-DreamingLoop (nightly) ------------------> direct LLM API call (no tool loop)
+DreamingLoop (nightly) ------------------> vector-native 4-phase pipeline (vector backends)
+                                           or direct LLM API call (flat-file fallback)
 ReflectionLoop (event-driven) -----------> rule engine + LLM analysis + sub-session mutations
 ```
 
@@ -148,12 +149,15 @@ Wintermute is explicitly designed to work with small, quantised models (3B–8B 
 data/
   .git/                      -- Local git repo for auto-versioning (rollback via git log / git revert)
   BASE_PROMPT.txt            -- Immutable core instructions
-  MEMORIES.txt               -- Long-term user facts (updated via append_memory; git-versioned backup when vector backend is active)
+  MEMORIES.txt               -- Working set export of top-accessed memories (vector backends) or full memory store (flat-file). Git-versioned.
   memory_index.db            -- FTS5 keyword index (only when backend=fts5)
+  local_vectors.db           -- SQLite vector store with metadata (only when backend=local_vector)
   conversation.db (tasks)     -- Active goals / working memory (managed via task tool, stored in SQLite)
   conversation.db (outcomes)  -- Sub-session outcome tracking (duration, status, TP verdict; used for historical feedback)
   skills/                    -- Learned procedures as *.md files (updated via add_skill tool)
-  DREAM_MEMORIES_PROMPT.txt  -- Customisable dreaming prompt for MEMORIES consolidation
+  DREAM_MEMORIES_PROMPT.txt  -- Customisable dreaming prompt for MEMORIES consolidation (flat-file path)
+  DREAM_DEDUP_PROMPT.txt     -- Dreaming deduplication merge prompt (vector-native path)
+  DREAM_CONTRADICTION_PROMPT.txt -- Dreaming contradiction resolution prompt (vector-native path)
   DREAM_TASKS_PROMPT.txt      -- Customisable dreaming prompt for task consolidation
   COMPACTION_PROMPT.txt      -- Customisable prompt for context compaction summarisation
   matrix_crypto.db           -- Matrix E2E encryption keys
@@ -162,4 +166,4 @@ data/
 
 Changes to MEMORIES.txt, skills, and other data files are automatically committed to a local git repository inside `data/`. This provides a full change history so that any mutation (memory append, nightly consolidation, skill updates) can be inspected with `cd data && git log --oneline` and rolled back with `git revert`.
 
-When a vector memory backend (`fts5` or `qdrant`) is active, all memory mutations are dual-written: the file is updated first (for git versioning), then the vector store is updated. This ensures MEMORIES.txt always reflects the current state and can be used to rebuild the index via `/rebuild-index`.
+When a vector memory backend (`fts5`, `local_vector`, or `qdrant`) is active, the vector store is the **primary unbounded memory**. Each memory entry is tagged with metadata: `source` (origin: `user_explicit`, `harvest`, `dreaming_merge`, `unknown`), `last_accessed` (timestamp of last search hit), and `access_count` (number of search hits). MEMORIES.txt serves as a derived working-set export — the top-N most-accessed entries are written to it during nightly dreaming for flat-file fallback and git versioning. Memory mutations are still dual-written (file + vector store) during normal operation.

@@ -43,11 +43,11 @@ This reduces effective prompt size for minimal sub-sessions by ~800 tokens — s
 
 ### 2. MEMORIES.txt / Vector Memory — Long-Term Facts
 
-Stores persistent facts about the user — preferences, biographical details, established decisions. Updated day-to-day via `append_memory` (preferred). Consolidated nightly by the dreaming loop to merge duplicates and prune outdated entries.
+Stores persistent facts about the user — preferences, biographical details, established decisions. Updated day-to-day via `append_memory` (preferred). Each entry is tagged with its `source` (`user_explicit`, `harvest`, `dreaming_merge`). Consolidated nightly by the dreaming loop — vector backends use a 4-phase pipeline (dedup clustering, contradiction detection, stale pruning, working set export); flat-file uses LLM consolidation.
 
 Key rule: if information would still matter in a month with no active project around it, it belongs in MEMORIES.
 
-**Vector-indexed retrieval (optional):** When a vector memory backend (`fts5` or `qdrant`) is configured, only the top-K most relevant memories are injected per turn based on the current user message and last assistant reply. This replaces the full MEMORIES.txt dump, reducing token waste on irrelevant memories. MEMORIES.txt is kept as a git-versioned backup via dual-write. See [configuration.md — memory](configuration.md#memory) for setup.
+**Vector-indexed retrieval (optional):** When a vector memory backend (`fts5`, `local_vector`, or `qdrant`) is configured, only the top-K most relevant memories are injected per turn based on the current user message and last assistant reply. The vector store is the **primary unbounded memory**; MEMORIES.txt is a derived working-set export of the top-N most-accessed entries. See [configuration.md — memory](configuration.md#memory) for setup.
 
 ### 3. Tasks (SQLite) — Working Memory
 
@@ -133,7 +133,7 @@ Each component has a configurable character limit (set in `config.yaml` under `c
 
 When a component exceeds its limit after any inference, a system event is enqueued asking the AI to read the component, condense it, and update it using the appropriate tool.
 
-The nightly dreaming loop also consolidates MEMORIES.txt and tasks independently using a direct LLM call (no tool loop).
+The nightly dreaming loop also consolidates memories and tasks independently. Vector backends use a 4-phase pipeline (dedup, contradictions, stale pruning, working set export) with targeted LLM calls per cluster/pair. Flat-file uses a single direct LLM call.
 
 ## Customisable Prompt Templates
 
@@ -141,8 +141,11 @@ The following prompt templates are stored as editable files in `data/` and shipp
 
 | File | Used By | Placeholder | Purpose |
 |------|---------|-------------|---------|
-| `DREAM_MEMORIES_PROMPT.txt` | Dreaming loop | `{content}` | Instructions for consolidating MEMORIES.txt overnight |
+| `DREAM_MEMORIES_PROMPT.txt` | Dreaming loop (flat-file path) | `{content}` | Instructions for consolidating MEMORIES.txt overnight |
+| `DREAM_DEDUP_PROMPT.txt` | Dreaming loop (vector-native) | `{content}` | Instructions for merging a cluster of semantically similar memory entries |
+| `DREAM_CONTRADICTION_PROMPT.txt` | Dreaming loop (vector-native) | `{entry_1}`, `{entry_2}` | Instructions for resolving contradictions between two entries (returns JSON: keep_first/keep_second/merge) |
 | `DREAM_TASK_PROMPT.txt` | Dreaming loop | `{content}` | Instructions for consolidating tasks overnight (LLM returns JSON actions) |
+| `MEMORY_HARVEST_PROMPT.txt` | Memory harvest workers | `{transcript}` | Instructions for extracting memories from conversation transcripts |
 | `COMPACTION_PROMPT.txt` | Context compaction | `{history}` | Instructions for summarising old conversation history |
 
 Templates support an optional placeholder (`{content}` or `{history}`). If present, the relevant text is substituted in. If absent, it is appended to the end of the prompt. This means you can write free-form instructions without worrying about placeholder syntax.

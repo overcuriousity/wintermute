@@ -156,11 +156,12 @@ Returns vary by action. `add` returns `status`, `task_id`. `list` returns tasks 
 
 #### `append_memory`
 
-Append a new fact to MEMORIES.txt. Preferred for day-to-day memory storage — no need to reproduce existing content. Nightly consolidation handles deduplication automatically.
+Append a new fact to MEMORIES.txt (and the vector store, if active). Preferred for day-to-day memory storage — no need to reproduce existing content. Nightly consolidation handles deduplication automatically.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `entry` | string | yes | The fact or note to append (one logical entry) |
+| `source` | string | no | Origin tag for this memory. Default: `"user_explicit"`. Other values: `"harvest"` (memory harvest workers). Used by dreaming to protect user-explicit memories from stale pruning. |
 
 Returns: `status`, `total_chars`
 

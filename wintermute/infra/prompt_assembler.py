@@ -338,7 +338,7 @@ def update_memories(content: str) -> None:
     ).start()
 
 
-def append_memory(entry: str) -> int:
+def append_memory(entry: str, source: str = "unknown") -> int:
     """Append a memory entry to MEMORIES.txt. Returns the new total length."""
     from wintermute.infra import memory_store
 
@@ -353,7 +353,7 @@ def append_memory(entry: str) -> int:
     logger.info("MEMORIES.txt appended (%d chars total)", len(new_content))
     if memory_store.is_vector_enabled():
         try:
-            memory_store.add(entry.strip())
+            memory_store.add(entry.strip(), source=source)
         except Exception as exc:
             logger.error("Failed to add memory to vector store: %s", exc)
     threading.Thread(

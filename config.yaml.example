@@ -449,6 +449,14 @@ memory:
     model: "text-embedding-3-small"
     dimensions: 1536
 
+  # Dreaming (vector-native consolidation settings).
+  # Only used when backend is local_vector or qdrant.
+  dreaming:
+    dedup_similarity_threshold: 0.85  # Cosine similarity threshold for dedup clustering
+    stale_days: 90                    # Prune memories not accessed in this many days
+    stale_min_access: 3               # ...and accessed fewer than this many times
+    working_set_size: 50              # Top-N memories exported to MEMORIES.txt
+
   # Qdrant connection (required for qdrant backend only).
   # api_key is optional — only needed for Qdrant Cloud or instances
   # configured with authentication. Leave empty for local unauthenticated.

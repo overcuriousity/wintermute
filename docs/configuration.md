@@ -358,9 +358,24 @@ When any non-`flat_file` backend is active, MEMORIES.txt is kept as a git-versio
 | `api_key` | no | `""` | Qdrant API key (required for Qdrant Cloud or authenticated instances) |
 | `collection` | no | `"wintermute_memories"` | Qdrant collection name |
 
+#### `memory.dreaming` (vector backends only)
+
+Controls the vector-native dreaming pipeline. Only used when `backend` is `local_vector` or `qdrant`. When `flat_file` is active, the original LLM consolidation path is used instead.
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `dedup_similarity_threshold` | no | `0.85` | Cosine similarity threshold for deduplication clustering |
+| `stale_days` | no | `90` | Prune memories not accessed in this many days |
+| `stale_min_access` | no | `3` | ...and accessed fewer than this many times |
+| `working_set_size` | no | `50` | Top-N most-accessed memories exported to MEMORIES.txt |
+
 **Cold boot:** When a vector backend is configured and the index is empty but `MEMORIES.txt` has content, all entries are automatically imported at startup.
 
-**Interaction logging:** All embedding API calls and Qdrant operations (search, add, replace_all) are logged to the interaction log, visible in the debug panel under the `embedding`, `qdrant_search`, `qdrant_add`, and `qdrant_replace_all` action types.
+**Access tracking:** Every `search()` call updates `last_accessed` and `access_count` for returned entries. This metadata drives stale pruning (phase 3) and working set export (phase 4) during dreaming.
+
+**Source tagging:** Each memory entry is tagged with its origin: `user_explicit` (via append_memory tool), `harvest` (via memory harvest workers), `dreaming_merge` (created by dreaming dedup/contradiction resolution), or `unknown` (legacy/untagged). User-explicit memories are protected from stale pruning.
+
+**Interaction logging:** All embedding API calls and vector operations (search, add, replace_all) are logged to the interaction log, visible in the debug panel under the `embedding`, `local_vector_*`, `qdrant_*` action types.
 
 ### `memory_harvest`
 

@@ -3,7 +3,7 @@ You are a memory extraction worker. Analyze the conversation transcript below an
 PROCEDURE:
 1. Use read_file(path="data/MEMORIES.txt") to review existing memories.
 2. Read the conversation transcript carefully.
-3. For each NEW fact not already in MEMORIES.txt, call append_memory(entry="...") once per fact.
+3. For each NEW fact not already in MEMORIES.txt, call append_memory(entry="...", source="harvest") once per fact.
 4. Write each memory as a concise, standalone statement.
 
 WHAT TO EXTRACT:

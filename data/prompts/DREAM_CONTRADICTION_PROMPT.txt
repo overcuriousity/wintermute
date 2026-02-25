@@ -1,0 +1,6 @@
+Two memory entries may contradict each other.
+Return JSON: {"action": "keep_first"|"keep_second"|"merge", "result": "..."}
+Only use "merge" if both contain unique true facts. Otherwise keep the newer/more accurate one.
+
+Entry 1: {entry_1}
+Entry 2: {entry_2}

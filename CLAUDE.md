@@ -40,7 +40,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 | `turing_protocol.py` | Phase-aware 3-stage pipeline: detect → validate → correct. Phases: `post_inference`, `pre_execution`, `post_execution`. Scoped to `main` and/or `sub_session`. |
 | `matrix_thread.py` | Matrix client (mautrix) with E2E encryption; voice messages transcribed via configurable Whisper endpoint |
 | `web_interface.py` | aiohttp server: WebSocket chat, debug panel (`/debug`), REST API |
-| `dreaming.py` | Nightly memory consolidation (direct LLM call, no tool loop) |
+| `dreaming.py` | Nightly memory consolidation: vector-native 4-phase pipeline (dedup, contradictions, stale pruning, working set export) or flat-file LLM consolidation |
 | `memory_harvest.py` | Periodic conversation mining → MEMORIES.txt extraction via sub-sessions |
 | `scheduler_thread.py` | APScheduler-based task scheduling; `ai_prompt` triggers sub-sessions |
 | `database.py` | SQLite ops: messages, tasks, summaries, interaction_log |
