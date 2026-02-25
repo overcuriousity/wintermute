@@ -129,6 +129,11 @@ class ReflectionLoop:
         # Session IDs that have already triggered an immediate rule check so
         # we don't double-fire when the same failure is picked up by the batch.
         self._checked_failures: set[str] = set()
+        self._self_model: object | None = None
+
+    def inject_self_model(self, profiler) -> None:
+        """Set the SelfModelProfiler instance (called once at startup)."""
+        self._self_model = profiler
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -206,6 +211,8 @@ class ReflectionLoop:
         findings = await self._run_rules()
         if findings and self._pool and self._pool.enabled:
             await self._run_analysis(findings)
+        if self._self_model:
+            await self._self_model.update(findings)
         self._checked_failures.clear()
 
     # ------------------------------------------------------------------

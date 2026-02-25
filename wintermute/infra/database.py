@@ -755,6 +755,26 @@ def _keyword_search_outcomes(objective: str, limit: int) -> list[dict]:
     return results
 
 
+def get_tool_usage_stats(since: float) -> list[tuple[str, int]]:
+    """Top tools from sub_session_outcomes.tools_used since timestamp."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT tools_used FROM sub_session_outcomes "
+            "WHERE timestamp > ? AND tools_used IS NOT NULL",
+            (since,),
+        ).fetchall()
+    counts: dict[str, int] = {}
+    for (raw,) in rows:
+        try:
+            tools = json.loads(raw)
+            if isinstance(tools, list):
+                for t in tools:
+                    counts[t] = counts.get(t, 0) + 1
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return sorted(counts.items(), key=lambda x: x[1], reverse=True)
+
+
 def get_outcome_stats() -> dict:
     """Return aggregate sub-session outcome statistics."""
     with _connect() as conn:

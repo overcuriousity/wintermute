@@ -1,0 +1,9 @@
+Summarise the following operational metrics and tuning changes for an AI assistant's self-assessment in 2-3 sentences (max {max_chars} characters). Be factual and concise. Focus on performance patterns and any recent parameter adjustments.
+
+## Metrics
+{metrics}
+
+## Recent Tuning Changes
+{changes}
+
+Write ONLY the summary, no preamble.

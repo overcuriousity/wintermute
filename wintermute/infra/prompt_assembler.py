@@ -46,6 +46,16 @@ _tool_profiles: dict[str, dict] = {}
 # Cached parsed BASE_PROMPT sections — populated on first call to _get_sections().
 _cached_sections: list[tuple[str, set[str], str]] | None = None
 
+# Self-model profiler — set by main.py at startup via set_self_model().
+_self_model_profiler = None
+
+
+def set_self_model(profiler) -> None:
+    """Set the SelfModelProfiler for system prompt injection."""
+    global _self_model_profiler
+    _self_model_profiler = profiler
+    logger.info("Self-model profiler registered with prompt assembler")
+
 
 def set_component_limits(memories: int = 10_000, tasks: int = 5_000,
                          skills: int = 2_000, **_compat) -> None:
@@ -294,6 +304,11 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
         reflection = _get_reflection_observations()
         if reflection:
             sections.append(f"# System Observations\n\n{reflection}")
+
+        if _self_model_profiler:
+            sm = _self_model_profiler.get_summary()
+            if sm:
+                sections.append(f"# Self-Assessment\n\n{sm}")
 
     if extra_summary:
         sections.append(f"# Conversation Summary\n\n{extra_summary}")

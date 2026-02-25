@@ -385,6 +385,22 @@ reflection:
   min_result_length: 50                   # Below this = "no meaningful output" (stale task check)
 
 
+# ── Self-Model (Operational Self-Awareness) ─────────────────────────
+# Aggregates operational metrics (sub-session outcomes, tool usage,
+# inference stats) and auto-tunes internal parameters within safe bounds.
+# A cached LLM prose summary is injected into the system prompt so the
+# assistant has awareness of its own performance characteristics.
+#
+# Runs inside the reflection cycle — no separate asyncio task.
+# Set enabled: false to disable entirely (zero overhead).
+#
+self_model:
+  enabled: true
+  sub_session_timeout_range: [120, 900]   # Min/max seconds for auto-tuning
+  memory_harvest_threshold_range: [5, 50] # Min/max message threshold
+  summary_max_chars: 300                  # Max chars for the prose summary
+
+
 # ── Memory Harvest (Automatic Memory Extraction) ────────────────────
 # Periodically mines recent conversation history for personal facts,
 # preferences, and important information, extracting them into

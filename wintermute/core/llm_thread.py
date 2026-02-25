@@ -732,6 +732,7 @@ class LLMThread:
                 database.save_message, "user", item.text, thread_id,
                 token_count=_count_tokens(item.text, self._cfg.model))
 
+        _inference_start = _time.time()
         try:
             reply = await self._inference_loop(
                 system_prompt, messages, thread_id,
@@ -774,6 +775,28 @@ class LLMThread:
             )
         except Exception:  # noqa: BLE001
             logger.debug("Failed to save interaction log entry", exc_info=True)
+
+        # Emit inference.completed event for self-model metrics.
+        _inference_duration = _time.time() - _inference_start
+        if self._event_bus:
+            self._event_bus.emit(
+                "inference.completed",
+                thread_id=thread_id,
+                duration_s=round(_inference_duration, 2),
+                tool_calls=len(reply.tool_call_details) if reply.tool_call_details else 0,
+                model=self._main_pool.last_used,
+            )
+        try:
+            await database.async_call(
+                database.save_interaction_log,
+                _time.time(), "inference_completed", thread_id,
+                self._main_pool.last_used,
+                f"duration={_inference_duration:.2f}s",
+                f"tool_calls={len(reply.tool_call_details) if reply.tool_call_details else 0}",
+                "ok",
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to log inference_completed", exc_info=True)
 
         _assistant_text = reply.text or "..."
         await database.async_call(

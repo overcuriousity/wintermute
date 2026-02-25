@@ -39,6 +39,7 @@ from wintermute.interfaces.matrix_thread import MatrixConfig, MatrixThread
 from wintermute.workers.dreaming import DreamingConfig, DreamingLoop
 from wintermute.workers.memory_harvest import MemoryHarvestConfig, MemoryHarvestLoop
 from wintermute.workers.reflection import ReflectionConfig, ReflectionLoop
+from wintermute.workers.self_model import SelfModelConfig, SelfModelProfiler
 from wintermute.workers.scheduler_thread import TaskScheduler, SchedulerConfig
 from wintermute.core.sub_session import SubSessionManager
 from wintermute.update_checker import UpdateCheckerConfig, UpdateCheckerLoop
@@ -532,6 +533,29 @@ async def main() -> None:
         pool=reflection_pool,
         event_bus=event_bus,
     )
+
+    # Self-model profiler — runs inside the reflection cycle.
+    sm_raw = cfg.get("self_model", {}) or {}
+    sm_cfg = SelfModelConfig(
+        enabled=sm_raw.get("enabled", True),
+        yaml_path=sm_raw.get("yaml_path", "data/self_model.yaml"),
+        sub_session_timeout_range=tuple(sm_raw.get("sub_session_timeout_range", [120, 900])),
+        memory_harvest_threshold_range=tuple(sm_raw.get("memory_harvest_threshold_range", [5, 50])),
+        summary_max_chars=sm_raw.get("summary_max_chars", 300),
+    )
+    if sm_cfg.enabled:
+        self_model = SelfModelProfiler(
+            config=sm_cfg,
+            pool=reflection_pool,
+            event_bus=event_bus,
+            sub_session_manager=sub_sessions,
+            memory_harvest_loop=harvest_loop,
+        )
+        reflection_loop.inject_self_model(self_model)
+        prompt_assembler.set_self_model(self_model)
+        logger.info("Self-model profiler enabled")
+    else:
+        logger.info("Self-model profiler disabled by config")
 
     dreaming_loop = DreamingLoop(
         config=dreaming_cfg,
