@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time as _time
 from dataclasses import dataclass, field
 from typing import Optional, TYPE_CHECKING
@@ -73,10 +74,9 @@ def _extract_skill_actions(text: str) -> list[str]:
     Returns an empty list if none is found or the JSON is malformed.
     Language-neutral: works regardless of the prose language.
     """
-    import re as _re
     # Match the last JSON object containing skill_actions anywhere in the text.
     # The block may appear at the end with preceding whitespace/newlines.
-    matches = _re.findall(r'\{[^{}]*"skill_actions"\s*:\s*\[[^\]]*\][^{}]*\}', text)
+    matches = re.findall(r'\{[^{}]*"skill_actions"\s*:\s*\[[^\]]*\][^{}]*\}', text)
     if not matches:
         return []
     try:
@@ -206,6 +206,7 @@ class ReflectionLoop:
         findings = await self._run_rules()
         if findings and self._pool and self._pool.enabled:
             await self._run_analysis(findings)
+        self._checked_failures.clear()
 
     # ------------------------------------------------------------------
     # Tier 1: Rule engine
@@ -273,17 +274,18 @@ class ReflectionLoop:
                             )
 
         # Rule 2: Timeout pattern (3+ consecutive timeouts).
+        # Group outcomes by task_id once instead of re-querying per task.
+        outcomes_by_task: dict[str, list] = {}
+        for o in outcomes:
+            tid = o.get("task_id")
+            if tid:
+                outcomes_by_task.setdefault(tid, []).append(o)
+
         for task_id in tasks_with_task_id:
             task = await database.async_call(database.get_task, task_id)
             if not task or task.get("status") != "active":
                 continue
-            try:
-                recent = await database.async_call(
-                    database.get_outcomes_since, since, limit=10
-                )
-            except Exception:
-                continue
-            task_outcomes = [o for o in recent if o.get("task_id") == task_id]
+            task_outcomes = outcomes_by_task.get(task_id, [])
             if len(task_outcomes) >= 3:
                 last_three = task_outcomes[:3]
                 if all(o["status"] == "timeout" for o in last_three):
@@ -329,6 +331,14 @@ class ReflectionLoop:
                     ),
                 )
                 findings.append(finding)
+                if self._event_bus:
+                    self._event_bus.emit(
+                        "reflection.finding",
+                        rule="stale_task",
+                        severity="warning",
+                        subject_id=task_id,
+                        action_taken="",
+                    )
 
         # Rule 4: Skill failure correlation.
         failed_outcomes = [o for o in outcomes if o["status"] in ("failed", "timeout")]
@@ -354,7 +364,6 @@ class ReflectionLoop:
                 # Look for read_file calls on data/skills/ paths.
                 if "read_file" in raw and "data/skills/" in raw:
                     # Extract skill filename from the input.
-                    import re
                     matches = re.findall(r'data/skills/([^\s"\']+\.md)', raw)
                     for skill_name in matches:
                         skill_fail_counts[skill_name] = skill_fail_counts.get(skill_name, 0) + 1
