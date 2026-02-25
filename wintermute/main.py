@@ -585,11 +585,14 @@ async def main() -> None:
     else:
         logger.info("Update checker disabled by config")
 
-    # Inject remaining references for /status and /dream commands.
+    # Inject remaining references for /status, /dream, /reflect commands.
     if matrix:
         matrix._scheduler = scheduler
         matrix._dreaming_loop = dreaming_loop
         matrix._update_checker = update_checker
+        matrix._memory_harvest = harvest_loop
+        matrix._reflection_loop = reflection_loop
+        matrix._self_model = self_model if sm_cfg.enabled else None
     if web_iface:
         web_iface._dreaming_loop = dreaming_loop
 

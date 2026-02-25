@@ -1355,6 +1355,10 @@ class MatrixThread:
             await self._handle_dream_command(thread_id)
             return
 
+        if content is None and text == "/reflect":
+            await self._handle_reflect_command(thread_id)
+            return
+
         if content is None and text == "/kimi-auth":
             await self._handle_kimi_auth(thread_id)
             return
@@ -1404,7 +1408,8 @@ class MatrixThread:
                 "- `/compact` — Force context compaction now; shows before/after token counts\n\n"
                 "**Autonomy**\n"
                 "- `/tasks` — List all active tasks\n"
-                "- `/dream` — Run a dream cycle (memory consolidation + task pruning)\n\n"
+                "- `/dream` — Run a dream cycle (memory consolidation + task pruning)\n"
+                "- `/reflect` — Trigger a reflection cycle; shows findings and self-model update\n\n"
                 "**Memory**\n"
                 "- `/memory-stats` — Show memory store backend, entry count, and status\n"
                 "- `/rebuild-index` — Rebuild the vector memory index from MEMORIES.txt\n\n"
@@ -1515,9 +1520,17 @@ class MatrixThread:
                 f" model: `{self._dreaming_loop._pool.primary.model}`)"
             )
         if hasattr(self, "_memory_harvest") and self._memory_harvest:
-            state = "running" if getattr(self._memory_harvest, "_running", False) else "stopped"
-            interval = getattr(getattr(self._memory_harvest, "_cfg", None), "poll_interval_seconds", None)
-            extra = f" (every {interval // 60}m)" if interval else ""
+            mh = self._memory_harvest
+            state = "running" if getattr(mh, "_running", False) else "stopped"
+            threshold = getattr(getattr(mh, "_cfg", None), "message_threshold", "?")
+            pending = sum(mh._msg_counts.values()) if hasattr(mh, "_msg_counts") else 0
+            in_flight = len(mh._in_flight) if hasattr(mh, "_in_flight") else 0
+            extra = f" (threshold: {threshold} msgs"
+            if pending:
+                extra += f", {pending} pending"
+            if in_flight:
+                extra += f", {in_flight} in-flight"
+            extra += ")"
             lines.append(f"Memory harvest: {state}{extra}")
         if hasattr(self, "_scheduler") and self._scheduler:
             jobs = self._scheduler.list_jobs()
@@ -1527,6 +1540,35 @@ class MatrixThread:
                     lines.append(f"- {j.get('id', '?')}: next {j.get('next_run', '?')}")
             else:
                 lines.append("Scheduler jobs: none")
+
+        # --- Reflection loop ---
+        if hasattr(self, "_reflection_loop") and self._reflection_loop:
+            rl = self._reflection_loop
+            state = "running" if getattr(rl, "_running", False) else "stopped"
+            cfg = rl._cfg
+            pending = getattr(rl, "_completed_count", 0)
+            lines.append(
+                f"Reflection: {state} (batch every {cfg.batch_threshold} completions,"
+                f" {pending}/{cfg.batch_threshold} pending, failure_limit={cfg.consecutive_failure_limit})"
+            )
+
+        # --- Self-model ---
+        if hasattr(self, "_self_model") and self._self_model:
+            sm = self._self_model
+            summary = sm.get_summary()
+            last_updated = sm._state.get("last_updated")
+            last_changes = sm._state.get("last_tuning_changes", [])
+            ts_str = ""
+            if last_updated:
+                from datetime import datetime as _dt, timezone as _tz
+                ts_str = " (updated " + _dt.fromtimestamp(last_updated, tz=_tz.utc).strftime("%Y-%m-%d %H:%M UTC") + ")"
+            lines.append(f"\n**Self-Model**{ts_str}")
+            if summary:
+                lines.append(summary)
+            else:
+                lines.append("No summary yet (runs with next reflection cycle)")
+            if last_changes:
+                lines.append("Last tuning: " + "; ".join(last_changes))
 
         # --- Update checker ---
         if hasattr(self, "_update_checker") and self._update_checker:
@@ -1603,6 +1645,43 @@ class MatrixThread:
             f"{skills_size_before} -> {skills_size_after} bytes",
             thread_id,
         )
+
+    async def _handle_reflect_command(self, thread_id: str) -> None:
+        if not hasattr(self, "_reflection_loop") or not self._reflection_loop:
+            await self.send_message("Reflection loop not available.", thread_id)
+            return
+
+        rl = self._reflection_loop
+        if not rl._cfg.enabled:
+            await self.send_message("Reflection loop is disabled by config.", thread_id)
+            return
+
+        await self.send_message("Running reflection cycle...", thread_id)
+        try:
+            findings = await rl._run_rules()
+            if findings and rl._pool and rl._pool.enabled:
+                await rl._run_analysis(findings)
+            if rl._self_model:
+                await rl._self_model.update(findings)
+            rl._checked_failures.clear()
+        except Exception as exc:
+            await self.send_message(f"Reflection cycle failed: {exc}", thread_id)
+            return
+
+        lines = [f"Reflection cycle complete. {len(findings)} finding(s)."]
+        for f in findings:
+            action = f" → {f.action_taken}" if f.action_taken else ""
+            lines.append(f"- [{f.severity.upper()}] {f.rule}: {f.detail[:120]}{action}")
+
+        if hasattr(self, "_self_model") and self._self_model:
+            sm_summary = self._self_model.get_summary()
+            if sm_summary:
+                lines.append(f"\n**Self-Assessment updated:**\n{sm_summary}")
+            tuning = self._self_model._state.get("last_tuning_changes", [])
+            if tuning:
+                lines.append("Tuning changes: " + "; ".join(tuning))
+
+        await self.send_message("\n".join(lines), thread_id)
 
     async def _handle_kimi_auth(self, thread_id: str) -> None:
         kimi_client = getattr(self, "_kimi_client", None)
