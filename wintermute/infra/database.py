@@ -56,6 +56,14 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _add_column(conn: sqlite3.Connection, table: str, column: str, col_type: str) -> None:
+    """Add a column to an existing table if it does not already exist."""
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+        conn.commit()
+
+
 def run_migrations(conn: sqlite3.Connection) -> None:
     """Ensure all tables and columns exist."""
     conn.executescript("""
@@ -123,10 +131,13 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             nesting_depth       INTEGER,
             continuation_count  INTEGER,
             backend_used        TEXT,
-            objective_embedding BLOB
+            objective_embedding BLOB,
+            task_id             TEXT
         );
     """)
     conn.commit()
+    # Inline migrations: add columns that may not exist in older DBs.
+    _add_column(conn, "sub_session_outcomes", "task_id", "TEXT")
 
 
 def init_db() -> None:
@@ -612,8 +623,8 @@ def save_sub_session_outcome(**fields) -> int:
             "(session_id, workflow_id, timestamp, objective, system_prompt_mode, "
             "tools_available, tools_used, tool_call_count, duration_seconds, "
             "timeout_value, turing_verdict, status, result_length, nesting_depth, "
-            "continuation_count, backend_used, objective_embedding) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "continuation_count, backend_used, objective_embedding, task_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 fields.get("session_id"),
                 fields.get("workflow_id"),
@@ -632,6 +643,7 @@ def save_sub_session_outcome(**fields) -> int:
                 fields.get("continuation_count"),
                 fields.get("backend_used"),
                 embedding_blob,
+                fields.get("task_id"),
             ),
         )
         conn.commit()
@@ -754,6 +766,52 @@ def get_outcome_stats() -> dict:
         "avg_tool_calls": round(avg_tool_calls, 1) if avg_tool_calls else None,
         "timeout_rate_pct": round(timeout_rate_row * 100 / total) if total else 0,
     }
+
+
+def get_outcomes_since(
+    since: float,
+    status_filter: Optional[str] = None,
+    limit: int = 200,
+) -> list[dict]:
+    """Return sub-session outcomes newer than *since* timestamp."""
+    where = "WHERE timestamp > ?"
+    params: list = [since]
+    if status_filter:
+        where += " AND status = ?"
+        params.append(status_filter)
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"SELECT id, session_id, workflow_id, timestamp, objective, "
+            f"system_prompt_mode, tools_used, tool_call_count, duration_seconds, "
+            f"timeout_value, turing_verdict, status, result_length, nesting_depth, "
+            f"continuation_count, backend_used, task_id "
+            f"FROM sub_session_outcomes {where} "
+            f"ORDER BY timestamp DESC LIMIT ?",
+            params + [limit],
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_task_failure_streak(task_id: str, limit: int = 10) -> int:
+    """Count consecutive recent failures/timeouts for a task.
+
+    Returns the streak length (0 if the most recent outcome was a success).
+    """
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT status FROM sub_session_outcomes "
+            "WHERE task_id = ? ORDER BY timestamp DESC LIMIT ?",
+            (task_id, limit),
+        ).fetchall()
+    streak = 0
+    for row in rows:
+        if row["status"] in ("failed", "timeout"):
+            streak += 1
+        else:
+            break
+    return streak
 
 
 def get_outcomes_page(

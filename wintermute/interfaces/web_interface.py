@@ -431,6 +431,9 @@ _DEBUG_HTML = r"""\
             <option value="qdrant_add">qdrant_add</option>
             <option value="qdrant_search">qdrant_search</option>
             <option value="qdrant_replace_all">qdrant_replace_all</option>
+            <option value="reflection_rule">reflection_rule</option>
+            <option value="reflection_analysis">reflection_analysis</option>
+            <option value="memory_harvest">memory_harvest</option>
             <option value="system_event">system_event</option>
           </select>
         </div>

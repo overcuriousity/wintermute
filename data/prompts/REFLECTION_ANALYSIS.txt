@@ -1,0 +1,21 @@
+You are reviewing the recent operational history of an AI assistant system.
+
+## Rule Engine Findings
+{findings}
+
+## Recent Failed Sub-Sessions
+{failed_sessions}
+
+## Active Tasks
+{active_tasks}
+
+Based on this data, provide brief observations:
+1. What patterns do you see in the failures?
+2. Are any tasks misconfigured or need adjustment?
+3. Should any skills be updated or retired?
+
+After your observations, end your response with this JSON block on its own line:
+{"skill_actions": []}
+
+If you recommend a skill change, add a brief English instruction per action:
+{"skill_actions": ["Review and update data/skills/example.md - correlates with 3 failures"]}

@@ -56,6 +56,7 @@ fails (API error, timeout), the next one is tried automatically.
 | `compaction` | no | first backend | Context history summarisation |
 | `sub_sessions` | no | first backend | Background sub-session workers |
 | `memory_harvest` | no | `sub_sessions` | Background memory extraction from conversations |
+| `reflection` | no | `compaction` | Reflection cycle LLM analysis |
 | `dreaming` | no | first backend | Nightly memory consolidation |
 | `turing_protocol` | no | first backend | Turing Protocol validation pipeline |
 **Failover:** When multiple backends are listed, they are tried in order on
@@ -375,6 +376,18 @@ Triggers when **either** condition is met:
 | `message_threshold` | no | `20` | Harvest after N new user messages |
 | `inactivity_timeout_minutes` | no | `15` | Or after N idle minutes (needs ≥ 5 msgs) |
 | `max_message_chars` | no | `2000` | Truncate long messages before sending to the worker |
+
+### `reflection`
+
+Event-driven feedback loop that observes sub-session outcomes, detects patterns (repeated failures, stale tasks, skill correlations), and adapts the system. Uses a three-tier architecture: rule engine (zero LLM cost) → LLM analysis (one-shot) → sub-session mutations (rare). See [autonomy.md — Reflection Cycle](autonomy.md#reflection-cycle) for details.
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `enabled` | no | `true` | Set `false` to disable entirely (zero overhead) |
+| `batch_threshold` | no | `10` | Trigger batch analysis every N sub-session completions |
+| `consecutive_failure_limit` | no | `3` | Auto-pause tasks after N consecutive failures |
+| `lookback_seconds` | no | `86400` | Time window (seconds) for pattern detection (default: 24h) |
+| `min_result_length` | no | `50` | Results shorter than this are flagged as "no meaningful output" (stale task check) |
 
 ### `scheduler`
 
