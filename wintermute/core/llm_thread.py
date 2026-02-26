@@ -21,6 +21,7 @@ import logging
 import random
 import time as _time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from wintermute.infra import database
@@ -555,6 +556,40 @@ class LLMThread:
                         recent_assistant_messages=_recent_assistant,
                     ),
                     name=f"turing_{item.thread_id}",
+                )
+
+            # Emit main-thread turn event for reflection/synthesis.
+            if (
+                self._event_bus
+                and not item.thread_id.startswith("sub_")
+                and not item.is_system_event
+            ):
+                # Extract skills loaded from read_file calls on data/skills/.
+                skills_loaded = []
+                for tc in reply.tool_call_details:
+                    if tc.get("name") == "read_file":
+                        try:
+                            args = json.loads(tc.get("arguments", "{}"))
+                            p = args.get("path", "")
+                            parts = Path(p).parts
+                            if (
+                                "data" in parts
+                                and "skills" in parts
+                                and parts.index("skills") == parts.index("data") + 1
+                                and p.endswith(".md")
+                            ):
+                                import re as _re
+                                m = _re.search(r'data/skills/([^/]+)\.md', p)
+                                if m:
+                                    skills_loaded.append(m.group(1))
+                        except Exception:
+                            pass
+                self._event_bus.emit(
+                    "main_thread.turn_completed",
+                    thread_id=item.thread_id,
+                    tools_used=reply.tool_calls_made,
+                    skills_loaded=skills_loaded,
+                    had_error="[Error" in (reply.text or ""),
                 )
 
             self._queue.task_done()

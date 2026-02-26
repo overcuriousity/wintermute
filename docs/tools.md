@@ -1,6 +1,6 @@
 # Tools
 
-Wintermute exposes 12 tools as OpenAI-compatible function-calling schemas, compatible with any OpenAI-compatible endpoint (llama-server, vLLM, LM Studio, OpenAI, etc.).
+Wintermute exposes 13 tools as OpenAI-compatible function-calling schemas, compatible with any OpenAI-compatible endpoint (llama-server, vLLM, LM Studio, OpenAI, etc.).
 
 ## Tool Categories
 
@@ -10,7 +10,7 @@ Tools are grouped into three categories that control which tools are available i
 |----------|-------------|-------|
 | **execution** | All agents | `execute_shell`, `read_file`, `write_file` |
 | **research** | All agents | `search_web`, `fetch_url` |
-| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `task`, `append_memory`, `add_skill` |
+| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `task`, `append_memory`, `add_skill`, `query_telemetry` |
 
 ## Tool Filtering by Sub-session Mode
 
@@ -174,6 +174,28 @@ Create or overwrite a skill documentation file in `data/skills/`. A summary appe
 | `skill_name` | string | yes | Filename stem (no extension), e.g. `"calendar"` |
 | `summary` | string | yes | One-line summary for the skills index (max 80 chars) |
 | `documentation` | string | yes | Markdown documentation for the skill |
+
+#### `query_telemetry`
+
+Query the system's own operational telemetry — success rates, recent outcomes, skill stats, tool usage, interaction logs, and self-model summary.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query_type` | enum | yes | `"outcome_stats"`, `"recent_outcomes"`, `"skill_stats"`, `"top_tools"`, `"interaction_log"`, `"self_model"` |
+| `since_hours` | integer | no | Lookback window in hours (default: 24) |
+| `limit` | integer | no | Max results to return (default: 10) |
+| `status_filter` | enum | no | Filter for `recent_outcomes`: `"completed"`, `"failed"`, `"timeout"` |
+
+**Query types:**
+
+| Type | Returns |
+|------|---------|
+| `outcome_stats` | Aggregate sub-session success/failure/timeout counts |
+| `recent_outcomes` | Latest sub-session results with objective, status, duration |
+| `skill_stats` | Per-skill read counts, session outcomes, failure rates, versions |
+| `top_tools` | Most-used tools in the lookback window |
+| `interaction_log` | Recent interaction log entries (inference, tool calls, reflections) |
+| `self_model` | Cached self-assessment summary + raw metrics from YAML |
 
 ## NL Translation Mode
 

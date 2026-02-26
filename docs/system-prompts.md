@@ -37,6 +37,7 @@ Each section declares which tool(s) it requires. When a sub-session is spawned w
 | `delegation` | `spawn_sub_session` | Task delegation patterns |
 | `scheduled_tasks` | `task` | Scheduled task instructions |
 | `system_events` | `spawn_sub_session` | System event handling |
+| `introspection` | `query_telemetry` | Self-introspection via telemetry queries |
 | `guidelines` | always | Guidelines, critical rules, personality |
 
 This reduces effective prompt size for minimal sub-sessions by ~800 tokens — significant for weak/small models where every token counts.
@@ -147,5 +148,6 @@ The following prompt templates are stored as editable files in `data/` and shipp
 | `DREAM_TASK_PROMPT.txt` | Dreaming loop | `{content}` | Instructions for consolidating tasks overnight (LLM returns JSON actions) |
 | `MEMORY_HARVEST_PROMPT.txt` | Memory harvest workers | `{transcript}` | Instructions for extracting memories from conversation transcripts |
 | `COMPACTION_PROMPT.txt` | Context compaction | `{history}` | Instructions for summarising old conversation history |
+| `SKILL_SYNTHESIS.txt` | Reflection loop (synthesis) | `{patterns}` | Instructions for proposing new skills from recurring successful sub-session patterns |
 
 Templates support an optional placeholder (`{content}` or `{history}`). If present, the relevant text is substituted in. If absent, it is appended to the end of the prompt. This means you can write free-form instructions without worrying about placeholder syntax.

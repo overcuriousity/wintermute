@@ -468,6 +468,7 @@ async def main() -> None:
     llm.inject_sub_session_manager(sub_sessions)
     tool_module.register_sub_session_manager(sub_sessions.spawn)
     tool_module.register_event_bus(event_bus)
+    # register_self_model is wired later, after self_model is built.
 
     # Inject LLM into interfaces.
     if matrix:
@@ -530,6 +531,9 @@ async def main() -> None:
         consecutive_failure_limit=reflection_raw.get("consecutive_failure_limit", 3),
         lookback_seconds=reflection_raw.get("lookback_seconds", 86400),
         min_result_length=reflection_raw.get("min_result_length", 50),
+        main_turn_batch_threshold=reflection_raw.get("main_turn_batch_threshold", 15),
+        synthesis_min_cluster_size=reflection_raw.get("synthesis_min_cluster_size", 3),
+        synthesis_min_outcomes=reflection_raw.get("synthesis_min_outcomes", 20),
     )
     reflection_loop = ReflectionLoop(
         config=reflection_cfg,
@@ -559,6 +563,7 @@ async def main() -> None:
             )
             reflection_loop.inject_self_model(self_model)
             prompt_assembler.set_self_model(self_model)
+            tool_module.register_self_model(self_model)
             logger.info("Self-model profiler enabled")
         except Exception:
             logger.exception("Self-model profiler failed to initialise — disabling")

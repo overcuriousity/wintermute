@@ -68,6 +68,11 @@ class SelfModelProfiler:
         self._state: dict = {}
         self._load()
 
+    @property
+    def yaml_path(self) -> Path:
+        """Path to the persisted YAML metrics file."""
+        return self._yaml_path
+
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------

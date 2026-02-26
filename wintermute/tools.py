@@ -324,6 +324,42 @@ TOOL_SCHEMAS = [
         },
     ),
     _fn(
+        "query_telemetry",
+        "Query your own operational telemetry — success rates, recent outcomes, skill stats, tool usage, interaction logs, and self-model summary.",
+        {
+            "type": "object",
+            "properties": {
+                "query_type": {
+                    "type": "string",
+                    "enum": ["outcome_stats", "recent_outcomes", "skill_stats",
+                             "top_tools", "interaction_log", "self_model"],
+                    "description": (
+                        "outcome_stats: aggregate success/failure counts. "
+                        "recent_outcomes: latest sub-session results. "
+                        "skill_stats: read/write/failure counts per skill. "
+                        "top_tools: most-used tools. "
+                        "interaction_log: recent log entries. "
+                        "self_model: cached self-assessment summary + raw metrics."
+                    ),
+                },
+                "since_hours": {
+                    "type": "integer",
+                    "description": "Lookback window in hours (default: 24).",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results to return (default: 10).",
+                },
+                "status_filter": {
+                    "type": "string",
+                    "enum": ["completed", "failed", "timeout"],
+                    "description": "Filter outcomes by status (for recent_outcomes).",
+                },
+            },
+            "required": ["query_type"],
+        },
+    ),
+    _fn(
         "fetch_url",
         "Fetch a web page and return it as plain text (HTML stripped).",
         {
@@ -358,6 +394,7 @@ TOOL_CATEGORIES: dict[str, str] = {
     "task":               "orchestration",
     "append_memory":      "orchestration",
     "add_skill":          "orchestration",
+    "query_telemetry":    "orchestration",
 }
 
 
@@ -506,6 +543,16 @@ def register_event_bus(bus) -> None:
     """Called once by main.py to provide the event bus."""
     global _event_bus
     _event_bus = bus
+
+
+# Self-model profiler — injected by main.py at startup.
+_self_model_profiler = None  # Optional[SelfModelProfiler]
+
+
+def register_self_model(profiler) -> None:
+    """Called once by main.py to provide the SelfModelProfiler instance."""
+    global _self_model_profiler
+    _self_model_profiler = profiler
 
 
 def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
@@ -857,6 +904,80 @@ def _tool_write_file(inputs: dict, **_kw) -> str:
 
 
 
+def _tool_query_telemetry(inputs: dict, **_kw) -> str:
+    """Query operational telemetry data."""
+    query_type = inputs.get("query_type", "")
+    since_hours = int(inputs.get("since_hours", 24))
+    limit = int(inputs.get("limit", 10))
+    status_filter = inputs.get("status_filter")
+    since_ts = time.time() - since_hours * 3600
+
+    try:
+        if query_type == "outcome_stats":
+            stats = database.get_outcome_stats()
+            return json.dumps(stats)
+
+        elif query_type == "recent_outcomes":
+            kwargs = {"since": since_ts, "limit": limit}
+            if status_filter:
+                kwargs["status_filter"] = status_filter
+            outcomes = database.get_outcomes_since(**kwargs)
+            rows = []
+            for o in outcomes:
+                rows.append({
+                    "session_id": o.get("session_id", ""),
+                    "objective": (o.get("objective") or "")[:120],
+                    "status": o.get("status", ""),
+                    "duration_seconds": o.get("duration_seconds"),
+                    "tool_call_count": o.get("tool_call_count", 0),
+                })
+            return json.dumps({"outcomes": rows, "count": len(rows)})
+
+        elif query_type == "skill_stats":
+            from wintermute.workers import skill_stats
+            return json.dumps(skill_stats.get_all())
+
+        elif query_type == "top_tools":
+            tool_stats = database.get_tool_usage_stats(since_ts)
+            return json.dumps({"tools": [{"name": t, "count": c} for t, c in tool_stats[:limit]]})
+
+        elif query_type == "interaction_log":
+            entries = database.get_interaction_log(limit=limit)
+            rows = []
+            for e in entries:
+                rows.append({
+                    "id": e.get("id"),
+                    "action": e.get("action", ""),
+                    "session": e.get("session", ""),
+                    "input": (e.get("input") or "")[:200],
+                    "output": (e.get("output") or "")[:200],
+                    "status": e.get("status", ""),
+                })
+            return json.dumps({"entries": rows, "count": len(rows)})
+
+        elif query_type == "self_model":
+            if _self_model_profiler is None:
+                return json.dumps({"error": "Self-model profiler not available"})
+            summary = _self_model_profiler.get_summary()
+            # Read raw YAML metrics.
+            raw_metrics = {}
+            try:
+                yaml_path = _self_model_profiler.yaml_path
+                if yaml_path.exists():
+                    import yaml
+                    raw_metrics = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+            except Exception:
+                pass
+            return json.dumps({"summary": summary, "metrics": raw_metrics})
+
+        else:
+            return json.dumps({"error": f"Unknown query_type: {query_type}"})
+
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("query_telemetry failed")
+        return json.dumps({"error": str(exc)})
+
+
 # ---------------------------------------------------------------------------
 # HTML-to-text helper (stdlib only, no extra dependencies)
 # ---------------------------------------------------------------------------
@@ -1024,6 +1145,7 @@ _DISPATCH: dict[str, Any] = {
     "write_file":         _tool_write_file,
     "search_web":         _tool_search_web,
     "fetch_url":          _tool_fetch_url,
+    "query_telemetry":    _tool_query_telemetry,
 }
 
 
