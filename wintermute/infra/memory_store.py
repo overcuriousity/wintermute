@@ -1121,12 +1121,20 @@ def init(config: dict) -> None:
 
 
 def search(query: str, top_k: int | None = None, threshold: float | None = None) -> list[dict]:
-    """Search memories by relevance.  Uses configured defaults for top_k/threshold."""
+    """Search memories by relevance.  Uses configured defaults for top_k/threshold.
+
+    Returns an empty list on transient errors (network, embedding failures)
+    so callers can degrade gracefully.
+    """
     if top_k is None:
         top_k = get_top_k()
     if threshold is None:
         threshold = get_threshold()
-    return _backend.search(query, top_k, threshold)
+    try:
+        return _backend.search(query, top_k, threshold)
+    except Exception as exc:
+        logger.warning("memory_store.search failed, returning empty results: %s", exc)
+        return []
 
 
 def add(entry: str, entry_id: str | None = None, source: str = "unknown") -> str:

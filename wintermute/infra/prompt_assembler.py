@@ -300,7 +300,11 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
             memories_text = "\n".join(r["text"] for r in memory_results)
             sections.append(f"# User Memories (relevance-ranked)\n\n{memories_text}")
     elif memory_store.is_vector_enabled() and query:
-        results = memory_store.search(query)
+        try:
+            results = memory_store.search(query)
+        except Exception as exc:
+            logger.warning("Memory search failed in prompt assembly, continuing without: %s", exc)
+            results = []
         if results:
             memories_text = "\n".join(r["text"] for r in results)
             sections.append(f"# User Memories (relevance-ranked)\n\n{memories_text}")

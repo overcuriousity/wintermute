@@ -736,7 +736,7 @@ class LLMThread:
                 _memory_results = await asyncio.to_thread(memory_store.search, _memory_query)
             except Exception as e:
                 logger.warning("Vector memory search failed, continuing without memory context: %s", e)
-                _memory_results = None
+                _memory_results = []  # empty list (not None) so assembler won't retry
         else:
             _memory_results = None
 
