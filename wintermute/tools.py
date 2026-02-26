@@ -791,6 +791,11 @@ def _tool_add_skill(inputs: dict, **_kw) -> str:
         )
         if _event_bus:
             _event_bus.emit("skill.added", skill_name=inputs["skill_name"])
+        try:
+            from wintermute.workers import skill_stats
+            skill_stats.record_skill_written(inputs["skill_name"])
+        except Exception:
+            pass
         return json.dumps({"status": "ok", "skill": inputs["skill_name"]})
     except Exception as exc:  # noqa: BLE001
         logger.exception("add_skill failed")
@@ -824,11 +829,19 @@ def _tool_execute_shell(inputs: dict, **_kw) -> str:
 def _tool_read_file(inputs: dict, **_kw) -> str:
     path = Path(inputs["path"])
     try:
-        return json.dumps({"content": path.read_text(encoding="utf-8")})
+        result = json.dumps({"content": path.read_text(encoding="utf-8")})
     except FileNotFoundError:
         return json.dumps({"error": f"File not found: {path}"})
     except OSError as exc:
         return json.dumps({"error": str(exc)})
+    # Track skill reads for skill_stats.
+    try:
+        if path.parent.name == "skills" and path.suffix == ".md" and "data/skills" in str(path):
+            from wintermute.workers import skill_stats
+            skill_stats.record_read(path.stem)
+    except Exception:
+        pass
+    return result
 
 
 def _tool_write_file(inputs: dict, **_kw) -> str:

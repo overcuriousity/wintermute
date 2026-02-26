@@ -382,11 +382,21 @@ def add_skill(skill_name: str, documentation: str,
               summary: Optional[str] = None) -> None:
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
     skill_file = SKILLS_DIR / f"{skill_name}.md"
+    is_update = skill_file.exists()
     if summary:
         content = f"{summary.strip()}\n\n{documentation.strip()}"
     else:
         # Fallback: use first line of documentation as summary.
         content = documentation.strip()
+    # Append changelog entry when overwriting an existing skill.
+    if is_update:
+        from datetime import datetime, timezone
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if "\n## Changelog" not in content:
+            content += f"\n\n## Changelog\n- {date_str}: updated"
+        else:
+            # Append to existing changelog section.
+            content += f"\n- {date_str}: updated"
     skill_file.write_text(content, encoding="utf-8")
     logger.info("Skill '%s' written to %s", skill_name, skill_file)
     threading.Thread(

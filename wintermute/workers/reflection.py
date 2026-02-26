@@ -213,6 +213,12 @@ class ReflectionLoop:
             await self._run_analysis(findings)
         if self._self_model:
             await self._self_model.update(findings)
+        # Flush accumulated skill read counts to YAML.
+        try:
+            from wintermute.workers import skill_stats
+            skill_stats.flush()
+        except Exception:
+            logger.debug("[reflection] Failed to flush skill_stats", exc_info=True)
         self._checked_failures.clear()
 
     # ------------------------------------------------------------------
@@ -375,8 +381,23 @@ class ReflectionLoop:
                     for skill_name in matches:
                         skill_fail_counts[skill_name] = skill_fail_counts.get(skill_name, 0) + 1
 
+            # Enrich with lifetime stats from skill_stats.
+            try:
+                from wintermute.workers import skill_stats
+                all_stats = skill_stats.get_all()
+            except Exception:
+                all_stats = {}
+
             for skill_name, fail_count in skill_fail_counts.items():
                 if fail_count >= 3:
+                    # Build enrichment suffix from lifetime stats.
+                    extra = ""
+                    sstat = all_stats.get(skill_name.replace(".md", ""), {})
+                    if sstat:
+                        total = sstat.get("sessions_loaded", 0)
+                        failures = sstat.get("failure_count", 0)
+                        rate = round(failures / total * 100) if total else 0
+                        extra = f" Lifetime: {total} sessions, {rate}% failure rate."
                     finding = ReflectionFinding(
                         rule="skill_failure_correlation",
                         severity="warning",
@@ -384,8 +405,8 @@ class ReflectionLoop:
                         subject_id=skill_name,
                         detail=(
                             f"Skill '{skill_name}' was loaded in {fail_count} failed "
-                            f"sub-sessions within the lookback window. "
-                            f"Consider reviewing or updating this skill."
+                            f"sub-sessions within the lookback window."
+                            f"{extra} Consider reviewing or updating this skill."
                         ),
                     )
                     findings.append(finding)
@@ -462,6 +483,28 @@ class ReflectionLoop:
             for t in active_tasks[:15]
         ) or "(none)"
 
+        # Build skill stats summary for enrichment.
+        skill_stats_text = "(unavailable)"
+        try:
+            from wintermute.workers import skill_stats
+            all_stats = skill_stats.get_all()
+            if all_stats:
+                lines = []
+                for sname, sdata in sorted(all_stats.items()):
+                    total = sdata.get("sessions_loaded", 0)
+                    fails = sdata.get("failure_count", 0)
+                    rate = round(fails / total * 100) if total else 0
+                    lines.append(
+                        f"- {sname}: reads={sdata.get('read_count', 0)}, "
+                        f"sessions={total}, fail_rate={rate}%, "
+                        f"version={sdata.get('version', 1)}"
+                    )
+                skill_stats_text = "\n".join(lines)
+            else:
+                skill_stats_text = "(no skill stats yet)"
+        except Exception:
+            pass
+
         # Load prompt template, fall back to hardcoded.
         try:
             from wintermute.infra import prompt_loader
@@ -470,6 +513,7 @@ class ReflectionLoop:
                 findings=findings_text,
                 failed_sessions=failed_text,
                 active_tasks=tasks_text,
+                skill_stats=skill_stats_text,
             )
         except FileNotFoundError:
             prompt_text = _DEFAULT_ANALYSIS_PROMPT.format(

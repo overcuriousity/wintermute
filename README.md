@@ -32,6 +32,7 @@ Two architectural choices make this concrete:
 - **Tool-filtered workers** — minimal workers receive only execution + research tools; `full`-mode workers get orchestration tools too. Named tool profiles (`researcher`, `file_worker`, etc.) and conditional system prompt sections keep context lean
 - **Web search** — `search_web` queries a local SearXNG instance and falls back to DuckDuckGo when SearXNG is unavailable
 - **Task scheduler** — one-time and recurring tasks with optional AI inference on trigger; per-timezone scheduling
+- **Skill evolution** — skills track usage stats (read counts, session outcomes, failure rates); unused skills are auto-retired during nightly dreaming; the reflection cycle correlates skill usage with failures and recommends updates
 - **Nightly dreaming** — automatic overnight consolidation of MEMORIES.txt and tasks via a direct LLM call (no tool loop, no conversation side effects)
 - **Task reviews** — periodic autonomous reviews of active tasks via an isolated sub-session (no conversation pollution)
 - **Context compaction** — when conversation history approaches the model's context window, older messages are summarised and chained into a rolling summary that preserves context across compaction cycles

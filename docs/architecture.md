@@ -14,6 +14,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **SchedulerThread** | `scheduler_thread.py` | APScheduler-based scheduled task execution |
 | **DreamingLoop** | `dreaming.py` | Nightly memory consolidation |
 | **ReflectionLoop** | `reflection.py` | Event-driven feedback loop: rule engine + LLM analysis + skill mutations |
+| **SkillStats** | `skill_stats.py` | YAML-backed skill usage tracking: read counts, session outcome correlation, staleness detection |
 | **SelfModelProfiler** | `self_model.py` | Operational metrics aggregator, parameter auto-tuner, and system-prompt self-assessment injector (runs inside reflection cycle) |
 | **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
 | **NL Translator** | `nl_translator.py` | Expands natural-language tool descriptions into structured arguments via a translator LLM |
@@ -66,15 +67,16 @@ SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + s
 2. Configure logging (console + rotating file)
 3. Initialise SQLite databases
 4. Initialise memory store (vector backend or flat-file fallback; cold-boot import if needed)
-5. Bootstrap `data/` directories (skills/, scripts/, archive/)
-6. Restore APScheduler jobs (and execute missed scheduled tasks)
-7. Build shared broadcast function (routes to Matrix rooms or web clients)
-8. Start LLM inference task
-9. Start web interface task (if enabled)
-10. Start Matrix task (if configured)
-11. Start dreaming loop
-12. Start reflection loop (and attach self-model profiler if enabled)
-13. Await shutdown signals (SIGTERM / SIGINT)
+5. Initialise skill stats (load `data/skill_stats.yaml`)
+6. Bootstrap `data/` directories (skills/, scripts/, archive/)
+7. Restore APScheduler jobs (and execute missed scheduled tasks)
+8. Build shared broadcast function (routes to Matrix rooms or web clients)
+9. Start LLM inference task
+10. Start web interface task (if enabled)
+11. Start Matrix task (if configured)
+12. Start dreaming loop
+13. Start reflection loop (and attach self-model profiler if enabled)
+14. Await shutdown signals (SIGTERM / SIGINT)
 
 ## Data Flow: User Message
 
@@ -162,6 +164,7 @@ data/
   DREAM_CONTRADICTION_PROMPT.txt -- Dreaming contradiction resolution prompt (vector-native path)
   DREAM_TASKS_PROMPT.txt      -- Customisable dreaming prompt for task consolidation
   COMPACTION_PROMPT.txt      -- Customisable prompt for context compaction summarisation
+  skill_stats.yaml           -- Skill usage stats: read counts, session outcomes, failure rates (YAML, auto-committed)
   self_model.yaml            -- Persisted self-model state: metrics, summary, last tuning changes
   SELF_MODEL_SUMMARY.txt     -- Prompt template for generating the self-assessment prose summary
   matrix_crypto.db           -- Matrix E2E encryption keys

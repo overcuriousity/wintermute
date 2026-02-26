@@ -1048,6 +1048,30 @@ class SubSessionManager:
         except Exception:
             logger.debug("Failed to persist outcome for %s", state.session_id, exc_info=True)
 
+        # Correlate skill usage with session outcome for skill_stats.
+        try:
+            import re as _re_mod
+            log_entries = await database.async_call(
+                database.get_interaction_log,
+                limit=200,
+                session_filter=state.session_id,
+                action_filter="tool_call",
+            )
+            skill_names: list[str] = []
+            for entry in log_entries:
+                raw = entry.get("input", "")
+                if "read_file" in raw and "data/skills/" in raw:
+                    matches = _re_mod.findall(r'data/skills/([^\s"\']+)\.md', raw)
+                    skill_names.extend(matches)
+            if skill_names:
+                from wintermute.workers import skill_stats
+                skill_stats.record_session_outcome(
+                    list(set(skill_names)),
+                    status == "completed",
+                )
+        except Exception:
+            logger.debug("Failed to correlate skills for %s", state.session_id, exc_info=True)
+
     _TASK_REVIEW_NO_ACTION = "[NO_ACTION]"
 
     async def _report(self, state: SubSessionState, text: str) -> None:
