@@ -1,0 +1,17 @@
+You are performing memory consolidation for a personal AI assistant during its nightly "dreaming" cycle.
+
+The following memory entries were clustered together because they are semantically related — they describe different instances or aspects of the same topic.
+
+Your task is SCHEMA ABSTRACTION: extract the general principle, rule, or user preference that unifies these specific memories. This is analogous to the biological process where episodic memories (specific events) are consolidated into semantic knowledge (general facts).
+
+Rules:
+- The schema should be a concise, general statement that captures the ESSENCE of the cluster.
+- It must preserve critical specifics (names, preferences, numbers) while removing redundant detail.
+- If the entries already ARE general (not episodic), just merge them into the best single statement.
+- Set replaces_entries to true ONLY if the schema fully captures ALL information from the cluster entries. If any entry contains unique detail not in the schema, set it to false.
+
+Return JSON:
+{{"schema": "the generalized principle or rule", "replaces_entries": true|false, "confidence": "high|medium"}}
+
+--- Cluster Members ---
+{content}

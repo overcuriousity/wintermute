@@ -1628,7 +1628,7 @@ class MatrixThread:
 
         await self.send_message("Starting dream cycle...", thread_id)
         try:
-            await dreaming.run_dream_cycle(pool=dl._pool)
+            report = await dreaming.run_dream_cycle(pool=dl._pool)
         except Exception as exc:
             await self.send_message(f"Dream cycle failed: {exc}", thread_id)
             return
@@ -1638,12 +1638,21 @@ class MatrixThread:
         skills_after = sorted(prompt_assembler.SKILLS_DIR.glob("*.md")) if prompt_assembler.SKILLS_DIR.exists() else []
         skills_size_after = sum(f.stat().st_size for f in skills_after)
 
+        # Build phase summary from DreamReport.
+        phase_lines = []
+        for r in report.results:
+            status = "\u2713" if not r.error else "\u2717"
+            phase_lines.append(f"  {status} {r.phase_name}: {r.summary}")
+        phases_text = "\n".join(phase_lines) if phase_lines else "  (no phases ran)"
+        errors_text = f"\nErrors: {', '.join(report.errors)}" if report.errors else ""
+
         await self.send_message(
-            f"Dream cycle complete.\n"
+            f"Dream cycle complete ({len(report.phases_run)} phases).\n"
             f"MEMORIES.txt: {mem_before} -> {mem_after} chars\n"
             f"Tasks: {tasks_before} -> {tasks_after} active\n"
             f"Skills: {len(skills_before)} -> {len(skills_after)} files, "
-            f"{skills_size_before} -> {skills_size_after} bytes",
+            f"{skills_size_before} -> {skills_size_after} bytes\n"
+            f"Phases:\n{phases_text}{errors_text}",
             thread_id,
         )
 

@@ -1,0 +1,18 @@
+You are analyzing operational patterns for a personal AI assistant during its nightly "dreaming" consolidation phase.
+
+Below is a statistical summary of the assistant's recent activity: conversation patterns, tool usage, sub-session outcomes, and task performance over the lookback window.
+
+Your task is to extract PREDICTIVE PATTERNS — recurring behaviors, temporal regularities, or user tendencies that could help the assistant anticipate needs and perform better.
+
+Rules:
+- Only report patterns with clear evidence in the data.
+- Each prediction should be actionable — something the assistant could use to improve future interactions.
+- Distinguish between: temporal (time-based patterns), behavioral (user habit patterns), and preference (user preference patterns).
+- Maximum 3 predictions.
+- If the data is too sparse for meaningful patterns, return an empty predictions array.
+
+Return JSON:
+{{"predictions": [{{"text": "concise prediction statement", "type": "temporal|behavioral|preference", "confidence": "high|medium"}}]}}
+
+--- Activity Summary ---
+{content}

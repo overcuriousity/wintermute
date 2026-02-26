@@ -34,7 +34,7 @@ Two architectural choices make this concrete:
 - **Task scheduler** — one-time and recurring tasks with optional AI inference on trigger; per-timezone scheduling
 - **Introspection** — the LLM can query its own operational telemetry (success rates, tool usage, skill stats, interaction logs, self-model summary) via the `query_telemetry` tool
 - **Skill evolution** — skills track usage stats (read counts, session outcomes, failure rates); unused skills are auto-retired during nightly dreaming; the reflection cycle correlates skill usage with failures, recommends updates, and synthesizes new skills from recurring successful patterns
-- **Nightly dreaming** — automatic overnight consolidation of MEMORIES.txt and tasks via a direct LLM call (no tool loop, no conversation side effects)
+- **Nightly dreaming** — biologically-inspired multi-phase memory consolidation: housekeeping (dedup, contradictions, stale pruning, working set export), plus creative phases gated by conditions — associative discovery (REM-inspired), schema abstraction (NREM slow-wave), and predictive pattern extraction. Per-phase state tracking, Qdrant snapshot safety, structured `DreamReport` output
 - **Task reviews** — periodic autonomous reviews of active tasks via an isolated sub-session (no conversation pollution)
 - **Context compaction** — when conversation history approaches the model's context window, older messages are summarised and chained into a rolling summary that preserves context across compaction cycles
 - **Turing Protocol** — three-stage validation pipeline (detect → validate → correct) that automatically corrects hallucinations and unfulfilled commitments

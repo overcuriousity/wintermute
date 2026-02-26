@@ -13,7 +13,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **SubSessionManager** | `sub_session.py` | Manages background worker sub-sessions and workflow DAGs |
 | **Turing Protocol** | `turing_protocol.py` | Three-stage post-inference validation framework (detect, validate, correct) |
 | **SchedulerThread** | `scheduler_thread.py` | APScheduler-based scheduled task execution |
-| **DreamingLoop** | `dreaming.py` | Nightly memory consolidation |
+| **DreamingLoop** | `dreaming.py` | Biologically-inspired multi-phase memory consolidation (housekeeping + creative phases) |
 | **ReflectionLoop** | `reflection.py` | Event-driven feedback loop: rule engine + LLM analysis + skill mutations |
 | **SkillStats** | `skill_stats.py` | YAML-backed skill usage tracking: read counts, session outcome correlation, staleness detection |
 | **SelfModelProfiler** | `self_model.py` | Operational metrics aggregator, parameter auto-tuner, and system-prompt self-assessment injector (runs inside reflection cycle) |
@@ -56,7 +56,7 @@ User (Matrix / Browser)
                                                         (back to LLMThread)
 
 SchedulerThread -------------------------> LLMThread queue / sub-session (scheduled tasks with ai_prompt)
-DreamingLoop (nightly) ------------------> vector-native 4-phase pipeline (vector backends)
+DreamingLoop (nightly) ------------------> housekeeping (4-phase) + creative (3-phase, gated) pipeline (vector backends)
                                            or direct LLM API call (flat-file fallback)
 ReflectionLoop (event-driven) -----------> rule engine + LLM analysis + sub-session mutations + pattern-to-skill synthesis
 SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + summary → system prompt
@@ -163,6 +163,9 @@ data/
   DREAM_MEMORIES_PROMPT.txt  -- Customisable dreaming prompt for MEMORIES consolidation (flat-file path)
   DREAM_DEDUP_PROMPT.txt     -- Dreaming deduplication merge prompt (vector-native path)
   DREAM_CONTRADICTION_PROMPT.txt -- Dreaming contradiction resolution prompt (vector-native path)
+  DREAM_ASSOCIATION_PROMPT.txt -- REM-inspired associative discovery prompt (creative phase)
+  DREAM_SCHEMA_PROMPT.txt    -- NREM-inspired schema abstraction prompt (creative phase)
+  DREAM_PREDICTION_PROMPT.txt -- Predictive pattern extraction prompt (creative phase)
   DREAM_TASKS_PROMPT.txt      -- Customisable dreaming prompt for task consolidation
   COMPACTION_PROMPT.txt      -- Customisable prompt for context compaction summarisation
   skill_stats.yaml           -- Skill usage stats: read counts, session outcomes, failure rates (YAML, auto-committed)

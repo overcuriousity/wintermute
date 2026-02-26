@@ -468,10 +468,38 @@ memory:
   # Dreaming (vector-native consolidation settings).
   # Only used when backend is local_vector or qdrant.
   dreaming:
+    # ── Housekeeping ──
     dedup_similarity_threshold: 0.85  # Cosine similarity threshold for dedup clustering
     stale_days: 90                    # Prune memories not accessed in this many days
     stale_min_access: 3               # ...and accessed fewer than this many times
     working_set_size: 50              # Top-N memories exported to MEMORIES.txt
+
+    # ── Associative Discovery (REM-inspired) ──
+    # Finds non-obvious cross-domain connections between memories.
+    # Gated: runs only when enough new memories accumulated AND time elapsed.
+    association_min_new_memories: 20   # Min new memory appends since last run
+    association_max_insights: 5        # Max insights to store per cycle
+    association_days_interval: 7       # Min days between runs
+    association_seed_count: 8          # Number of seed entries for LLM
+    association_sim_low: 0.3           # Lower similarity bound for seed selection
+    association_sim_high: 0.6          # Upper similarity bound for seed selection
+
+    # ── Schema Abstraction (NREM slow-wave inspired) ──
+    # Generalises clusters of episodic memories into semantic schemas.
+    # Gated: runs when store is large enough AND (time elapsed OR many merges).
+    schema_min_store_size: 50          # Min total memories in store
+    schema_days_interval: 14           # Min days between runs
+    schema_merge_trigger: 10           # Bypass time gate if dedup merged >= N clusters
+    schema_cluster_threshold: 0.6      # Similarity threshold for schema clustering
+    schema_max_clusters: 5             # Max clusters to process per cycle
+
+    # ── Predictive Pattern Extraction ──
+    # Extracts behavioural/temporal patterns from operational history.
+    # Gated: runs when enough sub-session outcomes AND time elapsed.
+    prediction_min_outcomes: 50        # Min sub-session outcomes since last run
+    prediction_days_interval: 7        # Min days between runs
+    prediction_lookback_days: 30       # How far back to look for patterns
+    prediction_max_predictions: 3      # Max predictions to store per cycle
 
   # Qdrant connection (required for qdrant backend only).
   # api_key is optional — only needed for Qdrant Cloud or instances

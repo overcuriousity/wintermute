@@ -44,7 +44,7 @@ This reduces effective prompt size for minimal sub-sessions by ~800 tokens — s
 
 ### 2. MEMORIES.txt / Vector Memory — Long-Term Facts
 
-Stores persistent facts about the user — preferences, biographical details, established decisions. Updated day-to-day via `append_memory` (preferred). Each entry is tagged with its `source` (`user_explicit`, `harvest`, `dreaming_merge`). Consolidated nightly by the dreaming loop — vector backends use a 4-phase pipeline (dedup clustering, contradiction detection, stale pruning, working set export); flat-file uses LLM consolidation.
+Stores persistent facts about the user — preferences, biographical details, established decisions. Updated day-to-day via `append_memory` (preferred). Each entry is tagged with its `source` (`user_explicit`, `harvest`, `dreaming_merge`, `dreaming_association`, `dreaming_schema`). Consolidated nightly by the dreaming loop — vector backends use a multi-phase pipeline: housekeeping (dedup clustering, contradiction detection, stale pruning, working set export) plus gated creative phases (associative discovery, schema abstraction, predictive patterns); flat-file uses LLM consolidation.
 
 Key rule: if information would still matter in a month with no active project around it, it belongs in MEMORIES.
 
@@ -134,7 +134,7 @@ Each component has a configurable character limit (set in `config.yaml` under `c
 
 When a component exceeds its limit after any inference, a system event is enqueued asking the AI to read the component, condense it, and update it using the appropriate tool.
 
-The nightly dreaming loop also consolidates memories and tasks independently. Vector backends use a 4-phase pipeline (dedup, contradictions, stale pruning, working set export) with targeted LLM calls per cluster/pair. Flat-file uses a single direct LLM call.
+The nightly dreaming loop also consolidates memories and tasks independently. Vector backends use a multi-phase pipeline: housekeeping (dedup, contradictions, stale pruning, working set export) plus gated creative phases (associative discovery, schema abstraction, predictive patterns) with targeted LLM calls per cluster/pair. Flat-file uses a single direct LLM call.
 
 ## Customisable Prompt Templates
 
@@ -145,6 +145,9 @@ The following prompt templates are stored as editable files in `data/` and shipp
 | `DREAM_MEMORIES_PROMPT.txt` | Dreaming loop (flat-file path) | `{content}` | Instructions for consolidating MEMORIES.txt overnight |
 | `DREAM_DEDUP_PROMPT.txt` | Dreaming loop (vector-native) | `{content}` | Instructions for merging a cluster of semantically similar memory entries |
 | `DREAM_CONTRADICTION_PROMPT.txt` | Dreaming loop (vector-native) | `{entry_1}`, `{entry_2}` | Instructions for resolving contradictions between two entries (returns JSON: keep_first/keep_second/merge) |
+| `DREAM_ASSOCIATION_PROMPT.txt` | Dreaming loop (creative, REM) | `{seed_memories}`, `{candidate_memories}` | Instructions for discovering non-obvious connections between distant memories (returns JSON insights) |
+| `DREAM_SCHEMA_PROMPT.txt` | Dreaming loop (creative, NREM) | `{cluster_texts}`, `{existing_schemas}` | Instructions for abstracting recurring structural patterns into higher-order schemas (returns JSON) |
+| `DREAM_PREDICTION_PROMPT.txt` | Dreaming loop (creative) | `{recent_memories}`, `{existing_predictions}` | Instructions for extracting actionable predictions from temporal/behavioral patterns (returns JSON) |
 | `DREAM_TASK_PROMPT.txt` | Dreaming loop | `{content}` | Instructions for consolidating tasks overnight (LLM returns JSON actions) |
 | `MEMORY_HARVEST_PROMPT.txt` | Memory harvest workers | `{transcript}` | Instructions for extracting memories from conversation transcripts |
 | `COMPACTION_PROMPT.txt` | Context compaction | `{history}` | Instructions for summarising old conversation history |

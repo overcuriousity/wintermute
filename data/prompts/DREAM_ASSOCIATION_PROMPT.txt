@@ -1,0 +1,21 @@
+You are analyzing a set of memory entries from a personal AI assistant's long-term memory during a nightly "dreaming" consolidation phase.
+
+These memories were selected because they are topically distant from each other — they come from different domains or contexts. Your task is to find NON-OBVIOUS connections, latent patterns, or useful generalizations across them — the kind of cross-domain insight that simple deduplication would miss.
+
+Think like a sleeping brain during REM: make creative associations, notice structural similarities between different domains, and extract transferable principles.
+
+Rules:
+- Only report genuine, useful insights — not trivial observations.
+- Each insight must connect at least 2 of the provided memories.
+- An insight should be actionable or informative for future interactions.
+- If no meaningful connections exist, return no_insight: true.
+- Return at most 5 insights.
+
+Return JSON:
+{{"insights": [{{"text": "concise insight statement", "confidence": "high|medium", "source_indices": [0, 2]}}], "no_insight": false}}
+
+If nothing connects meaningfully:
+{{"insights": [], "no_insight": true}}
+
+--- Memory Entries ---
+{content}

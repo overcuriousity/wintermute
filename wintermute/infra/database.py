@@ -163,6 +163,12 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             objective_embedding BLOB,
             task_id             TEXT
         );
+        CREATE TABLE IF NOT EXISTS dreaming_state (
+            phase_name      TEXT PRIMARY KEY,
+            last_run_at     REAL,
+            items_processed INTEGER DEFAULT 0,
+            outcome_summary TEXT
+        );
     """)
     conn.commit()
     # Inline migrations: add columns that may not exist in older DBs.
@@ -901,3 +907,77 @@ def get_outcomes_page(
     entries = [dict(r) for r in rows]
     stats = get_outcome_stats()
     return entries, total, stats
+
+
+# ---------------------------------------------------------------------------
+# Dreaming State (per-phase tracking for gated dream phases)
+# ---------------------------------------------------------------------------
+
+def get_dreaming_phase_state(phase_name: str) -> Optional[dict]:
+    """Return the stored state for a dream phase, or None if never run."""
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM dreaming_state WHERE phase_name = ?",
+            (phase_name,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_dreaming_phase_state(
+    phase_name: str,
+    items_processed: int = 0,
+    outcome_summary: str = "",
+) -> None:
+    """Upsert the state for a dream phase after it runs."""
+    now = time.time()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO dreaming_state (phase_name, last_run_at, items_processed, outcome_summary) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(phase_name) DO UPDATE SET "
+            "last_run_at = excluded.last_run_at, "
+            "items_processed = excluded.items_processed, "
+            "outcome_summary = excluded.outcome_summary",
+            (phase_name, now, items_processed, outcome_summary),
+        )
+        conn.commit()
+
+
+def get_all_dreaming_phase_states() -> dict[str, dict]:
+    """Return all dreaming phase states keyed by phase_name."""
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM dreaming_state").fetchall()
+    return {r["phase_name"]: dict(r) for r in rows}
+
+
+def count_memories_added_since(since: float) -> int:
+    """Count memory.appended events logged since a timestamp.
+
+    Uses the interaction_log table where action='tool_call' and
+    the session contains 'append_memory', or action='dreaming' source tags.
+    Falls back to counting lines with 'append_memory' in session field.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM interaction_log "
+            "WHERE timestamp > ? AND ("
+            "  (action = 'tool_call' AND session LIKE '%append_memory%') OR "
+            "  (action = 'dreaming' AND session LIKE '%merge%')"
+            ")",
+            (since,),
+        ).fetchone()
+    return row[0] if row else 0
+
+
+def get_summaries_since(since: float, limit: int = 50) -> list[dict]:
+    """Return compaction summaries created after a timestamp."""
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, timestamp, content, thread_id FROM summaries "
+            "WHERE timestamp > ? ORDER BY timestamp DESC LIMIT ?",
+            (since, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]

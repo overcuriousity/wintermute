@@ -360,7 +360,9 @@ When any non-`flat_file` backend is active, MEMORIES.txt is kept as a git-versio
 
 #### `memory.dreaming` (vector backends only)
 
-Controls the vector-native dreaming pipeline. Only used when `backend` is `local_vector` or `qdrant`. When `flat_file` is active, the original LLM consolidation path is used instead.
+Controls the vector-native dreaming pipeline. Only used when `backend` is `local_vector` or `qdrant`. When `flat_file` is active, only flat-file LLM consolidation + task/skill consolidation run.
+
+**Housekeeping settings:**
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
@@ -368,6 +370,34 @@ Controls the vector-native dreaming pipeline. Only used when `backend` is `local
 | `stale_days` | no | `90` | Prune memories not accessed in this many days |
 | `stale_min_access` | no | `3` | ...and accessed fewer than this many times |
 | `working_set_size` | no | `50` | Top-N most-accessed memories exported to MEMORIES.txt |
+
+**Association (REM-inspired) settings:**
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `association_enabled` | no | `true` | Enable the associative discovery phase |
+| `association_min_entries` | no | `20` | Minimum memory entries required to run |
+| `association_cooldown_hours` | no | `24` | Minimum hours between runs |
+| `association_seed_count` | no | `5` | Number of seed memories for Qdrant `recommend()` |
+| `association_candidate_count` | no | `20` | Number of candidate memories to evaluate |
+
+**Schema (NREM slow-wave inspired) settings:**
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `schema_enabled` | no | `true` | Enable the schema abstraction phase |
+| `schema_min_entries` | no | `30` | Minimum memory entries required to run |
+| `schema_cooldown_hours` | no | `72` | Minimum hours between runs |
+| `schema_cluster_sample` | no | `10` | Number of dedup clusters to sample for schema extraction |
+
+**Prediction settings:**
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `prediction_enabled` | no | `true` | Enable the predictive pattern extraction phase |
+| `prediction_min_entries` | no | `40` | Minimum memory entries required to run |
+| `prediction_cooldown_hours` | no | `168` | Minimum hours between runs (default: 7 days) |
+| `prediction_new_memory_threshold` | no | `10` | Minimum new memories since last dreaming cycle |
 
 **Cold boot:** When a vector backend is configured and the index is empty but `MEMORIES.txt` has content, all entries are automatically imported at startup.
 

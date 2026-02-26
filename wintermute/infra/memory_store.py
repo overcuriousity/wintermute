@@ -708,6 +708,146 @@ class QdrantBackend:
                         self._collection, self._dimensions)
         logger.info("Memory backend: qdrant (url=%s, collection=%s)",
                      self._url, self._collection)
+        # Create payload indexes for efficient filtered queries (dreaming, stale detection).
+        self._ensure_payload_indexes()
+
+    def _ensure_payload_indexes(self) -> None:
+        """Create payload indexes for efficient filtered queries.
+
+        Indexes: last_accessed (range), access_count (range), source (keyword),
+        created_at (range).  Idempotent — Qdrant silently ignores duplicates.
+        """
+        try:
+            from qdrant_client.models import PayloadSchemaType
+            for field, schema in [
+                ("last_accessed", PayloadSchemaType.FLOAT),
+                ("access_count", PayloadSchemaType.INTEGER),
+                ("source", PayloadSchemaType.KEYWORD),
+                ("created_at", PayloadSchemaType.FLOAT),
+            ]:
+                try:
+                    self._client.create_payload_index(
+                        collection_name=self._collection,
+                        field_name=field,
+                        field_schema=schema,
+                    )
+                except Exception:
+                    pass  # Index may already exist.
+            logger.debug("Qdrant: payload indexes ensured")
+        except Exception:
+            logger.debug("Qdrant: payload index creation skipped", exc_info=True)
+
+    def recommend(
+        self,
+        positive_ids: list[str],
+        negative_ids: list[str] | None = None,
+        limit: int = 10,
+        score_threshold: float | None = None,
+    ) -> list[dict]:
+        """Use Qdrant's recommend API to find memories related to positive
+        examples but distant from negative examples.
+
+        Returns list of dicts with id, text, score.
+        Falls back to empty list if recommend is unavailable.
+        """
+        try:
+            from qdrant_client.models import RecommendRequest
+            with self._lock:
+                results = self._client.recommend(
+                    collection_name=self._collection,
+                    positive=positive_ids,
+                    negative=negative_ids or [],
+                    limit=limit,
+                    score_threshold=score_threshold,
+                )
+            return [
+                {"id": str(r.id), "text": r.payload.get("text", ""), "score": r.score}
+                for r in results
+            ]
+        except Exception as exc:
+            logger.debug("Qdrant recommend() failed: %s", exc)
+            return []
+
+    def create_snapshot(self) -> str:
+        """Create a Qdrant collection snapshot for rollback.
+
+        Returns the snapshot name, or empty string on failure.
+        """
+        try:
+            with self._lock:
+                info = self._client.create_snapshot(
+                    collection_name=self._collection,
+                )
+            name = getattr(info, "name", str(info)) if info else ""
+            logger.info("Qdrant: snapshot created: %s", name)
+            return name
+        except Exception as exc:
+            logger.warning("Qdrant: snapshot creation failed: %s", exc)
+            return ""
+
+    def search_neighbors_batch(
+        self,
+        entry_ids: list[str],
+        limit: int = 20,
+        score_threshold: float = 0.0,
+    ) -> dict[str, list[dict]]:
+        """Find nearest neighbors for multiple entries in a single Qdrant call.
+
+        Returns a dict mapping each entry_id to its list of neighbor dicts
+        (id, text, score).  Uses search_batch for efficiency: O(n*k) instead
+        of the O(n^2) full pairwise matrix.
+        """
+        try:
+            from qdrant_client.models import SearchRequest
+            # Fetch vectors for the requested entries.
+            with self._lock:
+                points = self._client.retrieve(
+                    collection_name=self._collection,
+                    ids=entry_ids,
+                    with_vectors=True,
+                    with_payload=True,
+                )
+            if not points:
+                return {}
+
+            id_to_vec = {str(p.id): p.vector for p in points if p.vector}
+
+            requests = []
+            order = []  # Track which id each request corresponds to.
+            for eid in entry_ids:
+                vec = id_to_vec.get(eid)
+                if vec is None:
+                    continue
+                requests.append(SearchRequest(
+                    vector=vec,
+                    limit=limit + 1,  # +1 to exclude self.
+                    score_threshold=score_threshold,
+                    with_payload=True,
+                ))
+                order.append(eid)
+
+            if not requests:
+                return {}
+
+            with self._lock:
+                batch_results = self._client.search_batch(
+                    collection_name=self._collection,
+                    requests=requests,
+                )
+
+            result: dict[str, list[dict]] = {}
+            for eid, hits in zip(order, batch_results):
+                neighbors = [
+                    {"id": str(h.id), "text": h.payload.get("text", ""),
+                     "score": h.score, "source": h.payload.get("source", "unknown")}
+                    for h in hits
+                    if str(h.id) != eid  # Exclude self.
+                ][:limit]
+                result[eid] = neighbors
+            return result
+        except Exception as exc:
+            logger.debug("Qdrant search_neighbors_batch failed: %s", exc)
+            return {}
 
     def add(self, entry: str, entry_id: str | None = None, source: str = "unknown") -> str:
         from qdrant_client.models import PointStruct
@@ -1179,6 +1319,46 @@ def bulk_delete(entry_ids: list[str]) -> int:
 
 def get_top_accessed(limit: int) -> list[dict]:
     return _backend.get_top_accessed(limit)
+
+
+def recommend(
+    positive_ids: list[str],
+    negative_ids: list[str] | None = None,
+    limit: int = 10,
+    score_threshold: float | None = None,
+) -> list[dict]:
+    """Use Qdrant recommend API if available, else return empty list."""
+    if isinstance(_backend, QdrantBackend):
+        return _backend.recommend(positive_ids, negative_ids, limit, score_threshold)
+    return []
+
+
+def is_qdrant_backend() -> bool:
+    """True when the active backend is QdrantBackend."""
+    return isinstance(_backend, QdrantBackend)
+
+
+def create_snapshot() -> str:
+    """Create a Qdrant snapshot. Returns snapshot name or empty string."""
+    if isinstance(_backend, QdrantBackend):
+        return _backend.create_snapshot()
+    return ""
+
+
+def search_neighbors_batch(
+    entry_ids: list[str],
+    limit: int = 20,
+    score_threshold: float = 0.0,
+) -> dict[str, list[dict]]:
+    """Find nearest neighbors for multiple entries via Qdrant search_batch."""
+    if isinstance(_backend, QdrantBackend):
+        return _backend.search_neighbors_batch(entry_ids, limit, score_threshold)
+    return {}
+
+
+def get_embed_config() -> dict:
+    """Return the embeddings config dict (for external callers needing to embed)."""
+    return _config.get("embeddings", {})
 
 
 def is_vector_enabled() -> bool:

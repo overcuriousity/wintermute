@@ -8,7 +8,7 @@ All commands are available in both Matrix and the web UI.
 | `/compact` | Force context compaction. Summarises older messages and archives them, keeping the last 10 messages intact. Shows before/after token counts. |
 | `/tasks` | List all tasks (active, paused, completed) with their schedules. |
 | `/status` | Show detailed system status: LLM backends, context budget, memory, tasks, background loops (dreaming, harvest, reflection), self-model summary, active sub-sessions. |
-| `/dream` | Manually trigger the nightly dreaming consolidation of MEMORIES.txt and tasks. Shows before/after counts. |
+| `/dream` | Manually trigger the dreaming cycle. Runs all phases (housekeeping + creative) and shows per-phase results with ✓/✗ status, before/after counts for memories, tasks, and skills. |
 | `/reflect` | Manually trigger the reflection cycle (rule engine + LLM analysis + self-model update). Reports findings and any auto-tuning changes inline. |
 | `/memory-stats` | Show memory store status: backend type, entry count, and backend-specific details (Qdrant URL, collection, dimensions, status). |
 | `/rebuild-index` | Rebuild the vector memory index from MEMORIES.txt. Only available when a vector backend (`fts5` or `qdrant`) is active. Reports stats after completion. |

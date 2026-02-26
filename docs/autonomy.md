@@ -18,30 +18,39 @@ Wintermute includes several autonomous background systems that operate without u
 
 **Module:** `wintermute/workers/dreaming.py`
 
-A nightly consolidation pass that reviews and prunes MEMORIES.txt and tasks.
+A biologically-inspired multi-phase memory consolidation system that runs nightly. Phases are divided into **housekeeping** (janitorial) and **creative** (higher-order reasoning), with creative phases gated by configurable conditions to minimise LLM cost.
 
-- Fires at a configurable hour (default: 01:00 UTC)
-- Uses a direct LLM API call — no tool loop, no conversation side effects
-- Each component is consolidated independently (a failure in one doesn't abort the other)
+- Fires at a configurable hour (default: 01:00 UTC), also triggers early after 50+ memory appends
+- Uses direct LLM API calls with JSON mode — no tool loop, no conversation side effects
+- Each phase is independent — a failure in one does not abort the others
 - Can use a dedicated backend (configured via `llm.dreaming` in `config.yaml`)
 - Manually triggerable via the `/dream` command
+- Returns a structured `DreamReport` with per-phase results
+- Creates a Qdrant snapshot before housekeeping (when using Qdrant backend)
 
-**Consolidation logic:**
+**Housekeeping phases** (vector backends):
 
-When a **vector backend** (`local_vector` or `qdrant`) is active, dreaming runs a 4-phase vector-native pipeline:
-
-1. **Deduplication clustering:** Computes a cosine similarity matrix over all stored vectors, clusters entries above a configurable threshold (default: 0.85) using union-find, and asks the LLM to merge each cluster into a single concise entry (`DREAM_DEDUP_PROMPT.txt`). Originals are bulk-deleted and replaced with the merged entry.
+1. **Deduplication clustering:** Computes similarity data (Qdrant-native `search_batch` O(n·k) or numpy O(n²) fallback), clusters entries above a configurable threshold (default: 0.85) using union-find, and asks the LLM to merge each cluster into a single concise entry (`DREAM_DEDUP_PROMPT.txt`). Originals are bulk-deleted and replaced with the merged entry.
 2. **Contradiction detection:** Finds pairs in the "suspicious" similarity range (0.5–threshold), caps at 20 pairs, and asks the LLM to resolve each (`DREAM_CONTRADICTION_PROMPT.txt`). The LLM returns a JSON decision: keep_first, keep_second, or merge.
-3. **Stale pruning:** Removes entries not accessed in `stale_days` (default: 90) with fewer than `stale_min_access` (default: 3) accesses. Entries with `source="user_explicit"` are protected from pruning.
+3. **Stale pruning:** Removes entries not accessed in `stale_days` (default: 90) with fewer than `stale_min_access` (default: 3) accesses. Entries with `source="user_explicit"` or `source="dreaming_schema"` are protected from pruning.
 4. **Working set export:** The top-N most-accessed entries (default: 50) are written to `MEMORIES.txt` as a derived working set for flat-file fallback and git versioning. The vector store is **not** replaced — it remains the primary unbounded memory.
 
-When the **flat-file backend** is active, dreaming uses the original LLM consolidation path: the LLM reads all memories, consolidates them into a shorter text, and writes back to `MEMORIES.txt`.
+**Shared phases** (all backends):
 
-In both cases:
-- Tasks: LLM returns JSON actions (complete, update, keep) applied via DB; completed tasks older than 30 days are purged
-- Skills: auto-retires skills unused for 90+ days (moved to `data/skills/.archive/`), then deduplicates overlapping skills, then condenses each to ~150 tokens while preserving the first-line summary (used in the skills TOC)
+5. **Task consolidation:** LLM returns JSON actions (complete, update, keep) applied via DB; completed tasks older than 30 days are purged.
+6. **Skill consolidation:** Auto-retires skills unused for 90+ days (moved to `data/skills/.archive/`), then deduplicates overlapping skills, then condenses each to ~150 tokens while preserving the first-line summary.
 
-Configurable via `memory.dreaming` in `config.yaml` (vector-native settings) and `dreaming` (schedule). Prompts are stored in `data/prompts/` and can be customised. See [system-prompts.md](system-prompts.md#customisable-prompt-templates).
+**Creative phases** (vector backends only, gated):
+
+7. **Associative Discovery (REM-inspired):** Finds distant memory clusters via Qdrant `recommend()` (with negative examples for diversity) or numpy fallback, and asks the LLM to discover non-obvious connections (`DREAM_ASSOCIATION_PROMPT.txt`). Gated: requires ≥ `association_min_entries` memories (default: 20) and ≥ 24h since last run. Discovered insights are stored back with `source="dreaming_association"`.
+8. **Schema Abstraction (NREM slow-wave inspired):** Identifies recurring structural patterns across related memories and abstracts them into higher-order schemas (`DREAM_SCHEMA_PROMPT.txt`). Gated: requires ≥ `schema_min_entries` (default: 30) and ≥ 72h since last run. Also promotes high-confidence predictions (access_count ≥ 5) to schemas. Schemas are stored with `source="dreaming_schema"` and protected from stale pruning.
+9. **Predictive Pattern Extraction:** Analyses temporal sequences and behavioral patterns to generate actionable predictions (`DREAM_PREDICTION_PROMPT.txt`). Gated: requires ≥ `prediction_min_entries` (default: 40), ≥ 168h since last run, and ≥ 10 new memories since last dreaming cycle.
+
+When the **flat-file backend** is active, only phases 5–6 (task + skill consolidation) and the flat-file LLM consolidation path run. Creative phases are skipped.
+
+**Phase state tracking:** Each phase's last run time, items processed, and outcome summary are persisted in the `dreaming_state` SQLite table, enabling the gating conditions and incremental operation.
+
+Configurable via `memory.dreaming` in `config.yaml` (16 config keys across housekeeping, association, schema, and prediction sections) and `dreaming` (schedule). Prompts are stored in `data/prompts/` and can be customised. See [system-prompts.md](system-prompts.md#customisable-prompt-templates).
 
 ## Memory Harvest
 
