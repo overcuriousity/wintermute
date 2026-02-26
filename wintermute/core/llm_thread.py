@@ -21,6 +21,7 @@ import logging
 import random
 import time as _time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from wintermute.infra import database
@@ -565,16 +566,15 @@ class LLMThread:
             ):
                 # Extract skills loaded from read_file calls on data/skills/.
                 skills_loaded = []
+                _skills_dir = prompt_assembler.SKILLS_DIR.resolve()
                 for tc in reply.tool_call_details:
                     if tc.get("name") == "read_file":
                         try:
                             args = json.loads(tc.get("arguments", "{}"))
                             p = args.get("path", "")
-                            if "data/skills/" in p and p.endswith(".md"):
-                                import re as _re
-                                m = _re.search(r'data/skills/([^/]+)\.md', p)
-                                if m:
-                                    skills_loaded.append(m.group(1))
+                            skill_path = Path(p).resolve()
+                            if skill_path.suffix == ".md" and skill_path.parent == _skills_dir:
+                                skills_loaded.append(skill_path.stem)
                         except Exception:
                             pass
                 self._event_bus.emit(
