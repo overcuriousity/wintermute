@@ -186,6 +186,9 @@ async def _consolidate_skills(pool: "BackendPool") -> None:
                     skills.pop(name, None)
                     skill_stats.remove_skill(name)
                     logger.info("Dreaming: retired unused skill '%s' → .archive/", name)
+            # Flush immediately so removals survive a restart before the next
+            # reflection cycle (which is the only other flush point).
+            skill_stats.flush()
     except Exception:
         logger.debug("Dreaming: skill retirement failed", exc_info=True)
 

@@ -377,7 +377,8 @@ class ReflectionLoop:
                 # Look for read_file calls on data/skills/ paths.
                 if "read_file" in raw and "data/skills/" in raw:
                     # Extract skill filename from the input.
-                    matches = re.findall(r'data/skills/([^\s"\']+\.md)', raw)
+                    # Capture stem only (no .md extension) for consistent key lookup.
+                    matches = re.findall(r'data/skills/([^\s"\']+)\.md', raw)
                     for skill_name in matches:
                         skill_fail_counts[skill_name] = skill_fail_counts.get(skill_name, 0) + 1
 
@@ -392,7 +393,7 @@ class ReflectionLoop:
                 if fail_count >= 3:
                     # Build enrichment suffix from lifetime stats.
                     extra = ""
-                    sstat = all_stats.get(skill_name.replace(".md", ""), {})
+                    sstat = all_stats.get(skill_name, {})
                     if sstat:
                         total = sstat.get("sessions_loaded", 0)
                         failures = sstat.get("failure_count", 0)

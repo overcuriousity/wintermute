@@ -54,9 +54,10 @@ def init() -> None:
 def _ensure_entry(name: str) -> dict[str, Any]:
     """Return or create a stats entry for the given skill name."""
     if name not in _skills:
+        now = _time.time()
         _skills[name] = {
-            "created": _time.time(),
-            "last_read": 0.0,
+            "created": now,
+            "last_read": now,  # grace period: new skills won't retire for 90 days
             "read_count": 0,
             "sessions_loaded": 0,
             "success_count": 0,

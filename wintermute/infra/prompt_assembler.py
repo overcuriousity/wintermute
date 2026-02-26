@@ -388,15 +388,29 @@ def add_skill(skill_name: str, documentation: str,
     else:
         # Fallback: use first line of documentation as summary.
         content = documentation.strip()
-    # Append changelog entry when overwriting an existing skill.
+    # Append changelog entry when overwriting an existing skill, preserving
+    # the existing changelog from the old file content.
     if is_update:
         from datetime import datetime, timezone
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        if "\n## Changelog" not in content:
-            content += f"\n\n## Changelog\n- {date_str}: updated"
+        # Read old file to preserve its changelog section.
+        try:
+            existing = skill_file.read_text(encoding="utf-8")
+        except OSError:
+            existing = ""
+        existing_changelog = ""
+        if "## Changelog" in existing:
+            idx = existing.index("## Changelog")
+            existing_changelog = existing[idx:].rstrip()
+        # Strip any changelog the LLM may have included in the new content.
+        if "## Changelog" in content:
+            content = content[: content.index("## Changelog")].rstrip()
+        # Build the updated changelog section.
+        if existing_changelog:
+            changelog_section = f"{existing_changelog}\n- {date_str}: updated"
         else:
-            # Append to existing changelog section.
-            content += f"\n- {date_str}: updated"
+            changelog_section = f"## Changelog\n- {date_str}: updated"
+        content = f"{content}\n\n{changelog_section}"
     skill_file.write_text(content, encoding="utf-8")
     logger.info("Skill '%s' written to %s", skill_name, skill_file)
     threading.Thread(

@@ -834,9 +834,10 @@ def _tool_read_file(inputs: dict, **_kw) -> str:
         return json.dumps({"error": f"File not found: {path}"})
     except OSError as exc:
         return json.dumps({"error": str(exc)})
-    # Track skill reads for skill_stats.
+    # Track skill reads for skill_stats (only canonical data/skills/*.md).
     try:
-        if path.parent.name == "skills" and path.suffix == ".md" and "data/skills" in str(path):
+        skills_dir = prompt_assembler.SKILLS_DIR.resolve()
+        if path.suffix == ".md" and path.resolve().parent == skills_dir:
             from wintermute.workers import skill_stats
             skill_stats.record_read(path.stem)
     except Exception:
