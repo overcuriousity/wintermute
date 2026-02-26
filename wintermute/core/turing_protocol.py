@@ -191,19 +191,21 @@ _BUILTIN_HOOKS: list[TuringHook] = [
     TuringHook(
         name="empty_promise",
         detection_prompt=(
-            '- **empty_promise**: The assistant\'s response commits to performing '
-            'an action (in any language) — e.g. "I\'ll do X", "Let me check", '
-            '"Ich werde das prüfen", "Je vais vérifier" — as its **final answer**, '
-            'WITHOUT having made any tool call or spawn_sub_session call to '
-            'actually execute that action. The response ends with the promise '
-            'but no action was taken. tool_calls_made must be empty AND '
-            '"spawn_sub_session" must NOT be in tool_calls_made. '
-            'Do NOT flag responses where the assistant describes what it *did* '
-            '(past tense) — those are handled by phantom_tool_result. '
-            'Do NOT flag planning/explanation responses where the assistant '
-            'outlines steps and asks for user confirmation before acting. '
-            'Do NOT flag responses where the assistant explains it cannot '
-            'perform the action.'
+            '- **empty_promise**: ONLY applies when `tool_calls_made` is empty. '
+            'The assistant uses future-tense or intent phrasing to commit to '
+            'performing an action — in any language — without having called any '
+            'tool to actually carry it out. The assistant announces an action '
+            'but takes none. '
+            'A trailing generic question ("Is there anything else?") does NOT '
+            'exempt the response — flag the unfulfilled commitment regardless. '
+            'Do NOT flag: (a) any response where tool_calls_made is non-empty; '
+            '(b) responses whose primary purpose is asking the user for '
+            'permission or confirmation before acting ("Should I do X?"); '
+            '(c) responses where the assistant states it cannot perform the '
+            'action or explains a blocker. '
+            'Tense distinction: this hook = future intent ("I will", "I\'ll", '
+            '"Let me"); phantom_tool_result = fabricated past action '
+            '("I searched and found…").'
         ),
         validator_type="programmatic",
         validator_fn_name="validate_empty_promise",
@@ -560,21 +562,36 @@ def validate_empty_promise(context: dict, detection_result: dict) -> bool:
         return False
 
     # Check if the response ends with a question (seeking user confirmation).
-    # This catches the common pattern where the assistant explains a situation
-    # and then asks "Should I do X?" — which is deliberately waiting for
+    # This catches the pattern where the assistant asks "Should I do X?" without
+    # having committed to anything yet — which is deliberately waiting for
     # approval, not an unfulfilled promise.
+    #
+    # However, we must NOT suppress empty promises that end with a generic
+    # conversational closer ("Is there anything else?").  The structural
+    # distinction: a genuine confirmation request has no substantive content
+    # *before* the question; an empty promise has a real statement before it.
+    # We consider a pre-question line "substantive" when it is longer than
+    # _TRIVIAL_LINE_THRESHOLD characters after stripping — this filters out
+    # trivial affirmations ("Sure!", "Of course!") that are not action commits.
+    _TRIVIAL_LINE_THRESHOLD = 20
     assistant_response = context.get("assistant_response", "")
     # Get the last non-empty line, stripping markdown/whitespace.
     lines = [ln.strip().lstrip(">-#) ").strip("*_~`") for ln in assistant_response.splitlines() if ln.strip()]
     if lines:
         last_line = lines[-1]
         if last_line.endswith("?"):
-            logger.info(
-                "Stage 2: False positive (empty_promise) — response ends with a "
-                "question (seeking confirmation): %r. LLM reason: %s",
-                last_line[-80:], detection_result.get("reason", "?"),
-            )
-            return False
+            pre_lines = lines[:-1]
+            substantive_pre = [ln for ln in pre_lines if len(ln) > _TRIVIAL_LINE_THRESHOLD]
+            if not substantive_pre:
+                # The question IS the entire response — genuine confirmation request.
+                logger.info(
+                    "Stage 2: False positive (empty_promise) — response is a "
+                    "confirmation question with no prior commitment: %r. LLM reason: %s",
+                    last_line[-80:], detection_result.get("reason", "?"),
+                )
+                return False
+            # Substantive content exists before the question — the ? is a generic
+            # closer appended to an empty promise, not a confirmation request.
 
     logger.warning("Stage 2: Confirmed empty_promise — action committed but no tools called")
     return True
