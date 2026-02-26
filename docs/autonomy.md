@@ -88,11 +88,13 @@ An event-driven feedback loop that closes the observe→reflect→adapt cycle. T
 1. **Rule engine (zero LLM cost):** Programmatic pattern detection on DB and event data. Auto-applies simple actions (pause failing tasks, flag stale skills). Runs on every trigger event.
 2. **LLM analysis (cheap, one-shot):** A direct `pool.call()` with a prose prompt summarizing recent findings. Only runs when the rule engine finds something interesting.
 3. **Sub-session mutations (expensive, rare):** A constrained sub-session is spawned only when the LLM analysis recommends a creative change (e.g. rewriting a skill). Limited to `read_file`, `add_skill`, and `append_memory` tools with a 5-round cap.
+4. **Pattern-to-skill synthesis (periodic):** Clusters completed sub-session outcomes by tool usage patterns, identifies recurring workflows not yet captured as skills, and proposes new skills via a one-shot LLM call. Gates: ≥20 completed outcomes in the lookback window and 24h cooldown. Proposals are executed as mutation sub-sessions (max 2 per cycle).
 
 ### Trigger Conditions (event-driven, no polling)
 
 - `sub_session.failed` → immediate rule-engine check on that failure
 - `sub_session.completed` count reaches `batch_threshold` (default: 10) → batch analysis
+- `main_thread.turn_completed` count reaches `main_turn_batch_threshold` (default: 15) → batch analysis covering main-thread interaction data
 - 6-hour fallback poll if no events fire
 
 ### Rule Engine Checks
@@ -109,7 +111,8 @@ An event-driven feedback loop that closes the observe→reflect→adapt cycle. T
 - Rule engine findings: `action=reflection_rule` in the interaction log (`/debug`)
 - LLM analysis results: `action=reflection_analysis` in the interaction log
 - Inference timing: `action=inference_completed` in the interaction log (duration, tool calls, model)
-- Events: `reflection.finding`, `reflection.skill_flagged`, `reflection.analysis_completed`, `inference.completed` on the event bus (visible in `/debug` SSE stream)
+- Synthesis results: `action=reflection_synthesis` in the interaction log
+- Events: `reflection.finding`, `reflection.skill_flagged`, `reflection.analysis_completed`, `reflection.synthesis_completed`, `inference.completed` on the event bus (visible in `/debug` SSE stream)
 - Manually triggerable via the `/reflect` command
 
 **Configuration:** See `reflection:` section in `config.yaml` and the `llm.reflection` role in `config.yaml`.

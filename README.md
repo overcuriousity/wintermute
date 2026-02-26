@@ -32,7 +32,8 @@ Two architectural choices make this concrete:
 - **Tool-filtered workers** — minimal workers receive only execution + research tools; `full`-mode workers get orchestration tools too. Named tool profiles (`researcher`, `file_worker`, etc.) and conditional system prompt sections keep context lean
 - **Web search** — `search_web` queries a local SearXNG instance and falls back to DuckDuckGo when SearXNG is unavailable
 - **Task scheduler** — one-time and recurring tasks with optional AI inference on trigger; per-timezone scheduling
-- **Skill evolution** — skills track usage stats (read counts, session outcomes, failure rates); unused skills are auto-retired during nightly dreaming; the reflection cycle correlates skill usage with failures and recommends updates
+- **Introspection** — the LLM can query its own operational telemetry (success rates, tool usage, skill stats, interaction logs, self-model summary) via the `query_telemetry` tool
+- **Skill evolution** — skills track usage stats (read counts, session outcomes, failure rates); unused skills are auto-retired during nightly dreaming; the reflection cycle correlates skill usage with failures, recommends updates, and synthesizes new skills from recurring successful patterns
 - **Nightly dreaming** — automatic overnight consolidation of MEMORIES.txt and tasks via a direct LLM call (no tool loop, no conversation side effects)
 - **Task reviews** — periodic autonomous reviews of active tasks via an isolated sub-session (no conversation pollution)
 - **Context compaction** — when conversation history approaches the model's context window, older messages are summarised and chained into a rolling summary that preserves context across compaction cycles
@@ -92,7 +93,7 @@ Run it in a dedicated LXC container or VM — something you can reset without re
 | [Architecture](docs/architecture.md) | Component overview, diagrams, data flow, small-LLM design |
 | [Turing Protocol](docs/turing-protocol.md) | Validation pipeline: hooks, phases, scopes, configuration |
 | [System Prompts](docs/system-prompts.md) | Prompt assembly, components, size limits |
-| [Tools](docs/tools.md) | All 12 tools with parameters and categories |
+| [Tools](docs/tools.md) | All 13 tools with parameters and categories |
 | [Commands](docs/commands.md) | Slash commands (`/new`, `/compact`, `/tasks`, etc.) |
 | [Web Interface](docs/web-interface.md) | Debug panel, REST API |
 | [Autonomy](docs/autonomy.md) | Dreaming, task reviews, sub-sessions, workflows |

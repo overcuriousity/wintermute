@@ -96,6 +96,9 @@ class ReflectionConfig:
     consecutive_failure_limit: int = 3   # auto-pause after N consecutive failures
     lookback_seconds: int = 86400        # 24h window for pattern detection
     min_result_length: int = 50          # below this = "no meaningful output" (stale check)
+    main_turn_batch_threshold: int = 15  # trigger reflection after N main-thread turns
+    synthesis_min_cluster_size: int = 3  # min sessions per tool-set cluster
+    synthesis_min_outcomes: int = 20     # min completed outcomes before synthesis runs
 
 
 @dataclass
@@ -130,6 +133,8 @@ class ReflectionLoop:
         # we don't double-fire when the same failure is picked up by the batch.
         self._checked_failures: set[str] = set()
         self._self_model: object | None = None
+        self._main_turn_count: int = 0
+        self._last_synthesis_ts: float = 0.0
 
     def inject_self_model(self, profiler) -> None:
         """Set the SelfModelProfiler instance (called once at startup)."""
@@ -153,6 +158,10 @@ class ReflectionLoop:
             self._event_bus_subs.append(sub_id)
             sub_id = self._event_bus.subscribe(
                 "sub_session.completed", self._on_sub_session_completed
+            )
+            self._event_bus_subs.append(sub_id)
+            sub_id = self._event_bus.subscribe(
+                "main_thread.turn_completed", self._on_main_turn_completed
             )
             self._event_bus_subs.append(sub_id)
 
@@ -203,6 +212,12 @@ class ReflectionLoop:
             self._completed_count = 0
             self._check_event.set()
 
+    async def _on_main_turn_completed(self, event) -> None:
+        self._main_turn_count += 1
+        if self._main_turn_count >= self._cfg.main_turn_batch_threshold:
+            self._main_turn_count = 0
+            self._check_event.set()
+
     # ------------------------------------------------------------------
     # Main cycle
     # ------------------------------------------------------------------
@@ -211,6 +226,8 @@ class ReflectionLoop:
         findings = await self._run_rules()
         if findings and self._pool and self._pool.enabled:
             await self._run_analysis(findings)
+        if self._pool and self._pool.enabled and self._sub_sessions:
+            await self._run_synthesis()
         if self._self_model:
             await self._self_model.update(findings)
         # Flush accumulated skill read counts to YAML.
@@ -605,3 +622,165 @@ class ReflectionLoop:
             logger.info("[reflection] Skill mutation sub-session spawned: %s", session_id)
         except Exception:
             logger.exception("[reflection] Failed to spawn mutation sub-session")
+
+    # ------------------------------------------------------------------
+    # Tier 4: Pattern-to-skill synthesis
+    # ------------------------------------------------------------------
+
+    async def _run_synthesis(self) -> None:
+        """Detect recurring successful patterns and propose new skills."""
+        since = _time.time() - self._cfg.lookback_seconds
+
+        # Gate: cooldown (24h since last synthesis).
+        if _time.time() - self._last_synthesis_ts < 86400:
+            return
+
+        try:
+            outcomes = await database.async_call(
+                database.get_outcomes_since, since,
+                status_filter="completed", limit=100,
+            )
+        except Exception:
+            logger.debug("[reflection] Synthesis: failed to query outcomes", exc_info=True)
+            return
+
+        if len(outcomes) < self._cfg.synthesis_min_outcomes:
+            return
+
+        # Cluster by tool set.
+        clusters: dict[frozenset[str], list[dict]] = {}
+        for o in outcomes:
+            raw_tools = o.get("tools_used") or "[]"
+            try:
+                tools = frozenset(json.loads(raw_tools))
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not tools:
+                continue
+            clusters.setdefault(tools, []).append(o)
+
+        # Filter: keep clusters with enough sessions.
+        min_size = self._cfg.synthesis_min_cluster_size
+        viable = {k: v for k, v in clusters.items() if len(v) >= min_size}
+        if not viable:
+            return
+
+        # Deduplicate: skip clusters whose tool set is already covered by a skill.
+        from pathlib import Path
+        skills_dir = Path("data/skills")
+        existing_skill_texts: dict[str, str] = {}
+        if skills_dir.exists():
+            for sf in skills_dir.glob("*.md"):
+                try:
+                    existing_skill_texts[sf.stem] = sf.read_text(encoding="utf-8")
+                except Exception:
+                    pass
+
+        novel_clusters: dict[frozenset[str], list[dict]] = {}
+        for tool_set, sessions in viable.items():
+            # Check if any existing skill mentions all tools in the set.
+            covered = False
+            for _skill_name, skill_text in existing_skill_texts.items():
+                if all(t in skill_text for t in tool_set):
+                    covered = True
+                    break
+            if not covered:
+                novel_clusters[tool_set] = sessions
+
+        if not novel_clusters:
+            return
+
+        # Build prompt for LLM synthesis.
+        pattern_lines = []
+        for i, (tool_set, sessions) in enumerate(list(novel_clusters.items())[:5], 1):
+            objectives = [
+                (s.get("objective") or "")[:100] for s in sessions[:5]
+            ]
+            pattern_lines.append(
+                f"Pattern {i}: tools={sorted(tool_set)}, "
+                f"{len(sessions)} sessions\n"
+                f"  Example objectives:\n"
+                + "\n".join(f"  - {obj}" for obj in objectives)
+            )
+        patterns_text = "\n\n".join(pattern_lines)
+
+        try:
+            from wintermute.infra import prompt_loader
+            prompt_text = prompt_loader.load(
+                "SKILL_SYNTHESIS.txt",
+                patterns=patterns_text,
+            )
+        except FileNotFoundError:
+            prompt_text = (
+                "You are analyzing recurring successful patterns in an AI assistant's "
+                "sub-session history. Propose reusable skills from these patterns.\n\n"
+                f"{patterns_text}\n\n"
+                'Respond with JSON: {"skill_proposals": [{"name": "...", "summary": "...", "procedure": "..."}]}\n'
+                "Only propose skills that would genuinely save effort on future similar tasks."
+            )
+        except Exception:
+            logger.exception("[reflection] Failed to load SKILL_SYNTHESIS.txt")
+            return
+
+        try:
+            response = await self._pool.call(
+                messages=[{"role": "user", "content": prompt_text}],
+                max_tokens_override=512,
+            )
+        except Exception:
+            logger.exception("[reflection] Synthesis LLM call failed")
+            return
+
+        if not response.choices:
+            return
+
+        text = response.choices[0].message.content or ""
+        self._last_synthesis_ts = _time.time()
+
+        # Extract skill_proposals from JSON.
+        proposals = []
+        matches = re.findall(r'\{[^{}]*"skill_proposals"\s*:\s*\[.*?\]\s*\}', text, re.DOTALL)
+        if matches:
+            try:
+                parsed = json.loads(matches[-1])
+                proposals = parsed.get("skill_proposals", [])
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        if not proposals:
+            logger.info("[reflection] Synthesis: no skill proposals returned")
+            return
+
+        logger.info("[reflection] Synthesis: %d skill proposal(s)", len(proposals))
+
+        # Log to interaction_log.
+        try:
+            await database.async_call(
+                database.save_interaction_log,
+                _time.time(),
+                "reflection_synthesis",
+                "system:reflection",
+                "synthesis",
+                f"{len(novel_clusters)} pattern(s)",
+                text[:2000],
+                "ok",
+            )
+        except Exception:
+            pass
+
+        if self._event_bus:
+            self._event_bus.emit(
+                "reflection.synthesis_completed",
+                patterns_count=len(novel_clusters),
+                proposals_count=len(proposals),
+            )
+
+        # Spawn one mutation per proposal (cap at 2 per cycle).
+        for proposal in proposals[:2]:
+            name = proposal.get("name", "unnamed")
+            summary = proposal.get("summary", "")
+            procedure = proposal.get("procedure", "")
+            if name and procedure:
+                await self._spawn_mutation(
+                    f"Create skill '{name}': {summary}\n\nProcedure:\n{procedure}"
+                )

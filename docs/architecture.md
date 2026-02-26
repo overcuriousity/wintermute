@@ -34,7 +34,7 @@ User (Matrix / Browser)
         |
         |-- tool calls --> execute_shell / read_file / write_file
         |                  search_web / fetch_url
-        |                  append_memory / task / add_skill
+        |                  append_memory / task / add_skill / query_telemetry
         |
         +-- spawn_sub_session --> SubSessionManager
                                         |
@@ -57,7 +57,7 @@ User (Matrix / Browser)
 SchedulerThread -------------------------> LLMThread queue / sub-session (scheduled tasks with ai_prompt)
 DreamingLoop (nightly) ------------------> vector-native 4-phase pipeline (vector backends)
                                            or direct LLM API call (flat-file fallback)
-ReflectionLoop (event-driven) -----------> rule engine + LLM analysis + sub-session mutations
+ReflectionLoop (event-driven) -----------> rule engine + LLM analysis + sub-session mutations + pattern-to-skill synthesis
 SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + summary → system prompt
 ```
 
@@ -167,6 +167,7 @@ data/
   skill_stats.yaml           -- Skill usage stats: read counts, session outcomes, failure rates (YAML, auto-committed)
   self_model.yaml            -- Persisted self-model state: metrics, summary, last tuning changes
   SELF_MODEL_SUMMARY.txt     -- Prompt template for generating the self-assessment prose summary
+  SKILL_SYNTHESIS.txt        -- Prompt template for pattern-to-skill synthesis proposals
   matrix_crypto.db           -- Matrix E2E encryption keys
   matrix_recovery.key        -- Cross-signing recovery key
 ```

@@ -1,0 +1,18 @@
+You are analyzing recurring successful patterns in an AI assistant's sub-session history.
+Each pattern below is a cluster of completed sub-sessions that used the same set of tools.
+
+## Patterns
+
+{patterns}
+
+## Instructions
+
+From these patterns, propose reusable skills that would help the assistant handle similar tasks more efficiently in the future. Only propose skills that:
+- Represent a genuinely recurring workflow (not one-off tasks)
+- Would provide actionable step-by-step guidance
+- Are not already covered by existing skills
+
+Respond with this JSON structure (and nothing else):
+{{"skill_proposals": [{{"name": "skill-name", "summary": "One-line summary (max 80 chars)", "procedure": "Step-by-step procedure in markdown (max 500 chars)"}}]}}
+
+If no good skills can be extracted, return: {{"skill_proposals": []}}
