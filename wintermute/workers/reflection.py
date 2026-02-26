@@ -655,6 +655,10 @@ class ReflectionLoop:
                 tools = frozenset(json.loads(raw_tools))
             except (json.JSONDecodeError, TypeError):
                 continue
+            # Intentional: we ignore sessions that did not use any tools.
+            # Synthesis here is focused on reusable tool workflows; tool-less
+            # completions are not clustered. Revisit if we ever want to learn
+            # from purely conversational or non-tool runs.
             if not tools:
                 continue
             clusters.setdefault(tools, []).append(o)
