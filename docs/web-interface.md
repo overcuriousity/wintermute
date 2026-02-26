@@ -43,3 +43,7 @@ The debug panel is backed by a REST API:
 | GET | `/api/debug/memory` | Get memory store stats and search results (query: `q`, `k`) |
 | GET | `/api/debug/outcomes` | List sub-session outcomes with aggregate stats (supports `status`, `limit`, `offset` query params) |
 | GET | `/api/debug/stream` | Server-sent events stream for live panel updates |
+| GET | `/api/debug/thread-config` | List all per-thread config overrides and available backends |
+| GET | `/api/debug/thread-config/{thread_id}` | Get resolved config for a thread (values + sources) |
+| POST | `/api/debug/thread-config/{thread_id}` | Set per-thread config overrides (JSON body with keys to set; `null` removes an override) |
+| DELETE | `/api/debug/thread-config/{thread_id}` | Remove all per-thread config overrides |

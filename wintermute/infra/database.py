@@ -169,6 +169,11 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             items_processed INTEGER DEFAULT 0,
             outcome_summary TEXT
         );
+        CREATE TABLE IF NOT EXISTS thread_config (
+            thread_id   TEXT PRIMARY KEY,
+            config_json TEXT NOT NULL,
+            updated_at  REAL NOT NULL
+        );
     """)
     conn.commit()
     # Inline migrations: add columns that may not exist in older DBs.
@@ -981,3 +986,50 @@ def get_summaries_since(since: float, limit: int = 50) -> list[dict]:
             (since, limit),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Per-Thread Configuration
+# ---------------------------------------------------------------------------
+
+def get_all_thread_configs() -> list[tuple[str, str]]:
+    """Return all (thread_id, config_json) pairs."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT thread_id, config_json FROM thread_config"
+        ).fetchall()
+    return rows
+
+
+def get_thread_config(thread_id: str) -> Optional[str]:
+    """Return raw config JSON for a thread, or None."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT config_json FROM thread_config WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+    return row[0] if row else None
+
+
+def set_thread_config(thread_id: str, config_json: str) -> None:
+    """Insert or update per-thread config (UPSERT)."""
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO thread_config (thread_id, config_json, updated_at) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(thread_id) DO UPDATE SET "
+            "config_json = excluded.config_json, updated_at = excluded.updated_at",
+            (thread_id, config_json, time.time()),
+        )
+        conn.commit()
+
+
+def delete_thread_config(thread_id: str) -> bool:
+    """Delete per-thread config. Returns True if a row was deleted."""
+    with _connect() as conn:
+        n = conn.execute(
+            "DELETE FROM thread_config WHERE thread_id = ?",
+            (thread_id,),
+        ).rowcount
+        conn.commit()
+    return n > 0

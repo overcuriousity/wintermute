@@ -451,6 +451,23 @@ Operational self-awareness profiler that runs inside the reflection cycle. Aggre
 |-----|----------|---------|-------------|
 | `timezone` | no | `"UTC"` | IANA timezone for all task scheduling (also affects `dreaming` schedule). Examples: `Europe/Berlin`, `America/New_York` |
 
+### Per-Thread Configuration
+
+Individual threads can override settings at runtime via the `/config` slash
+command or the web debug API.  Overrides are stored in SQLite (`thread_config`
+table) and persist across restarts.  When no override is set, hardcoded defaults
+apply.  All changes are logged to the interaction log with action `config_change`
+or `config_reset` for auditability.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `backend_name` | *(main pool)* | Pin inference to a named backend from `inference_backends`. When unset, the role-based `llm.base` pool is used. |
+| `session_timeout_minutes` | `null` (disabled) | Idle timeout in minutes. After this period of inactivity the thread's session is automatically reset. |
+| `sub_sessions_enabled` | `true` | Whether background sub-session workers can be spawned from this thread. |
+| `system_prompt_mode` | `"full"` | `"full"` includes all prompt sections (memories, tasks, skills, etc.). `"minimal"` includes only Core Instructions + Current Time + Conversation Summary. |
+
+See [Slash Commands](commands.md) for `/config` usage.
+
 ### `logging`
 
 | Key | Required | Default | Description |

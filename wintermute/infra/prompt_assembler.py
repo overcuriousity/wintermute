@@ -260,7 +260,8 @@ def _read_skills_toc() -> str:
 def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = None,
              available_tools: Optional[set[str]] = None,
              query: Optional[str] = None,
-             memory_results: Optional[list[dict]] = None) -> str:
+             memory_results: Optional[list[dict]] = None,
+             prompt_mode: str = "full") -> str:
     """
     Build and return the full system prompt string.
 
@@ -278,8 +279,14 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     instead of calling memory_store.search() synchronously. Callers in async
     contexts should fetch memories via ``asyncio.to_thread`` and pass them here
     to avoid blocking the event loop.
+
+    ``prompt_mode`` controls how much context is injected:
+      - ``"full"`` (default): all sections (memories, tasks, skills, etc.)
+      - ``"minimal"``: only Core Instructions + Current Time + Conversation Summary
     """
     from wintermute.infra import memory_store
+
+    minimal = prompt_mode == "minimal"
 
     sections: list[str] = []
 
@@ -295,44 +302,46 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     except Exception as exc:
         logger.warning("Could not determine local time: %s", exc)
 
-    if memory_results is not None:
-        if memory_results:
-            memories_text = "\n".join(r["text"] for r in memory_results)
-            sections.append(f"# User Memories (relevance-ranked)\n\n{memories_text}")
-    elif memory_store.is_vector_enabled() and query:
-        try:
-            results = memory_store.search(query)
-        except Exception as exc:
-            logger.warning("Memory search failed in prompt assembly, continuing without: %s", exc)
-            results = []
-        if results:
-            memories_text = "\n".join(r["text"] for r in results)
-            sections.append(f"# User Memories (relevance-ranked)\n\n{memories_text}")
-    else:
-        memories = _read(MEMORIES_FILE)
-        if memories:
-            sections.append(f"# User Memories\n\n{memories}")
+    if not minimal:
+        if memory_results is not None:
+            if memory_results:
+                memories_text = "\n".join(r["text"] for r in memory_results)
+                sections.append(f"# User Memories (relevance-ranked)\n\n{memories_text}")
+        elif memory_store.is_vector_enabled() and query:
+            try:
+                results = memory_store.search(query)
+            except Exception as exc:
+                logger.warning("Memory search failed in prompt assembly, continuing without: %s", exc)
+                results = []
+            if results:
+                memories_text = "\n".join(r["text"] for r in results)
+                sections.append(f"# User Memories (relevance-ranked)\n\n{memories_text}")
+        else:
+            memories = _read(MEMORIES_FILE)
+            if memories:
+                sections.append(f"# User Memories\n\n{memories}")
 
-    tasks_text = database.get_active_tasks_text(thread_id=thread_id)
-    if tasks_text:
-        sections.append(f"# Active Tasks\n\n{tasks_text}")
+        tasks_text = database.get_active_tasks_text(thread_id=thread_id)
+        if tasks_text:
+            sections.append(f"# Active Tasks\n\n{tasks_text}")
 
-    # Reflection observations — main thread only
-    if available_tools is None:
-        reflection = _get_reflection_observations()
-        if reflection:
-            sections.append(f"# System Observations\n\n{reflection}")
+        # Reflection observations — main thread only
+        if available_tools is None:
+            reflection = _get_reflection_observations()
+            if reflection:
+                sections.append(f"# System Observations\n\n{reflection}")
 
-        if _self_model_profiler:
-            sm = _self_model_profiler.get_summary()
-            if sm:
-                sections.append(f"# Self-Assessment\n\n{sm}")
+            if _self_model_profiler:
+                sm = _self_model_profiler.get_summary()
+                if sm:
+                    sections.append(f"# Self-Assessment\n\n{sm}")
 
     if extra_summary:
         sections.append(f"# Conversation Summary\n\n{extra_summary}")
 
-    skills_toc = _read_skills_toc()
-    sections.append(f"# Skills\n\n{skills_toc}")
+    if not minimal:
+        skills_toc = _read_skills_toc()
+        sections.append(f"# Skills\n\n{skills_toc}")
 
     return "\n\n---\n\n".join(sections)
 

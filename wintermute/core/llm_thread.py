@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager
     from wintermute.infra.event_bus import EventBus
+    from wintermute.infra.thread_config import ThreadConfigManager, ResolvedThreadConfig
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +249,9 @@ class LLMThread:
                  nl_translation_pool: "Optional[BackendPool]" = None,
                  nl_translation_config: "Optional[dict]" = None,
                  seed_language: str = "en",
-                 event_bus: "Optional[EventBus]" = None) -> None:
+                 event_bus: "Optional[EventBus]" = None,
+                 thread_config_manager: "Optional[ThreadConfigManager]" = None,
+                 backend_pools_by_name: "Optional[dict[str, BackendPool]]" = None) -> None:
         self._main_pool = main_pool
         self._compaction_pool = compaction_pool
         self._turing_protocol_pool = turing_protocol_pool
@@ -257,6 +260,8 @@ class LLMThread:
         self._nl_translation_config = nl_translation_config or {}
         self._seed_language = seed_language
         self._event_bus = event_bus
+        self._thread_config_manager = thread_config_manager
+        self._backend_pools_by_name = backend_pools_by_name or {}
         # Convenience: primary config for context_size / model name lookups.
         self._cfg = main_pool.primary
         self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)
@@ -271,6 +276,8 @@ class LLMThread:
         self._thread_seq: dict[str, int] = {}
         # Per-thread cache of the last system prompt actually sent to the LLM.
         self._last_system_prompt: dict[str, str] = {}
+        # Per-thread last activity timestamp (for session timeout tracking).
+        self._last_activity: dict[str, float] = {}
 
     def inject_sub_session_manager(self, manager: "SubSessionManager") -> None:
         """Called after construction once SubSessionManager is built."""
@@ -303,6 +310,42 @@ class LLMThread:
     @property
     def queue_size(self) -> int:
         return self._queue.qsize()
+
+    @property
+    def thread_config_manager(self) -> "Optional[ThreadConfigManager]":
+        return self._thread_config_manager
+
+    def _resolve_pool(self, thread_id: str) -> BackendPool:
+        """Return the inference pool for a thread, respecting per-thread overrides."""
+        if not self._thread_config_manager:
+            return self._main_pool
+        resolved = self._thread_config_manager.resolve(thread_id)
+        if resolved.backend_name and resolved.backend_name in self._backend_pools_by_name:
+            return self._backend_pools_by_name[resolved.backend_name]
+        return self._main_pool
+
+    def _resolve_config(self, thread_id: str) -> "Optional[ResolvedThreadConfig]":
+        """Return resolved per-thread config, or None if no manager is set."""
+        if not self._thread_config_manager:
+            return None
+        return self._thread_config_manager.resolve(thread_id)
+
+    def check_session_timeouts(self) -> list[str]:
+        """Return thread_ids that have exceeded their configured session timeout.
+
+        Only checks threads that have both a configured timeout and recorded
+        last-activity timestamps. Returns empty list if no config manager.
+        """
+        if not self._thread_config_manager:
+            return []
+        now = _time.time()
+        expired = []
+        for tid, last_ts in self._last_activity.items():
+            resolved = self._thread_config_manager.resolve(tid)
+            timeout = resolved.session_timeout_minutes
+            if timeout is not None and (now - last_ts) > timeout * 60:
+                expired.append(tid)
+        return expired
 
     # ------------------------------------------------------------------
     # Public interface
@@ -721,6 +764,16 @@ class LLMThread:
         thread_id = item.thread_id
         messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
 
+        # Track last activity for session timeout checking (#58 plumbing).
+        if not item.is_system_event:
+            self._last_activity[thread_id] = _time.time()
+
+        # Resolve per-thread config overrides.
+        resolved_cfg = self._resolve_config(thread_id)
+        pool = self._resolve_pool(thread_id)
+        pool_cfg = pool.primary if pool.enabled else self._cfg
+        prompt_mode = resolved_cfg.system_prompt_mode if resolved_cfg else "full"
+
         # Build a query for vector memory retrieval (user message + last assistant reply).
         _query_parts = [item.text] if item.text else []
         for m in reversed(messages):
@@ -742,22 +795,25 @@ class LLMThread:
 
         # Assemble system prompt first so we can measure its real token cost.
         summary = self._compaction_summaries.get(thread_id)
-        system_prompt = prompt_assembler.assemble(extra_summary=summary, query=_memory_query, memory_results=_memory_results)
+        system_prompt = prompt_assembler.assemble(
+            extra_summary=summary, query=_memory_query,
+            memory_results=_memory_results, prompt_mode=prompt_mode,
+        )
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
         active_schemas = tool_module.get_tool_schemas(nl_tools=nl_tools)
         overhead_tokens = (
-            _count_tokens(system_prompt, self._cfg.model)
-            + _count_tokens(json.dumps(active_schemas), self._cfg.model)
+            _count_tokens(system_prompt, pool_cfg.model)
+            + _count_tokens(json.dumps(active_schemas), pool_cfg.model)
         )
 
         history_tokens = sum(
             _count_tokens(m["content"] if isinstance(m["content"], str) else
                           " ".join(p.get("text", "") for p in m["content"] if isinstance(p, dict)),
-                          self._cfg.model)
+                          pool_cfg.model)
             for m in messages
         )
-        compaction_threshold = self._cfg.context_size - self._cfg.max_tokens - overhead_tokens
+        compaction_threshold = pool_cfg.context_size - pool_cfg.max_tokens - overhead_tokens
         if history_tokens > compaction_threshold:
             logger.info(
                 "History at %d tokens (overhead %d, threshold %d) – compacting before inference (thread=%s)",
@@ -767,7 +823,10 @@ class LLMThread:
             messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
             # Reassemble with the updated compaction summary.
             summary = self._compaction_summaries.get(thread_id)
-            system_prompt = prompt_assembler.assemble(extra_summary=summary, query=_memory_query, memory_results=_memory_results)
+            system_prompt = prompt_assembler.assemble(
+                extra_summary=summary, query=_memory_query,
+                memory_results=_memory_results, prompt_mode=prompt_mode,
+            )
 
         self._last_system_prompt[thread_id] = system_prompt
 
@@ -778,14 +837,14 @@ class LLMThread:
                 db_text = item.text or "[image attached]"
             await database.async_call(
                 database.save_message, "user", db_text, thread_id,
-                token_count=_count_tokens(db_text, self._cfg.model))
+                token_count=_count_tokens(db_text, pool_cfg.model))
             if self._event_bus:
                 self._event_bus.emit("message.received", thread_id=thread_id, text=db_text)
         elif is_sub_session_result:
             _se_text = f"[SYSTEM EVENT] {item.text}"
             await database.async_call(
                 database.save_message, "user", _se_text, thread_id,
-                token_count=_count_tokens(_se_text, self._cfg.model))
+                token_count=_count_tokens(_se_text, pool_cfg.model))
         elif item.turing_depth > 0:
             # Turing correction prompt: saved to DB before inference so the
             # model sees it.  If the model ignores the correction (no tool
@@ -793,24 +852,29 @@ class LLMThread:
             # to avoid polluting future turns (see cleanup below).
             await database.async_call(
                 database.save_message, "user", item.text, thread_id,
-                token_count=_count_tokens(item.text, self._cfg.model))
+                token_count=_count_tokens(item.text, pool_cfg.model))
 
         _inference_start = _time.time()
         try:
             reply = await self._inference_loop(
                 system_prompt, messages, thread_id,
                 disable_tools=is_sub_session_result,
+                pool=pool,
             )
         except ContextTooLargeError:
             logger.warning("Context too large for thread %s — forcing compaction", thread_id)
             await self._compact_context(thread_id)
             messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
             summary = self._compaction_summaries.get(thread_id)
-            system_prompt = prompt_assembler.assemble(extra_summary=summary, query=_memory_query, memory_results=_memory_results)
+            system_prompt = prompt_assembler.assemble(
+                extra_summary=summary, query=_memory_query,
+                memory_results=_memory_results, prompt_mode=prompt_mode,
+            )
             # Retry once after compaction
             reply = await self._inference_loop(
                 system_prompt, messages, thread_id,
                 disable_tools=is_sub_session_result,
+                pool=pool,
             )
 
         # Determine action type for interaction log
@@ -832,7 +896,7 @@ class LLMThread:
             await database.async_call(
                 database.save_interaction_log,
                 _time.time(), _action, thread_id,
-                self._main_pool.last_used,
+                pool.last_used,
                 item.text, reply.text, "ok",
                 raw_output=json.dumps(raw_output_data),
             )
@@ -847,13 +911,13 @@ class LLMThread:
                 thread_id=thread_id,
                 duration_s=round(_inference_duration, 2),
                 tool_calls=len(reply.tool_call_details) if reply.tool_call_details else 0,
-                model=self._main_pool.last_used,
+                model=pool.last_used,
             )
         try:
             await database.async_call(
                 database.save_interaction_log,
                 _time.time(), "inference_completed", thread_id,
-                self._main_pool.last_used,
+                pool.last_used,
                 f"duration={_inference_duration:.2f}s",
                 f"tool_calls={len(reply.tool_call_details) if reply.tool_call_details else 0}",
                 "ok",
@@ -864,7 +928,7 @@ class LLMThread:
         _assistant_text = reply.text or "..."
         await database.async_call(
             database.save_message, "assistant", _assistant_text, thread_id,
-            token_count=_count_tokens(_assistant_text, self._cfg.model))
+            token_count=_count_tokens(_assistant_text, pool_cfg.model))
         if self._event_bus:
             self._event_bus.emit("message.sent", thread_id=thread_id, text=_assistant_text)
 
@@ -942,17 +1006,23 @@ class LLMThread:
 
     async def _inference_loop(self, system_prompt: str, messages: list[dict],
                               thread_id: str = "default",
-                              disable_tools: bool = False) -> LLMReply:
+                              disable_tools: bool = False,
+                              pool: "Optional[BackendPool]" = None) -> LLMReply:
         """
         Repeatedly call the API until finish_reason is not 'tool_calls'.
         The system prompt is prepended as a role=system message each call
         (not stored in the DB so it stays fresh on every inference).
+
+        *pool* overrides the default main_pool when a per-thread backend
+        override is active.
 
         Turing Protocol hooks are fired at three phases:
           - pre_execution:  before each tool call (can block execution)
           - post_execution: after each tool call (can flag results)
           - post_inference:  handled by the caller (_run_turing_check)
         """
+        active_pool = pool or self._main_pool
+        active_cfg = active_pool.primary if active_pool.enabled else self._cfg
         full_messages = [{"role": "system", "content": system_prompt}] + messages
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
@@ -962,7 +1032,7 @@ class LLMThread:
             tools = tool_module.get_tool_schemas(nl_tools=nl_tools)
         else:
             tools = tool_module.TOOL_SCHEMAS
-        token_budget = self._cfg.context_size - self._cfg.max_tokens
+        token_budget = active_cfg.context_size - active_cfg.max_tokens
         reasoning_parts: list[str] = []
         tool_calls_made: list[str] = []
         tool_call_details: list[dict] = []
@@ -985,7 +1055,7 @@ class LLMThread:
             thread_id=thread_id,
             nesting_depth=0,
             scope="main",
-            pool_last_used=self._main_pool.last_used,
+            pool_last_used=active_pool.last_used,
             event_bus=self._event_bus,
             nl_enabled=nl_enabled,
             nl_tools=nl_tools,
@@ -999,7 +1069,7 @@ class LLMThread:
             # Trim oldest tool results if accumulated context exceeds budget.
             self._trim_tool_results(full_messages, token_budget)
 
-            response = await self._main_pool.call(
+            response = await active_pool.call(
                 messages=full_messages,
                 tools=tools,
             )
@@ -1014,7 +1084,7 @@ class LLMThread:
             choice = response.choices[0]
 
             # Collect reasoning tokens from every round (including tool-use rounds).
-            if self._cfg.reasoning:
+            if active_cfg.reasoning:
                 r = self._extract_reasoning(choice.message)
                 if r:
                     reasoning_parts.append(r)
@@ -1032,7 +1102,7 @@ class LLMThread:
                     await database.async_call(
                         database.save_interaction_log,
                         _time.time(), "inference_round", thread_id,
-                        self._main_pool.last_used,
+                        active_pool.last_used,
                         _round_content[:500] or f"[requesting {len(_tc_names)} tool call(s)]",
                         f"[tool_calls: {', '.join(_tc_names)}]",
                         "ok",
@@ -1050,7 +1120,7 @@ class LLMThread:
                 full_messages.append(choice.message)
 
                 # Execute each tool via the shared pipeline.
-                tc_ctx.pool_last_used = self._main_pool.last_used
+                tc_ctx.pool_last_used = active_pool.last_used
                 for tc in choice.message.tool_calls:
                     outcome = await process_tool_call(
                         tc, tc_ctx, tool_calls_made,

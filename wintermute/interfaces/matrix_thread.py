@@ -21,6 +21,7 @@ Special commands handled directly (before reaching the LLM):
   /tasks          - list active tasks
   /status         - show system status
   /dream          - trigger a dream cycle
+  /config         - view/set per-thread configuration overrides
   /kimi-auth      - authenticate Kimi-Code backend
   /verify-session - send E2EE verification request to allowed_users
   /commands       - list all slash commands
@@ -1401,6 +1402,10 @@ class MatrixThread:
                 await self.send_message(f"Failed to get memory stats: {exc}", thread_id)
             return
 
+        if content is None and text.startswith("/config"):
+            await self._handle_config_command(text, thread_id)
+            return
+
         if content is None and text == "/commands":
             await self.send_message(
                 "**Wintermute — Slash Commands**\n\n"
@@ -1414,6 +1419,11 @@ class MatrixThread:
                 "**Memory**\n"
                 "- `/memory-stats` — Show memory store backend, entry count, and status\n"
                 "- `/rebuild-index` — Rebuild the vector memory index from MEMORIES.txt\n\n"
+                "**Configuration**\n"
+                "- `/config` — Show current resolved config for this thread\n"
+                "- `/config <key> <value>` — Set a per-thread override (keys: backend_name, session_timeout_minutes, sub_sessions_enabled, system_prompt_mode)\n"
+                "- `/config reset` — Remove all per-thread overrides\n"
+                "- `/config reset <key>` — Remove a single per-thread override\n\n"
                 "**System**\n"
                 "- `/status` — Show runtime status: models, token budget, memory, loops, sub-sessions\n"
                 "- `/kimi-auth` — Start Kimi-Code OAuth device-code flow\n"
@@ -1692,6 +1702,68 @@ class MatrixThread:
                 lines.append("Tuning changes: " + "; ".join(tuning))
 
         await self.send_message("\n".join(lines), thread_id)
+
+    async def _handle_config_command(self, text: str, thread_id: str) -> None:
+        """Handle /config, /config <key> <value>, /config reset [<key>]."""
+        mgr = getattr(self, "_thread_config_manager", None)
+        if mgr is None:
+            await self.send_message("Thread configuration is not available.", thread_id)
+            return
+
+        parts = text.strip().split(None, 2)  # ["/config", key?, value?]
+
+        # /config — show resolved config with sources
+        if len(parts) == 1:
+            resolved = mgr.resolve_as_dict(thread_id)
+            lines = [f"**Configuration** (thread: `{thread_id}`)\n"]
+            for key, info in resolved.items():
+                src_tag = f" _(from {info['source']})_" if info["source"] != "default" else ""
+                lines.append(f"- `{key}`: **{info['value']}**{src_tag}")
+            backends = mgr.get_available_backends()
+            if backends:
+                lines.append(f"\nAvailable backends: {', '.join(f'`{b}`' for b in sorted(backends))}")
+            await self.send_message("\n".join(lines), thread_id)
+            return
+
+        # /config reset [<key>]
+        if parts[1] == "reset":
+            if len(parts) == 3:
+                key = parts[2]
+                current = mgr.get(thread_id)
+                if current is None or getattr(current, key, None) is None:
+                    await self.send_message(f"No override set for `{key}` on this thread.", thread_id)
+                    return
+                try:
+                    mgr.set(thread_id, key, None)
+                    resolved = mgr.resolve(thread_id)
+                    new_val = getattr(resolved, key, "?")
+                    await self.send_message(
+                        f"Override for `{key}` removed. Effective value: **{new_val}**", thread_id,
+                    )
+                except (ValueError, AttributeError) as exc:
+                    await self.send_message(f"Error: {exc}", thread_id)
+            else:
+                mgr.reset(thread_id)
+                await self.send_message("All per-thread overrides removed.", thread_id)
+            return
+
+        # /config <key> <value>
+        if len(parts) < 3:
+            await self.send_message(
+                "Usage: `/config <key> <value>` or `/config reset [<key>]`\n"
+                "Keys: `backend_name`, `session_timeout_minutes`, `sub_sessions_enabled`, `system_prompt_mode`",
+                thread_id,
+            )
+            return
+
+        key, value = parts[1], parts[2]
+        try:
+            mgr.set(thread_id, key, value)
+            resolved = mgr.resolve(thread_id)
+            new_val = getattr(resolved, key, "?")
+            await self.send_message(f"`{key}` set to **{new_val}** for this thread.", thread_id)
+        except (ValueError, TypeError) as exc:
+            await self.send_message(f"Error: {exc}", thread_id)
 
     async def _handle_kimi_auth(self, thread_id: str) -> None:
         kimi_client = getattr(self, "_kimi_client", None)

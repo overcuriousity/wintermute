@@ -435,6 +435,8 @@ _DEBUG_HTML = r"""\
             <option value="reflection_analysis">reflection_analysis</option>
             <option value="memory_harvest">memory_harvest</option>
             <option value="system_event">system_event</option>
+            <option value="config_change">config_change</option>
+            <option value="config_reset">config_reset</option>
           </select>
         </div>
       </div>
@@ -644,6 +646,7 @@ async function loadSessionMessages(threadId) {
     ${ctxHtml}
     <span style="margin-left:auto;display:flex;gap:.4rem">
       <button class="btn btn-sm" onclick="showSystemPrompt()">Sys&nbsp;Prompt</button>
+      <button class="btn btn-sm" onclick="showThreadConfig()">Config</button>
       <button class="btn btn-sm" onclick="compactSession()">Compact</button>
       <button class="btn btn-danger btn-sm" onclick="deleteSession()">Delete</button>
     </span>`;
@@ -763,6 +766,118 @@ async function showSystemPrompt() {
 function toggleSpSection(id) {
   const el = document.getElementById(id);
   el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+async function showThreadConfig() {
+  if (!selectedSession) { alert('Select a session first'); return; }
+  const existing = document.getElementById('tc-modal');
+  if (existing) existing.remove();
+  const modal = document.createElement('div');
+  modal.id = 'tc-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;display:flex;align-items:center;justify-content:center';
+  modal.innerHTML = `
+    <div style="background:#16213e;border:1px solid #0f3460;border-radius:.5rem;width:50vw;max-width:600px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden">
+      <div style="padding:.6rem 1rem;background:#0d1526;border-bottom:1px solid #0f3460;display:flex;align-items:center;gap:.7rem;flex-shrink:0">
+        <span style="font-weight:600;color:#a8d8ea">Thread Config</span>
+        <span class="mono dim" style="font-size:.72rem">${esc(selectedSession)}</span>
+        <button class="btn btn-sm" style="margin-left:auto" onclick="document.getElementById('tc-modal').remove()">Close</button>
+      </div>
+      <div id="tc-body" style="padding:1rem;overflow:auto;font-size:.85rem;color:#ccc">Loading\u2026</div>
+    </div>`;
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  document.body.appendChild(modal);
+  try {
+    const [cfgR, metaR] = await Promise.all([
+      fetch('/api/debug/thread-config/' + encodeURIComponent(selectedSession)),
+      fetch('/api/debug/thread-config'),
+    ]);
+    const cfg = await cfgR.json();
+    const meta = await metaR.json();
+    if (cfg.error) { document.getElementById('tc-body').textContent = cfg.error; return; }
+    const keys = meta.keys || [];
+    const backends = meta.available_backends || [];
+    const resolved = cfg.resolved || {};
+    const overrides = cfg.overrides || {};
+    let html = '<table style="width:100%;border-collapse:collapse">';
+    html += '<tr style="border-bottom:1px solid #0f3460"><th style="text-align:left;padding:.4rem;color:#a8d8ea">Key</th><th style="text-align:left;padding:.4rem;color:#a8d8ea">Value</th><th style="text-align:left;padding:.4rem;color:#a8d8ea">Source</th><th style="padding:.4rem"></th></tr>';
+    for (const key of keys) {
+      const info = resolved[key] || {};
+      const val = info.value ?? '';
+      const src = info.source || 'default';
+      const srcColor = src === 'override' ? '#6fe06f' : (src === 'config' ? '#e0c96f' : '#888');
+      let inputHtml;
+      if (key === 'backend_name') {
+        inputHtml = '<select id="tc-' + key + '" style="background:#0a1020;color:#ccc;border:1px solid #0f3460;padding:.2rem .4rem;width:100%">';
+        inputHtml += '<option value="">(default)</option>';
+        for (const b of backends) inputHtml += '<option value="' + esc(b) + '"' + (overrides[key] === b ? ' selected' : '') + '>' + esc(b) + '</option>';
+        inputHtml += '</select>';
+      } else if (key === 'sub_sessions_enabled') {
+        inputHtml = '<select id="tc-' + key + '" style="background:#0a1020;color:#ccc;border:1px solid #0f3460;padding:.2rem .4rem;width:100%">';
+        inputHtml += '<option value="">(default)</option>';
+        inputHtml += '<option value="true"' + (overrides[key] === true ? ' selected' : '') + '>true</option>';
+        inputHtml += '<option value="false"' + (overrides[key] === false ? ' selected' : '') + '>false</option>';
+        inputHtml += '</select>';
+      } else if (key === 'system_prompt_mode') {
+        inputHtml = '<select id="tc-' + key + '" style="background:#0a1020;color:#ccc;border:1px solid #0f3460;padding:.2rem .4rem;width:100%">';
+        inputHtml += '<option value="">(default)</option>';
+        inputHtml += '<option value="full"' + (overrides[key] === 'full' ? ' selected' : '') + '>full</option>';
+        inputHtml += '<option value="minimal"' + (overrides[key] === 'minimal' ? ' selected' : '') + '>minimal</option>';
+        inputHtml += '</select>';
+      } else {
+        const ovVal = key in overrides ? overrides[key] : '';
+        inputHtml = '<input id="tc-' + key + '" type="text" value="' + esc(String(ovVal)) + '" placeholder="(default)" style="background:#0a1020;color:#ccc;border:1px solid #0f3460;padding:.2rem .4rem;width:100%">';
+      }
+      html += '<tr style="border-bottom:1px solid #0a1020">' +
+        '<td style="padding:.4rem;font-family:monospace;font-size:.8rem">' + esc(key) + '</td>' +
+        '<td style="padding:.4rem">' + inputHtml + '</td>' +
+        '<td style="padding:.4rem;color:' + srcColor + ';font-size:.78rem">' + esc(src) + ' (' + esc(String(val)) + ')</td>' +
+        '<td style="padding:.4rem"></td></tr>';
+    }
+    html += '</table>';
+    html += '<div style="margin-top:1rem;display:flex;gap:.5rem">';
+    html += '<button class="btn btn-primary btn-sm" onclick="saveThreadConfig()">Save</button>';
+    html += '<button class="btn btn-danger btn-sm" onclick="resetThreadConfig()">Reset All</button>';
+    html += '</div>';
+    document.getElementById('tc-body').innerHTML = html;
+  } catch (e) {
+    document.getElementById('tc-body').textContent = 'Failed to load: ' + e;
+  }
+}
+
+async function saveThreadConfig() {
+  if (!selectedSession) return;
+  const keys = ['backend_name', 'session_timeout_minutes', 'sub_sessions_enabled', 'system_prompt_mode'];
+  const body = {};
+  for (const key of keys) {
+    const el = document.getElementById('tc-' + key);
+    if (!el) continue;
+    const val = el.value.trim();
+    if (val === '') { body[key] = null; continue; }
+    if (key === 'session_timeout_minutes') { body[key] = parseInt(val, 10) || null; continue; }
+    if (key === 'sub_sessions_enabled') { body[key] = val === 'true'; continue; }
+    body[key] = val;
+  }
+  try {
+    const r = await fetch('/api/debug/thread-config/' + encodeURIComponent(selectedSession), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (data.error) { alert('Error: ' + data.error); return; }
+    document.getElementById('tc-modal').remove();
+  } catch (e) { alert('Save failed: ' + e); }
+}
+
+async function resetThreadConfig() {
+  if (!selectedSession) return;
+  if (!confirm('Remove all config overrides for this thread?')) return;
+  try {
+    const r = await fetch('/api/debug/thread-config/' + encodeURIComponent(selectedSession), { method: 'DELETE' });
+    const data = await r.json();
+    if (data.error) { alert('Error: ' + data.error); return; }
+    document.getElementById('tc-modal').remove();
+  } catch (e) { alert('Reset failed: ' + e); }
 }
 
 // ── Workers (unified sub-sessions + workflows) ──
@@ -1427,6 +1542,11 @@ class WebInterface:
         app.router.add_get("/api/debug/interaction-log/{id}",            self._api_interaction_log_entry)
         app.router.add_get("/api/debug/outcomes",                        self._api_outcomes)
         app.router.add_get("/api/debug/stream",                          self._api_stream)
+        # Per-thread config API
+        app.router.add_get("/api/debug/thread-config",                   self._api_thread_configs)
+        app.router.add_get("/api/debug/thread-config/{thread_id}",       self._api_thread_config_get)
+        app.router.add_post("/api/debug/thread-config/{thread_id}",      self._api_thread_config_set)
+        app.router.add_delete("/api/debug/thread-config/{thread_id}",    self._api_thread_config_reset)
 
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
@@ -1697,6 +1817,65 @@ class WebInterface:
         return self._json({"items": items, "count": len(items)})
 
     # ------------------------------------------------------------------
+    # Per-thread config API
+    # ------------------------------------------------------------------
+
+    async def _api_thread_configs(self, _request: web.Request) -> web.Response:
+        """GET /api/debug/thread-config — list all overrides + available backends."""
+        mgr = getattr(self, "_thread_config_manager", None)
+        if mgr is None:
+            return self._json({"error": "Thread config not available"})
+        overrides = mgr.get_all_overrides()
+        return self._json({
+            "overrides": overrides,
+            "available_backends": sorted(mgr.get_available_backends()),
+            "keys": ["backend_name", "session_timeout_minutes",
+                     "sub_sessions_enabled", "system_prompt_mode"],
+        })
+
+    async def _api_thread_config_get(self, request: web.Request) -> web.Response:
+        """GET /api/debug/thread-config/{thread_id} — resolved config with sources."""
+        mgr = getattr(self, "_thread_config_manager", None)
+        if mgr is None:
+            return self._json({"error": "Thread config not available"})
+        thread_id = request.match_info["thread_id"]
+        resolved_dict = mgr.resolve_as_dict(thread_id)
+        raw = mgr.get(thread_id)
+        return self._json({
+            "thread_id": thread_id,
+            "resolved": resolved_dict,
+            "overrides": {k: v for k, v in (raw.__dict__ if raw else {}).items()
+                          if v is not None} if raw else {},
+        })
+
+    async def _api_thread_config_set(self, request: web.Request) -> web.Response:
+        """POST /api/debug/thread-config/{thread_id} — set overrides (JSON body)."""
+        mgr = getattr(self, "_thread_config_manager", None)
+        if mgr is None:
+            return self._json({"error": "Thread config not available"})
+        thread_id = request.match_info["thread_id"]
+        try:
+            body = await request.json()
+        except Exception:
+            return web.Response(status=400, text="Invalid JSON body")
+        try:
+            for key, value in body.items():
+                mgr.set(thread_id, key, value)
+        except (ValueError, TypeError) as exc:
+            return self._json({"error": str(exc)})
+        resolved_dict = mgr.resolve_as_dict(thread_id)
+        return self._json({"ok": True, "resolved": resolved_dict})
+
+    async def _api_thread_config_reset(self, request: web.Request) -> web.Response:
+        """DELETE /api/debug/thread-config/{thread_id} — remove all overrides."""
+        mgr = getattr(self, "_thread_config_manager", None)
+        if mgr is None:
+            return self._json({"error": "Thread config not available"})
+        thread_id = request.match_info["thread_id"]
+        mgr.reset(thread_id)
+        return self._json({"ok": True})
+
+    # ------------------------------------------------------------------
     # Interaction Log
     # ------------------------------------------------------------------
 
@@ -1834,6 +2013,10 @@ class WebInterface:
         interactions_total = await database.async_call(database.count_interaction_log)
         interactions_max_id = await database.async_call(database.get_interaction_log_max_id)
 
+        # Per-thread config overrides
+        mgr = getattr(self, "_thread_config_manager", None)
+        thread_config_overrides = mgr.get_all_overrides() if mgr else {}
+
         return {
             "sessions": sessions,
             "subsessions": subsessions,
@@ -1843,6 +2026,7 @@ class WebInterface:
             "interactions_total": interactions_total,
             "interactions_max_id": interactions_max_id,
             "memory_count": self._get_memory_count(),
+            "thread_config_overrides": thread_config_overrides,
         }
 
     async def _api_stream(self, request: web.Request) -> web.StreamResponse:

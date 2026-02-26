@@ -31,6 +31,7 @@ from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 from wintermute.infra.event_bus import EventBus
+from wintermute.infra.thread_config import ThreadConfigManager
 from wintermute import tools as tool_module
 from openai import AsyncOpenAI
 
@@ -358,6 +359,17 @@ async def main() -> None:
     nl_translation_pool = _build_pool(multi_cfg.nl_translation, client_cache)
     reflection_pool = _build_pool(multi_cfg.reflection, client_cache)
 
+    # Build per-backend pools for per-thread overrides.
+    backends_by_name = _parse_inference_backends(cfg.get("inference_backends", []))
+    backend_pools_by_name: dict[str, BackendPool] = {}
+    for bname, bcfg in backends_by_name.items():
+        backend_pools_by_name[bname] = _build_pool([bcfg], client_cache)
+
+    # Per-thread configuration manager.
+    thread_config_mgr = ThreadConfigManager(
+        available_backends=list(backends_by_name.keys()),
+    )
+
     # Parse NL translation config.
     nl_raw = cfg.get("nl_translation", {}) or {}
     nl_translation_config = {
@@ -450,7 +462,9 @@ async def main() -> None:
                     nl_translation_pool=nl_translation_pool,
                     nl_translation_config=nl_translation_config,
                     seed_language=seed_language,
-                    event_bus=event_bus)
+                    event_bus=event_bus,
+                    thread_config_manager=thread_config_mgr,
+                    backend_pools_by_name=backend_pools_by_name)
 
     # Build SubSessionManager — shares the LLM backend pool, reports back via
     # enqueue_system_event so results enter the parent thread's queue.
@@ -475,6 +489,7 @@ async def main() -> None:
         matrix._llm = llm
         matrix._sub_sessions = sub_sessions
         matrix._kimi_client = client_cache.get(("kimi-code",))
+        matrix._thread_config_manager = thread_config_mgr
         # Whisper voice transcription.
         whisper_raw = cfg.get("whisper", {}) or {}
         if whisper_raw.get("enabled"):
@@ -496,6 +511,7 @@ async def main() -> None:
     if web_iface:
         web_iface._llm = llm
         web_iface._kimi_client = client_cache.get(("kimi-code",))
+        web_iface._thread_config_manager = thread_config_mgr
 
     scheduler = TaskScheduler(
         config=scheduler_cfg,
