@@ -606,12 +606,28 @@ class ReflectionLoop:
         if self._sub_sessions is None:
             return
         logger.info("[reflection] Spawning skill mutation sub-session")
+
+        # Enumerate existing skill files so the LLM doesn't waste rounds
+        # trying to discover them (it has read_file but no directory listing).
+        from pathlib import Path
+        skills_dir = Path("data/skills")
+        existing_files: list[str] = []
+        if skills_dir.exists():
+            existing_files = sorted(
+                f.name for f in skills_dir.glob("*.md")
+            )
+        if existing_files:
+            listing = "Existing skill files: " + ", ".join(existing_files)
+        else:
+            listing = "No skill files exist yet."
+
         try:
             session_id = self._sub_sessions.spawn(
                 objective=(
                     "You are performing a skill maintenance task based on a "
                     "reflection cycle recommendation.\n\n"
                     + objective
+                    + f"\n\n{listing}"
                     + "\n\nUse read_file to examine any relevant skill files before "
                     "making changes.  Use add_skill to create or update skills. "
                     "Keep changes minimal and justified."

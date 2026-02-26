@@ -18,7 +18,7 @@ Based on this data, provide brief observations:
 3. Should any skills be updated or retired?
 
 After your observations, end your response with this JSON block on its own line:
-{"skill_actions": []}
+{{"skill_actions": []}}
 
 If you recommend a skill change, add a brief English instruction per action:
-{"skill_actions": ["Review and update data/skills/example.md - correlates with 3 failures"]}
+{{"skill_actions": ["Review and update data/skills/example.md - correlates with 3 failures"]}}
