@@ -70,7 +70,7 @@ from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 from wintermute.core import turing_protocol as turing_protocol_module
-from wintermute.core import nl_translator
+from wintermute.core.inference_engine import ToolCallContext, process_tool_call
 from wintermute import tools as tool_module
 from wintermute.core.llm_thread import BackendPool, ContextTooLargeError
 
@@ -200,6 +200,7 @@ class SubSessionManager:
         self._nl_translation_pool = nl_translation_pool
         self._nl_translation_config = nl_translation_config or {}
         self._event_bus = event_bus
+        self._default_timeout: int = DEFAULT_TIMEOUT
         self._states: dict[str, SubSessionState] = {}
         self._tasks: dict[str, asyncio.Task] = {}
         # DAG workflow tracking
@@ -213,6 +214,19 @@ class SubSessionManager:
         self._aggregated_parents: set[str] = set()
 
     # ------------------------------------------------------------------
+    # Default timeout (tunable by self-model)
+    # ------------------------------------------------------------------
+
+    @property
+    def default_timeout(self) -> int:
+        """Current default timeout for new sub-sessions (seconds)."""
+        return self._default_timeout
+
+    @default_timeout.setter
+    def default_timeout(self, value: int) -> None:
+        self._default_timeout = max(30, value)  # floor at 30s
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
@@ -222,7 +236,7 @@ class SubSessionManager:
         context_blobs: Optional[list[str]] = None,
         parent_thread_id: Optional[str] = None,
         system_prompt_mode: str = "minimal",
-        timeout: int = DEFAULT_TIMEOUT,
+        timeout: Optional[int] = None,
         nesting_depth: int = 1,
         prior_messages: Optional[list[dict]] = None,
         continuation_depth: int = 0,
@@ -257,6 +271,9 @@ class SubSessionManager:
         Pass prior_messages to resume from a previous session's message history
         (used internally by the auto-continuation logic on timeout).
         """
+        # Resolve default timeout from the (tunable) instance attribute.
+        if timeout is None:
+            timeout = self._default_timeout
         # Resolve tool profile if provided.
         if profile:
             profiles = prompt_assembler.get_tool_profiles()
@@ -799,7 +816,14 @@ class SubSessionManager:
                         self._states.pop(nid, None)
                         self._tasks.pop(nid, None)
                         self._session_to_workflow.pop(nid, None)
+                        # Clean up _worker_spawned: nid may be a parent key,
+                        # or a child in another parent's list.
                         self._worker_spawned.pop(nid, None)
+                        for _ws_parent, _ws_children in list(self._worker_spawned.items()):
+                            if nid in _ws_children:
+                                _ws_children.remove(nid)
+                                if not _ws_children:
+                                    del self._worker_spawned[_ws_parent]
                         self._aggregated_parents.discard(nid)
                     logger.debug("Purged completed workflow %s from memory", old_wid)
 
@@ -1251,6 +1275,34 @@ class SubSessionManager:
         tp_correction_depth = 0  # depth-2 re-check: 0=unchecked, 1=corrected once, >=2=graceful fallback
         tool_calls_made: list[str] = []  # accumulated across the session
 
+        # Build shared tool-call context for the inference engine.
+        async def _tp_check_sub(phase, *, tool_name=None, tool_args=None,
+                                tool_result=None, assistant_response="",
+                                tool_calls_made=None, nl_tools=None):
+            return await self._run_tp_phase(
+                phase=phase, state=state,
+                tool_calls_made=tool_calls_made or [],
+                assistant_response=assistant_response,
+                tool_name=tool_name, tool_args=tool_args,
+                tool_result=tool_result, nl_tools=nl_tools,
+            )
+
+        from wintermute.infra.prompt_assembler import _timezone as _pa_tz
+        tc_ctx = ToolCallContext(
+            thread_id=state.session_id,
+            nesting_depth=state.nesting_depth,
+            parent_thread_id=state.parent_thread_id,
+            scope="sub_session",
+            pool_last_used=self._pool.last_used,
+            event_bus=self._event_bus,
+            nl_enabled=nl_enabled,
+            nl_tools=nl_tools,
+            nl_translation_pool=self._nl_translation_pool,
+            timezone_str=_pa_tz,
+            tp_enabled=tp_enabled,
+            tp_check=_tp_check_sub if tp_enabled else None,
+        )
+
         # Derive the set of available tool names for prompt section filtering.
         _available_tool_names: set[str] | None = None
         if state.tool_names:
@@ -1373,183 +1425,18 @@ class SubSessionManager:
                     })
 
                 for tc_idx, tc in enumerate(choice.message.tool_calls):
-                    try:
-                        inputs = json.loads(tc.function.arguments)
-                    except json.JSONDecodeError as _jde:
-                        logger.warning(
-                            "Malformed tool args in sub-session %s for %s: %s — raw: %s",
-                            state.session_id, tc.function.name, _jde,
-                            tc.function.arguments[:500],
-                        )
-                        state.messages[_placeholder_start + tc_idx] = {
-                            "role":         "tool",
-                            "tool_call_id": tc.id,
-                            "content":      (
-                                f"[ERROR] Could not parse arguments for tool "
-                                f"'{tc.function.name}': {_jde}. "
-                                f"Please retry with valid JSON arguments."
-                            ),
-                        }
-                        continue
-
-                    name = tc.function.name
-                    nl_was_translated = False
-
-                    # -- NL Translation: expand description to structured args --
-                    if nl_enabled and nl_translator.is_nl_tool_call(name, inputs):
-                        from wintermute.infra.prompt_assembler import _timezone as _pa_tz
-                        translated = await nl_translator.translate_nl_tool_call(
-                            self._nl_translation_pool, name, inputs["description"],
-                            thread_id=state.session_id,
-                            timezone_str=_pa_tz,
-                        )
-                        # Log the NL translation call.
-                        try:
-                            await database.async_call(
-                                database.save_interaction_log,
-                                _time.time(), "nl_translation", state.session_id,
-                                self._nl_translation_pool.last_used,
-                                inputs["description"],
-                                json.dumps(translated) if translated is not None else "null",
-                                "ok" if translated is not None else "error",
-                            )
-                        except Exception:
-                            pass
-                        if translated is None:
-                            state.messages[_placeholder_start + tc_idx] = {
-                                "role":         "tool",
-                                "tool_call_id": tc.id,
-                                "content":      "[TRANSLATION ERROR] Failed to translate natural-language tool call. Please try rephrasing or use structured arguments.",
-                            }
-                            continue
-                        if isinstance(translated, dict) and "error" in translated:
-                            state.messages[_placeholder_start + tc_idx] = {
-                                "role":         "tool",
-                                "tool_call_id": tc.id,
-                                "content":      f"[CLARIFICATION NEEDED] {translated.get('clarification_needed', translated['error'])}",
-                            }
-                            continue
-                        if isinstance(translated, list):
-                            # Merge orphan metadata items (no required field) into
-                            # the preceding item.  Handles NL translator emitting
-                            # depends_on / not_before as separate array elements.
-                            merged: list[dict] = []
-                            for item in translated:
-                                if merged and "objective" not in item and name == "spawn_sub_session":
-                                    merged[-1].update(item)
-                                else:
-                                    merged.append(item)
-                            translated = merged
-                            combined_results = []
-                            for i, item_args in enumerate(translated):
-                                item_result = await asyncio.get_running_loop().run_in_executor(
-                                    None, lambda _n=name, _a=item_args: tool_module.execute_tool(
-                                        _n, _a,
-                                        thread_id=state.session_id,
-                                        nesting_depth=state.nesting_depth,
-                                        parent_thread_id=state.parent_thread_id,
-                                    )
-                                )
-                                summary = ", ".join(f"{k}={v!r}" for k, v in item_args.items() if k != "description")
-                                combined_results.append(f"[{i+1}] [Translated to: {summary}] {item_result}")
-                                tool_calls_made.append(name)
-                                state.tool_calls_log.append((name, item_result[:120].replace("\n", " ")))
-                                try:
-                                    await database.async_call(
-                                        database.save_interaction_log,
-                                        _time.time(), "tool_call", state.session_id,
-                                        self._pool.last_used,
-                                        json.dumps({"tool": name, "arguments": json.dumps(item_args)}),
-                                        item_result[:500], "ok",
-                                    )
-                                except Exception:
-                                    pass
-                            state.messages[_placeholder_start + tc_idx] = {
-                                "role":         "tool",
-                                "tool_call_id": tc.id,
-                                "content":      "\n\n".join(combined_results),
-                            }
-                            continue
-                        inputs = translated
-                        nl_was_translated = True
-
-                    # -- Turing Protocol: pre_execution phase --
-                    if tp_enabled:
-                        pre_result = await self._run_tp_phase(
-                            phase="pre_execution",
-                            state=state,
-                            tool_calls_made=tool_calls_made,
-                            assistant_response=(choice.message.content or ""),
-                            tool_name=name,
-                            tool_args=inputs,
-                            nl_tools=nl_tools,
-                        )
-                        if pre_result and pre_result.correction:
-                            logger.warning(
-                                "Sub-session %s: pre_execution hook blocked tool %s: %s",
-                                state.session_id, name,
-                                pre_result.correction[:200],
-                            )
-                            state.messages[_placeholder_start + tc_idx] = {
-                                "role":         "tool",
-                                "tool_call_id": tc.id,
-                                "content":      f"[BLOCKED BY TURING PROTOCOL] {pre_result.correction}",
-                            }
-                            continue
-
-                    result = await asyncio.get_running_loop().run_in_executor(
-                        None, lambda _n=name, _i=inputs: tool_module.execute_tool(
-                            _n, _i,
-                            thread_id=state.session_id,
-                            nesting_depth=state.nesting_depth,
-                            parent_thread_id=state.parent_thread_id,
-                        )
+                    outcome = await process_tool_call(
+                        tc, tc_ctx, tool_calls_made,
+                        assistant_response=(choice.message.content or ""),
                     )
-                    tool_calls_made.append(name)
-
-                    # Prepend translation summary if NL translation was used.
-                    if nl_was_translated:
-                        summary = ", ".join(f"{k}={v!r}" for k, v in inputs.items())
-                        result = f"[Translated to: {summary}] {result}"
-
-                    # -- Turing Protocol: post_execution phase --
-                    if tp_enabled:
-                        post_result = await self._run_tp_phase(
-                            phase="post_execution",
-                            state=state,
-                            tool_calls_made=tool_calls_made,
-                            assistant_response=(choice.message.content or ""),
-                            tool_name=name,
-                            tool_result=result,
-                            nl_tools=nl_tools,
-                        )
-                        if post_result and post_result.correction:
-                            result += f"\n\n[TURING PROTOCOL WARNING] {post_result.correction}"
-
-                    # Log the tool call
-                    try:
-                        await database.async_call(
-                            database.save_interaction_log,
-                            _time.time(), "tool_call", state.session_id,
-                            self._pool.last_used,
-                            json.dumps({"tool": name, "arguments": tc.function.arguments}),
-                            result[:500], "ok",
-                        )
-                    except Exception:
-                        pass
-                    # Track progress on state so the timeout handler can report
-                    # and continue from it.
-                    if self._event_bus:
-                        self._event_bus.emit("tool.executed", tool=name,
-                                             thread_id=state.session_id, scope="sub_session")
-                    result_preview = result[:120].replace("\n", " ")
-                    state.tool_calls_log.append((name, result_preview))
-                    logger.debug("Sub-session %s tool %s -> %s",
-                                 state.session_id, name, result[:200])
+                    # Track progress on state for the timeout handler.
+                    for cn in outcome.calls_made:
+                        preview = outcome.content[:120].replace("\n", " ")
+                        state.tool_calls_log.append((cn, preview))
                     state.messages[_placeholder_start + tc_idx] = {
                         "role":         "tool",
                         "tool_call_id": tc.id,
-                        "content":      result,
+                        "content":      outcome.content,
                     }
                 continue
 

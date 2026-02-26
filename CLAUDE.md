@@ -32,7 +32,8 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 
 | Module | Purpose |
 |---|---|
-| `llm_thread.py` | Inference engine, conversation history, context compaction, tool dispatch, Turing Protocol dispatch |
+| `llm_thread.py` | Conversation history, context compaction, Turing Protocol dispatch; delegates per-tool-call execution to `inference_engine` |
+| `inference_engine.py` | Shared tool-call pipeline (`process_tool_call`): JSON parse, NL translation, TP pre/post execution gates, tool dispatch, interaction logging — used by both `llm_thread` and `sub_session` |
 | `tools.py` | Tool definitions (OpenAI function-calling schemas) + `execute_tool()` dispatcher |
 | `sub_session.py` | Background worker DAG: `TaskNode`/`Workflow` with `depends_on` edges, nested workers (depth 2), timeout continuation |
 | `prompt_assembler.py` | Assembles system prompt per-turn: BASE_PROMPT + datetime + MEMORIES + tasks + skills TOC (full skills loaded on demand via read_file) |
@@ -43,7 +44,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 | `dreaming.py` | Nightly memory consolidation: vector-native 4-phase pipeline (dedup, contradictions, stale pruning, working set export) or flat-file LLM consolidation |
 | `memory_harvest.py` | Periodic conversation mining → MEMORIES.txt extraction via sub-sessions |
 | `scheduler_thread.py` | APScheduler-based task scheduling; `ai_prompt` triggers sub-sessions |
-| `database.py` | SQLite ops: messages, tasks, summaries, interaction_log |
+| `database.py` | SQLite ops (per-thread cached connections): messages, tasks, summaries, interaction_log |
 
 **LLM provider abstraction:** `BackendPool` wraps `AsyncOpenAI` with ordered failover. Four provider types: `"openai"` (any compatible endpoint), `"anthropic"` (native Messages API with prompt caching), `"gemini-cli"`, `"kimi-code"`. Role-based routing (`base`, `compaction`, `sub_sessions`, `dreaming`, `turing_protocol`).
 

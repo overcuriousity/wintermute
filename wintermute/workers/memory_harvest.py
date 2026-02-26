@@ -76,6 +76,26 @@ class MemoryHarvestLoop:
         # Pending harvest check triggered by event bus
         self._check_event = asyncio.Event()
 
+    # ------------------------------------------------------------------
+    # Public tuning API (used by self-model auto-tuning)
+    # ------------------------------------------------------------------
+
+    @property
+    def message_threshold(self) -> int:
+        """Current message count threshold before harvest triggers."""
+        return self._cfg.message_threshold
+
+    @message_threshold.setter
+    def message_threshold(self, value: int) -> None:
+        self._cfg.message_threshold = max(1, value)
+
+    def has_backlog(self) -> bool:
+        """Return True if any thread has messages at/above threshold while a harvest is in flight."""
+        return (
+            any(count >= self._cfg.message_threshold for count in self._msg_counts.values())
+            and len(self._in_flight) > 0
+        )
+
     async def _on_message_received(self, event) -> None:
         """Increment per-thread counter and trigger immediate check."""
         thread_id = event.data.get("thread_id", "")

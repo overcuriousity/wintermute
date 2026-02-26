@@ -193,7 +193,7 @@ def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
         raw = llm_raw.get(name)
         if raw is None:
             if allow_empty:
-                return _resolve_role(name, default_list, backends)
+                return []  # not configured → disabled
             return _resolve_role(name, default_list, backends)
         if isinstance(raw, list):
             if not raw and allow_empty:

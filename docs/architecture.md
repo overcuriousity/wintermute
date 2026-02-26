@@ -6,7 +6,8 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 
 | Component | Module | Role |
 |-----------|--------|------|
-| **LLMThread** | `llm_thread.py` | Owns conversation history, runs inference + tool-use loops |
+| **LLMThread** | `llm_thread.py` | Owns conversation history, runs inference loops; delegates per-tool-call execution to InferenceEngine |
+| **InferenceEngine** | `inference_engine.py` | Shared tool-call pipeline (JSON parse, NL translation, Turing Protocol gates, tool dispatch, logging) used by LLMThread and SubSessionManager |
 | **WebInterface** | `web_interface.py` | aiohttp HTTP server; debug/admin panel at `/debug`, REST API at `/api/debug/*` |
 | **MatrixThread** | `matrix_thread.py` | Matrix client with E2E encryption (optional) |
 | **SubSessionManager** | `sub_session.py` | Manages background worker sub-sessions and workflow DAGs |
@@ -20,7 +21,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **NL Translator** | `nl_translator.py` | Expands natural-language tool descriptions into structured arguments via a translator LLM |
 | **MemoryStore** | `memory_store.py` | Vector-indexed memory retrieval (flat_file / FTS5 / local_vector / Qdrant backends) with access tracking and source tagging |
 | **PromptAssembler** | `prompt_assembler.py` | Builds system prompts from file components |
-| **Database** | `database.py` | SQLite message persistence, thread management, task storage, and sub-session outcome tracking |
+| **Database** | `database.py` | SQLite message persistence (per-thread cached connections), thread management, task storage, and sub-session outcome tracking |
 
 ## System Diagram
 

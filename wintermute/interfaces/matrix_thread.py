@@ -223,7 +223,7 @@ class MatrixThread:
         self._running = False
         self._send_lock = asyncio.Lock()
         self._verifications: dict[str, _SasState] = {}
-        self._requested_sessions: set[str] = set()  # UTD: session IDs we've already requested
+        self._requested_sessions: dict[str, None] = {}  # ordered dict as LRU set for session IDs
         # Whisper transcription (injected from main.py if enabled).
         self._whisper_client = None
         self._whisper_model: str = ""
@@ -984,13 +984,14 @@ class MatrixThread:
         except Exception:
             return
 
-        self._requested_sessions.add(session_id)
+        self._requested_sessions[session_id] = None
         # Prevent unbounded growth over long uptimes
         if len(self._requested_sessions) > 500:
-            # Discard oldest half (sets are unordered, but this is fine —
-            # the worst case is a duplicate key request, which is harmless)
+            # Discard oldest half — dict preserves insertion order so we
+            # evict the genuinely oldest entries first.
             to_remove = list(self._requested_sessions)[:250]
-            self._requested_sessions -= set(to_remove)
+            for k in to_remove:
+                self._requested_sessions.pop(k, None)
         sender = str(evt.sender)
         room_id = str(evt.room_id)
 
@@ -1323,7 +1324,7 @@ class MatrixThread:
             await self.send_message("Session reset. Starting fresh conversation.", thread_id)
             from wintermute.infra import prompt_loader
             try:
-                seed_prompt = prompt_loader.load_seed(self._llm._seed_language)
+                seed_prompt = prompt_loader.load_seed(self._llm.seed_language)
                 await self._llm.enqueue_system_event(seed_prompt, thread_id)
             except Exception:  # noqa: BLE001
                 logger.exception("Seed after /new failed (non-fatal)")
@@ -1457,10 +1458,10 @@ class MatrixThread:
             ctx = pool.primary.context_size // 1024
             return f"{label}: {chain} ({ctx}k ctx)"
 
-        lines.append(_fmt_pool("Main", self._llm._main_pool))
-        lines.append(_fmt_pool("Compaction", self._llm._compaction_pool))
-        lines.append(_fmt_pool("Turing Protocol", self._llm._turing_protocol_pool))
-        lines.append(_fmt_pool("NL Translation", self._llm._nl_translation_pool))
+        lines.append(_fmt_pool("Main", self._llm.main_pool))
+        lines.append(_fmt_pool("Compaction", self._llm.compaction_pool))
+        lines.append(_fmt_pool("Turing Protocol", self._llm.turing_protocol_pool))
+        lines.append(_fmt_pool("NL Translation", self._llm.nl_translation_pool))
         if hasattr(self, "_sub_sessions") and self._sub_sessions:
             lines.append(_fmt_pool("Sub-sessions", self._sub_sessions._pool))
         if hasattr(self, "_dreaming_loop") and self._dreaming_loop:
@@ -1478,7 +1479,7 @@ class MatrixThread:
             pass
 
         # Queue depth
-        qsize = self._llm._queue.qsize()
+        qsize = self._llm.queue_size
         if qsize:
             lines.append(f"Queue: {qsize} item(s) pending")
 

@@ -28,7 +28,7 @@ from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 from wintermute.core import turing_protocol as turing_protocol_module
-from wintermute.core import nl_translator
+from wintermute.core.inference_engine import ToolCallContext, process_tool_call
 from wintermute import tools as tool_module
 
 from typing import TYPE_CHECKING
@@ -275,6 +275,34 @@ class LLMThread:
     def inject_sub_session_manager(self, manager: "SubSessionManager") -> None:
         """Called after construction once SubSessionManager is built."""
         self._sub_sessions = manager
+
+    # ------------------------------------------------------------------
+    # Read-only accessors for external consumers (interfaces, /status)
+    # ------------------------------------------------------------------
+
+    @property
+    def seed_language(self) -> str:
+        return self._seed_language
+
+    @property
+    def main_pool(self) -> BackendPool:
+        return self._main_pool
+
+    @property
+    def compaction_pool(self) -> BackendPool:
+        return self._compaction_pool
+
+    @property
+    def turing_protocol_pool(self) -> BackendPool:
+        return self._turing_protocol_pool
+
+    @property
+    def nl_translation_pool(self) -> "Optional[BackendPool]":
+        return self._nl_translation_pool
+
+    @property
+    def queue_size(self) -> int:
+        return self._queue.qsize()
 
     # ------------------------------------------------------------------
     # Public interface
@@ -941,6 +969,32 @@ class LLMThread:
 
         tp_enabled = self._turing_protocol_pool.enabled
 
+        # Build a shared context for tool-call processing.
+        async def _tp_check_main(phase, *, tool_name=None, tool_args=None,
+                                 tool_result=None, assistant_response="",
+                                 tool_calls_made=None, nl_tools=None):
+            return await self._run_phase_check(
+                phase=phase, scope="main", thread_id=thread_id,
+                tool_calls_made=tool_calls_made or [],
+                assistant_response=assistant_response,
+                tool_name=tool_name, tool_args=tool_args,
+                tool_result=tool_result, nl_tools=nl_tools,
+            )
+
+        tc_ctx = ToolCallContext(
+            thread_id=thread_id,
+            nesting_depth=0,
+            scope="main",
+            pool_last_used=self._main_pool.last_used,
+            event_bus=self._event_bus,
+            nl_enabled=nl_enabled,
+            nl_tools=nl_tools,
+            nl_translation_pool=getattr(self, "_nl_translation_pool", None),
+            timezone_str=prompt_assembler._timezone,
+            tp_enabled=tp_enabled,
+            tp_check=_tp_check_main if tp_enabled else None,
+        )
+
         while True:
             # Trim oldest tool results if accumulated context exceeds budget.
             self._trim_tool_results(full_messages, token_budget)
@@ -995,184 +1049,18 @@ class LLMThread:
                 # Append the assistant's tool-call message.
                 full_messages.append(choice.message)
 
-                # Execute each tool and collect results.
+                # Execute each tool via the shared pipeline.
+                tc_ctx.pool_last_used = self._main_pool.last_used
                 for tc in choice.message.tool_calls:
-                    try:
-                        inputs = json.loads(tc.function.arguments)
-                    except json.JSONDecodeError as _jde:
-                        logger.warning(
-                            "Malformed tool args for %s (id=%s): %s — raw: %s",
-                            tc.function.name, tc.id, _jde,
-                            tc.function.arguments[:500],
-                        )
-                        full_messages.append({
-                            "role":         "tool",
-                            "tool_call_id": tc.id,
-                            "content":      (
-                                f"[ERROR] Could not parse arguments for tool "
-                                f"'{tc.function.name}': {_jde}. "
-                                f"Please retry with valid JSON arguments."
-                            ),
-                        })
-                        continue
-
-                    name = tc.function.name
-                    nl_was_translated = False
-
-                    # -- NL Translation: expand description to structured args --
-                    if nl_enabled and nl_translator.is_nl_tool_call(name, inputs):
-                        _nl_tz = prompt_assembler._timezone
-                        translated = await nl_translator.translate_nl_tool_call(
-                            self._nl_translation_pool, name, inputs["description"],
-                            thread_id=thread_id,
-                            timezone_str=_nl_tz,
-                        )
-                        # Log the NL translation call.
-                        try:
-                            await database.async_call(
-                                database.save_interaction_log,
-                                _time.time(), "nl_translation", thread_id,
-                                self._nl_translation_pool.last_used,
-                                inputs["description"],
-                                json.dumps(translated) if translated is not None else "null",
-                                "ok" if translated is not None else "error",
-                            )
-                        except Exception:
-                            pass
-                        if translated is None:
-                            full_messages.append({
-                                "role":         "tool",
-                                "tool_call_id": tc.id,
-                                "content":      "[TRANSLATION ERROR] Failed to translate natural-language tool call. Please try rephrasing or use structured arguments.",
-                            })
-                            continue
-                        if isinstance(translated, dict) and "error" in translated:
-                            full_messages.append({
-                                "role":         "tool",
-                                "tool_call_id": tc.id,
-                                "content":      f"[CLARIFICATION NEEDED] {translated.get('clarification_needed', translated['error'])}",
-                            })
-                            continue
-                        if isinstance(translated, list):
-                            # Merge orphan metadata items (no required field) into
-                            # the preceding item.  Handles NL translator emitting
-                            # depends_on / not_before as separate array elements.
-                            merged: list[dict] = []
-                            for item in translated:
-                                if merged and "objective" not in item and name == "spawn_sub_session":
-                                    merged[-1].update(item)
-                                else:
-                                    merged.append(item)
-                            translated = merged
-                            # Multi-item: execute each, combine results.
-                            combined_results = []
-                            for i, item_args in enumerate(translated):
-                                item_result = await asyncio.get_running_loop().run_in_executor(
-                                    None, lambda _n=name, _a=item_args: tool_module.execute_tool(
-                                        _n, _a, thread_id=thread_id, nesting_depth=0,
-                                    )
-                                )
-                                summary = ", ".join(f"{k}={v!r}" for k, v in item_args.items() if k != "description")
-                                combined_results.append(f"[{i+1}] [Translated to: {summary}] {item_result}")
-                                tool_calls_made.append(name)
-                                tool_call_details.append({
-                                    "name": name,
-                                    "arguments": json.dumps(item_args),
-                                    "result": item_result,
-                                })
-                                try:
-                                    await database.async_call(
-                                        database.save_interaction_log,
-                                        _time.time(), "tool_call", thread_id,
-                                        self._main_pool.last_used,
-                                        json.dumps({"tool": name, "arguments": json.dumps(item_args)}),
-                                        item_result[:500], "ok",
-                                    )
-                                except Exception:
-                                    pass
-                            full_messages.append({
-                                "role":         "tool",
-                                "tool_call_id": tc.id,
-                                "content":      "\n\n".join(combined_results),
-                            })
-                            continue
-                        inputs = translated
-                        nl_was_translated = True
-
-                    # -- Turing Protocol: pre_execution phase --
-                    if tp_enabled:
-                        pre_result = await self._run_phase_check(
-                            phase="pre_execution",
-                            scope="main",
-                            thread_id=thread_id,
-                            tool_calls_made=tool_calls_made,
-                            assistant_response=(choice.message.content or ""),
-                            tool_name=name,
-                            tool_args=inputs,
-                            nl_tools=nl_tools,
-                        )
-                        if pre_result and pre_result.correction:
-                            logger.warning(
-                                "pre_execution hook blocked tool %s in thread %s: %s",
-                                name, thread_id,
-                                pre_result.correction[:200],
-                            )
-                            full_messages.append({
-                                "role":         "tool",
-                                "tool_call_id": tc.id,
-                                "content":      f"[BLOCKED BY TURING PROTOCOL] {pre_result.correction}",
-                            })
-                            continue
-
-                    result = await asyncio.get_running_loop().run_in_executor(
-                        None, lambda _n=name, _i=inputs: tool_module.execute_tool(
-                            _n, _i, thread_id=thread_id, nesting_depth=0,
-                        )
+                    outcome = await process_tool_call(
+                        tc, tc_ctx, tool_calls_made,
+                        assistant_response=(choice.message.content or ""),
                     )
-                    tool_calls_made.append(name)
-
-                    # Prepend translation summary if NL translation was used.
-                    if nl_was_translated:
-                        summary = ", ".join(f"{k}={v!r}" for k, v in inputs.items())
-                        result = f"[Translated to: {summary}] {result}"
-
-                    # -- Turing Protocol: post_execution phase --
-                    if tp_enabled:
-                        post_result = await self._run_phase_check(
-                            phase="post_execution",
-                            scope="main",
-                            thread_id=thread_id,
-                            tool_calls_made=tool_calls_made,
-                            assistant_response=(choice.message.content or ""),
-                            tool_name=name,
-                            tool_result=result,
-                            nl_tools=nl_tools,
-                        )
-                        if post_result and post_result.correction:
-                            result += f"\n\n[TURING PROTOCOL WARNING] {post_result.correction}"
-
-                    tool_call_details.append({
-                        "name": name,
-                        "arguments": tc.function.arguments,
-                        "result": result,
-                    })
-                    if self._event_bus:
-                        self._event_bus.emit("tool.executed", tool=name, thread_id=thread_id, scope="main")
-                    try:
-                        await database.async_call(
-                            database.save_interaction_log,
-                            _time.time(), "tool_call", thread_id,
-                            self._main_pool.last_used,
-                            json.dumps({"tool": name, "arguments": tc.function.arguments}),
-                            result[:500], "ok",
-                        )
-                    except Exception:
-                        pass
-                    logger.debug("Tool %s -> %s", name, result[:200])
+                    tool_call_details.extend(outcome.call_details)
                     full_messages.append({
                         "role":         "tool",
                         "tool_call_id": tc.id,
-                        "content":      result,
+                        "content":      outcome.content,
                     })
                 continue  # next round
 

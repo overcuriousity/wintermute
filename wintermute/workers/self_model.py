@@ -19,7 +19,6 @@ import json
 import logging
 import time as _time
 import threading
-from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
@@ -114,7 +113,16 @@ class SelfModelProfiler:
             return
         try:
             metrics = await self._collect_metrics()
-            changes = self._auto_tune(metrics)
+            # Pre-fetch recent harvest logs asynchronously to avoid blocking in _auto_tune.
+            recent_harvests = None
+            try:
+                recent_harvests = await database.async_call(
+                    database.get_interaction_log,
+                    limit=5, action_filter="memory_harvest",
+                )
+            except Exception:
+                pass
+            changes = self._auto_tune(metrics, recent_harvests=recent_harvests)
             summary = await self._generate_summary(metrics, changes)
             self._summary = summary
 
@@ -207,8 +215,12 @@ class SelfModelProfiler:
     # Auto-tuning
     # ------------------------------------------------------------------
 
-    def _auto_tune(self, metrics: dict) -> list[str]:
-        """Apply heuristic tuning rules, return list of changes made."""
+    def _auto_tune(self, metrics: dict, recent_harvests: list | None = None) -> list[str]:
+        """Apply heuristic tuning rules, return list of changes made.
+
+        *recent_harvests* is an optional pre-fetched list of interaction_log
+        entries (passed from the async caller to avoid blocking DB calls).
+        """
         changes: list[str] = []
         timeout_rate = metrics.get("timeout_rate_pct", 0)
         avg_duration = metrics.get("avg_duration_seconds")
@@ -217,50 +229,40 @@ class SelfModelProfiler:
 
         # --- Sub-session timeout tuning ---
         if self._sub_sessions is not None:
-            from wintermute.core.sub_session import DEFAULT_TIMEOUT
-            current_timeout = getattr(self._sub_sessions, '_default_timeout', DEFAULT_TIMEOUT)
+            current_timeout = self._sub_sessions.default_timeout
 
             if timeout_rate > 30 and current_timeout < hi_timeout:
                 new_timeout = min(current_timeout + 60, hi_timeout)
-                self._sub_sessions._default_timeout = new_timeout
+                self._sub_sessions.default_timeout = new_timeout
                 changes.append(f"Increased sub-session timeout {current_timeout}s → {new_timeout}s (timeout_rate={timeout_rate}%)")
                 logger.info("[self_model] %s", changes[-1])
 
             elif timeout_rate < 5 and avg_duration and avg_duration < current_timeout * 0.4 and current_timeout > lo_timeout:
                 new_timeout = max(current_timeout - 60, lo_timeout)
-                self._sub_sessions._default_timeout = new_timeout
+                self._sub_sessions.default_timeout = new_timeout
                 changes.append(f"Decreased sub-session timeout {current_timeout}s → {new_timeout}s (timeout_rate={timeout_rate}%, avg_duration={avg_duration:.0f}s)")
                 logger.info("[self_model] %s", changes[-1])
 
         # --- Memory harvest threshold tuning ---
         if self._harvest is not None:
-            current_threshold = self._harvest._cfg.message_threshold
+            current_threshold = self._harvest.message_threshold
 
-            # Check for backlog: threads with accumulated messages above threshold.
-            has_backlog = any(
-                count >= current_threshold
-                for count in self._harvest._msg_counts.values()
-            ) and len(self._harvest._in_flight) > 0
-
-            if has_backlog and current_threshold > lo_harvest:
+            if self._harvest.has_backlog() and current_threshold > lo_harvest:
                 # Harvest can't keep up — decrease threshold to trigger sooner.
                 new_threshold = max(current_threshold - 5, lo_harvest)
-                self._harvest._cfg.message_threshold = new_threshold
+                self._harvest.message_threshold = new_threshold
                 changes.append(f"Decreased harvest threshold {current_threshold} → {new_threshold} (backlog detected)")
                 logger.info("[self_model] %s", changes[-1])
-            elif current_threshold < hi_harvest:
+            elif current_threshold < hi_harvest and recent_harvests is not None:
                 # Check recent harvests for low yield → increase threshold.
                 try:
-                    recent_harvests = database.get_interaction_log(
-                        limit=5, action_filter="memory_harvest",
-                    )
                     low_yield = (
                         len(recent_harvests) >= 3
                         and all(len(h.get("output", "")) < 50 for h in recent_harvests)
                     )
                     if low_yield:
                         new_threshold = min(current_threshold + 5, hi_harvest)
-                        self._harvest._cfg.message_threshold = new_threshold
+                        self._harvest.message_threshold = new_threshold
                         changes.append(f"Increased harvest threshold {current_threshold} → {new_threshold} (low yield)")
                         logger.info("[self_model] %s", changes[-1])
                 except Exception:

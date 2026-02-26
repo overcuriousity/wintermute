@@ -285,12 +285,91 @@ class TaskScheduler:
     # Crash recovery
     # ------------------------------------------------------------------
 
+    _MAX_MISSED_AGE_HOURS = 24  # Don't recover jobs missed more than 24h ago
+
     def _recover_missed(self) -> None:
-        """Log jobs that were loaded from the persistent store."""
+        """Detect and re-fire jobs that were missed during downtime.
+
+        APScheduler's misfire_grace_time handles some of this, but jobs whose
+        fire time fell entirely within the downtime window may not re-fire.
+        We explicitly check for jobs with a next_run_time in the past and
+        whose associated task has an ai_prompt, then fire them immediately.
+        One-time (DateTrigger) jobs that already ran are excluded because
+        APScheduler removes them after execution.
+        """
+        import asyncio
+        from datetime import datetime, timezone, timedelta
+
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(hours=self._MAX_MISSED_AGE_HOURS)
+        recovered = 0
+
         for job in self._scheduler.get_jobs():
             if job.next_run_time is None:
                 continue
-            logger.debug("Loaded job %s, next_run=%s", job.id, job.next_run_time)
+            # Normalise to UTC for comparison.
+            next_run = job.next_run_time
+            if next_run.tzinfo is None:
+                next_run = next_run.replace(tzinfo=timezone.utc)
+            else:
+                next_run = next_run.astimezone(timezone.utc)
+
+            if next_run >= now:
+                logger.debug("Loaded job %s, next_run=%s (upcoming)", job.id, next_run)
+                continue
+
+            if next_run < cutoff:
+                logger.info(
+                    "[scheduler] Skipping stale missed job %s (next_run=%s, older than %dh)",
+                    job.id, next_run, self._MAX_MISSED_AGE_HOURS,
+                )
+                continue
+
+            # This job's next_run_time is in the past but within the recovery window.
+            kw = job.kwargs or {}
+            ai_prompt = kw.get("ai_prompt")
+            task_id = kw.get("task_id", job.id)
+            thread_id = kw.get("thread_id")
+            background = kw.get("background", False)
+            message = kw.get("message", task_id)
+
+            if not ai_prompt and not thread_id:
+                logger.debug(
+                    "[scheduler] Missed job %s has no ai_prompt and no thread_id — skipping",
+                    job.id,
+                )
+                continue
+
+            logger.info(
+                "[scheduler] Recovering missed job %s (next_run=%s, missed by %.0fs)",
+                job.id, next_run, (now - next_run).total_seconds(),
+            )
+            # Schedule immediate async execution via the event loop.
+            self._loop_call_soon(
+                task_id, message, ai_prompt, thread_id, background,
+            )
+            recovered += 1
+
+        if recovered:
+            logger.info("[scheduler] Recovered %d missed job(s)", recovered)
+
+    def _loop_call_soon(self, task_id: str, message: str,
+                        ai_prompt: str | None, thread_id: str | None,
+                        background: bool) -> None:
+        """Schedule _fire_task on the event loop from the synchronous start() context."""
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                self._fire_task(task_id, message, ai_prompt, thread_id, background),
+                name=f"recover_{task_id}",
+            )
+        except RuntimeError:
+            # No running loop yet — defer via call_soon_threadsafe if possible.
+            logger.warning(
+                "[scheduler] No running event loop during recovery — job %s will "
+                "fire at its next scheduled time", task_id,
+            )
 
     # ------------------------------------------------------------------
     # Time parsing

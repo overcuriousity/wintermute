@@ -8,6 +8,7 @@ optional per-subscriber debounce to coalesce rapid-fire events.
 
 import asyncio
 import logging
+import threading
 import time as _time
 import uuid
 from collections import deque
@@ -35,15 +36,18 @@ class EventBus:
         self._debounce_timers: dict[str, asyncio.TimerHandle] = {}
         # Debounce pending events: sub_id -> Event (latest)
         self._debounce_pending: dict[str, Event] = {}
+        # Guard _subs mutations from concurrent emit/subscribe/unsubscribe.
+        self._lock = threading.Lock()
 
     def emit(self, event_type: str, **data: Any) -> None:
         """Fire-and-forget event emission. Never raises."""
         event = Event(event_type=event_type, data=data)
         self._history.append(event)
-        subs = self._subs.get(event_type)
+        with self._lock:
+            subs = dict(self._subs.get(event_type, {}))
         if not subs:
             return
-        for sub_id, (callback, debounce_ms) in list(subs.items()):
+        for sub_id, (callback, debounce_ms) in subs.items():
             if debounce_ms > 0:
                 self._debounce_emit(sub_id, callback, event, debounce_ms)
             else:
@@ -91,22 +95,24 @@ class EventBus:
                   debounce_ms: int = 0) -> str:
         """Subscribe to an event type. Returns subscription ID."""
         sub_id = f"sub_{uuid.uuid4().hex[:8]}"
-        self._subs.setdefault(event_type, {})[sub_id] = (callback, debounce_ms)
+        with self._lock:
+            self._subs.setdefault(event_type, {})[sub_id] = (callback, debounce_ms)
         logger.debug("EventBus: %s subscribed to %s (debounce=%dms)", sub_id, event_type, debounce_ms)
         return sub_id
 
     def unsubscribe(self, sub_id: str) -> None:
         """Remove a subscription by ID."""
-        for event_type, subs in self._subs.items():
-            if sub_id in subs:
-                del subs[sub_id]
-                # Clean up any pending debounce
-                handle = self._debounce_timers.pop(sub_id, None)
-                if handle:
-                    handle.cancel()
-                self._debounce_pending.pop(sub_id, None)
-                logger.debug("EventBus: %s unsubscribed from %s", sub_id, event_type)
-                return
+        with self._lock:
+            for event_type, subs in self._subs.items():
+                if sub_id in subs:
+                    del subs[sub_id]
+                    # Clean up any pending debounce
+                    handle = self._debounce_timers.pop(sub_id, None)
+                    if handle:
+                        handle.cancel()
+                    self._debounce_pending.pop(sub_id, None)
+                    logger.debug("EventBus: %s unsubscribed from %s", sub_id, event_type)
+                    return
 
     def history(self, event_type: Optional[str] = None,
                 since: Optional[float] = None,

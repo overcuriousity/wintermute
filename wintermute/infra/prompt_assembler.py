@@ -45,6 +45,8 @@ _tool_profiles: dict[str, dict] = {}
 
 # Cached parsed BASE_PROMPT sections — populated on first call to _get_sections().
 _cached_sections: list[tuple[str, set[str], str]] | None = None
+_cached_sections_mtime: float = 0.0
+_sections_lock = threading.Lock()
 
 # Self-model profiler — set by main.py at startup via set_self_model().
 _self_model_profiler = None
@@ -136,12 +138,24 @@ def _parse_sections(raw: str) -> list[tuple[str, set[str], str]]:
 
 
 def _get_sections() -> list[tuple[str, set[str], str]]:
-    """Return cached parsed BASE_PROMPT sections (parses once on first call)."""
-    global _cached_sections
-    if _cached_sections is None:
-        raw = prompt_loader.load("BASE_PROMPT.txt")
-        _cached_sections = _parse_sections(raw)
-    return _cached_sections
+    """Return cached parsed BASE_PROMPT sections.
+
+    Re-parses automatically when the underlying file's mtime changes.
+    Thread-safe via ``_sections_lock``.
+    """
+    global _cached_sections, _cached_sections_mtime
+    base_prompt_path = prompt_loader.PROMPTS_DIR / "BASE_PROMPT.txt"
+    try:
+        current_mtime = base_prompt_path.stat().st_mtime
+    except OSError:
+        current_mtime = 0.0
+
+    with _sections_lock:
+        if _cached_sections is None or current_mtime != _cached_sections_mtime:
+            raw = prompt_loader.load("BASE_PROMPT.txt")
+            _cached_sections = _parse_sections(raw)
+            _cached_sections_mtime = current_mtime
+        return _cached_sections
 
 
 def _assemble_base(available_tools: set[str] | None = None) -> str:

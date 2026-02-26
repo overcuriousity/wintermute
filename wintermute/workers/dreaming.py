@@ -543,7 +543,7 @@ async def run_dream_cycle(pool: "BackendPool") -> None:
         logger.exception("Dreaming: failed to consolidate skills")
 
     loop = asyncio.get_event_loop()
-    loop.run_in_executor(
+    await loop.run_in_executor(
         None, data_versioning.auto_commit, "dreaming: nightly consolidation",
     )
 

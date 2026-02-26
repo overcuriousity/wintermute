@@ -2,6 +2,14 @@
 SQLite database operations for conversation history and tasks.
 The APScheduler job store uses its own SQLite file (scheduler.db).
 
+Architecture note (global singleton pattern)
+---------------------------------------------
+This module exposes free functions (``save_message()``, ``load_active_messages()``,
+etc.) backed by a module-level SQLite database path (``CONVERSATION_DB``).
+Connections are cached per-thread via ``threading.local`` to avoid reopening
+on every call while remaining safe for concurrent access from multiple
+threads (each thread gets its own ``sqlite3.Connection``).
+
 All public functions are synchronous (they use sqlite3 directly).
 Async callers MUST use ``await async_call(fn, *args, **kwargs)`` to
 avoid blocking the event loop (SQLite's busy_timeout can stall for
@@ -11,6 +19,7 @@ up to 5 seconds under write contention).
 import asyncio
 import json
 import sqlite3
+import threading
 import time
 import logging
 from pathlib import Path
@@ -19,6 +28,9 @@ from typing import Any, Callable, Optional
 logger = logging.getLogger(__name__)
 
 CONVERSATION_DB = Path("data/conversation.db")
+
+# Per-thread cached connection — avoids reopening on every call.
+_local = threading.local()
 
 
 async def async_call(fn: Callable, *args: Any, **kwargs: Any) -> Any:
@@ -38,21 +50,38 @@ async def async_call(fn: Callable, *args: Any, **kwargs: Any) -> Any:
 def thread_has_messages(thread_id: str = "default") -> bool:
     """Return True if the thread has any non-archived messages."""
     conn = _connect()
-    try:
-        row = conn.execute(
-            "SELECT 1 FROM messages WHERE thread_id=? AND archived=0 LIMIT 1",
-            (thread_id,),
-        ).fetchone()
-        return row is not None
-    finally:
-        conn.close()
+    row = conn.execute(
+        "SELECT 1 FROM messages WHERE thread_id=? AND archived=0 LIMIT 1",
+        (thread_id,),
+    ).fetchone()
+    return row is not None
 
 
 def _connect() -> sqlite3.Connection:
-    """Open a WAL-mode connection with a 5-second busy timeout."""
+    """Return a WAL-mode connection, cached per-thread.
+
+    The connection is kept open for the lifetime of the thread so that
+    repeated calls avoid the overhead of ``sqlite3.connect()`` +
+    ``PRAGMA`` setup on every query.  If the cached connection is
+    broken the cache entry is discarded and a fresh one is returned.
+    """
+    conn: sqlite3.Connection | None = getattr(_local, "conn", None)
+    if conn is not None:
+        try:
+            conn.execute("SELECT 1")
+            return conn
+        except sqlite3.Error:
+            # Connection went stale — drop and reconnect.
+            try:
+                conn.close()
+            except Exception:
+                pass
+            _local.conn = None
+
     conn = sqlite3.connect(CONVERSATION_DB)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
+    _local.conn = conn
     return conn
 
 

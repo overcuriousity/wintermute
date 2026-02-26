@@ -40,5 +40,6 @@ The debug panel is backed by a REST API:
 | DELETE | `/api/debug/tasks/{task_id}` | Delete a task |
 | GET | `/api/debug/interaction-log` | List interaction log entries (Turing Protocol, dreaming, embedding calls, Qdrant operations) |
 | GET | `/api/debug/interaction-log/{id}` | Get a specific interaction log entry |
+| GET | `/api/debug/memory` | Get memory store stats and search results (query: `q`, `k`) |
 | GET | `/api/debug/outcomes` | List sub-session outcomes with aggregate stats (supports `status`, `limit`, `offset` query params) |
 | GET | `/api/debug/stream` | Server-sent events stream for live panel updates |

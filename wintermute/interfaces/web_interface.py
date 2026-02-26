@@ -1556,7 +1556,7 @@ class WebInterface:
             await self._llm.reset_session(thread_id)
             from wintermute.infra import prompt_loader
             try:
-                seed_prompt = prompt_loader.load_seed(self._llm._seed_language)
+                seed_prompt = prompt_loader.load_seed(self._llm.seed_language)
                 await self._llm.enqueue_system_event(seed_prompt, thread_id)
             except Exception:  # noqa: BLE001
                 pass
@@ -1766,19 +1766,20 @@ class WebInterface:
         query = request.query.get("q", "")
         top_k = int(request.query.get("k", "5"))
 
-        result: dict = {
-            "backend": memory_store.stats().get("backend", "unknown"),
-            "count": memory_store.count(),
-            "vector_enabled": memory_store.is_vector_enabled(),
-            "top_k": memory_store.get_top_k(),
-            "threshold": memory_store.get_threshold(),
-            "stats": memory_store.stats(),
-        }
+        def _build_result() -> dict:
+            r: dict = {
+                "backend": memory_store.stats().get("backend", "unknown"),
+                "count": memory_store.count(),
+                "vector_enabled": memory_store.is_vector_enabled(),
+                "top_k": memory_store.get_top_k(),
+                "threshold": memory_store.get_threshold(),
+                "stats": memory_store.stats(),
+            }
+            if query:
+                r["results"] = memory_store.search(query, top_k=top_k)
+            return r
 
-        if query:
-            results = memory_store.search(query, top_k=top_k)
-            result["results"] = results
-
+        result = await asyncio.get_running_loop().run_in_executor(None, _build_result)
         return self._json(result)
 
     # ------------------------------------------------------------------
