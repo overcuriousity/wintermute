@@ -29,7 +29,7 @@ import json
 import logging
 import re
 import time as _time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, TYPE_CHECKING
 
 from wintermute.infra import database

@@ -383,6 +383,9 @@ reflection:
   consecutive_failure_limit: 3            # Auto-pause tasks after N consecutive failures
   lookback_seconds: 86400                 # 24h window for pattern detection
   min_result_length: 50                   # Below this = "no meaningful output" (stale task check)
+  main_turn_batch_threshold: 15          # Also trigger after N main-thread turns
+  synthesis_min_cluster_size: 3          # Min sessions in a tool-set cluster to propose a skill
+  synthesis_min_outcomes: 20             # Min completed outcomes before synthesis runs
 
 
 # ── Self-Model (Operational Self-Awareness) ─────────────────────────
