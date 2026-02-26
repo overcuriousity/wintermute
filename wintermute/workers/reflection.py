@@ -134,6 +134,9 @@ class ReflectionLoop:
         self._checked_failures: set[str] = set()
         self._self_model: object | None = None
         self._main_turn_count: int = 0
+        # Timestamp of last synthesis run (epoch seconds). 0.0 is a sentinel
+        # meaning "never run", intentionally allowing the first synthesis after
+        # construction (or after a loop restart) to bypass the cooldown check.
         self._last_synthesis_ts: float = 0.0
 
     def inject_self_model(self, profiler) -> None:
@@ -227,7 +230,8 @@ class ReflectionLoop:
         if findings and self._pool and self._pool.enabled:
             await self._run_analysis(findings)
         if self._pool and self._pool.enabled and self._sub_sessions:
-            await self._run_synthesis()
+            if _time.time() - self._last_synthesis_ts >= 86400:
+                await self._run_synthesis()
         if self._self_model:
             await self._self_model.update(findings)
         # Flush accumulated skill read counts to YAML.
@@ -631,10 +635,6 @@ class ReflectionLoop:
         """Detect recurring successful patterns and propose new skills."""
         since = _time.time() - self._cfg.lookback_seconds
 
-        # Gate: cooldown (24h since last synthesis).
-        if _time.time() - self._last_synthesis_ts < 86400:
-            return
-
         try:
             outcomes = await database.async_call(
                 database.get_outcomes_since, since,
@@ -683,9 +683,14 @@ class ReflectionLoop:
         novel_clusters: dict[frozenset[str], list[dict]] = {}
         for tool_set, sessions in viable.items():
             # Check if any existing skill mentions all tools in the set.
+            # Use word-boundary matching to avoid false positives where a tool
+            # name is a substring of another (e.g. "shell" matching "execute_shell").
             covered = False
             for _skill_name, skill_text in existing_skill_texts.items():
-                if all(t in skill_text for t in tool_set):
+                if all(
+                    re.search(r'\b' + re.escape(t) + r'\b', skill_text)
+                    for t in tool_set
+                ):
                     covered = True
                     break
             if not covered:
@@ -729,7 +734,7 @@ class ReflectionLoop:
         try:
             response = await self._pool.call(
                 messages=[{"role": "user", "content": prompt_text}],
-                max_tokens_override=512,
+                max_tokens_override=1024,
             )
         except Exception:
             logger.exception("[reflection] Synthesis LLM call failed")
@@ -739,22 +744,39 @@ class ReflectionLoop:
             return
 
         text = response.choices[0].message.content or ""
-        self._last_synthesis_ts = _time.time()
 
-        # Extract skill_proposals from JSON.
+        # Extract skill_proposals from JSON using brace-depth tracking to
+        # correctly handle nested objects within the proposals array.
         proposals = []
-        matches = re.findall(r'\{[^{}]*"skill_proposals"\s*:\s*\[.*?\]\s*\}', text, re.DOTALL)
-        if matches:
-            try:
-                parsed = json.loads(matches[-1])
-                proposals = parsed.get("skill_proposals", [])
-            except (json.JSONDecodeError, ValueError):
-                pass
+        skill_key = '"skill_proposals"'
+        idx = text.find(skill_key)
+        if idx != -1:
+            start = text.rfind("{", 0, idx)
+            if start != -1:
+                depth = 0
+                end = None
+                for pos in range(start, len(text)):
+                    ch = text[pos]
+                    if ch == "{":
+                        depth += 1
+                    elif ch == "}":
+                        depth -= 1
+                        if depth == 0:
+                            end = pos + 1
+                            break
+                if end is not None:
+                    candidate = text[start:end]
+                    try:
+                        parsed = json.loads(candidate)
+                        proposals = parsed.get("skill_proposals", [])
+                    except (json.JSONDecodeError, ValueError):
+                        pass
 
         if not proposals:
             logger.info("[reflection] Synthesis: no skill proposals returned")
             return
 
+        self._last_synthesis_ts = _time.time()
         logger.info("[reflection] Synthesis: %d skill proposal(s)", len(proposals))
 
         # Log to interaction_log.
@@ -782,9 +804,12 @@ class ReflectionLoop:
         # Spawn one mutation per proposal (cap at 2 per cycle).
         for proposal in proposals[:2]:
             name = proposal.get("name", "unnamed")
-            summary = proposal.get("summary", "")
+            summary = proposal.get("summary", "").strip()
             procedure = proposal.get("procedure", "")
             if name and procedure:
-                await self._spawn_mutation(
-                    f"Create skill '{name}': {summary}\n\nProcedure:\n{procedure}"
-                )
+                # Build objective string, omitting summary if it's empty/whitespace.
+                objective = f"Create skill '{name}'"
+                if summary:
+                    objective += f": {summary}"
+                objective += f"\n\nProcedure:\n{procedure}"
+                await self._spawn_mutation(objective)

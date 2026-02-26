@@ -21,6 +21,7 @@ import logging
 import random
 import time as _time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from wintermute.infra import database
@@ -570,7 +571,13 @@ class LLMThread:
                         try:
                             args = json.loads(tc.get("arguments", "{}"))
                             p = args.get("path", "")
-                            if "data/skills/" in p and p.endswith(".md"):
+                            parts = Path(p).parts
+                            if (
+                                "data" in parts
+                                and "skills" in parts
+                                and parts.index("skills") == parts.index("data") + 1
+                                and p.endswith(".md")
+                            ):
                                 import re as _re
                                 m = _re.search(r'data/skills/([^/]+)\.md', p)
                                 if m:

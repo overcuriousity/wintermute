@@ -962,7 +962,7 @@ def _tool_query_telemetry(inputs: dict, **_kw) -> str:
             # Read raw YAML metrics.
             raw_metrics = {}
             try:
-                yaml_path = Path(_self_model_profiler._cfg.yaml_path)
+                yaml_path = _self_model_profiler.yaml_path
                 if yaml_path.exists():
                     import yaml
                     raw_metrics = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
