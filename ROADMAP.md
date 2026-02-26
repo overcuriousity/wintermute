@@ -132,45 +132,17 @@ Skills are `.md` files the LLM reads. The system can't:
 
 ## Roadmap Phases
 
-### Phase 2: Self-Model
+### ~~Phase 2: Self-Model~~ ✅ DONE
 
-**Structured self-knowledge maintained by the reflection cycle:**
+Operational self-awareness profiler (`wintermute/workers/self_model.py`) runs inside the reflection cycle:
 
-A `data/self_model.yaml` file containing:
+- **Metrics collection:** Sub-session success/timeout/failure rates, average duration, top-5 tools (24h), compaction/harvest/inference counts from `interaction_log`
+- **Auto-tuning:** Adjusts sub-session timeout (±60s based on timeout rate) and memory harvest threshold (±5 based on backlog/yield) within configured safe bounds — applied live, no restart needed
+- **LLM summary:** One-shot prose summary (via `SELF_MODEL_SUMMARY.txt` prompt) cached and injected into the main-thread system prompt as `# Self-Assessment`; fallback to structured text if LLM unavailable
+- **Persistence:** State written to `data/self_model.yaml` with auto-commit to the data git repo; survives restarts
+- **Visibility:** `/status` shows summary + last tuning changes; `/reflect` triggers immediate update
 
-```yaml
-capabilities:
-  shell_commands: {success_rate: 0.92, common_failures: ["timeout on network ops"]}
-  web_search: {success_rate: 0.78, note: "SearXNG instance unreliable after midnight"}
-
-performance:
-  avg_sub_session_duration_s: 45
-  avg_tool_calls_per_session: 3.2
-  compaction_frequency: "every ~40 messages"
-  token_budget_utilization: 0.73
-
-operational:
-  peak_hours: ["09:00-12:00", "14:00-17:00"]  # when user is active
-  quiet_hours: ["01:00-07:00"]  # good for background work
-  backend_latency:
-    base: {p50_ms: 1200, p99_ms: 4500}
-    sub_sessions: {p50_ms: 800, p99_ms: 3000}
-
-skills:
-  most_used: ["calendar.md", "deploy-docker.md"]
-  never_used: ["legacy-backup.md"]
-
-tasks:
-  active: 12
-  completion_rate_30d: 0.68
-  avg_attempts_to_complete: 2.1
-```
-
-The reflection cycle updates this file. The prompt assembler includes a compact summary in the system prompt. The LLM can then make informed decisions: "my web search is unreliable at night, I'll schedule this for morning" or "this skill has never been used, I can skip loading it."
-
-**Weak-LLM optimization:** The self-model is injected as structured YAML, not prose. Small models parse structured data more reliably than narrative self-descriptions. The self-model also enables the system to auto-tune its own parameters (compaction threshold, sub-session timeout defaults) without requiring the user to configure them.
-
-**Prerequisite:** Phase 1 (reflection cycle generates self-model updates). Also requires adding `inference.completed` events with token count/duration to the event bus (incremental addition to existing infrastructure).
+The original design envisioned a richer YAML schema (per-capability success rates, backend latency percentiles, peak/quiet hours). The current implementation focuses on the metrics available from existing DB tables. Extending to per-capability tracking is incremental and can be added as Phase 3 (skill evolution) provides usage data.
 
 ### Phase 3: Skill Evolution
 
@@ -194,13 +166,13 @@ Completed:
   ✅ Event Bus
   ✅ Audit Infrastructure (interaction_log + sub_session_outcomes + /debug)
   ✅ Phase 1: Reflection Cycle
+  ✅ Phase 2: Self-Model
 
 Remaining:
-  Phase 2: Self-Model        (depends on Phase 1 ✅)
   Phase 3: Skill Evolution   (depends on Phase 1 ✅)
 ```
 
-Phases 2 and 3 can be developed in parallel — both depend on the now-operational reflection cycle.
+Phase 3 is the sole remaining phase — all prerequisites are satisfied.
 
 ## Design Principles
 

@@ -9,6 +9,9 @@ You are reviewing the recent operational history of an AI assistant system.
 ## Active Tasks
 {active_tasks}
 
+## Skill Usage Stats
+{skill_stats}
+
 Based on this data, provide brief observations:
 1. What patterns do you see in the failures?
 2. Are any tasks misconfigured or need adjustment?

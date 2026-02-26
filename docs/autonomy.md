@@ -39,7 +39,7 @@ When the **flat-file backend** is active, dreaming uses the original LLM consoli
 
 In both cases:
 - Tasks: LLM returns JSON actions (complete, update, keep) applied via DB; completed tasks older than 30 days are purged
-- Skills: deduplicates overlapping skills, then condenses each to ~150 tokens while preserving the first-line summary (used in the skills TOC)
+- Skills: auto-retires skills unused for 90+ days (moved to `data/skills/.archive/`), then deduplicates overlapping skills, then condenses each to ~150 tokens while preserving the first-line summary (used in the skills TOC)
 
 Configurable via `memory.dreaming` in `config.yaml` (vector-native settings) and `dreaming` (schedule). Prompts are stored in `data/prompts/` and can be customised. See [system-prompts.md](system-prompts.md#customisable-prompt-templates).
 
@@ -102,7 +102,7 @@ An event-driven feedback loop that closes the observe→reflect→adapt cycle. T
 | `consecutive_failures` | Task with N+ consecutive failed sub-sessions | Auto-pauses the task |
 | `timeout_pattern` | Task with 3+ consecutive timeouts | Warning (suggests longer timeout or simpler prompt) |
 | `stale_task` | Scheduled task producing very short output | Warning (may need better `ai_prompt`) |
-| `skill_correlation` | Skill loaded in 3+ failed sub-sessions | Warning + event (flags skill for review) |
+| `skill_correlation` | Skill loaded in 3+ failed sub-sessions | Warning + event (flags skill for review, enriched with lifetime stats from skill_stats) |
 
 ### Visibility
 
@@ -124,6 +124,7 @@ Runs inside the reflection cycle (no separate asyncio task) and builds an operat
 - Sub-session success / timeout / failure rates and average duration (from `sub_session_outcomes`)
 - Top 5 most-used tools in the last 24h (from `tools_used` JSON in outcomes)
 - Compaction, harvest, and inference counts (from `interaction_log`)
+- Skill metrics: total count, total reads, skills unused for 90+ days (from `skill_stats`)
 
 **Auto-tuning** adjusts two live parameters within configured safe bounds each cycle:
 
@@ -143,6 +144,56 @@ Changes are applied immediately to the live `SubSessionManager` and `MemoryHarve
 **Visibility:** `/status` shows the self-model summary, last-updated timestamp, and any tuning changes from the last cycle. `/reflect` triggers an immediate cycle and prints the updated self-assessment inline.
 
 **Configuration:** See `self_model:` section in `config.yaml`.
+
+## Skill Evolution
+
+**Module:** `wintermute/workers/skill_stats.py`
+
+Skills are no longer static files — they are tracked, correlated with outcomes, auto-retired when stale, and flagged when problematic. Skill stats are persisted to `data/skill_stats.yaml` (versioned in the data git repo alongside the skills themselves).
+
+### Usage Tracking
+
+Every `read_file` call on a `data/skills/*.md` path increments the skill's read counter and updates its `last_read` timestamp. Every `add_skill` call increments the skill's version counter. This is transparent to the LLM — no tool schemas are changed.
+
+### Outcome Correlation
+
+When a sub-session completes or fails, the system scans its interaction log for skill file reads and records the session outcome against each loaded skill. Over time this builds a per-skill success/failure profile:
+
+```yaml
+skills:
+  calendar:
+    created: 1708900000.0
+    last_read: 1709100000.0
+    read_count: 17
+    sessions_loaded: 12
+    success_count: 9
+    failure_count: 3
+    last_updated: 1709000000.0
+    version: 3
+```
+
+### Auto-Retirement
+
+During nightly dreaming (before deduplication), skills not read in the last 90 days are automatically moved to `data/skills/.archive/`. The archive directory is inside `data/` so it is auto-committed to the data git repo. Archived skills vanish from the skills TOC automatically (the assembler only globs top-level `*.md` files). No LLM call is involved — this is a pure bookkeeping operation.
+
+### Reflection Integration
+
+The reflection cycle uses skill stats in two ways:
+
+1. **Rule engine enrichment:** When Rule 4 (skill failure correlation) fires, findings are enriched with lifetime stats — total sessions loaded and failure rate percentage — giving the LLM analysis richer context for its recommendations.
+2. **Analysis context:** The LLM analysis prompt includes a skill stats summary (reads, sessions, failure rates, versions) so it can recommend new skills or flag problematic ones with data.
+
+### Self-Model Integration
+
+The self-model profiler collects three skill metrics each cycle: total skill count, total reads across all skills, and number of skills unused for 90+ days. These flow into the self-assessment summary automatically.
+
+### Changelog
+
+When an existing skill is overwritten via `add_skill`, a `## Changelog` section is appended with the date. Dreaming condensation naturally folds old changelog entries. Git history in the data repo remains the authoritative audit trail.
+
+### Persistence
+
+Stats are flushed to YAML at the end of each reflection cycle and auto-committed to the data git repo. The file survives DB resets and is human-readable and editable.
 
 ## Sub-sessions and Workflow DAG
 

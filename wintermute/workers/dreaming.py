@@ -172,6 +172,29 @@ async def _consolidate_skills(pool: "BackendPool") -> None:
     if not skills:
         return
 
+    # ── Step 0: Auto-retire unused skills ────────────────────────────────────
+    try:
+        from wintermute.workers import skill_stats
+        unused = skill_stats.get_unused_skills(days=90)
+        if unused:
+            archive_dir = skills_dir / ".archive"
+            archive_dir.mkdir(exist_ok=True)
+            for name in unused:
+                src = skills_dir / f"{name}.md"
+                if src.exists():
+                    src.rename(archive_dir / f"{name}.md")
+                    skills.pop(name, None)
+                    skill_stats.remove_skill(name)
+                    logger.info("Dreaming: retired unused skill '%s' → .archive/", name)
+            # Flush immediately so removals survive a restart before the next
+            # reflection cycle (which is the only other flush point).
+            skill_stats.flush()
+    except Exception:
+        logger.debug("Dreaming: skill retirement failed", exc_info=True)
+
+    if not skills:
+        return
+
     # ── Step 1: Deduplication ────────────────────────────────────────────────
     if len(skills) > 1:
         try:

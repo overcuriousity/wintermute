@@ -40,6 +40,7 @@ from wintermute.workers.dreaming import DreamingConfig, DreamingLoop
 from wintermute.workers.memory_harvest import MemoryHarvestConfig, MemoryHarvestLoop
 from wintermute.workers.reflection import ReflectionConfig, ReflectionLoop
 from wintermute.workers.self_model import SelfModelConfig, SelfModelProfiler
+from wintermute.workers import skill_stats
 from wintermute.workers.scheduler_thread import TaskScheduler, SchedulerConfig
 from wintermute.core.sub_session import SubSessionManager
 from wintermute.update_checker import UpdateCheckerConfig, UpdateCheckerLoop
@@ -317,6 +318,9 @@ async def main() -> None:
     ensure_data_dirs()
     prompt_loader.validate_all()
     database.init_db()
+
+    # Initialize skill stats (YAML-backed, no LLM).
+    skill_stats.init()
 
     # Initialize vector memory store (before pool construction).
     from wintermute.infra import memory_store
