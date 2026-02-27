@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import random
+import re
 import time as _time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -661,8 +662,7 @@ class LLMThread:
                                 and parts.index("skills") == parts.index("data") + 1
                                 and p.endswith(".md")
                             ):
-                                import re as _re
-                                m = _re.search(r'data/skills/([^/]+)\.md', p)
+                                m = re.search(r'data/skills/([^/]+)\.md', p)
                                 if m:
                                     skills_loaded.append(m.group(1))
                         except Exception:

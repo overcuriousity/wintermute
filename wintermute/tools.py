@@ -16,8 +16,10 @@ Tool categories
 import json
 import logging
 import os
+import re
 import subprocess
 import time
+import urllib.parse
 from collections import deque
 from html.parser import HTMLParser
 from pathlib import Path
@@ -27,10 +29,7 @@ from urllib.request import Request, urlopen
 
 from wintermute.infra import database
 from wintermute.infra import prompt_assembler
-
 logger = logging.getLogger(__name__)
-
-DATA_DIR = Path("data")
 
 SEARXNG_URL = os.environ.get("WINTERMUTE_SEARXNG_URL", "http://127.0.0.1:8888")
 
@@ -40,10 +39,6 @@ SEARXNG_URL = os.environ.get("WINTERMUTE_SEARXNG_URL", "http://127.0.0.1:8888")
 
 _TOOL_CALL_LOG: deque[dict] = deque(maxlen=500)
 
-
-def get_tool_call_log() -> list[dict]:
-    """Return a copy of the tool call log, newest first."""
-    return list(reversed(_TOOL_CALL_LOG))
 
 # Maximum nesting depth for sub-session spawning.
 # 0 = main agent, 1 = sub-session, 2 = sub-sub-session (max).
@@ -533,6 +528,12 @@ def register_task_scheduler(ensure_fn, remove_fn, list_fn) -> None:
     _task_scheduler_list = list_fn
 
 
+def set_searxng_url(url: str) -> None:
+    """Override the default SearXNG URL (called from main.py config)."""
+    global SEARXNG_URL
+    SEARXNG_URL = url
+
+
 def register_sub_session_manager(fn) -> None:
     """Called once by SubSessionManager to provide the spawn hook."""
     global _sub_session_spawn
@@ -683,7 +684,6 @@ def _tool_task(inputs: dict, thread_id: Optional[str] = None,
             schedule_config = None
             schedule_desc = None
             if schedule_type:
-                from wintermute.workers.scheduler_thread import _describe_schedule
                 sched_inputs = {k: inputs[k] for k in
                     ("schedule_type", "at", "day_of_week", "day_of_month",
                      "interval_seconds", "window_start", "window_end")
@@ -1007,7 +1007,6 @@ class _HTMLTextExtractor(HTMLParser):
             self._pieces.append(data)
 
     def get_text(self) -> str:
-        import re
         text = "".join(self._pieces)
         # Collapse runs of whitespace but preserve paragraph breaks.
         text = re.sub(r"[ \t]+", " ", text)
@@ -1022,12 +1021,32 @@ def _html_to_text(html: str) -> str:
     return parser.get_text()
 
 
+def _describe_schedule(inputs: dict) -> str:
+    """Build a human-readable schedule string from structured inputs."""
+    t = inputs.get("schedule_type", "once")
+    if t == "once":
+        return f"once at {inputs.get('at', '?')}"
+    if t == "daily":
+        return f"daily at {inputs.get('at', '?')}"
+    if t == "weekly":
+        return f"weekly on {inputs.get('day_of_week', '?')} at {inputs.get('at', '?')}"
+    if t == "monthly":
+        return f"monthly on day {inputs.get('day_of_month', '?')} at {inputs.get('at', '?')}"
+    if t == "interval":
+        secs = inputs.get("interval_seconds", "?")
+        desc = f"every {secs}s"
+        ws, we = inputs.get("window_start"), inputs.get("window_end")
+        if ws and we:
+            desc += f" from {ws} to {we}"
+        return desc
+    return str(inputs)
+
+
 # ---------------------------------------------------------------------------
 # Research tool implementations
 # ---------------------------------------------------------------------------
 
 def _tool_search_web(inputs: dict, **_kw) -> str:
-    import urllib.parse
     query = inputs["query"]
     max_results = int(inputs.get("max_results", 5))
     logger.info("search_web: %s", query)

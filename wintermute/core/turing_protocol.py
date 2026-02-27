@@ -60,8 +60,11 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import re
 import time as _time
+from collections import OrderedDict
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
 
@@ -70,12 +73,14 @@ if TYPE_CHECKING:
 
 from wintermute.infra import database
 from wintermute.infra.llm_utils import strip_fences
+from wintermute.infra import prompt_loader
+from wintermute.infra import paths as _paths
 
 from wintermute.tools import TOOL_SCHEMAS, _NL_SCHEMA_MAP
 
 logger = logging.getLogger(__name__)
 
-HOOKS_FILE = Path("data") / "TURING_PROTOCOL_HOOKS.txt"
+HOOKS_FILE = _paths.HOOKS_FILE
 
 # Cache for file-loaded hooks: (mtime, file_hooks_dict).
 # Avoids re-reading + re-parsing the file on every protocol call.
@@ -462,7 +467,6 @@ def _load_hooks(
 
 def _build_stage1_system_prompt(hooks: list[TuringHook]) -> str:
     """Assemble the Stage 1 system prompt from all enabled hooks' detection_prompt fields."""
-    from wintermute.infra import prompt_loader
     bullets = "\n".join(h.detection_prompt for h in hooks)
     return prompt_loader.load("TURING_STAGE1.txt", detection_bullets=bullets)
 
@@ -701,7 +705,6 @@ def validate_repetition_loop(context: dict, detection_result: dict) -> bool:
     if not recent:
         return False
 
-    from difflib import SequenceMatcher
     for prev in recent:
         if len(prev) < 50:
             continue
@@ -752,7 +755,6 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook
     tool_schema = _get_tool_schema(tool_name, nl_tools=nl_tools) if tool_name else ""
 
     # Group violations by hook type to merge same-type violations.
-    from collections import OrderedDict
     grouped: OrderedDict[str, list[dict]] = OrderedDict()
     for violation in confirmed:
         vtype = violation.get("type", "")
@@ -855,7 +857,6 @@ def _get_phantom_tool_schemas(violation: dict, nl_tools: "set[str] | None" = Non
     `add_skill`) and returns their schemas concatenated.  Falls back to a
     generic message if no tools are identified.
     """
-    import re
     reason = violation.get("reason", "")
     # Match backtick-quoted tool names and bare tool names from the known set.
     known_tools = {t["function"]["name"] for t in TOOL_SCHEMAS}
@@ -1291,8 +1292,6 @@ async def _check_objective_completion(
     Makes a single LLM call using the TURING_OBJECTIVE_COMPLETION.txt
     prompt template.  Returns a violation dict if the objective is NOT met.
     """
-    from wintermute.infra import prompt_loader
-
     objective = context.get("objective", "")
     assistant_response = context.get("assistant_response", "")
     if not objective or not assistant_response:

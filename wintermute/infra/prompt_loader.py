@@ -6,11 +6,12 @@ No hardcoded fallbacks — a missing file is a startup error.
 """
 
 import logging
-from pathlib import Path
+
+from wintermute.infra import paths as _paths
 
 logger = logging.getLogger(__name__)
 
-PROMPTS_DIR = Path("data/prompts")
+PROMPTS_DIR = _paths.PROMPTS_DIR
 
 REQUIRED_FILES = [
     "BASE_PROMPT.txt",
