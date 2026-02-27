@@ -189,6 +189,8 @@ class BackendPool:
                         raise
                     break  # try next backend
 
+        if last_error is None:
+            last_error = RuntimeError("All backends exhausted without a concrete error")
         raise last_error  # type: ignore[misc]
 
 
