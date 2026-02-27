@@ -976,7 +976,7 @@ class QdrantBackend:
         ]
 
     def replace_all(self, entries: list[str]) -> None:
-        from qdrant_client.models import PointStruct
+        from qdrant_client.models import Filter, HasIdCondition, PointStruct
 
         t0 = time.time()
         entries = [e.strip() for e in entries if e.strip()]
@@ -1036,7 +1036,6 @@ class QdrantBackend:
                 },
             ))
 
-        from qdrant_client.models import Filter, HasIdCondition
         # Delete points no longer present (avoids delete_collection race window).
         with self._lock:
             if new_ids:
