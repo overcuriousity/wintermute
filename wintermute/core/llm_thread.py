@@ -1067,6 +1067,8 @@ class LLMThread:
             tp_check=_tp_check_main if tp_enabled else None,
         )
 
+        MAX_EMPTY_RETRIES = 3
+        empty_retries = 0
         while True:
             # Trim oldest tool results if accumulated context exceeds budget.
             self._trim_tool_results(full_messages, token_budget)
@@ -1077,6 +1079,9 @@ class LLMThread:
             )
 
             if not response.choices:
+                empty_retries += 1
+                if empty_retries >= MAX_EMPTY_RETRIES:
+                    raise RuntimeError("LLM returned empty choices repeatedly")
                 logger.warning("LLM returned empty choices, retrying")
                 logger.debug("Empty choices raw response: %s", response)
                 full_messages.append({"role": "assistant", "content": ""})
