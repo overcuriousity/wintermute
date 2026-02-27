@@ -888,28 +888,28 @@ class QdrantBackend:
             raise RuntimeError("Embedding call returned no vectors")
         t0 = time.time()
         now = time.time()
-        # Try to preserve existing metadata (access_count, last_accessed, source, created_at).
-        existing_payload: dict = {}
-        try:
-            with self._lock:
+        # Retrieve existing metadata and upsert under a single lock acquisition to
+        # prevent a concurrent add() from overwriting metadata with stale data.
+        with self._lock:
+            existing_payload: dict = {}
+            try:
                 pts = self._client.retrieve(
                     collection_name=self._collection,
                     ids=[eid], with_payload=True, with_vectors=False,
                 )
-            if pts:
-                existing_payload = pts[0].payload or {}
-        except Exception as exc:  # noqa: BLE001
-            # Point may not exist yet — use defaults.  Log unexpected failures.
-            if "not found" not in str(exc).lower():
-                logger.debug("Failed to retrieve existing metadata for point %s: %s", eid, exc)
-        payload = {
-            "text": entry.strip(),
-            "created_at": existing_payload.get("created_at", now),
-            "last_accessed": existing_payload.get("last_accessed", now),
-            "access_count": existing_payload.get("access_count", 0),
-            "source": existing_payload.get("source", source),
-        }
-        with self._lock:
+                if pts:
+                    existing_payload = pts[0].payload or {}
+            except Exception as exc:  # noqa: BLE001
+                # Point may not exist yet — use defaults.  Log unexpected failures.
+                if "not found" not in str(exc).lower():
+                    logger.debug("Failed to retrieve existing metadata for point %s: %s", eid, exc)
+            payload = {
+                "text": entry.strip(),
+                "created_at": existing_payload.get("created_at", now),
+                "last_accessed": existing_payload.get("last_accessed", now),
+                "access_count": existing_payload.get("access_count", 0),
+                "source": existing_payload.get("source", source),
+            }
             self._client.upsert(
                 collection_name=self._collection,
                 points=[PointStruct(
