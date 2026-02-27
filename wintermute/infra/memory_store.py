@@ -184,9 +184,10 @@ class FTS5Backend:
             conn = self._connect()
             try:
                 conn.execute(
-                    "INSERT OR REPLACE INTO memories_meta "
+                    "INSERT INTO memories_meta "
                     "(entry_id, text, created_at, last_accessed, access_count, source) "
-                    "VALUES (?, ?, ?, ?, 0, ?)",
+                    "VALUES (?, ?, ?, ?, 0, ?) "
+                    "ON CONFLICT(entry_id) DO UPDATE SET text = excluded.text",
                     (eid, entry.strip(), now, now, source),
                 )
                 conn.commit()
@@ -257,14 +258,36 @@ class FTS5Backend:
         return [{"id": r[0], "text": r[1], "score": 1.0} for r in rows]
 
     def replace_all(self, entries: list[str]) -> None:
+        now = time.time()
+        cleaned = [(e.strip(), _make_id(e)) for e in entries if e.strip()]
+        new_ids = [eid for _, eid in cleaned]
         with self._lock:
             conn = self._connect()
             try:
-                conn.execute("DELETE FROM memories_meta")
-                now = time.time()
+                # Delete entries no longer present.
+                # Use SET-DIFFERENCE delete in batches to stay under SQLite's
+                # parameter limit (~999 variables per statement).
+                if new_ids:
+                    cur = conn.execute("SELECT entry_id FROM memories_meta")
+                    existing_ids = [row[0] for row in cur.fetchall()]
+                    new_ids_set = set(new_ids)
+                    to_delete = [eid for eid in existing_ids if eid not in new_ids_set]
+                    for i in range(0, len(to_delete), 900):
+                        batch = to_delete[i : i + 900]
+                        placeholders = ",".join("?" for _ in batch)
+                        conn.execute(
+                            f"DELETE FROM memories_meta WHERE entry_id IN ({placeholders})",
+                            batch,
+                        )
+                else:
+                    conn.execute("DELETE FROM memories_meta")
+                # Upsert: insert new entries, update text for existing (preserve metadata).
                 conn.executemany(
-                    "INSERT INTO memories_meta (entry_id, text, created_at) VALUES (?, ?, ?)",
-                    [(_make_id(e), e.strip(), now) for e in entries if e.strip()],
+                    "INSERT INTO memories_meta "
+                    "(entry_id, text, created_at, last_accessed, access_count, source) "
+                    "VALUES (?, ?, ?, ?, 0, 'dreaming') "
+                    "ON CONFLICT(entry_id) DO UPDATE SET text = excluded.text",
+                    [(eid, text, now, now) for text, eid in cleaned],
                 )
                 conn.commit()
             finally:
@@ -426,9 +449,11 @@ class LocalVectorBackend:
             conn = self._connect()
             try:
                 conn.execute(
-                    "INSERT OR REPLACE INTO local_vectors "
+                    "INSERT INTO local_vectors "
                     "(entry_id, text, vector, created_at, last_accessed, access_count, source) "
-                    "VALUES (?, ?, ?, ?, ?, 0, ?)",
+                    "VALUES (?, ?, ?, ?, ?, 0, ?) "
+                    "ON CONFLICT(entry_id) DO UPDATE SET "
+                    "text = excluded.text, vector = excluded.vector",
                     (eid, entry.strip(), blob, now, now, source),
                 )
                 conn.commit()
@@ -534,16 +559,37 @@ class LocalVectorBackend:
 
         now = time.time()
         rows = [
-            (_make_id(entry), entry, self._vec_to_blob(vec), now)
+            (_make_id(entry), entry, self._vec_to_blob(vec), now, now)
             for entry, vec in zip(entries, vectors)
         ]
+        new_ids = [r[0] for r in rows]
         with self._lock:
             conn = self._connect()
             try:
-                conn.execute("DELETE FROM local_vectors")
+                # Delete entries no longer present.
+                # Use SET-DIFFERENCE delete in batches to stay under SQLite's
+                # parameter limit (~999 variables per statement).
+                if new_ids:
+                    cur = conn.execute("SELECT entry_id FROM local_vectors")
+                    existing_ids = {row[0] for row in cur.fetchall()}
+                    new_ids_set = set(new_ids)
+                    to_delete = list(existing_ids - new_ids_set)
+                    for i in range(0, len(to_delete), 900):
+                        batch = to_delete[i : i + 900]
+                        placeholders = ",".join("?" for _ in batch)
+                        conn.execute(
+                            f"DELETE FROM local_vectors WHERE entry_id IN ({placeholders})",
+                            batch,
+                        )
+                else:
+                    conn.execute("DELETE FROM local_vectors")
+                # Upsert: insert new, update text+vector for existing (preserve metadata).
                 conn.executemany(
-                    "INSERT INTO local_vectors (entry_id, text, vector, created_at) "
-                    "VALUES (?, ?, ?, ?)",
+                    "INSERT INTO local_vectors "
+                    "(entry_id, text, vector, created_at, last_accessed, access_count, source) "
+                    "VALUES (?, ?, ?, ?, ?, 0, 'dreaming') "
+                    "ON CONFLICT(entry_id) DO UPDATE SET "
+                    "text = excluded.text, vector = excluded.vector",
                     rows,
                 )
                 conn.commit()
@@ -858,16 +904,30 @@ class QdrantBackend:
             raise RuntimeError("Embedding call returned no vectors")
         t0 = time.time()
         now = time.time()
+        # Retrieve existing metadata and upsert under a single lock acquisition to
+        # prevent a concurrent add() from overwriting metadata with stale data.
+        # retrieve() returns [] for a missing point — no exception for "not found".
         with self._lock:
+            existing_payload: dict = {}
+            pts = self._client.retrieve(
+                collection_name=self._collection,
+                ids=[eid], with_payload=True, with_vectors=False,
+            )
+            if pts:
+                existing_payload = pts[0].payload or {}
+            payload = {
+                "text": entry.strip(),
+                "created_at": existing_payload.get("created_at", now),
+                "last_accessed": existing_payload.get("last_accessed", now),
+                "access_count": existing_payload.get("access_count", 0),
+                "source": existing_payload.get("source", source),
+            }
             self._client.upsert(
                 collection_name=self._collection,
                 points=[PointStruct(
                     id=eid,
                     vector=vectors[0],
-                    payload={
-                        "text": entry.strip(), "created_at": now,
-                        "last_accessed": now, "access_count": 0, "source": source,
-                    },
+                    payload=payload,
                 )],
             )
         _log_interaction(t0, "qdrant_add", entry[:200], f"id={eid}", llm="qdrant")
@@ -915,20 +975,29 @@ class QdrantBackend:
                 pass  # Best-effort access tracking.
 
     def get_all(self) -> list[dict]:
-        with self._lock:
-            result = self._client.scroll(
-                collection_name=self._collection,
-                limit=10000,
-                with_payload=True,
-            )
-        points = result[0] if result else []
+        points = []
+        offset = None
+        while True:
+            with self._lock:
+                result = self._client.scroll(
+                    collection_name=self._collection,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=True,
+                )
+            if not result:
+                break
+            points.extend(result[0])
+            offset = result[1] if len(result) > 1 else None
+            if offset is None:
+                break
         return [
             {"id": str(p.id), "text": p.payload.get("text", ""), "score": 1.0}
             for p in points
         ]
 
     def replace_all(self, entries: list[str]) -> None:
-        from qdrant_client.models import PointStruct
+        from qdrant_client.models import Filter, HasIdCondition, PointStruct
 
         t0 = time.time()
         entries = [e.strip() for e in entries if e.strip()]
@@ -947,26 +1016,66 @@ class QdrantBackend:
                 f"Embedding mismatch: {len(entries)} entries but {len(vectors) if vectors else 0} vectors"
             )
 
-        points = [
-            PointStruct(
-                id=_make_id(entry),
-                vector=vec,
-                payload={"text": entry, "created_at": time.time()},
-            )
-            for entry, vec in zip(entries, vectors)
-        ]
+        now = time.time()
+        new_ids = [_make_id(entry) for entry in entries]
 
+        # Hold a single lock for the entire retrieve-metadata → delete → upsert
+        # critical section so no concurrent add() / _track_access() can interleave
+        # and have its metadata overwritten by stale values from existing_meta.
         with self._lock:
-            # Recreate collection to ensure clean state.
-            self._client.delete_collection(self._collection)
-        self.init()
-        # Upsert in batches of 100.
-        for i in range(0, len(points), 100):
-            batch = points[i:i + 100]
-            with self._lock:
+            # Fetch existing metadata only for the incoming IDs via batched
+            # retrieve() — cheaper than scrolling the whole collection.
+            existing_meta: dict[str, dict] = {}
+            try:
+                for i in range(0, len(new_ids), 256):
+                    pts = self._client.retrieve(
+                        collection_name=self._collection,
+                        ids=new_ids[i : i + 256],
+                        with_payload=True,
+                        with_vectors=False,
+                    )
+                    for p in pts or []:
+                        existing_meta[str(p.id)] = p.payload or {}
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Qdrant: failed to read existing metadata in replace_all; "
+                    "aborting to avoid metadata loss",
+                    exc_info=True,
+                )
+                raise
+
+            points = [
+                PointStruct(
+                    id=eid,
+                    vector=vec,
+                    payload={
+                        "text": entry,
+                        "created_at": existing_meta.get(eid, {}).get("created_at", now),
+                        "last_accessed": existing_meta.get(eid, {}).get("last_accessed", now),
+                        "access_count": existing_meta.get(eid, {}).get("access_count", 0),
+                        "source": existing_meta.get(eid, {}).get("source", "dreaming"),
+                    },
+                )
+                for entry, vec, eid in zip(entries, vectors, new_ids)
+            ]
+
+            # Delete points no longer present (avoids delete_collection race window).
+            if new_ids:
+                self._client.delete(
+                    collection_name=self._collection,
+                    points_selector=Filter(
+                        must_not=[HasIdCondition(has_id=new_ids)],
+                    ),
+                )
+            else:
+                self._client.delete_collection(self._collection)
+                self.init()
+
+            # Upsert in batches of 100.
+            for i in range(0, len(points), 100):
                 self._client.upsert(
                     collection_name=self._collection,
-                    points=batch,
+                    points=points[i : i + 100],
                 )
         logger.info("Qdrant: replaced all entries (%d)", len(entries))
         _log_interaction(
@@ -1012,14 +1121,23 @@ class QdrantBackend:
         logger.info("Qdrant: rebuilt index from MEMORIES.txt (%d entries)", len(entries))
 
     def get_all_with_vectors(self) -> list[dict]:
-        with self._lock:
-            result = self._client.scroll(
-                collection_name=self._collection,
-                limit=10000,
-                with_payload=True,
-                with_vectors=True,
-            )
-        points = result[0] if result else []
+        points = []
+        offset = None
+        while True:
+            with self._lock:
+                result = self._client.scroll(
+                    collection_name=self._collection,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=True,
+                )
+            if not result:
+                break
+            points.extend(result[0])
+            offset = result[1] if len(result) > 1 else None
+            if offset is None:
+                break
         return [
             {
                 "id": str(p.id),
@@ -1036,17 +1154,27 @@ class QdrantBackend:
     def get_stale(self, max_age_days: int, min_access: int) -> list[dict]:
         from qdrant_client.models import Filter, FieldCondition, Range
         cutoff = time.time() - (max_age_days * 86400)
-        with self._lock:
-            result = self._client.scroll(
-                collection_name=self._collection,
-                scroll_filter=Filter(must=[
-                    FieldCondition(key="last_accessed", range=Range(lt=cutoff)),
-                    FieldCondition(key="access_count", range=Range(lt=min_access)),
-                ]),
-                limit=10000,
-                with_payload=True,
-            )
-        points = result[0] if result else []
+        scroll_filter = Filter(must=[
+            FieldCondition(key="last_accessed", range=Range(lt=cutoff)),
+            FieldCondition(key="access_count", range=Range(lt=min_access)),
+        ])
+        points = []
+        offset = None
+        while True:
+            with self._lock:
+                result = self._client.scroll(
+                    collection_name=self._collection,
+                    scroll_filter=scroll_filter,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=True,
+                )
+            if not result:
+                break
+            points.extend(result[0])
+            offset = result[1] if len(result) > 1 else None
+            if offset is None:
+                break
         return [
             {
                 "id": str(p.id), "text": p.payload.get("text", ""),
