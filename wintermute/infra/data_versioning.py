@@ -19,11 +19,10 @@ import logging
 import queue
 import subprocess
 import threading
-from pathlib import Path
+
+from wintermute.infra.paths import DATA_DIR
 
 logger = logging.getLogger(__name__)
-
-DATA_DIR = Path("data")
 
 _lock = threading.Lock()
 

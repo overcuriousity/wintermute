@@ -297,17 +297,6 @@ def get_active_thread_ids() -> list[str]:
     return [r[0] for r in rows]
 
 
-def get_recently_active_thread_ids(since: float) -> list[str]:
-    """Return thread_ids with at least one non-archived message after `since` (Unix timestamp)."""
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT DISTINCT thread_id FROM messages "
-            "WHERE archived=0 AND timestamp > ?",
-            (since,),
-        ).fetchall()
-    return [r[0] for r in rows]
-
-
 def get_thread_stats(thread_id: str = "default") -> dict:
     """Return message count and estimated token usage for a thread's active messages."""
     with _connect() as conn:
@@ -949,14 +938,6 @@ def update_dreaming_phase_state(
         conn.commit()
 
 
-def get_all_dreaming_phase_states() -> dict[str, dict]:
-    """Return all dreaming phase states keyed by phase_name."""
-    with _connect() as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute("SELECT * FROM dreaming_state").fetchall()
-    return {r["phase_name"]: dict(r) for r in rows}
-
-
 def count_memories_added_since(since: float) -> int:
     """Count memory.appended events logged since a timestamp.
 
@@ -999,16 +980,6 @@ def get_all_thread_configs() -> list[tuple[str, str]]:
             "SELECT thread_id, config_json FROM thread_config"
         ).fetchall()
     return rows
-
-
-def get_thread_config(thread_id: str) -> Optional[str]:
-    """Return raw config JSON for a thread, or None."""
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT config_json FROM thread_config WHERE thread_id = ?",
-            (thread_id,),
-        ).fetchone()
-    return row[0] if row else None
 
 
 def set_thread_config(thread_id: str, config_json: str) -> None:

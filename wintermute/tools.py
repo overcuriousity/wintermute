@@ -15,7 +15,6 @@ Tool categories
 
 import json
 import logging
-import os
 import subprocess
 import time
 from collections import deque
@@ -27,12 +26,11 @@ from urllib.request import Request, urlopen
 
 from wintermute.infra import database
 from wintermute.infra import prompt_assembler
+from wintermute.infra.paths import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path("data")
-
-SEARXNG_URL = os.environ.get("WINTERMUTE_SEARXNG_URL", "http://127.0.0.1:8888")
+SEARXNG_URL = "http://127.0.0.1:8888"
 
 # ---------------------------------------------------------------------------
 # In-memory tool call log (bounded ring buffer for the debug UI)
@@ -40,10 +38,6 @@ SEARXNG_URL = os.environ.get("WINTERMUTE_SEARXNG_URL", "http://127.0.0.1:8888")
 
 _TOOL_CALL_LOG: deque[dict] = deque(maxlen=500)
 
-
-def get_tool_call_log() -> list[dict]:
-    """Return a copy of the tool call log, newest first."""
-    return list(reversed(_TOOL_CALL_LOG))
 
 # Maximum nesting depth for sub-session spawning.
 # 0 = main agent, 1 = sub-session, 2 = sub-sub-session (max).
@@ -531,6 +525,12 @@ def register_task_scheduler(ensure_fn, remove_fn, list_fn) -> None:
     _task_scheduler_ensure = ensure_fn
     _task_scheduler_remove = remove_fn
     _task_scheduler_list = list_fn
+
+
+def set_searxng_url(url: str) -> None:
+    """Override the default SearXNG URL (called from main.py config)."""
+    global SEARXNG_URL
+    SEARXNG_URL = url
 
 
 def register_sub_session_manager(fn) -> None:

@@ -182,16 +182,6 @@ async def _execute_multi_item(
             "arguments": json.dumps(item_args),
             "result": item_result,
         })
-        try:
-            await database.async_call(
-                database.save_interaction_log,
-                _time.time(), "tool_call", ctx.thread_id,
-                ctx.pool_last_used,
-                json.dumps({"tool": name, "arguments": json.dumps(item_args)}),
-                item_result[:500], "ok",
-            )
-        except Exception:
-            pass
 
     return ToolCallOutcome(
         content="\n\n".join(combined),

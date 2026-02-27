@@ -18,7 +18,6 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Optional
 
 from apscheduler.executors.asyncio import AsyncIOExecutor
@@ -31,15 +30,13 @@ from dateutil import parser as dateutil_parser
 
 from wintermute import tools as tool_module
 from wintermute.infra import database
+from wintermute.infra.paths import DATA_DIR, SCHEDULER_DB
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager
     from wintermute.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
-
-DATA_DIR = Path("data")
-SCHEDULER_DB = "data/scheduler.db"
 
 # Module-level reference so the job function below can be pickled by APScheduler.
 # Set by TaskScheduler.start().

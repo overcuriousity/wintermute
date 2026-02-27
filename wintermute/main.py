@@ -30,6 +30,7 @@ import yaml
 from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
+from wintermute.infra.paths import DATA_DIR
 from wintermute.infra.event_bus import EventBus
 from wintermute.infra.thread_config import ThreadConfigManager
 from wintermute import tools as tool_module
@@ -102,8 +103,6 @@ def setup_logging(cfg: dict) -> None:
 # ---------------------------------------------------------------------------
 # Data file bootstrapping
 # ---------------------------------------------------------------------------
-
-DATA_DIR = Path("data")
 
 def ensure_data_dirs() -> None:
     """Ensure required data directories exist.
@@ -527,6 +526,9 @@ async def main() -> None:
     llm.inject_sub_session_manager(sub_sessions)
     tool_module.register_sub_session_manager(sub_sessions.spawn)
     tool_module.register_event_bus(event_bus)
+    searxng_url = cfg.get("search", {}).get("searxng_url")
+    if searxng_url:
+        tool_module.set_searxng_url(searxng_url)
     # register_self_model is wired later, after self_model is built.
 
     # Inject LLM into interfaces.
