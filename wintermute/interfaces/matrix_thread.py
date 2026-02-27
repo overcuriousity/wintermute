@@ -41,6 +41,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from collections.abc import Mapping as _Mapping
+
 from ruamel.yaml import YAML as _YAML
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString as _DQStr
 
@@ -105,10 +107,10 @@ def _update_config_yaml(access_token: str, device_id: str) -> None:
             with CONFIG_PATH.open(encoding="utf-8") as f:
                 data = yaml.load(f)
         except Exception:
-            logger.warning("_update_config_yaml: failed to parse %s — skipping write", CONFIG_PATH)
+            logger.warning("_update_config_yaml: failed to parse %s — skipping write", CONFIG_PATH, exc_info=True)
             return
 
-        if not isinstance(data, dict) or not isinstance(data.get("matrix"), dict):
+        if not isinstance(data, _Mapping) or not isinstance(data.get("matrix"), _Mapping):
             logger.warning("_update_config_yaml: 'matrix' section missing in %s — skipping write", CONFIG_PATH)
             return
 
