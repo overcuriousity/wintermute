@@ -229,6 +229,7 @@ class MatrixThread:
         self._whisper_client = None
         self._whisper_model: str = ""
         self._whisper_language: str = ""
+        self._background_tasks: set[asyncio.Task] = set()
 
     # ------------------------------------------------------------------
     # Public interface
@@ -478,14 +479,18 @@ class MatrixThread:
         async def _on_first_sync(*_args: object, **_kw: object) -> None:
             if not _done.is_set():
                 _done.set()
-                asyncio.create_task(
+                _t1 = asyncio.create_task(
                     self._ensure_cross_signed(client.crypto),
                     name="cross-sign",
                 )
-                asyncio.create_task(
+                self._background_tasks.add(_t1)
+                _t1.add_done_callback(self._background_tasks.discard)
+                _t2 = asyncio.create_task(
                     self._accept_pending_invites(),
                     name="accept-pending-invites",
                 )
+                self._background_tasks.add(_t2)
+                _t2.add_done_callback(self._background_tasks.discard)
 
         client.add_event_handler(InternalEventType.SYNC_SUCCESSFUL, _on_first_sync)
 
@@ -675,9 +680,11 @@ class MatrixThread:
                     )
                     # New device detected — ask allowed_users to verify even on path (a),
                     # because the user may not have verified this device before.
-                    asyncio.create_task(
+                    _t = asyncio.create_task(
                         self._send_verification_requests(), name="send-verify-request",
                     )
+                    self._background_tasks.add(_t)
+                    _t.add_done_callback(self._background_tasks.discard)
                     return
                 except Exception as restore_exc:  # noqa: BLE001
                     logger.info(
@@ -701,7 +708,9 @@ class MatrixThread:
                 CRYPTO_RECOVERY_KEY_PATH.read_text().strip(),
             )
             # Proactively ask allowed_users to verify — they get an in-app notification.
-            asyncio.create_task(self._send_verification_requests(), name="send-verify-request")
+            _t = asyncio.create_task(self._send_verification_requests(), name="send-verify-request")
+            self._background_tasks.add(_t)
+            _t.add_done_callback(self._background_tasks.discard)
 
         except Exception as exc:  # noqa: BLE001
             approval_url = _extract_uia_url(exc)
@@ -1008,7 +1017,7 @@ class MatrixThread:
                 "UTD: requesting missing session %.16s for %s from %s (%d device(s))",
                 session_id, room_id, sender, len(device_ids),
             )
-            asyncio.create_task(
+            _t = asyncio.create_task(
                 self._client.crypto.request_room_key(
                     room_id=RoomID(room_id),
                     sender_key=sender_key,
@@ -1018,6 +1027,8 @@ class MatrixThread:
                 ),
                 name=f"key_req_{session_id[:8]}",
             )
+            self._background_tasks.add(_t)
+            _t.add_done_callback(self._background_tasks.discard)
         else:
             logger.warning(
                 "UTD: no known devices for %s, cannot request key for session %.16s in %s",
