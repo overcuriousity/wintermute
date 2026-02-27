@@ -75,6 +75,8 @@ class MemoryHarvestLoop:
         self._event_bus_subs: list[str] = []
         # Pending harvest check triggered by event bus
         self._check_event = asyncio.Event()
+        # Strong references to background tasks to prevent GC
+        self._background_tasks: set = set()
 
     # ------------------------------------------------------------------
     # Public tuning API (used by self-model auto-tuning)
@@ -284,9 +286,11 @@ class MemoryHarvestLoop:
 
         # Monitor completion in background — only commit the harvested ID range
         # and write the interaction_log entry after the sub-session succeeds.
-        asyncio.ensure_future(
+        task = asyncio.create_task(
             self._await_harvest(session_id, thread_id, max_id, new_count)
         )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def _await_harvest(self, session_id: str, thread_id: str,
                               max_id: int, new_count: int) -> None:
