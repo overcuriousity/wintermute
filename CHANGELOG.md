@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.5.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.4.0-alpha...v0.5.0-alpha) (2026-02-27)
+
+
+### Features
+
+* add /reflect command and self-model/reflection to /status ([0357a26](https://github.com/overcuriousity/wintermute/commit/0357a26139d611b4cd5bfba33cb7d5f3f5fbec05))
+* add async event bus infrastructure wired into all components ([4f5e5e4](https://github.com/overcuriousity/wintermute/commit/4f5e5e4d2c57655c0da76cb5dde0676c96c50fff))
+* add skill merge action to dreaming dedup ([b58de0e](https://github.com/overcuriousity/wintermute/commit/b58de0e4384a44813dfe8c5328cc03426cec1183))
+* apply PR [#60](https://github.com/overcuriousity/wintermute/issues/60) changes (introspection tool, reflection, skill synthesis) ([f33bc00](https://github.com/overcuriousity/wintermute/commit/f33bc002ce7c286a957c2eb0299ec63ec704bfac))
+* biologically-inspired multi-phase dreaming system ([baa651f](https://github.com/overcuriousity/wintermute/commit/baa651f346be5b04944e664ae1ec740489febd62))
+* enhance startup logging with visual indicator ([6a71b1e](https://github.com/overcuriousity/wintermute/commit/6a71b1e7a849861731a54c79d5d695a1c1a5e985))
+* implement Phase 1 reflection cycle (feedback loop) ([6720f56](https://github.com/overcuriousity/wintermute/commit/6720f56bcb96b0f8c9c78c9e9c8d0fdeb6e6a770))
+* implement Phase 1 reflection cycle (feedback loop) ([a253438](https://github.com/overcuriousity/wintermute/commit/a253438bec34707599affa514207474a3e0ea147))
+* improve delegation heuristics and surface reflection observations ([52a6b88](https://github.com/overcuriousity/wintermute/commit/52a6b88676ab8c46836c42c75e69a3e73983e85c))
+* per-thread configuration overrides ([#7](https://github.com/overcuriousity/wintermute/issues/7)) ([88c5052](https://github.com/overcuriousity/wintermute/commit/88c505290a35e52f870094b05d2605fcf85cf4b6))
+* Phase 3 — Skill Evolution ([a8f160a](https://github.com/overcuriousity/wintermute/commit/a8f160af509e58a429664d1c255f19c8cc4fa2c9))
+* Phase 3 — Skill Evolution (usage tracking, outcome correlation, auto-retirement) ([f72bb38](https://github.com/overcuriousity/wintermute/commit/f72bb386babae6f0634cb76f95263d4b2735e27d))
+* self-model profiler with operational metrics and auto-tuning ([0b0c605](https://github.com/overcuriousity/wintermute/commit/0b0c6059cc06271fd19324e190b05a8f4d805894))
+* vector-native dreaming with access tracking and source tagging ([2154c19](https://github.com/overcuriousity/wintermute/commit/2154c1903d3d4936118f1cb4a17931467794e8a1))
+
+
+### Bug Fixes
+
+* add retry with exponential backoff for embedding endpoint ([c73c679](https://github.com/overcuriousity/wintermute/commit/c73c6790de9bf4c9d5242a0ab33f9bdf1bf66b4b))
+* address Copilot review — 5 bugs in skill evolution ([3554271](https://github.com/overcuriousity/wintermute/commit/35542718c11c8dd7eada6382e2222dc92512709f))
+* address Copilot review comments on outcome tracking ([88f1c1b](https://github.com/overcuriousity/wintermute/commit/88f1c1b7167e88ad12a59505c62e622167d4692e))
+* address Copilot review feedback in reflection.py ([50084cc](https://github.com/overcuriousity/wintermute/commit/50084ccad7908375d867798a9a774333a6a6fa16))
+* address valid Copilot review items from PR [#60](https://github.com/overcuriousity/wintermute/issues/60) (synthesis, encapsulation, path checks) ([b2da51d](https://github.com/overcuriousity/wintermute/commit/b2da51d1f7767f49895ee99656e112488e4b4653))
+* auto-inject parent context into sub-sessions ([d4b8fb9](https://github.com/overcuriousity/wintermute/commit/d4b8fb956f85475fcb8b277d7f967ca48c63d973))
+* don't wipe crypto store on transient network errors ([e98cf66](https://github.com/overcuriousity/wintermute/commit/e98cf66eb92c36eeb011b28ff6069d9097b39aeb))
+* fall back to system service when user D-Bus bus is unavailable ([12e77f9](https://github.com/overcuriousity/wintermute/commit/12e77f98f60557305909048dc6acae367f90456a))
+* gracefully handle missing systemd user bus in LXC containers ([ff03e83](https://github.com/overcuriousity/wintermute/commit/ff03e835c0ed090edac2377005d2bcc976368bc8))
+* guard self-model init failure to prevent blocking harvest task startup ([893c555](https://github.com/overcuriousity/wintermute/commit/893c5554b97165c370024ff4c604eec9b596c338))
+* implement valid Copilot review topics from PR [#60](https://github.com/overcuriousity/wintermute/issues/60) ([e50a6ca](https://github.com/overcuriousity/wintermute/commit/e50a6cafcc25e67b21ddb9aa529ee61c31dac266))
+* make Tier 3 trigger language-neutral; fix action_filter bug ([dca4506](https://github.com/overcuriousity/wintermute/commit/dca4506ea1b4a85542253bf91d17f0931ab78259))
+* resolve outcome tracking bugs and implement Outcomes debug panel ([0c79ba9](https://github.com/overcuriousity/wintermute/commit/0c79ba9f348d214c37a0bb5db6caa53707a86e09))
+* robust JSON extraction in dreaming — tolerate prose-wrapped responses ([06c1bb3](https://github.com/overcuriousity/wintermute/commit/06c1bb3570b9e7f2c9cafe09a2708354c339fd43))
+* SAS verification MAC info string and MUnknownToken handling ([73467ce](https://github.com/overcuriousity/wintermute/commit/73467ce213e73f5f1a3abfa53c9fb8e854736ebb))
+* systemd user→system service fallback in onboarding.py and docs ([6974d2b](https://github.com/overcuriousity/wintermute/commit/6974d2b3a53154a756b0300d409d5a089033452a))
+
+
+### Dependencies
+
+* **python:** bump ruff from 0.15.1 to 0.15.2 ([1a42def](https://github.com/overcuriousity/wintermute/commit/1a42def8a17159d1d2c10d61fbcb70c5445dc8f6))
+
+
+### Documentation
+
+* add reflection cycle documentation, web UI filters, roadmap update ([1567eda](https://github.com/overcuriousity/wintermute/commit/1567eda1ebb2703dbe3d6820493a52243937be5b))
+* document self-model, /reflect command, and /status updates ([6a2d63f](https://github.com/overcuriousity/wintermute/commit/6a2d63f3d7c4b7256f09e35142474746910cef8f))
+* mark Phase 2 (Self-Model) as done in roadmap ([4a14cb2](https://github.com/overcuriousity/wintermute/commit/4a14cb2556ea837ce2bc21bb8b90fa7121e26193))
+* updated commands.md, configuration.md, web-interface.md ([88c5052](https://github.com/overcuriousity/wintermute/commit/88c505290a35e52f870094b05d2605fcf85cf4b6))
+
 ## [0.4.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.3.0-alpha...v0.4.0-alpha) (2026-02-23)
 
 
