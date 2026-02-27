@@ -90,6 +90,14 @@ web:
   port: 8080                              # Listen port. Avoid conflicts with SearXNG etc.
 
 
+# ── Search ─────────────────────────────────────────────────────────
+# SearXNG instance used by the search_web tool.
+# Previously configured via the WINTERMUTE_SEARXNG_URL env var.
+#
+search:
+  searxng_url: "http://127.0.0.1:8888"   # URL of your SearXNG instance
+
+
 # ── Inference Backends ───────────────────────────────────────────────
 # Named backend definitions. Each describes one LLM endpoint+model.
 # You can define as many as you want and reference them by name in the
