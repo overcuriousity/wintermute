@@ -126,10 +126,22 @@ def _try_parse_json_body(body: str, known_tools: set[str]) -> Optional[list[Synt
     for item in items:
         if not isinstance(item, dict):
             continue
-        name = item.get("name") or item.get("function", "")
+        # Support both flat {"name": …, "arguments": …} and nested
+        # {"function": {"name": …, "arguments": …}} shapes.
+        func = item.get("function")
+        nested_name: str = ""
+        nested_args = None
+        if isinstance(func, dict):
+            nested_name = func.get("name") or ""
+            nested_args = func.get("arguments") or func.get("parameters")
+        elif isinstance(func, str):
+            nested_name = func
+        name = str(item.get("name") or nested_name).strip()
+        if not name:
+            continue
         if known_tools and name not in known_tools:
             continue
-        args = item.get("arguments") or item.get("parameters") or {}
+        args = item.get("arguments") or item.get("parameters") or nested_args or {}
         if isinstance(args, str):
             args_str = args
         elif isinstance(args, dict):
@@ -224,9 +236,12 @@ def rescue_tool_calls(
 
     # --- Pattern 4: Known tool-name tags ---
     if known:
+        # Build a lowercase lookup so case-insensitive tag matches (e.g.
+        # <SPAWN_SUB_SESSION>) resolve to the canonical tool name.
+        _known_lower: dict[str, str] = {n.lower(): n for n in known}
         pat = _build_tool_name_pattern(known)
         for m in pat.finditer(content):
-            name = m.group(1)
+            name = _known_lower.get(m.group(1).lower(), m.group(1))
             body = m.group(2).strip()
             # Could be JSON, key=value, or a single string argument
             try:
