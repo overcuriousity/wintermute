@@ -101,6 +101,7 @@ def auto_commit(message: str) -> None:
 _queue: queue.Queue[str | None] = queue.Queue()
 _worker_lock = threading.Lock()
 _worker: threading.Thread | None = None
+_draining = False
 
 
 def _worker_loop() -> None:
@@ -115,40 +116,51 @@ def _worker_loop() -> None:
             _queue.task_done()
 
 
-def _ensure_worker() -> None:
+def _start_worker_locked() -> None:
+    """Start the worker thread if not already running.  Caller must hold _worker_lock."""
     global _worker
-    with _worker_lock:
-        if _worker is None or not _worker.is_alive():
-            _worker = threading.Thread(
-                target=_worker_loop, name="data-commit-worker", daemon=False,
-            )
-            _worker.start()
+    if _worker is None or not _worker.is_alive():
+        _worker = threading.Thread(
+            target=_worker_loop, name="data-commit-worker", daemon=False,
+        )
+        _worker.start()
 
 
 def commit_async(message: str) -> None:
     """Queue a commit to run on the background worker thread.
 
     Commits are processed in FIFO order by a single non-daemon worker, so
-    concurrent callers never pile up blocked threads.
+    concurrent callers never pile up blocked threads.  Once ``drain()`` has
+    been called, falls back to a synchronous commit so no work is lost.
     """
-    _ensure_worker()
-    _queue.put(message)
+    with _worker_lock:
+        if _draining:
+            # Shutdown in progress — run synchronously so the commit isn't lost.
+            auto_commit(message)
+            return
+        _start_worker_locked()
+        _queue.put(message)
 
 
 def drain(timeout: float = 5.0) -> None:
     """Flush all pending commits and stop the worker.  Called during shutdown.
 
-    Sends a stop sentinel so the worker exits cleanly after processing all
-    queued messages, then joins the thread.  Because the worker is non-daemon,
-    the interpreter will wait for it regardless; the timeout controls how long
+    Sets a draining flag (under _worker_lock) before inserting the sentinel,
+    so no new messages can be enqueued after the sentinel — preventing the
+    race where a concurrent commit_async() call posts after the sentinel and
+    is left permanently unprocessed.  Because the worker is non-daemon, the
+    interpreter will wait for it regardless; the timeout controls how long
     we log a warning before giving up on a graceful join.
     """
+    global _draining
     with _worker_lock:
+        _draining = True
         w = _worker
-    if w is None or not w.is_alive():
-        return
+        if w is None or not w.is_alive():
+            return
+        # Insert sentinel inside the lock — no new messages can be queued after this.
+        _queue.put(None)
     logger.info("data_versioning: draining pending commits…")
-    _queue.put(None)  # Stop sentinel — processed after all queued commits.
     w.join(timeout=timeout)
     if w.is_alive():
         logger.warning("data_versioning: worker still alive after %.1fs", timeout)
