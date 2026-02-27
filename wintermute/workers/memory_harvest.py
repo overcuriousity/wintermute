@@ -75,6 +75,8 @@ class MemoryHarvestLoop:
         self._event_bus_subs: list[str] = []
         # Pending harvest check triggered by event bus
         self._check_event = asyncio.Event()
+        # Strong references to background tasks to prevent GC
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
     # ------------------------------------------------------------------
     # Public tuning API (used by self-model auto-tuning)
@@ -150,6 +152,9 @@ class MemoryHarvestLoop:
             for sub_id in self._event_bus_subs:
                 self._event_bus.unsubscribe(sub_id)
             self._event_bus_subs.clear()
+        for task in list(self._background_tasks):
+            task.cancel()
+        self._background_tasks.clear()
 
     # ------------------------------------------------------------------
     # Core logic
@@ -284,9 +289,11 @@ class MemoryHarvestLoop:
 
         # Monitor completion in background — only commit the harvested ID range
         # and write the interaction_log entry after the sub-session succeeds.
-        asyncio.ensure_future(
+        task = asyncio.create_task(
             self._await_harvest(session_id, thread_id, max_id, new_count)
         )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def _await_harvest(self, session_id: str, thread_id: str,
                               max_id: int, new_count: int) -> None:
@@ -331,8 +338,13 @@ class MemoryHarvestLoop:
                     f"{session_id} {status}",
                     "ok" if status == "completed" else status,
                 )
+            except asyncio.CancelledError:
+                raise
             except Exception:  # noqa: BLE001
                 pass
+        except asyncio.CancelledError:
+            logger.debug("Memory harvest monitor for %s cancelled during shutdown", session_id)
+            raise
         except Exception:  # noqa: BLE001
             logger.exception("Memory harvest monitor for %s failed", session_id)
         finally:
