@@ -18,7 +18,6 @@ import sqlite3
 import threading
 import time
 
-from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from wintermute.infra.paths import DATA_DIR, MEMORIES_FILE, FTS5_DB_PATH
