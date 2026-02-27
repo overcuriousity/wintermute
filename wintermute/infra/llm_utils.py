@@ -35,6 +35,10 @@ def parse_json_from_llm(text: str, expected_type: type) -> Any:
     """
     if expected_type not in (dict, list):
         raise TypeError(
+            f"parse_json_from_llm expected_type must be dict or list, got {expected_type!r}"
+        )
+    if expected_type not in (dict, list):
+        raise TypeError(
             f"parse_json_from_llm: expected_type must be dict or list, got {expected_type!r}"
         )
     type_name = "object" if expected_type is dict else "array"
