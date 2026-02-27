@@ -95,6 +95,81 @@ _MODE_TOOL_CATEGORIES: dict[str, set[str]] = {
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _sanitize_tool_call_boundary(messages: list) -> list:
+    """Ensure *messages* form a valid tool-call sequence.
+
+    After context trimming the first message(s) in the kept tail may be
+    orphaned ``tool`` results whose preceding ``assistant`` (with
+    ``tool_calls``) was discarded, or an ``assistant`` message with
+    ``tool_calls`` whose ``tool`` results were only partially kept.
+
+    This function:
+    1. Strips leading ``tool``-role messages (orphaned results).
+    2. If the (new) first message is an ``assistant`` with ``tool_calls``,
+       verifies that **all** expected ``tool`` results immediately follow it.
+       If any are missing the ``assistant`` and its partial results are
+       dropped too.
+    3. Strips any trailing ``assistant`` message that has ``tool_calls``
+       without subsequent ``tool`` results (can happen if it was the very
+       last message in the tail).
+
+    Returns the sanitised list (possibly shorter, possibly empty).
+    """
+    if not messages:
+        return messages
+
+    def _role(m) -> str:
+        return m.get("role") if isinstance(m, dict) else getattr(m, "role", "")
+
+    def _tool_calls(m):
+        """Return the tool_calls list (or None) for an assistant message."""
+        if isinstance(m, dict):
+            return m.get("tool_calls")
+        return getattr(m, "tool_calls", None)
+
+    def _tool_call_id(m) -> str | None:
+        if isinstance(m, dict):
+            return m.get("tool_call_id")
+        return getattr(m, "tool_call_id", None)
+
+    # -- Step 1: drop orphaned leading tool-result messages ----------------
+    start = 0
+    while start < len(messages) and _role(messages[start]) == "tool":
+        start += 1
+    msgs = messages[start:]
+    if not msgs:
+        return []
+
+    # -- Step 2: validate leading assistant with tool_calls ----------------
+    first = msgs[0]
+    if _role(first) == "assistant" and _tool_calls(first):
+        expected_ids = {
+            (tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None))
+            for tc in _tool_calls(first)
+        } - {None, ""}
+        # Collect the tool-result ids that immediately follow
+        found_ids: set[str] = set()
+        i = 1
+        while i < len(msgs) and _role(msgs[i]) == "tool":
+            tid = _tool_call_id(msgs[i])
+            if tid:
+                found_ids.add(tid)
+            i += 1
+        if not expected_ids.issubset(found_ids):
+            # Drop the incomplete assistant + its partial tool results
+            msgs = msgs[i:]
+
+    # -- Step 3: drop trailing assistant with dangling tool_calls ----------
+    while msgs and _role(msgs[-1]) == "assistant" and _tool_calls(msgs[-1]):
+        msgs.pop()
+
+    return msgs
+
+
+# ---------------------------------------------------------------------------
 # State
 # ---------------------------------------------------------------------------
 
@@ -1392,8 +1467,18 @@ class SubSessionManager:
                         "Sub-session %s: context too large (%d messages), trimming and retrying",
                         state.session_id, len(state.messages),
                     )
-                    # Keep system prompt + original objective + last 2 exchanges
-                    state.messages = state.messages[:2] + state.messages[-4:]
+                    # Keep system prompt + original objective + last tail messages,
+                    # then sanitize the boundary so no assistant tool_calls are
+                    # separated from their tool-result messages (API 400 guard).
+                    head = state.messages[:2]
+                    tail_start = max(2, len(state.messages) - 4)
+                    tail = state.messages[tail_start:]
+                    tail = _sanitize_tool_call_boundary(tail)
+                    if not tail:
+                        # Entire tail was malformed; fall back to head only
+                        # so the next iteration re-prompts from scratch.
+                        tail = []
+                    state.messages = head + tail
                     continue
                 raise  # Can't trim further, let _run() handle it
 
