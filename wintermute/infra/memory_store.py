@@ -898,8 +898,10 @@ class QdrantBackend:
                 )
             if pts:
                 existing_payload = pts[0].payload or {}
-        except Exception:  # noqa: BLE001
-            pass  # Point doesn't exist yet — use defaults.
+        except Exception as exc:  # noqa: BLE001
+            # Point may not exist yet — use defaults.  Log unexpected failures.
+            if "not found" not in str(exc).lower():
+                logger.debug("Failed to retrieve existing metadata for point %s: %s", eid, exc)
         payload = {
             "text": entry.strip(),
             "created_at": existing_payload.get("created_at", now),
@@ -997,16 +999,25 @@ class QdrantBackend:
         new_ids = [_make_id(entry) for entry in entries]
 
         # Read existing metadata before replacing, so we can carry it over.
+        # Paginate to handle collections larger than any single scroll page.
         existing_meta: dict[str, dict] = {}
         try:
-            with self._lock:
-                result = self._client.scroll(
-                    collection_name=self._collection,
-                    limit=10000,
-                    with_payload=True,
-                )
-            for p in (result[0] if result else []):
-                existing_meta[str(p.id)] = p.payload or {}
+            offset = None
+            while True:
+                with self._lock:
+                    result = self._client.scroll(
+                        collection_name=self._collection,
+                        limit=1000,
+                        offset=offset,
+                        with_payload=True,
+                    )
+                if not result:
+                    break
+                for p in result[0]:
+                    existing_meta[str(p.id)] = p.payload or {}
+                offset = result[1] if len(result) > 1 else None
+                if not offset:
+                    break
         except Exception:  # noqa: BLE001
             pass  # Fresh collection or scroll failed — use defaults.
 
@@ -1025,10 +1036,19 @@ class QdrantBackend:
                 },
             ))
 
+        from qdrant_client.models import Filter, HasIdCondition
+        # Delete points no longer present (avoids delete_collection race window).
         with self._lock:
-            # Recreate collection to ensure clean state.
-            self._client.delete_collection(self._collection)
-        self.init()
+            if new_ids:
+                self._client.delete(
+                    collection_name=self._collection,
+                    points_selector=Filter(
+                        must_not=[HasIdCondition(has_id=new_ids)],
+                    ),
+                )
+            else:
+                self._client.delete_collection(self._collection)
+                self.init()
         # Upsert in batches of 100.
         for i in range(0, len(points), 100):
             batch = points[i:i + 100]
