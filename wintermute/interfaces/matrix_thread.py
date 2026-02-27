@@ -33,7 +33,10 @@ import hashlib as _hashlib
 import json as _json
 import logging
 import mimetypes as _mimetypes
+import os as _os
 import re as _re
+import tempfile as _tempfile
+import threading as _threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -71,42 +74,65 @@ CRYPTO_PICKLE_KEY = "wintermute"
 CONFIG_PATH = Path("config.yaml")
 
 
+_config_write_lock = _threading.Lock()
+
+
 def _update_config_yaml(access_token: str, device_id: str) -> None:
     """Write new access_token and device_id back into config.yaml (in-place).
 
     Replaces just those two lines under the matrix: section, preserving all
-    other content and formatting.
+    other content and formatting.  Uses a lock and atomic write (tempfile +
+    os.replace) to prevent concurrent writes from producing truncated YAML.
     """
     if not CONFIG_PATH.exists():
         return
-    text = CONFIG_PATH.read_text()
 
-    # Match access_token / device_id only when preceded by "matrix:" on a
-    # prior line (within the same YAML block, indented by 2+ spaces).
-    # This prevents accidentally replacing keys with the same name in other
-    # sections (e.g. a hypothetical api.access_token).
-    def _replace_in_matrix_block(key: str, value: str, src: str) -> str:
-        # Find the matrix: section and replace only the first occurrence of
-        # `key:` within it (indented, so it belongs to the matrix block).
-        pattern = _re.compile(
-            r"(^matrix\s*:.*?)(^\s{2,}" + key + r":\s*).*?$",
-            _re.MULTILINE | _re.DOTALL,
-        )
-        def _replacer(m: _re.Match) -> str:
-            return m.group(1) + m.group(2) + f'"{value}"'
-        result, n = pattern.subn(_replacer, src, count=1)
-        if n == 0:
-            # Fallback: replace first occurrence anywhere (original behaviour).
-            result = _re.sub(
-                r"(^\s*" + key + r":\s*).*$",
-                rf'\g<1>"{value}"',
-                src, count=1, flags=_re.MULTILINE,
+    with _config_write_lock:
+        text = CONFIG_PATH.read_text()
+
+        # Match access_token / device_id only when preceded by "matrix:" on a
+        # prior line (within the same YAML block, indented by 2+ spaces).
+        # This prevents accidentally replacing keys with the same name in other
+        # sections (e.g. a hypothetical api.access_token).
+        def _replace_in_matrix_block(key: str, value: str, src: str) -> str:
+            # Find the matrix: section and replace only the first occurrence of
+            # `key:` within it (indented, so it belongs to the matrix block).
+            pattern = _re.compile(
+                r"(^matrix\s*:.*?)(^\s{2,}" + key + r":\s*).*?$",
+                _re.MULTILINE | _re.DOTALL,
             )
-        return result
+            def _replacer(m: _re.Match) -> str:
+                return m.group(1) + m.group(2) + f'"{value}"'
+            result, n = pattern.subn(_replacer, src, count=1)
+            if n == 0:
+                # Fallback: replace first occurrence anywhere (original behaviour).
+                result = _re.sub(
+                    r"(^\s*" + key + r":\s*).*$",
+                    rf'\g<1>"{value}"',
+                    src, count=1, flags=_re.MULTILINE,
+                )
+            return result
 
-    text = _replace_in_matrix_block("access_token", access_token, text)
-    text = _replace_in_matrix_block("device_id", device_id, text)
-    CONFIG_PATH.write_text(text)
+        text = _replace_in_matrix_block("access_token", access_token, text)
+        text = _replace_in_matrix_block("device_id", device_id, text)
+
+        # Atomic write: temp file in same directory, then os.replace().
+        fd, tmp_path = _tempfile.mkstemp(
+            dir=str(CONFIG_PATH.parent), suffix=".tmp", prefix=".config_",
+        )
+        try:
+            _os.write(fd, text.encode())
+            _os.close(fd)
+            fd = -1  # Mark as closed.
+            _os.replace(tmp_path, str(CONFIG_PATH))
+        except BaseException:
+            if fd >= 0:
+                _os.close(fd)
+            try:
+                _os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
 
 # SAS (m.sas.v1) to-device event types
