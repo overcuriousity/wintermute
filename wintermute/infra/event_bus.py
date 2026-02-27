@@ -38,6 +38,13 @@ class EventBus:
         self._debounce_pending: dict[str, Event] = {}
         # Guard _subs mutations from concurrent emit/subscribe/unsubscribe.
         self._lock = threading.Lock()
+        # Capture the event loop at construction time so that emit() works
+        # from thread-pool workers (run_in_executor) where there is no
+        # running loop.  Falls back to None if constructed outside a loop.
+        try:
+            self._loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
 
     def emit(self, event_type: str, **data: Any) -> None:
         """Fire-and-forget event emission. Never raises."""
@@ -58,7 +65,13 @@ class EventBus:
             loop = asyncio.get_running_loop()
             loop.create_task(self._safe_call(sub_id, callback, event))
         except RuntimeError:
-            logger.debug("EventBus: no running loop for %s", sub_id)
+            # Called from a thread-pool worker (run_in_executor) — schedule
+            # the coroutine on the main event loop captured at init time.
+            loop = self._loop
+            if loop is not None and loop.is_running():
+                loop.call_soon_threadsafe(loop.create_task, self._safe_call(sub_id, callback, event))
+            else:
+                logger.debug("EventBus: no usable loop for %s", sub_id)
 
     async def _safe_call(self, sub_id: str, callback: Callable, event: Event) -> None:
         try:
@@ -77,13 +90,23 @@ class EventBus:
             existing.cancel()
         try:
             loop = asyncio.get_running_loop()
-            handle = loop.call_later(
-                debounce_ms / 1000.0,
-                lambda: self._flush_debounce(sub_id, callback),
-            )
-            self._debounce_timers[sub_id] = handle
         except RuntimeError:
-            pass
+            # Called from a thread-pool worker — use the stored loop.
+            loop = self._loop
+        if loop is not None and loop.is_running():
+            def _schedule_later():
+                handle = loop.call_later(
+                    debounce_ms / 1000.0,
+                    lambda: self._flush_debounce(sub_id, callback),
+                )
+                self._debounce_timers[sub_id] = handle
+            try:
+                asyncio.get_running_loop()
+                # We're in the event-loop thread — schedule directly.
+                _schedule_later()
+            except RuntimeError:
+                # Thread-pool context — bounce onto the loop thread.
+                loop.call_soon_threadsafe(_schedule_later)
 
     def _flush_debounce(self, sub_id: str, callback: Callable) -> None:
         self._debounce_timers.pop(sub_id, None)
