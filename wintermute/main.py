@@ -310,6 +310,38 @@ def _build_pool(configs: list[ProviderConfig], cache: dict) -> BackendPool:
     return BackendPool(backends)
 
 
+class _LazyBackendPoolDict(dict):
+    """Dict that builds BackendPools lazily on first access.
+
+    Backends assigned to an llm role are materialised eagerly at startup.
+    Other backends (defined in ``inference_backends`` but not mapped to any
+    role) are only built when a user selects them via per-thread config —
+    avoiding e.g. kimi-code OAuth prompts at startup when the backend is
+    merely *defined* but unused.
+    """
+
+    def __init__(self, backends_by_name: dict[str, ProviderConfig],
+                 client_cache: dict) -> None:
+        super().__init__()
+        self._available = backends_by_name
+        self._client_cache = client_cache
+
+    def __contains__(self, key: object) -> bool:
+        # Report *all* defined backends as available so per-thread
+        # overrides can reference them.
+        return key in self._available or super().__contains__(key)
+
+    def __getitem__(self, key: str) -> BackendPool:
+        try:
+            return super().__getitem__(key)
+        except KeyError:
+            if key in self._available:
+                pool = _build_pool([self._available[key]], self._client_cache)
+                self[key] = pool
+                return pool
+            raise
+
+
 async def main() -> None:
     cfg = load_config()
     setup_logging(cfg)
@@ -360,10 +392,23 @@ async def main() -> None:
     reflection_pool = _build_pool(multi_cfg.reflection, client_cache)
 
     # Build per-backend pools for per-thread overrides.
+    # Pools for backends already used in a role are built eagerly (clients
+    # already exist in client_cache). Other backends are built lazily on
+    # first access so that e.g. kimi-code auth is not triggered at startup
+    # when the backend is defined but not assigned to any llm role.
     backends_by_name = _parse_inference_backends(cfg.get("inference_backends", []))
-    backend_pools_by_name: dict[str, BackendPool] = {}
-    for bname, bcfg in backends_by_name.items():
-        backend_pools_by_name[bname] = _build_pool([bcfg], client_cache)
+    _used_backend_names: set[str] = set()
+    for cfgs in (multi_cfg.main, multi_cfg.compaction, multi_cfg.sub_sessions,
+                 multi_cfg.dreaming, multi_cfg.turing_protocol,
+                 multi_cfg.memory_harvest, multi_cfg.nl_translation,
+                 multi_cfg.reflection):
+        for pc in cfgs:
+            _used_backend_names.add(pc.name)
+    backend_pools_by_name = _LazyBackendPoolDict(backends_by_name, client_cache)
+    for bname in _used_backend_names:
+        if bname in backends_by_name:
+            # Eagerly materialise pools for role-assigned backends.
+            _ = backend_pools_by_name[bname]
 
     # Per-thread configuration manager.
     thread_config_mgr = ThreadConfigManager(
