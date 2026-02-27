@@ -133,7 +133,7 @@ class WebInterface:
             html = _DEBUG_HTML_PATH.read_text(encoding="utf-8")
         except OSError as exc:
             logger.error("Could not read debug panel HTML from %s: %s", _DEBUG_HTML_PATH, exc)
-            return web.Response(status=500, text=f"Debug panel unavailable: {exc}")
+            return web.Response(status=500, text="Debug panel unavailable")
         return web.Response(text=html, content_type="text/html")
 
     # ------------------------------------------------------------------
