@@ -37,7 +37,7 @@ import os as _os
 import re as _re
 import tempfile as _tempfile
 import threading as _threading
-from collections.abc import Mapping as _Mapping
+from collections.abc import MutableMapping as _Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
