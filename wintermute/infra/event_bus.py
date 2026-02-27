@@ -38,6 +38,13 @@ class EventBus:
         self._debounce_pending: dict[str, Event] = {}
         # Guard _subs mutations from concurrent emit/subscribe/unsubscribe.
         self._lock = threading.Lock()
+        # Capture the event loop at construction time so that emit() works
+        # from thread-pool workers (run_in_executor) where there is no
+        # running loop.  Falls back to None if constructed outside a loop.
+        try:
+            self._loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
 
     def emit(self, event_type: str, **data: Any) -> None:
         """Fire-and-forget event emission. Never raises."""
@@ -58,7 +65,13 @@ class EventBus:
             loop = asyncio.get_running_loop()
             loop.create_task(self._safe_call(sub_id, callback, event))
         except RuntimeError:
-            logger.debug("EventBus: no running loop for %s", sub_id)
+            # Called from a thread-pool worker (run_in_executor) — schedule
+            # the coroutine on the main event loop captured at init time.
+            loop = self._loop
+            if loop is not None and loop.is_running():
+                loop.call_soon_threadsafe(loop.create_task, self._safe_call(sub_id, callback, event))
+            else:
+                logger.warning("EventBus: event dropped for %s — no usable event loop", sub_id)
 
     async def _safe_call(self, sub_id: str, callback: Callable, event: Event) -> None:
         try:
@@ -70,20 +83,38 @@ class EventBus:
 
     def _debounce_emit(self, sub_id: str, callback: Callable,
                        event: Event, debounce_ms: int) -> None:
-        self._debounce_pending[sub_id] = event
-        # Cancel existing timer
-        existing = self._debounce_timers.pop(sub_id, None)
-        if existing:
-            existing.cancel()
+        # All debounce state mutations (pending dict, timer cancel+create) must
+        # happen on the event-loop thread to avoid races when emit() is called
+        # from run_in_executor workers.  Wrapping the entire operation in a
+        # single call_soon_threadsafe also prevents the double-schedule race
+        # that would occur if two worker threads both see no existing timer and
+        # enqueue two independent _schedule_later callbacks.
+        def _do_debounce():
+            self._debounce_pending[sub_id] = event
+            existing = self._debounce_timers.pop(sub_id, None)
+            if existing:
+                existing.cancel()
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = self._loop
+            if loop is not None and loop.is_running():
+                handle = loop.call_later(
+                    debounce_ms / 1000.0,
+                    lambda: self._flush_debounce(sub_id, callback),
+                )
+                self._debounce_timers[sub_id] = handle
+
         try:
-            loop = asyncio.get_running_loop()
-            handle = loop.call_later(
-                debounce_ms / 1000.0,
-                lambda: self._flush_debounce(sub_id, callback),
-            )
-            self._debounce_timers[sub_id] = handle
+            asyncio.get_running_loop()
+            # We're already on the event-loop thread — execute directly.
+            _do_debounce()
         except RuntimeError:
-            pass
+            # Thread-pool context — serialize the entire operation onto the
+            # loop thread so state mutations and timer scheduling are atomic.
+            loop = self._loop
+            if loop is not None and loop.is_running():
+                loop.call_soon_threadsafe(_do_debounce)
 
     def _flush_debounce(self, sub_id: str, callback: Callable) -> None:
         self._debounce_timers.pop(sub_id, None)
