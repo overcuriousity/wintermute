@@ -884,9 +884,22 @@ def _validate_against_schema(args: dict, schema: dict) -> list[str]:
     """Validate *args* against a JSON Schema using jsonschema.
 
     Returns a list of human-readable error strings; empty list means valid.
+    Error messages are prefixed with the argument name (e.g. "'priority': …")
+    so the LLM correction prompt is actionable.
+
+    Unknown properties are always rejected: if the schema does not already
+    set additionalProperties the validator injects False to preserve the
+    behaviour of the previous hand-rolled implementation.
     """
+    if "additionalProperties" not in schema:
+        schema = {**schema, "additionalProperties": False}
     validator = Draft7Validator(schema)
-    return [e.message for e in sorted(validator.iter_errors(args), key=lambda e: list(e.path))]
+    errors = []
+    for e in sorted(validator.iter_errors(args), key=lambda e: list(e.path)):
+        path_parts = list(e.path)
+        prefix = (f"'{'.'.join(str(p) for p in path_parts)}': ") if path_parts else ""
+        errors.append(f"{prefix}{e.message}")
+    return errors
 
 
 # ------------------------------------------------------------------
