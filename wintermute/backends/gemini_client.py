@@ -125,7 +125,7 @@ class GeminiCloudClient:
             if time.time() < self._creds.get("expires_at", 0) - 60:
                 return self._creds["access_token"]
             logger.info("Refreshing Gemini access token")
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             self._creds = await loop.run_in_executor(
                 None, gemini_auth.refresh_access_token, self._creds
             )
@@ -427,7 +427,7 @@ class GeminiCloudClient:
             if resp.status_code == 401 and attempt == 0:
                 logger.info("Gemini 401 — refreshing token and retrying")
                 async with self._refresh_lock:
-                    loop = asyncio.get_event_loop()
+                    loop = asyncio.get_running_loop()
                     self._creds = await loop.run_in_executor(
                         None, gemini_auth.refresh_access_token, self._creds
                     )
