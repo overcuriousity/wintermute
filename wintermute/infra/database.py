@@ -18,10 +18,13 @@ up to 5 seconds under write contention).
 
 import asyncio
 import json
+import re
 import sqlite3
+import struct
 import threading
 import time
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -297,17 +300,6 @@ def get_active_thread_ids() -> list[str]:
     return [r[0] for r in rows]
 
 
-def get_recently_active_thread_ids(since: float) -> list[str]:
-    """Return thread_ids with at least one non-archived message after `since` (Unix timestamp)."""
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT DISTINCT thread_id FROM messages "
-            "WHERE archived=0 AND timestamp > ?",
-            (since,),
-        ).fetchall()
-    return [r[0] for r in rows]
-
-
 def get_thread_stats(thread_id: str = "default") -> dict:
     """Return message count and estimated token usage for a thread's active messages."""
     with _connect() as conn:
@@ -439,29 +431,20 @@ def delete_task(task_id: str) -> bool:
 
 def list_tasks(status: str = "active", thread_id: Optional[str] = None) -> list[dict]:
     """Return tasks filtered by status, ordered by priority then id."""
+    conditions: list[str] = []
+    params: list = []
+    if status == "all":
+        conditions.append("status != 'deleted'")
+    else:
+        conditions.append("status = ?")
+        params.append(status)
+    if thread_id:
+        conditions.append("thread_id = ?")
+        params.append(thread_id)
+    sql = f"SELECT * FROM tasks WHERE {' AND '.join(conditions)} ORDER BY priority ASC, id ASC"
     with _connect() as conn:
         conn.row_factory = sqlite3.Row
-        if status == "all" and not thread_id:
-            rows = conn.execute(
-                "SELECT * FROM tasks WHERE status != 'deleted' ORDER BY priority ASC, id ASC"
-            ).fetchall()
-        elif status == "all" and thread_id:
-            rows = conn.execute(
-                "SELECT * FROM tasks WHERE status != 'deleted' AND thread_id=? "
-                "ORDER BY priority ASC, id ASC",
-                (thread_id,),
-            ).fetchall()
-        elif thread_id:
-            rows = conn.execute(
-                "SELECT * FROM tasks WHERE status=? AND thread_id=? "
-                "ORDER BY priority ASC, id ASC",
-                (status, thread_id),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM tasks WHERE status=? ORDER BY priority ASC, id ASC",
-                (status,),
-            ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -494,8 +477,7 @@ def get_active_tasks_text(thread_id: Optional[str] = None) -> str:
         if it.get("schedule_desc"):
             next_info = ""
             if it.get("last_run_at"):
-                from datetime import datetime as _dt, timezone as _tz
-                last = _dt.fromtimestamp(it['last_run_at'], tz=_tz.utc).strftime("%Y-%m-%d %H:%M")
+                last = datetime.fromtimestamp(it['last_run_at'], tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
                 next_info = f", last: {last}"
                 if it.get("run_count"):
                     next_info += f", runs: {it['run_count']}"
@@ -535,7 +517,6 @@ def delete_old_completed_tasks(days: int = 30) -> int:
 
 def load_harvest_state() -> dict[str, int]:
     """Return {thread_id: max_message_id} from the last *successful* harvest per thread."""
-    import re
     result: dict[str, int] = {}
     with _connect() as conn:
         rows = conn.execute(
@@ -664,7 +645,6 @@ def save_sub_session_outcome(**fields) -> int:
             if embed_cfg.get("endpoint"):
                 vectors = memory_store._embed([objective], embed_cfg)
                 if vectors and vectors[0]:
-                    import struct
                     embedding_blob = struct.pack(f"{len(vectors[0])}f", *vectors[0])
     except Exception as exc:
         logger.debug("Could not embed outcome objective: %s", exc)
@@ -724,7 +704,6 @@ def get_similar_outcomes(objective: str, limit: int = 5) -> list[dict]:
 
 def _vector_search_outcomes(objective: str, embed_cfg: dict, limit: int) -> list[dict]:
     """Search outcomes by cosine similarity of objective embeddings."""
-    import struct
     from wintermute.infra.memory_store import _embed
 
     query_vec = _embed([objective], embed_cfg, task="query")
@@ -949,14 +928,6 @@ def update_dreaming_phase_state(
         conn.commit()
 
 
-def get_all_dreaming_phase_states() -> dict[str, dict]:
-    """Return all dreaming phase states keyed by phase_name."""
-    with _connect() as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute("SELECT * FROM dreaming_state").fetchall()
-    return {r["phase_name"]: dict(r) for r in rows}
-
-
 def count_memories_added_since(since: float) -> int:
     """Count memory.appended events logged since a timestamp.
 
@@ -999,16 +970,6 @@ def get_all_thread_configs() -> list[tuple[str, str]]:
             "SELECT thread_id, config_json FROM thread_config"
         ).fetchall()
     return rows
-
-
-def get_thread_config(thread_id: str) -> Optional[str]:
-    """Return raw config JSON for a thread, or None."""
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT config_json FROM thread_config WHERE thread_id = ?",
-            (thread_id,),
-        ).fetchone()
-    return row[0] if row else None
 
 
 def set_thread_config(thread_id: str, config_json: str) -> None:

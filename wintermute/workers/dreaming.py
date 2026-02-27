@@ -27,7 +27,6 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
-import re as _re
 import time as _time
 from dataclasses import dataclass, field
 from datetime import datetime, time as dt_time, timedelta, timezone
@@ -42,6 +41,7 @@ from wintermute.infra import data_versioning
 from wintermute.infra import memory_store
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
+from wintermute.infra.llm_utils import parse_json_from_llm
 
 if TYPE_CHECKING:
     from wintermute.core.llm_thread import BackendPool
@@ -132,74 +132,6 @@ async def _consolidate(pool: "BackendPool",
     return result
 
 
-def _extract_json_object(text: str) -> dict:
-    """Extract the first JSON object from text, tolerating prose wrappers."""
-    text = text.strip()
-    try:
-        result = _json.loads(text)
-        if isinstance(result, dict):
-            return result
-        if isinstance(result, list) and result and isinstance(result[0], dict):
-            return result[0]
-    except _json.JSONDecodeError:
-        pass
-    fenced = _re.sub(r"^```(?:json)?\s*", "", text, flags=_re.MULTILINE)
-    fenced = _re.sub(r"```\s*$", "", fenced, flags=_re.MULTILINE).strip()
-    try:
-        result = _json.loads(fenced)
-        if isinstance(result, dict):
-            return result
-    except _json.JSONDecodeError:
-        pass
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end > start:
-        try:
-            result = _json.loads(text[start:end + 1])
-            if isinstance(result, dict):
-                return result
-        except _json.JSONDecodeError:
-            pass
-    raise ValueError(f"No JSON object found in response: {text[:200]!r}")
-
-
-def _extract_json_array(text: str) -> list:
-    """Extract the first JSON array from text, tolerating prose wrappers.
-
-    Tries in order:
-    1. Direct parse (model returned clean JSON)
-    2. Strip ```json ... ``` or ``` ... ``` fences
-    3. Find the first '[' ... last ']' substring and parse that
-    Raises ValueError if nothing parses.
-    """
-    text = text.strip()
-    # 1. Direct parse
-    try:
-        result = _json.loads(text)
-        if isinstance(result, list):
-            return result
-    except _json.JSONDecodeError:
-        pass
-    # 2. Strip markdown code fences
-    fenced = _re.sub(r"^```(?:json)?\s*", "", text, flags=_re.MULTILINE)
-    fenced = _re.sub(r"```\s*$", "", fenced, flags=_re.MULTILINE).strip()
-    try:
-        result = _json.loads(fenced)
-        if isinstance(result, list):
-            return result
-    except _json.JSONDecodeError:
-        pass
-    # 3. Grab outermost [...] span
-    start = text.find("[")
-    end = text.rfind("]")
-    if start != -1 and end > start:
-        try:
-            result = _json.loads(text[start:end + 1])
-            if isinstance(result, list):
-                return result
-        except _json.JSONDecodeError:
-            pass
-    raise ValueError(f"No JSON array found in response: {text[:200]!r}")
 
 
 def _load_dreaming_config() -> dict:
@@ -471,7 +403,7 @@ async def _phase_contradiction(pool: "BackendPool", cfg: dict,
                              .replace("{entry_2}", sim_data.texts[j]),
                 "",
             )
-            decision = _extract_json_object(raw)
+            decision = parse_json_from_llm(raw, dict)
             action = decision.get("action", "")
             if action == "keep_first":
                 await asyncio.to_thread(memory_store.delete, sim_data.ids[j])
@@ -587,8 +519,8 @@ async def _phase_task_consolidation(pool: "BackendPool", cfg: dict,
     applied = 0
     if raw:
         try:
-            actions = _extract_json_array(raw)
-        except (ValueError, _json.JSONDecodeError) as exc:
+            actions = parse_json_from_llm(raw, list)
+        except ValueError as exc:
             logger.warning("Dreaming: tasks LLM returned non-JSON: %s", exc)
             actions = []
         for act in actions:
@@ -675,7 +607,7 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
                 for name, (_, content) in skills.items()
             )
             raw = await _consolidate(pool, "skills_dedup", dedup_prompt, formatted)
-            actions = _extract_json_array(raw)
+            actions = parse_json_from_llm(raw, list)
             for act in actions:
                 action = act.get("action")
                 name = act.get("file", "")
@@ -697,7 +629,7 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
                         skills[name][0].unlink()
                         del skills[name]
                     merged_skills += 1
-        except (ValueError, _json.JSONDecodeError) as exc:
+        except ValueError as exc:
             logger.warning("Dreaming: skill dedup non-JSON: %s", exc)
         except Exception:  # noqa: BLE001
             logger.exception("Dreaming: skill dedup failed")
@@ -846,7 +778,7 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
             pool, "association", assoc_prompt, content,
             json_mode=True, max_tokens=1024,
         )
-        parsed = _extract_json_object(raw)
+        parsed = parse_json_from_llm(raw, dict)
         if parsed.get("no_insight", False):
             result.summary = "LLM found no cross-domain insights"
             return result
@@ -964,7 +896,7 @@ async def _phase_schema(pool: "BackendPool", cfg: dict,
                 pool, "schema", schema_prompt, content,
                 json_mode=True, max_tokens=1024,
             )
-            parsed = _extract_json_object(raw)
+            parsed = parse_json_from_llm(raw, dict)
             schema_text = parsed.get("schema", "").strip()
             replaces = parsed.get("replaces_entries", False)
             confidence = parsed.get("confidence", "medium")
@@ -1123,7 +1055,7 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
             pool, "prediction", pred_prompt, content,
             json_mode=True, max_tokens=1024,
         )
-        parsed = _extract_json_object(raw)
+        parsed = parse_json_from_llm(raw, dict)
         predictions = parsed.get("predictions", [])
 
         predictions_added = 0

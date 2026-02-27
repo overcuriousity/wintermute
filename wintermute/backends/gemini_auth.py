@@ -27,9 +27,11 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import httpx
 
+from wintermute.infra import paths as _paths
+
 logger = logging.getLogger(__name__)
 
-CREDENTIALS_FILE = Path("data") / "gemini_credentials.json"
+CREDENTIALS_FILE = _paths.GEMINI_CREDENTIALS_FILE
 
 OAUTH_SCOPES = [
     "https://www.googleapis.com/auth/cloud-platform",

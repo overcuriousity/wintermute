@@ -43,6 +43,17 @@ Two architectural choices make this concrete:
 
 ---
 
+## Screenshots of Web Interface
+
+<img width="1500" height="1052" alt="image" src="https://github.com/user-attachments/assets/f82cb7d2-190d-4e2f-9229-23639ee6e7f1" />
+
+<img width="1500" height="1052" alt="image" src="https://github.com/user-attachments/assets/39f835a4-eee8-4765-98e5-19b64f164c87" />
+
+<img width="1500" height="1052" alt="image" src="https://github.com/user-attachments/assets/ac3a7bc9-f910-4e9f-a300-aa4329ded351" />
+
+
+---
+
 ## Requirements
 
 - Linux (Fedora / RHEL or Debian / Ubuntu)

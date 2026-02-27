@@ -18,14 +18,11 @@ import sqlite3
 import threading
 import time
 
-from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-logger = logging.getLogger(__name__)
+from wintermute.infra.paths import DATA_DIR, MEMORIES_FILE, FTS5_DB_PATH
 
-DATA_DIR = Path("data")
-MEMORIES_FILE = DATA_DIR / "MEMORIES.txt"
-FTS5_DB_PATH = DATA_DIR / "memory_index.db"
+logger = logging.getLogger(__name__)
 
 # Module-level singleton state.
 _backend: MemoryBackend | None = None
@@ -1482,11 +1479,6 @@ def search_neighbors_batch(
     if isinstance(_backend, QdrantBackend):
         return _backend.search_neighbors_batch(entry_ids, limit, score_threshold)
     return {}
-
-
-def get_embed_config() -> dict:
-    """Return the embeddings config dict (for external callers needing to embed)."""
-    return _config.get("embeddings", {})
 
 
 def is_vector_enabled() -> bool:

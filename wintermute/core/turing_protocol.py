@@ -60,21 +60,29 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import re
 import time as _time
+from collections import OrderedDict
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
+
+from jsonschema import Draft7Validator
 
 if TYPE_CHECKING:
     from wintermute.core.llm_thread import BackendPool
 
 from wintermute.infra import database
+from wintermute.infra.llm_utils import strip_fences
+from wintermute.infra import prompt_loader
+from wintermute.infra import paths as _paths
 
 from wintermute.tools import TOOL_SCHEMAS, _NL_SCHEMA_MAP
 
 logger = logging.getLogger(__name__)
 
-HOOKS_FILE = Path("data") / "TURING_PROTOCOL_HOOKS.txt"
+HOOKS_FILE = _paths.HOOKS_FILE
 
 # Cache for file-loaded hooks: (mtime, file_hooks_dict).
 # Avoids re-reading + re-parsing the file on every protocol call.
@@ -461,7 +469,6 @@ def _load_hooks(
 
 def _build_stage1_system_prompt(hooks: list[TuringHook]) -> str:
     """Assemble the Stage 1 system prompt from all enabled hooks' detection_prompt fields."""
-    from wintermute.infra import prompt_loader
     bullets = "\n".join(h.detection_prompt for h in hooks)
     return prompt_loader.load("TURING_STAGE1.txt", detection_bullets=bullets)
 
@@ -700,7 +707,6 @@ def validate_repetition_loop(context: dict, detection_result: dict) -> bool:
     if not recent:
         return False
 
-    from difflib import SequenceMatcher
     for prev in recent:
         if len(prev) < 50:
             continue
@@ -751,7 +757,6 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook
     tool_schema = _get_tool_schema(tool_name, nl_tools=nl_tools) if tool_name else ""
 
     # Group violations by hook type to merge same-type violations.
-    from collections import OrderedDict
     grouped: OrderedDict[str, list[dict]] = OrderedDict()
     for violation in confirmed:
         vtype = violation.get("type", "")
@@ -854,7 +859,6 @@ def _get_phantom_tool_schemas(violation: dict, nl_tools: "set[str] | None" = Non
     `add_skill`) and returns their schemas concatenated.  Falls back to a
     generic message if no tools are identified.
     """
-    import re
     reason = violation.get("reason", "")
     # Match backtick-quoted tool names and bare tool names from the known set.
     known_tools = {t["function"]["name"] for t in TOOL_SCHEMAS}
@@ -874,84 +878,49 @@ def _get_phantom_tool_schemas(violation: dict, nl_tools: "set[str] | None" = Non
 
 
 # ---------------------------------------------------------------------------
-# Schema validation helpers (no external dependency — custom subset impl)
+# Schema validation helper
 # ---------------------------------------------------------------------------
 
-def _check_type(value: Any, expected: str) -> bool:
-    """Return True if *value* matches the JSON Schema *expected* type string.
+_VALIDATOR_CACHE: dict[int, Draft7Validator] = {}
 
-    Note: ``bool`` is a subclass of ``int`` in Python, so we explicitly
-    reject booleans when the expected type is ``"integer"`` or ``"number"``.
+
+def _get_validator(schema: dict) -> Draft7Validator:
+    """Return a cached Draft7Validator for *schema*.
+
+    Tool schemas are module-level constants, so ``id(schema)`` is stable for
+    the lifetime of the process.  Schemas that omit ``additionalProperties``
+    have ``False`` injected before compilation so that unknown keys are
+    rejected (matching the behaviour of the previous hand-rolled validator).
+    Schemas that explicitly set ``additionalProperties`` keep their declared
+    value.
     """
-    if expected == "string":
-        return isinstance(value, str)
-    if expected == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
-    if expected == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    if expected == "boolean":
-        return isinstance(value, bool)
-    if expected == "array":
-        return isinstance(value, list)
-    if expected == "object":
-        return isinstance(value, dict)
-    return True  # Unknown type — do not block.
+    key = id(schema)
+    if key not in _VALIDATOR_CACHE:
+        effective = schema if "additionalProperties" in schema else {**schema, "additionalProperties": False}
+        _VALIDATOR_CACHE[key] = Draft7Validator(effective)
+    return _VALIDATOR_CACHE[key]
 
 
 def _validate_against_schema(args: dict, schema: dict) -> list[str]:
-    """Validate *args* against a JSON Schema (subset used by TOOL_SCHEMAS).
-
-    Checks:
-    - Arguments is a JSON object (dict)
-    - All ``required`` fields are present
-    - Each provided field is declared in ``properties`` (no unknown keys)
-    - Each provided field matches its declared ``type``
-    - Each provided field satisfies its ``enum`` constraint
-    - Integer / number fields satisfy ``minimum`` / ``maximum`` constraints
+    """Validate *args* against a JSON Schema using jsonschema.
 
     Returns a list of human-readable error strings; empty list means valid.
+    Errors for nested fields are prefixed with the dotted path (e.g.
+    ``'priority': …``).  Root-level errors (e.g. missing required properties)
+    have no path prefix and are emitted as-is.
+
+    Unknown properties are rejected unless the schema explicitly permits them
+    via ``additionalProperties``.
     """
-    if not isinstance(args, dict):
-        return [f"Tool arguments must be a JSON object, got {type(args).__name__}"]
-
-    errors: list[str] = []
-    properties: dict = schema.get("properties", {})
-    required: list = schema.get("required", [])
-
-    for field in required:
-        if field not in args:
-            errors.append(f"Missing required field '{field}'")
-
-    for field, value in args.items():
-        if field not in properties:
-            errors.append(f"Unknown field '{field}'")
-            continue
-
-        prop = properties[field]
-        expected_type = prop.get("type")
-
-        if expected_type and not _check_type(value, expected_type):
-            errors.append(
-                f"Field '{field}': expected {expected_type}, "
-                f"got {type(value).__name__} ({value!r})"
-            )
-            continue  # Skip further checks if the type is already wrong.
-
-        if "enum" in prop and value not in prop["enum"]:
-            errors.append(
-                f"Field '{field}': must be one of {prop['enum']}, got {value!r}"
-            )
-
-        if expected_type in ("integer", "number"):
-            if "minimum" in prop and value < prop["minimum"]:
-                errors.append(
-                    f"Field '{field}': must be >= {prop['minimum']}, got {value}"
-                )
-            if "maximum" in prop and value > prop["maximum"]:
-                errors.append(
-                    f"Field '{field}': must be <= {prop['maximum']}, got {value}"
-                )
-
+    validator = _get_validator(schema)
+    errors = []
+    for e in sorted(
+        validator.iter_errors(args),
+        key=lambda e: (list(e.path), list(e.schema_path), str(e.validator), e.message),
+    ):
+        path_parts = list(e.path)
+        prefix = (f"'{'.'.join(str(p) for p in path_parts)}': ") if path_parts else ""
+        errors.append(f"{prefix}{e.message}")
     return errors
 
 
@@ -1093,10 +1062,7 @@ async def run_turing_protocol(
                     "(model may have spent all tokens on reasoning/thinking)"
                 )
             else:
-                # Strip markdown code fences if the model wraps its JSON.
-                if stage1_raw.startswith("```"):
-                    stage1_raw = stage1_raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-
+                stage1_raw = strip_fences(stage1_raw)
                 result = json.loads(stage1_raw)
                 if not isinstance(result, dict):
                     logger.warning(
@@ -1293,8 +1259,6 @@ async def _check_objective_completion(
     Makes a single LLM call using the TURING_OBJECTIVE_COMPLETION.txt
     prompt template.  Returns a violation dict if the objective is NOT met.
     """
-    from wintermute.infra import prompt_loader
-
     objective = context.get("objective", "")
     assistant_response = context.get("assistant_response", "")
     if not objective or not assistant_response:
