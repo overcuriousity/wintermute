@@ -69,6 +69,7 @@ if TYPE_CHECKING:
     from wintermute.core.llm_thread import BackendPool
 
 from wintermute.infra import database
+from wintermute.infra.llm_utils import strip_fences
 
 from wintermute.tools import TOOL_SCHEMAS, _NL_SCHEMA_MAP
 
@@ -1093,10 +1094,7 @@ async def run_turing_protocol(
                     "(model may have spent all tokens on reasoning/thinking)"
                 )
             else:
-                # Strip markdown code fences if the model wraps its JSON.
-                if stage1_raw.startswith("```"):
-                    stage1_raw = stage1_raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-
+                stage1_raw = strip_fences(stage1_raw)
                 result = json.loads(stage1_raw)
                 if not isinstance(result, dict):
                     logger.warning(
