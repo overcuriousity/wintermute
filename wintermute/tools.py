@@ -15,6 +15,7 @@ Tool categories
 
 import json
 import logging
+import os
 import subprocess
 import time
 from collections import deque
@@ -30,7 +31,7 @@ from wintermute.infra.paths import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
-SEARXNG_URL = "http://127.0.0.1:8888"
+SEARXNG_URL = os.environ.get("WINTERMUTE_SEARXNG_URL", "http://127.0.0.1:8888")
 
 # ---------------------------------------------------------------------------
 # In-memory tool call log (bounded ring buffer for the debug UI)
