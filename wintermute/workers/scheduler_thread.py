@@ -14,11 +14,13 @@ stored in the tasks table in conversation.db.
 Natural-language time parsing is handled by a simple heuristic + dateutil.
 """
 
+import asyncio
 import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from apscheduler.executors.asyncio import AsyncIOExecutor
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
@@ -168,7 +170,7 @@ class TaskScheduler:
                 "thread_id": thread_id,
                 "background": background,
                 "schedule_type": schedule_config.get("schedule_type"),
-                "schedule": _describe_schedule(schedule_config),
+                "schedule": tool_module._describe_schedule(schedule_config),
                 "created": datetime.now(timezone.utc).isoformat(),
             },
             replace_existing=True,
@@ -294,9 +296,6 @@ class TaskScheduler:
         One-time (DateTrigger) jobs that already ran are excluded because
         APScheduler removes them after execution.
         """
-        import asyncio
-        from datetime import datetime, timezone, timedelta
-
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(hours=self._MAX_MISSED_AGE_HOURS)
         recovered = 0
@@ -354,7 +353,6 @@ class TaskScheduler:
                         ai_prompt: str | None, thread_id: str | None,
                         background: bool) -> None:
         """Schedule _fire_task on the event loop from the synchronous start() context."""
-        import asyncio
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(
@@ -437,7 +435,6 @@ def _parse_hhmm(s: str) -> tuple[int, int]:
 
 def _parse_once_at(spec: str, tz_name: str = "UTC") -> datetime:
     """Parse a one-time fire datetime from natural language or ISO-8601."""
-    from zoneinfo import ZoneInfo
     try:
         local_tz = ZoneInfo(tz_name)
     except Exception:
@@ -467,24 +464,3 @@ def _parse_once_at(spec: str, tz_name: str = "UTC") -> datetime:
     except Exception:  # noqa: BLE001
         logger.warning("Could not parse once_at '%s', defaulting to +1h", spec)
         return now + timedelta(hours=1)
-
-
-def _describe_schedule(inputs: dict) -> str:
-    """Build a human-readable schedule string from structured inputs."""
-    t = inputs.get("schedule_type", "once")
-    if t == "once":
-        return f"once at {inputs.get('at', '?')}"
-    if t == "daily":
-        return f"daily at {inputs.get('at', '?')}"
-    if t == "weekly":
-        return f"weekly on {inputs.get('day_of_week', '?')} at {inputs.get('at', '?')}"
-    if t == "monthly":
-        return f"monthly on day {inputs.get('day_of_month', '?')} at {inputs.get('at', '?')}"
-    if t == "interval":
-        secs = inputs.get("interval_seconds", "?")
-        desc = f"every {secs}s"
-        ws, we = inputs.get("window_start"), inputs.get("window_end")
-        if ws and we:
-            desc += f" from {ws} to {we}"
-        return desc
-    return str(inputs)

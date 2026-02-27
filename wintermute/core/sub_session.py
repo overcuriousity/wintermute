@@ -59,6 +59,7 @@ hops are allowed before the chain gives up and reports partial progress.
 import asyncio
 import json
 import logging
+import re
 import shutil
 import time as _time
 import uuid
@@ -1162,7 +1163,6 @@ class SubSessionManager:
 
         # Correlate skill usage with session outcome for skill_stats.
         try:
-            import re as _re_mod
             log_entries = await database.async_call(
                 database.get_interaction_log,
                 limit=200,
@@ -1173,7 +1173,7 @@ class SubSessionManager:
             for entry in log_entries:
                 raw = entry.get("input", "")
                 if "read_file" in raw and "data/skills/" in raw:
-                    matches = _re_mod.findall(r'data/skills/([^\s"\']+)\.md', raw)
+                    matches = re.findall(r'data/skills/([^\s"\']+)\.md', raw)
                     skill_names.extend(matches)
             if skill_names:
                 from wintermute.workers import skill_stats
