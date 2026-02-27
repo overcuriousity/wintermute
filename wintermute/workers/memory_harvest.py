@@ -76,7 +76,7 @@ class MemoryHarvestLoop:
         # Pending harvest check triggered by event bus
         self._check_event = asyncio.Event()
         # Strong references to background tasks to prevent GC
-        self._background_tasks: set = set()
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
     # ------------------------------------------------------------------
     # Public tuning API (used by self-model auto-tuning)
@@ -152,6 +152,9 @@ class MemoryHarvestLoop:
             for sub_id in self._event_bus_subs:
                 self._event_bus.unsubscribe(sub_id)
             self._event_bus_subs.clear()
+        for task in list(self._background_tasks):
+            task.cancel()
+        self._background_tasks.clear()
 
     # ------------------------------------------------------------------
     # Core logic
