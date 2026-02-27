@@ -350,12 +350,21 @@ def check_component_sizes() -> dict[str, bool]:
     """
     Return a dict indicating which components exceed their size thresholds.
     Keys: 'memories', 'tasks', 'skills'
+
+    When vector memory is enabled, the full MEMORIES.txt is never injected
+    into the system prompt (only relevance-ranked results are), so the
+    memories size check is skipped.
     """
-    memories_len = len(_read(MEMORIES_FILE))
+    from wintermute.infra import memory_store
+
+    if memory_store.is_vector_enabled():
+        memories_oversized = False
+    else:
+        memories_oversized = len(_read(MEMORIES_FILE)) > MEMORIES_LIMIT
     tasks_len     = len(database.get_active_tasks_text())
     skills_toc_len = len(_read_skills_toc())
     return {
-        "memories": memories_len > MEMORIES_LIMIT,
+        "memories": memories_oversized,
         "tasks":    tasks_len    > TASKS_LIMIT,
         "skills":   skills_toc_len > SKILLS_LIMIT,
     }
