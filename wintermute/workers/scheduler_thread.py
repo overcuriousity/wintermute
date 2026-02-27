@@ -103,7 +103,7 @@ class TaskScheduler:
     def start(self) -> None:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         jobstores = {
-            "default": SQLAlchemyJobStore(url=f"sqlite:///{SCHEDULER_DB}")
+            "default": SQLAlchemyJobStore(url=f"sqlite:///{SCHEDULER_DB.as_posix()}")
         }
         executors = {"default": AsyncIOExecutor()}
         self._scheduler = AsyncIOScheduler(

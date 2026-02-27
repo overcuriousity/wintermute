@@ -27,8 +27,6 @@ from urllib.request import Request, urlopen
 
 from wintermute.infra import database
 from wintermute.infra import prompt_assembler
-from wintermute.infra.paths import DATA_DIR
-
 logger = logging.getLogger(__name__)
 
 SEARXNG_URL = os.environ.get("WINTERMUTE_SEARXNG_URL", "http://127.0.0.1:8888")
