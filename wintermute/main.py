@@ -526,7 +526,7 @@ async def main() -> None:
     llm.inject_sub_session_manager(sub_sessions)
     tool_module.register_sub_session_manager(sub_sessions.spawn)
     tool_module.register_event_bus(event_bus)
-    searxng_url = cfg.get("search", {}).get("searxng_url")
+    searxng_url = (cfg.get("search") or {}).get("searxng_url")
     if searxng_url:
         tool_module.set_searxng_url(searxng_url)
     # register_self_model is wired later, after self_model is built.
