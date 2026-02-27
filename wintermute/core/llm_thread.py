@@ -1170,7 +1170,7 @@ class LLMThread:
                             database.save_interaction_log,
                             _time.time(), "inference_round", thread_id,
                             active_pool.last_used,
-                            _raw_content[:500] or f"[rescued {len(_rescued_names)} tool call(s)]",
+                            _raw_content[:500],
                             f"[rescued_tool_calls: {', '.join(_rescued_names)}]",
                             "ok",
                             raw_output=json.dumps({
