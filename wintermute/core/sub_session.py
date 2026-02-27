@@ -146,7 +146,10 @@ def _sanitize_tool_call_boundary(messages: list) -> list:
     # -- Step 2: validate leading assistant with tool_calls ----------------
     first = msgs[0]
     if _role(first) == "assistant" and _tool_calls(first):
-        expected_ids = {tc.id for tc in _tool_calls(first)}
+        expected_ids = {
+            (tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None))
+            for tc in _tool_calls(first)
+        } - {None, ""}
         # Collect the tool-result ids that immediately follow
         found_ids: set[str] = set()
         i = 1
@@ -1468,7 +1471,8 @@ class SubSessionManager:
                     # then sanitize the boundary so no assistant tool_calls are
                     # separated from their tool-result messages (API 400 guard).
                     head = state.messages[:2]
-                    tail = state.messages[-4:]
+                    tail_start = max(2, len(state.messages) - 4)
+                    tail = state.messages[tail_start:]
                     tail = _sanitize_tool_call_boundary(tail)
                     if not tail:
                         # Entire tail was malformed; fall back to head only
