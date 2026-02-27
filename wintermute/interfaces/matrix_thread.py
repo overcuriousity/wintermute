@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Optional
 
 from ruamel.yaml import YAML as _YAML
+from ruamel.yaml.scalarstring import DoubleQuotedScalarString as _DQStr
 
 try:
     import olm as _olm
@@ -82,9 +83,16 @@ _config_write_lock = _threading.Lock()
 def _update_config_yaml(access_token: str, device_id: str) -> None:
     """Write new access_token and device_id back into config.yaml (in-place).
 
-    Uses ruamel.yaml for a comment-preserving round-trip parse so the rest of
-    the file is left byte-for-byte identical.  Writes via a tempfile + os.replace
-    to prevent concurrent writes from producing truncated YAML.
+    Uses ruamel.yaml for a comment-preserving round-trip parse that preserves
+    comments and key order while minimizing formatting changes.  Writes via a
+    tempfile + os.replace to prevent concurrent writes from producing truncated
+    YAML.
+
+    Values are stored as double-quoted scalars so PyYAML's safe_load() cannot
+    coerce them (e.g. a token that starts with 'yes' or 'null' stays a string).
+
+    If the file cannot be parsed or the matrix section is missing, a warning is
+    logged and the function returns without modifying the file.
     """
     if not CONFIG_PATH.exists():
         return
@@ -93,11 +101,21 @@ def _update_config_yaml(access_token: str, device_id: str) -> None:
     yaml.preserve_quotes = True
 
     with _config_write_lock:
-        with CONFIG_PATH.open(encoding="utf-8") as f:
-            data = yaml.load(f)
+        try:
+            with CONFIG_PATH.open(encoding="utf-8") as f:
+                data = yaml.load(f)
+        except Exception:
+            logger.warning("_update_config_yaml: failed to parse %s — skipping write", CONFIG_PATH)
+            return
 
-        data["matrix"]["access_token"] = access_token
-        data["matrix"]["device_id"] = device_id
+        if not isinstance(data, dict) or not isinstance(data.get("matrix"), dict):
+            logger.warning("_update_config_yaml: 'matrix' section missing in %s — skipping write", CONFIG_PATH)
+            return
+
+        # Force double-quoted scalars so PyYAML safe_load() always reads them
+        # back as strings regardless of the token value.
+        data["matrix"]["access_token"] = _DQStr(access_token)
+        data["matrix"]["device_id"] = _DQStr(device_id)
 
         # Atomic write: temp file in same directory, then os.replace().
         fd, tmp_path = _tempfile.mkstemp(
