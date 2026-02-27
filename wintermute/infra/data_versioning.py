@@ -142,15 +142,16 @@ def commit_async(message: str) -> None:
         _queue.put(message)
 
 
-def drain(timeout: float = 5.0) -> None:
+def drain() -> None:
     """Flush all pending commits and stop the worker.  Called during shutdown.
 
     Sets a draining flag (under _worker_lock) before inserting the sentinel,
     so no new messages can be enqueued after the sentinel — preventing the
     race where a concurrent commit_async() call posts after the sentinel and
-    is left permanently unprocessed.  Because the worker is non-daemon, the
-    interpreter will wait for it regardless; the timeout controls how long
-    we log a warning before giving up on a graceful join.
+    is left permanently unprocessed.  Blocks until the worker thread exits.
+
+    Because the worker is non-daemon, the caller should run this in a thread
+    pool if it must not block an event loop (e.g. via ``asyncio.to_thread``).
     """
     global _draining
     with _worker_lock:
@@ -161,6 +162,4 @@ def drain(timeout: float = 5.0) -> None:
         # Insert sentinel inside the lock — no new messages can be queued after this.
         _queue.put(None)
     logger.info("data_versioning: draining pending commits…")
-    w.join(timeout=timeout)
-    if w.is_alive():
-        logger.warning("data_versioning: worker still alive after %.1fs", timeout)
+    w.join()
