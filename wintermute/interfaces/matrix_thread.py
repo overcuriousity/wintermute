@@ -37,11 +37,10 @@ import os as _os
 import re as _re
 import tempfile as _tempfile
 import threading as _threading
+from collections.abc import Mapping as _Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
-
-from collections.abc import Mapping as _Mapping
 
 from ruamel.yaml import YAML as _YAML
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString as _DQStr
