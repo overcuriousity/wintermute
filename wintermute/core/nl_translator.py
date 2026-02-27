@@ -19,6 +19,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 from zoneinfo import ZoneInfo
 
+from wintermute.infra.llm_utils import strip_fences
+
 from wintermute.infra import prompt_loader
 
 if TYPE_CHECKING:
@@ -97,13 +99,6 @@ def is_nl_tool_call(tool_name: str, tool_args: dict) -> bool:
         and isinstance(tool_args["description"], str)
     )
 
-
-def _strip_markdown_fences(text: str) -> str:
-    """Remove markdown code fences (```json ... ```) from LLM output."""
-    text = text.strip()
-    text = re.sub(r"^```(?:json)?\s*\n?", "", text)
-    text = re.sub(r"\n?```\s*$", "", text)
-    return text.strip()
 
 
 def _fix_unescaped_control_chars(text: str) -> str:
@@ -214,7 +209,7 @@ async def translate_nl_tool_call(
         logger.warning("NL translator returned empty response for %s", tool_name)
         return None
 
-    raw = _strip_markdown_fences(raw)
+    raw = strip_fences(raw)
 
     try:
         parsed = json.loads(raw)
