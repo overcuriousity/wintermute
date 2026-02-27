@@ -340,6 +340,9 @@ class MemoryHarvestLoop:
                 )
             except Exception:  # noqa: BLE001
                 pass
+        except asyncio.CancelledError:
+            logger.debug("Memory harvest monitor for %s cancelled during shutdown", session_id)
+            raise
         except Exception:  # noqa: BLE001
             logger.exception("Memory harvest monitor for %s failed", session_id)
         finally:
