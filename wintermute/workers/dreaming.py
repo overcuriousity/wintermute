@@ -27,7 +27,6 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
-import re as _re
 import time as _time
 from dataclasses import dataclass, field
 from datetime import datetime, time as dt_time, timedelta, timezone
@@ -521,7 +520,7 @@ async def _phase_task_consolidation(pool: "BackendPool", cfg: dict,
     if raw:
         try:
             actions = parse_json_from_llm(raw, list)
-        except (ValueError, _json.JSONDecodeError) as exc:
+        except ValueError as exc:
             logger.warning("Dreaming: tasks LLM returned non-JSON: %s", exc)
             actions = []
         for act in actions:
@@ -630,7 +629,7 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
                         skills[name][0].unlink()
                         del skills[name]
                     merged_skills += 1
-        except (ValueError, _json.JSONDecodeError) as exc:
+        except ValueError as exc:
             logger.warning("Dreaming: skill dedup non-JSON: %s", exc)
         except Exception:  # noqa: BLE001
             logger.exception("Dreaming: skill dedup failed")

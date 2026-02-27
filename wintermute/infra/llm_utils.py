@@ -31,7 +31,12 @@ def parse_json_from_llm(text: str, expected_type: type) -> Any:
     also accepted (some models wrap objects in an array).
 
     Raises ``ValueError`` if no valid JSON of the expected type is found.
+    Raises ``TypeError`` if *expected_type* is not ``dict`` or ``list``.
     """
+    if expected_type not in (dict, list):
+        raise TypeError(
+            f"parse_json_from_llm: expected_type must be dict or list, got {expected_type!r}"
+        )
     type_name = "object" if expected_type is dict else "array"
     open_char, close_char = ("{", "}") if expected_type is dict else ("[", "]")
 
