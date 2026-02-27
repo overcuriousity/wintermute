@@ -19,6 +19,7 @@ dependencies = [
     "anthropic>=0.42.0",
     "numpy>=1.26.0",
     "qdrant-client>=1.13.0",
+    "ruamel.yaml>=0.18.0",
     "jsonschema>=4.0.0",
 ]
 
