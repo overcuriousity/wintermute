@@ -68,6 +68,8 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
 
+from jsonschema import Draft7Validator
+
 if TYPE_CHECKING:
     from wintermute.core.llm_thread import BackendPool
 
@@ -876,84 +878,49 @@ def _get_phantom_tool_schemas(violation: dict, nl_tools: "set[str] | None" = Non
 
 
 # ---------------------------------------------------------------------------
-# Schema validation helpers (no external dependency — custom subset impl)
+# Schema validation helper
 # ---------------------------------------------------------------------------
 
-def _check_type(value: Any, expected: str) -> bool:
-    """Return True if *value* matches the JSON Schema *expected* type string.
+_VALIDATOR_CACHE: dict[int, Draft7Validator] = {}
 
-    Note: ``bool`` is a subclass of ``int`` in Python, so we explicitly
-    reject booleans when the expected type is ``"integer"`` or ``"number"``.
+
+def _get_validator(schema: dict) -> Draft7Validator:
+    """Return a cached Draft7Validator for *schema*.
+
+    Tool schemas are module-level constants, so ``id(schema)`` is stable for
+    the lifetime of the process.  Schemas that omit ``additionalProperties``
+    have ``False`` injected before compilation so that unknown keys are
+    rejected (matching the behaviour of the previous hand-rolled validator).
+    Schemas that explicitly set ``additionalProperties`` keep their declared
+    value.
     """
-    if expected == "string":
-        return isinstance(value, str)
-    if expected == "integer":
-        return isinstance(value, int) and not isinstance(value, bool)
-    if expected == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    if expected == "boolean":
-        return isinstance(value, bool)
-    if expected == "array":
-        return isinstance(value, list)
-    if expected == "object":
-        return isinstance(value, dict)
-    return True  # Unknown type — do not block.
+    key = id(schema)
+    if key not in _VALIDATOR_CACHE:
+        effective = schema if "additionalProperties" in schema else {**schema, "additionalProperties": False}
+        _VALIDATOR_CACHE[key] = Draft7Validator(effective)
+    return _VALIDATOR_CACHE[key]
 
 
 def _validate_against_schema(args: dict, schema: dict) -> list[str]:
-    """Validate *args* against a JSON Schema (subset used by TOOL_SCHEMAS).
-
-    Checks:
-    - Arguments is a JSON object (dict)
-    - All ``required`` fields are present
-    - Each provided field is declared in ``properties`` (no unknown keys)
-    - Each provided field matches its declared ``type``
-    - Each provided field satisfies its ``enum`` constraint
-    - Integer / number fields satisfy ``minimum`` / ``maximum`` constraints
+    """Validate *args* against a JSON Schema using jsonschema.
 
     Returns a list of human-readable error strings; empty list means valid.
+    Errors for nested fields are prefixed with the dotted path (e.g.
+    ``'priority': …``).  Root-level errors (e.g. missing required properties)
+    have no path prefix and are emitted as-is.
+
+    Unknown properties are rejected unless the schema explicitly permits them
+    via ``additionalProperties``.
     """
-    if not isinstance(args, dict):
-        return [f"Tool arguments must be a JSON object, got {type(args).__name__}"]
-
-    errors: list[str] = []
-    properties: dict = schema.get("properties", {})
-    required: list = schema.get("required", [])
-
-    for field in required:
-        if field not in args:
-            errors.append(f"Missing required field '{field}'")
-
-    for field, value in args.items():
-        if field not in properties:
-            errors.append(f"Unknown field '{field}'")
-            continue
-
-        prop = properties[field]
-        expected_type = prop.get("type")
-
-        if expected_type and not _check_type(value, expected_type):
-            errors.append(
-                f"Field '{field}': expected {expected_type}, "
-                f"got {type(value).__name__} ({value!r})"
-            )
-            continue  # Skip further checks if the type is already wrong.
-
-        if "enum" in prop and value not in prop["enum"]:
-            errors.append(
-                f"Field '{field}': must be one of {prop['enum']}, got {value!r}"
-            )
-
-        if expected_type in ("integer", "number"):
-            if "minimum" in prop and value < prop["minimum"]:
-                errors.append(
-                    f"Field '{field}': must be >= {prop['minimum']}, got {value}"
-                )
-            if "maximum" in prop and value > prop["maximum"]:
-                errors.append(
-                    f"Field '{field}': must be <= {prop['maximum']}, got {value}"
-                )
-
+    validator = _get_validator(schema)
+    errors = []
+    for e in sorted(
+        validator.iter_errors(args),
+        key=lambda e: (list(e.path), list(e.schema_path), str(e.validator), e.message),
+    ):
+        path_parts = list(e.path)
+        prefix = (f"'{'.'.join(str(p) for p in path_parts)}': ") if path_parts else ""
+        errors.append(f"{prefix}{e.message}")
     return errors
 
 
