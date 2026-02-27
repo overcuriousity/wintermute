@@ -1305,7 +1305,7 @@ async def run_dream_cycle(
             ))
 
     # Auto-commit all changes.
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     await loop.run_in_executor(
         None, data_versioning.auto_commit, "dreaming: nightly consolidation",
     )
