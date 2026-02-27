@@ -876,7 +876,6 @@ def _get_phantom_tool_schemas(violation: dict, nl_tools: "set[str] | None" = Non
 
 
 # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
 # Schema validation helper
 # ---------------------------------------------------------------------------
 
@@ -904,8 +903,9 @@ def _validate_against_schema(args: dict, schema: dict) -> list[str]:
     """Validate *args* against a JSON Schema using jsonschema.
 
     Returns a list of human-readable error strings; empty list means valid.
-    Error messages are prefixed with the argument name (e.g. "'priority': …")
-    so the LLM correction prompt is actionable.
+    Errors for nested fields are prefixed with the dotted path (e.g.
+    ``'priority': …``).  Root-level errors (e.g. missing required properties)
+    have no path prefix and are emitted as-is.
 
     Unknown properties are rejected unless the schema explicitly permits them
     via ``additionalProperties``.
