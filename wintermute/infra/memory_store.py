@@ -184,9 +184,10 @@ class FTS5Backend:
             conn = self._connect()
             try:
                 conn.execute(
-                    "INSERT OR REPLACE INTO memories_meta "
+                    "INSERT INTO memories_meta "
                     "(entry_id, text, created_at, last_accessed, access_count, source) "
-                    "VALUES (?, ?, ?, ?, 0, ?)",
+                    "VALUES (?, ?, ?, ?, 0, ?) "
+                    "ON CONFLICT(entry_id) DO UPDATE SET text = excluded.text",
                     (eid, entry.strip(), now, now, source),
                 )
                 conn.commit()
@@ -257,14 +258,28 @@ class FTS5Backend:
         return [{"id": r[0], "text": r[1], "score": 1.0} for r in rows]
 
     def replace_all(self, entries: list[str]) -> None:
+        now = time.time()
+        cleaned = [(e.strip(), _make_id(e)) for e in entries if e.strip()]
+        new_ids = [eid for _, eid in cleaned]
         with self._lock:
             conn = self._connect()
             try:
-                conn.execute("DELETE FROM memories_meta")
-                now = time.time()
+                # Delete entries no longer present.
+                if new_ids:
+                    placeholders = ",".join("?" for _ in new_ids)
+                    conn.execute(
+                        f"DELETE FROM memories_meta WHERE entry_id NOT IN ({placeholders})",
+                        new_ids,
+                    )
+                else:
+                    conn.execute("DELETE FROM memories_meta")
+                # Upsert: insert new entries, update text for existing (preserve metadata).
                 conn.executemany(
-                    "INSERT INTO memories_meta (entry_id, text, created_at) VALUES (?, ?, ?)",
-                    [(_make_id(e), e.strip(), now) for e in entries if e.strip()],
+                    "INSERT INTO memories_meta "
+                    "(entry_id, text, created_at, last_accessed, access_count, source) "
+                    "VALUES (?, ?, ?, ?, 0, 'dreaming') "
+                    "ON CONFLICT(entry_id) DO UPDATE SET text = excluded.text",
+                    [(eid, text, now, now) for text, eid in cleaned],
                 )
                 conn.commit()
             finally:
@@ -426,9 +441,11 @@ class LocalVectorBackend:
             conn = self._connect()
             try:
                 conn.execute(
-                    "INSERT OR REPLACE INTO local_vectors "
+                    "INSERT INTO local_vectors "
                     "(entry_id, text, vector, created_at, last_accessed, access_count, source) "
-                    "VALUES (?, ?, ?, ?, ?, 0, ?)",
+                    "VALUES (?, ?, ?, ?, ?, 0, ?) "
+                    "ON CONFLICT(entry_id) DO UPDATE SET "
+                    "text = excluded.text, vector = excluded.vector",
                     (eid, entry.strip(), blob, now, now, source),
                 )
                 conn.commit()
@@ -534,16 +551,29 @@ class LocalVectorBackend:
 
         now = time.time()
         rows = [
-            (_make_id(entry), entry, self._vec_to_blob(vec), now)
+            (_make_id(entry), entry, self._vec_to_blob(vec), now, now)
             for entry, vec in zip(entries, vectors)
         ]
+        new_ids = [r[0] for r in rows]
         with self._lock:
             conn = self._connect()
             try:
-                conn.execute("DELETE FROM local_vectors")
+                # Delete entries no longer present.
+                if new_ids:
+                    placeholders = ",".join("?" for _ in new_ids)
+                    conn.execute(
+                        f"DELETE FROM local_vectors WHERE entry_id NOT IN ({placeholders})",
+                        new_ids,
+                    )
+                else:
+                    conn.execute("DELETE FROM local_vectors")
+                # Upsert: insert new, update text+vector for existing (preserve metadata).
                 conn.executemany(
-                    "INSERT INTO local_vectors (entry_id, text, vector, created_at) "
-                    "VALUES (?, ?, ?, ?)",
+                    "INSERT INTO local_vectors "
+                    "(entry_id, text, vector, created_at, last_accessed, access_count, source) "
+                    "VALUES (?, ?, ?, ?, ?, 0, 'dreaming') "
+                    "ON CONFLICT(entry_id) DO UPDATE SET "
+                    "text = excluded.text, vector = excluded.vector",
                     rows,
                 )
                 conn.commit()
@@ -858,16 +888,32 @@ class QdrantBackend:
             raise RuntimeError("Embedding call returned no vectors")
         t0 = time.time()
         now = time.time()
+        # Try to preserve existing metadata (access_count, last_accessed, source, created_at).
+        existing_payload: dict = {}
+        try:
+            with self._lock:
+                pts = self._client.retrieve(
+                    collection_name=self._collection,
+                    ids=[eid], with_payload=True, with_vectors=False,
+                )
+            if pts:
+                existing_payload = pts[0].payload or {}
+        except Exception:  # noqa: BLE001
+            pass  # Point doesn't exist yet — use defaults.
+        payload = {
+            "text": entry.strip(),
+            "created_at": existing_payload.get("created_at", now),
+            "last_accessed": existing_payload.get("last_accessed", now),
+            "access_count": existing_payload.get("access_count", 0),
+            "source": existing_payload.get("source", source),
+        }
         with self._lock:
             self._client.upsert(
                 collection_name=self._collection,
                 points=[PointStruct(
                     id=eid,
                     vector=vectors[0],
-                    payload={
-                        "text": entry.strip(), "created_at": now,
-                        "last_accessed": now, "access_count": 0, "source": source,
-                    },
+                    payload=payload,
                 )],
             )
         _log_interaction(t0, "qdrant_add", entry[:200], f"id={eid}", llm="qdrant")
@@ -947,14 +993,37 @@ class QdrantBackend:
                 f"Embedding mismatch: {len(entries)} entries but {len(vectors) if vectors else 0} vectors"
             )
 
-        points = [
-            PointStruct(
-                id=_make_id(entry),
+        now = time.time()
+        new_ids = [_make_id(entry) for entry in entries]
+
+        # Read existing metadata before replacing, so we can carry it over.
+        existing_meta: dict[str, dict] = {}
+        try:
+            with self._lock:
+                result = self._client.scroll(
+                    collection_name=self._collection,
+                    limit=10000,
+                    with_payload=True,
+                )
+            for p in (result[0] if result else []):
+                existing_meta[str(p.id)] = p.payload or {}
+        except Exception:  # noqa: BLE001
+            pass  # Fresh collection or scroll failed — use defaults.
+
+        points = []
+        for entry, vec, eid in zip(entries, vectors, new_ids):
+            old = existing_meta.get(eid, {})
+            points.append(PointStruct(
+                id=eid,
                 vector=vec,
-                payload={"text": entry, "created_at": time.time()},
-            )
-            for entry, vec in zip(entries, vectors)
-        ]
+                payload={
+                    "text": entry,
+                    "created_at": old.get("created_at", now),
+                    "last_accessed": old.get("last_accessed", now),
+                    "access_count": old.get("access_count", 0),
+                    "source": old.get("source", "dreaming"),
+                },
+            ))
 
         with self._lock:
             # Recreate collection to ensure clean state.
