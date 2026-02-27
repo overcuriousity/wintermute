@@ -664,152 +664,167 @@ def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
         return json.dumps({"error": str(exc)})
 
 
+def _task_add(inputs: dict, effective_scope: Optional[str]) -> str:
+    content = inputs.get("content")
+    if not content:
+        return json.dumps({"error": "content is required for add action"})
+    add_thread = inputs.get("thread_id") or effective_scope
+    schedule_type = inputs.get("schedule_type")
+    ai_prompt = inputs.get("ai_prompt")
+    background = bool(inputs.get("background", False))
+
+    schedule_config = None
+    schedule_desc = None
+    if schedule_type:
+        sched_inputs = {k: inputs[k] for k in
+            ("schedule_type", "at", "day_of_week", "day_of_month",
+             "interval_seconds", "window_start", "window_end")
+            if k in inputs}
+        schedule_config = json.dumps(sched_inputs)
+        schedule_desc = _describe_schedule(sched_inputs)
+
+    task_id = database.add_task(
+        content=content,
+        priority=int(inputs.get("priority", 5)),
+        thread_id=add_thread,
+        schedule_type=schedule_type,
+        schedule_desc=schedule_desc,
+        schedule_config=schedule_config,
+        ai_prompt=ai_prompt,
+        background=background,
+    )
+
+    if schedule_type and _task_scheduler_ensure is not None:
+        _task_scheduler_ensure(
+            task_id, json.loads(schedule_config),
+            ai_prompt, add_thread, background,
+        )
+        database.update_task(task_id, apscheduler_job_id=task_id)
+
+    if _event_bus:
+        _event_bus.emit("task.created", task_id=task_id,
+                        content=content[:200],
+                        schedule_type=schedule_type)
+    result = {"status": "ok", "task_id": task_id}
+    if schedule_desc:
+        result["schedule"] = schedule_desc
+    return json.dumps(result)
+
+
+def _task_complete(inputs: dict, effective_scope: Optional[str]) -> str:
+    task_id = inputs.get("task_id")
+    if not task_id:
+        return json.dumps({"error": "task_id is required for complete action"})
+    reason = (inputs.get("reason") or "").strip()
+    if not reason:
+        return json.dumps({"error": "reason is required for complete action — explain why this task is finished"})
+    task = database.get_task(task_id)
+    if task and task.get("apscheduler_job_id") and _task_scheduler_remove:
+        _task_scheduler_remove(task_id)
+    ok = database.complete_task(task_id, reason=reason, thread_id=effective_scope)
+    if ok and _event_bus:
+        _event_bus.emit("task.completed", task_id=task_id, reason=reason[:200])
+    return json.dumps({"status": "ok" if ok else "not_found", "reason": reason})
+
+
+def _task_pause(inputs: dict, effective_scope: Optional[str]) -> str:
+    task_id = inputs.get("task_id")
+    if not task_id:
+        return json.dumps({"error": "task_id is required for pause action"})
+    task = database.get_task(task_id)
+    if task and task.get("apscheduler_job_id") and _task_scheduler_remove:
+        _task_scheduler_remove(task_id)
+    ok = database.pause_task(task_id)
+    return json.dumps({"status": "ok" if ok else "not_found"})
+
+
+def _task_resume(inputs: dict, effective_scope: Optional[str]) -> str:
+    task_id = inputs.get("task_id")
+    if not task_id:
+        return json.dumps({"error": "task_id is required for resume action"})
+    ok = database.resume_task(task_id)
+    if ok:
+        # Re-register schedule with APScheduler.
+        task = database.get_task(task_id)
+        if task and task.get("schedule_config") and _task_scheduler_ensure:
+            sched = json.loads(task["schedule_config"])
+            _task_scheduler_ensure(
+                task_id, sched,
+                task.get("ai_prompt"), task.get("thread_id"),
+                bool(task.get("background")),
+            )
+    return json.dumps({"status": "ok" if ok else "not_found"})
+
+
+def _task_delete(inputs: dict, effective_scope: Optional[str]) -> str:
+    task_id = inputs.get("task_id")
+    if not task_id:
+        return json.dumps({"error": "task_id is required for delete action"})
+    task = database.get_task(task_id)
+    if task and task.get("apscheduler_job_id") and _task_scheduler_remove:
+        _task_scheduler_remove(task_id)
+    ok = database.delete_task(task_id)
+    return json.dumps({"status": "ok" if ok else "not_found"})
+
+
+def _task_update(inputs: dict, effective_scope: Optional[str]) -> str:
+    task_id = inputs.get("task_id")
+    if not task_id:
+        return json.dumps({"error": "task_id is required for update action"})
+    kwargs = {}
+    if "content" in inputs:
+        kwargs["content"] = inputs["content"]
+    if "priority" in inputs:
+        kwargs["priority"] = int(inputs["priority"])
+    ok = database.update_task(task_id, thread_id=effective_scope, **kwargs)
+    return json.dumps({"status": "ok" if ok else "not_found"})
+
+
+def _task_list(inputs: dict, effective_scope: Optional[str]) -> str:
+    status = inputs.get("status", "active")
+    items = database.list_tasks(status, thread_id=effective_scope)
+    formatted = []
+    for it in items:
+        entry = {
+            "id": it["id"],
+            "content": it["content"],
+            "priority": it["priority"],
+            "status": it["status"],
+        }
+        if it.get("schedule_desc"):
+            entry["schedule"] = it["schedule_desc"]
+        if it.get("ai_prompt"):
+            entry["ai_prompt"] = it["ai_prompt"][:100]
+        if it.get("last_run_at"):
+            entry["last_run_at"] = it["last_run_at"]
+            entry["run_count"] = it.get("run_count", 0)
+        if it.get("last_result_summary"):
+            entry["last_result"] = it["last_result_summary"][:200]
+        formatted.append(entry)
+    return json.dumps({"tasks": formatted, "count": len(formatted)})
+
+
+_TASK_ACTIONS: dict[str, Any] = {
+    "add":      _task_add,
+    "complete": _task_complete,
+    "pause":    _task_pause,
+    "resume":   _task_resume,
+    "delete":   _task_delete,
+    "update":   _task_update,
+    "list":     _task_list,
+}
+
+
 def _tool_task(inputs: dict, thread_id: Optional[str] = None,
                parent_thread_id: Optional[str] = None, **_kw) -> str:
     """Unified task tool — handles add/update/complete/pause/resume/delete/list."""
     effective_scope = parent_thread_id or thread_id
     try:
         action = inputs.get("action", "list")
-
-        if action == "add":
-            content = inputs.get("content")
-            if not content:
-                return json.dumps({"error": "content is required for add action"})
-            add_thread = inputs.get("thread_id") or effective_scope
-            schedule_type = inputs.get("schedule_type")
-            ai_prompt = inputs.get("ai_prompt")
-            background = bool(inputs.get("background", False))
-
-            # Build schedule config and description for DB storage.
-            schedule_config = None
-            schedule_desc = None
-            if schedule_type:
-                sched_inputs = {k: inputs[k] for k in
-                    ("schedule_type", "at", "day_of_week", "day_of_month",
-                     "interval_seconds", "window_start", "window_end")
-                    if k in inputs}
-                schedule_config = json.dumps(sched_inputs)
-                schedule_desc = _describe_schedule(sched_inputs)
-
-            task_id = database.add_task(
-                content=content,
-                priority=int(inputs.get("priority", 5)),
-                thread_id=add_thread,
-                schedule_type=schedule_type,
-                schedule_desc=schedule_desc,
-                schedule_config=schedule_config,
-                ai_prompt=ai_prompt,
-                background=background,
-            )
-
-            # If scheduled, register with APScheduler.
-            if schedule_type and _task_scheduler_ensure is not None:
-                _task_scheduler_ensure(
-                    task_id, json.loads(schedule_config),
-                    ai_prompt, add_thread, background,
-                )
-                database.update_task(task_id, apscheduler_job_id=task_id)
-
-            if _event_bus:
-                _event_bus.emit("task.created", task_id=task_id,
-                                content=content[:200],
-                                schedule_type=schedule_type)
-            result = {"status": "ok", "task_id": task_id}
-            if schedule_desc:
-                result["schedule"] = schedule_desc
-            return json.dumps(result)
-
-        elif action == "complete":
-            task_id = inputs.get("task_id")
-            if not task_id:
-                return json.dumps({"error": "task_id is required for complete action"})
-            reason = (inputs.get("reason") or "").strip()
-            if not reason:
-                return json.dumps({"error": "reason is required for complete action — explain why this task is finished"})
-            # Remove schedule if any.
-            task = database.get_task(task_id)
-            if task and task.get("apscheduler_job_id") and _task_scheduler_remove:
-                _task_scheduler_remove(task_id)
-            ok = database.complete_task(task_id, reason=reason, thread_id=effective_scope)
-            if ok and _event_bus:
-                _event_bus.emit("task.completed", task_id=task_id, reason=reason[:200])
-            return json.dumps({"status": "ok" if ok else "not_found", "reason": reason})
-
-        elif action == "pause":
-            task_id = inputs.get("task_id")
-            if not task_id:
-                return json.dumps({"error": "task_id is required for pause action"})
-            task = database.get_task(task_id)
-            if task and task.get("apscheduler_job_id") and _task_scheduler_remove:
-                _task_scheduler_remove(task_id)
-            ok = database.pause_task(task_id)
-            return json.dumps({"status": "ok" if ok else "not_found"})
-
-        elif action == "resume":
-            task_id = inputs.get("task_id")
-            if not task_id:
-                return json.dumps({"error": "task_id is required for resume action"})
-            ok = database.resume_task(task_id)
-            if ok:
-                # Re-register schedule with APScheduler.
-                task = database.get_task(task_id)
-                if task and task.get("schedule_config") and _task_scheduler_ensure:
-                    sched = json.loads(task["schedule_config"])
-                    _task_scheduler_ensure(
-                        task_id, sched,
-                        task.get("ai_prompt"), task.get("thread_id"),
-                        bool(task.get("background")),
-                    )
-            return json.dumps({"status": "ok" if ok else "not_found"})
-
-        elif action == "delete":
-            task_id = inputs.get("task_id")
-            if not task_id:
-                return json.dumps({"error": "task_id is required for delete action"})
-            task = database.get_task(task_id)
-            if task and task.get("apscheduler_job_id") and _task_scheduler_remove:
-                _task_scheduler_remove(task_id)
-            ok = database.delete_task(task_id)
-            return json.dumps({"status": "ok" if ok else "not_found"})
-
-        elif action == "update":
-            task_id = inputs.get("task_id")
-            if not task_id:
-                return json.dumps({"error": "task_id is required for update action"})
-            kwargs = {}
-            if "content" in inputs:
-                kwargs["content"] = inputs["content"]
-            if "priority" in inputs:
-                kwargs["priority"] = int(inputs["priority"])
-            ok = database.update_task(task_id, thread_id=effective_scope, **kwargs)
-            return json.dumps({"status": "ok" if ok else "not_found"})
-
-        elif action == "list":
-            status = inputs.get("status", "active")
-            items = database.list_tasks(status, thread_id=effective_scope)
-            # Format for readability
-            formatted = []
-            for it in items:
-                entry = {
-                    "id": it["id"],
-                    "content": it["content"],
-                    "priority": it["priority"],
-                    "status": it["status"],
-                }
-                if it.get("schedule_desc"):
-                    entry["schedule"] = it["schedule_desc"]
-                if it.get("ai_prompt"):
-                    entry["ai_prompt"] = it["ai_prompt"][:100]
-                if it.get("last_run_at"):
-                    entry["last_run_at"] = it["last_run_at"]
-                    entry["run_count"] = it.get("run_count", 0)
-                if it.get("last_result_summary"):
-                    entry["last_result"] = it["last_result_summary"][:200]
-                formatted.append(entry)
-            return json.dumps({"tasks": formatted, "count": len(formatted)})
-
-        else:
+        handler = _TASK_ACTIONS.get(action)
+        if handler is None:
             return json.dumps({"error": f"Unknown action: {action}"})
+        return handler(inputs, effective_scope)
     except Exception as exc:  # noqa: BLE001
         logger.exception("task tool failed")
         return json.dumps({"error": str(exc)})
