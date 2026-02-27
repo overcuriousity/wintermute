@@ -97,7 +97,7 @@ def record_session_outcome(skill_names: list[str], success: bool) -> None:
 
 
 def flush() -> None:
-    """Persist current stats to YAML and auto-commit in a daemon thread."""
+    """Persist current stats to YAML and queue a background auto-commit."""
     with _lock:
         snapshot = dict(_skills)
     if not snapshot:
@@ -108,11 +108,7 @@ def flush() -> None:
             yaml.dump({"skills": snapshot}, default_flow_style=False, allow_unicode=True),
             encoding="utf-8",
         )
-        threading.Thread(
-            target=data_versioning.auto_commit,
-            args=("skill_stats: update",),
-            daemon=True,
-        ).start()
+        data_versioning.commit_async("skill_stats: update")
     except Exception:
         logger.debug("[skill_stats] Failed to flush YAML", exc_info=True)
 

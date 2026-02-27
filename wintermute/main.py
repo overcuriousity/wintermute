@@ -761,6 +761,15 @@ async def main() -> None:
     except asyncio.TimeoutError:
         logger.warning("Some tasks did not stop within 10 s — forcing exit")
 
+    # Drain after tasks are cancelled so any commits queued during shutdown
+    # cleanup are also flushed before the process exits.  Run in a thread so
+    # we don't block the event loop; cap the wait at 30 s.
+    from wintermute.infra import data_versioning
+    try:
+        await asyncio.wait_for(asyncio.to_thread(data_versioning.drain), timeout=30.0)
+    except asyncio.TimeoutError:
+        logger.warning("data_versioning: drain timed out after 30 s — commits may be incomplete")
+
     logger.info("Wintermute shutdown complete")
 
 

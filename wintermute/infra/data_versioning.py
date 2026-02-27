@@ -6,12 +6,17 @@ an ``auto_commit()`` helper that stages all unignored changes and commits
 them.  This gives a full change history for MEMORIES.txt, skills, and other
 mutable data files so that any change can be manually rolled back.
 
-Usage from async code::
+For fire-and-forget background commits use ``commit_async()``, which queues
+the work onto a single non-daemon worker thread.  Call ``drain()`` during
+shutdown to flush all pending commits before the process exits::
 
-    loop.run_in_executor(None, auto_commit, "memory: append")
+    data_versioning.commit_async("memory: append")
+    # ... at shutdown:
+    data_versioning.drain()
 """
 
 import logging
+import queue
 import subprocess
 import threading
 from pathlib import Path
@@ -87,3 +92,74 @@ def auto_commit(message: str) -> None:
                 logger.debug("data_versioning: committed — %s", message)
         except Exception:  # noqa: BLE001
             logger.exception("data_versioning: auto_commit failed")
+
+
+# ---------------------------------------------------------------------------
+# Async commit helpers (single worker thread + queue, shutdown drain)
+# ---------------------------------------------------------------------------
+
+_queue: queue.Queue[str | None] = queue.Queue()
+_worker_lock = threading.Lock()
+_worker: threading.Thread | None = None
+_draining = False
+
+
+def _worker_loop() -> None:
+    """Drain the commit queue until the stop sentinel (None) is received."""
+    while True:
+        message = _queue.get()
+        try:
+            if message is None:
+                return  # Stop sentinel — shut down worker.
+            auto_commit(message)
+        finally:
+            _queue.task_done()
+
+
+def _start_worker_locked() -> None:
+    """Start the worker thread if not already running.  Caller must hold _worker_lock."""
+    global _worker
+    if _worker is None or not _worker.is_alive():
+        _worker = threading.Thread(
+            target=_worker_loop, name="data-commit-worker", daemon=False,
+        )
+        _worker.start()
+
+
+def commit_async(message: str) -> None:
+    """Queue a commit to run on the background worker thread.
+
+    Commits are processed in FIFO order by a single non-daemon worker, so
+    concurrent callers never pile up blocked threads.  Once ``drain()`` has
+    been called, falls back to a synchronous commit so no work is lost.
+    """
+    with _worker_lock:
+        if _draining:
+            # Shutdown in progress — run synchronously so the commit isn't lost.
+            auto_commit(message)
+            return
+        _start_worker_locked()
+        _queue.put(message)
+
+
+def drain() -> None:
+    """Flush all pending commits and stop the worker.  Called during shutdown.
+
+    Sets a draining flag (under _worker_lock) before inserting the sentinel,
+    so no new messages can be enqueued after the sentinel — preventing the
+    race where a concurrent commit_async() call posts after the sentinel and
+    is left permanently unprocessed.  Blocks until the worker thread exits.
+
+    Because the worker is non-daemon, the caller should run this in a thread
+    pool if it must not block an event loop (e.g. via ``asyncio.to_thread``).
+    """
+    global _draining
+    with _worker_lock:
+        _draining = True
+        w = _worker
+        if w is None or not w.is_alive():
+            return
+        # Insert sentinel inside the lock — no new messages can be queued after this.
+        _queue.put(None)
+    logger.info("data_versioning: draining pending commits…")
+    w.join()

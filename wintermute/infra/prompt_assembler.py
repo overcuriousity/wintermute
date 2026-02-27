@@ -381,10 +381,7 @@ def update_memories(content: str) -> None:
             memory_store.replace_all(entries)
         except Exception as exc:
             logger.error("Failed to sync vector store on update_memories: %s", exc)
-    threading.Thread(
-        target=data_versioning.auto_commit, args=("memory: consolidation",),
-        daemon=True,
-    ).start()
+    data_versioning.commit_async("memory: consolidation")
 
 
 def append_memory(entry: str, source: str = "unknown") -> int:
@@ -405,10 +402,7 @@ def append_memory(entry: str, source: str = "unknown") -> int:
             memory_store.add(entry.strip(), source=source)
         except Exception as exc:
             logger.error("Failed to add memory to vector store: %s", exc)
-    threading.Thread(
-        target=data_versioning.auto_commit, args=("memory: append",),
-        daemon=True,
-    ).start()
+    data_versioning.commit_async("memory: append")
     return len(new_content)
 
 
@@ -447,10 +441,7 @@ def add_skill(skill_name: str, documentation: str,
         content = f"{content}\n\n{changelog_section}"
     skill_file.write_text(content, encoding="utf-8")
     logger.info("Skill '%s' written to %s", skill_name, skill_file)
-    threading.Thread(
-        target=data_versioning.auto_commit, args=(f"skill: {skill_name}",),
-        daemon=True,
-    ).start()
+    data_versioning.commit_async(f"skill: {skill_name}")
 
 
 def merge_consolidated_memories(snapshot: str, consolidated: str) -> None:
