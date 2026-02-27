@@ -880,6 +880,26 @@ def _get_phantom_tool_schemas(violation: dict, nl_tools: "set[str] | None" = Non
 # Schema validation helper
 # ---------------------------------------------------------------------------
 
+_VALIDATOR_CACHE: dict[int, Draft7Validator] = {}
+
+
+def _get_validator(schema: dict) -> Draft7Validator:
+    """Return a cached Draft7Validator for *schema*.
+
+    Tool schemas are module-level constants, so ``id(schema)`` is stable for
+    the lifetime of the process.  Schemas that omit ``additionalProperties``
+    have ``False`` injected before compilation so that unknown keys are
+    rejected (matching the behaviour of the previous hand-rolled validator).
+    Schemas that explicitly set ``additionalProperties`` keep their declared
+    value.
+    """
+    key = id(schema)
+    if key not in _VALIDATOR_CACHE:
+        effective = schema if "additionalProperties" in schema else {**schema, "additionalProperties": False}
+        _VALIDATOR_CACHE[key] = Draft7Validator(effective)
+    return _VALIDATOR_CACHE[key]
+
+
 def _validate_against_schema(args: dict, schema: dict) -> list[str]:
     """Validate *args* against a JSON Schema using jsonschema.
 
@@ -887,15 +907,15 @@ def _validate_against_schema(args: dict, schema: dict) -> list[str]:
     Error messages are prefixed with the argument name (e.g. "'priority': …")
     so the LLM correction prompt is actionable.
 
-    Unknown properties are always rejected: if the schema does not already
-    set additionalProperties the validator injects False to preserve the
-    behaviour of the previous hand-rolled implementation.
+    Unknown properties are rejected unless the schema explicitly permits them
+    via ``additionalProperties``.
     """
-    if "additionalProperties" not in schema:
-        schema = {**schema, "additionalProperties": False}
-    validator = Draft7Validator(schema)
+    validator = _get_validator(schema)
     errors = []
-    for e in sorted(validator.iter_errors(args), key=lambda e: list(e.path)):
+    for e in sorted(
+        validator.iter_errors(args),
+        key=lambda e: (list(e.path), list(e.schema_path), str(e.validator), e.message),
+    ):
         path_parts = list(e.path)
         prefix = (f"'{'.'.join(str(p) for p in path_parts)}': ") if path_parts else ""
         errors.append(f"{prefix}{e.message}")
