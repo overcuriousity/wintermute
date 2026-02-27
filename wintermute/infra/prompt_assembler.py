@@ -202,7 +202,7 @@ def _get_reflection_observations() -> str:
         for e in entries:
             ts_str = e.get("timestamp", "")
             try:
-                ts = datetime.fromisoformat(ts_str)
+                ts = datetime.fromtimestamp(float(ts_str), tz=timezone.utc)
                 if ts.tzinfo is None:
                     ts = ts.replace(tzinfo=timezone.utc)
                 if ts < cutoff:
