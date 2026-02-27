@@ -17,14 +17,15 @@ import platform
 import socket
 import time
 import uuid
-from pathlib import Path
 from typing import Any, Callable, Awaitable
 
 import aiohttp
 
+from wintermute.infra import paths as _paths
+
 logger = logging.getLogger(__name__)
 
-CREDENTIALS_FILE = Path("data") / "kimi_credentials.json"
+CREDENTIALS_FILE = _paths.KIMI_CREDENTIALS_FILE
 
 # OAuth constants
 KIMI_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098"
@@ -34,7 +35,7 @@ KIMI_OAUTH_HOST = "https://auth.kimi.com"
 _EXPIRY_BUFFER_SECONDS = 300  # 5 minutes
 
 # Device ID persistence (one per installation)
-_DEVICE_ID_FILE = Path("data") / ".kimi_device_id"
+_DEVICE_ID_FILE = _paths.KIMI_DEVICE_ID_FILE
 
 
 # ---------------------------------------------------------------------------

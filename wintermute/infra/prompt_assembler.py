@@ -21,12 +21,9 @@ from zoneinfo import ZoneInfo
 from wintermute.infra import database
 from wintermute.infra import data_versioning
 from wintermute.infra import prompt_loader
+from wintermute.infra.paths import DATA_DIR, MEMORIES_FILE, SKILLS_DIR
 
 logger = logging.getLogger(__name__)
-
-DATA_DIR = Path("data")
-MEMORIES_FILE     = DATA_DIR / "MEMORIES.txt"
-SKILLS_DIR        = DATA_DIR / "skills"
 
 # Size thresholds (characters) that trigger AI summarisation.
 # Defaults — overridden at startup via set_component_limits() from config.yaml.

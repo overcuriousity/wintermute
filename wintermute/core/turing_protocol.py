@@ -73,12 +73,13 @@ if TYPE_CHECKING:
 
 from wintermute.infra import database
 from wintermute.infra import prompt_loader
+from wintermute.infra import paths as _paths
 
 from wintermute.tools import TOOL_SCHEMAS, _NL_SCHEMA_MAP
 
 logger = logging.getLogger(__name__)
 
-HOOKS_FILE = Path("data") / "TURING_PROTOCOL_HOOKS.txt"
+HOOKS_FILE = _paths.HOOKS_FILE
 
 # Cache for file-loaded hooks: (mtime, file_hooks_dict).
 # Avoids re-reading + re-parsing the file on every protocol call.

@@ -30,6 +30,7 @@ import yaml
 from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
+from wintermute.infra.paths import DATA_DIR
 from wintermute.infra.event_bus import EventBus
 from wintermute.infra.thread_config import ThreadConfigManager
 from wintermute import tools as tool_module
@@ -102,8 +103,6 @@ def setup_logging(cfg: dict) -> None:
 # ---------------------------------------------------------------------------
 # Data file bootstrapping
 # ---------------------------------------------------------------------------
-
-DATA_DIR = Path("data")
 
 def ensure_data_dirs() -> None:
     """Ensure required data directories exist.
@@ -203,6 +202,16 @@ def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
         print(f"ERROR: llm.{name} must be a list of backend names (got {type(raw).__name__})")
         sys.exit(1)
 
+    def _get_role_with_fallback(name: str, fallback: list[ProviderConfig]) -> list[ProviderConfig]:
+        """Resolve a role, falling back to *fallback* when omitted or set to []."""
+        raw = llm_raw.get(name)
+        if raw is None or (isinstance(raw, list) and not raw):
+            return list(fallback)
+        if isinstance(raw, list):
+            return _resolve_role(name, raw, backends)
+        print(f"ERROR: llm.{name} must be a list of backend names (got {type(raw).__name__})")
+        sys.exit(1)
+
     # -- Turing Protocol backends --
     tp_configs = _get_role("turing_protocol", allow_empty=True)
 
@@ -227,33 +236,13 @@ def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
 
     # -- Memory Harvest backends --
     # Falls back to sub_sessions backends when omitted (not to first backend).
-    mh_raw = llm_raw.get("memory_harvest")
     sub_sessions_configs = _get_role("sub_sessions")
-    if mh_raw is None:
-        mh_configs = list(sub_sessions_configs)
-    elif isinstance(mh_raw, list):
-        if not mh_raw:
-            mh_configs = list(sub_sessions_configs)  # empty list → fallback
-        else:
-            mh_configs = _resolve_role("memory_harvest", mh_raw, backends)
-    else:
-        print(f"ERROR: llm.memory_harvest must be a list of backend names (got {type(mh_raw).__name__})")
-        sys.exit(1)
+    mh_configs = _get_role_with_fallback("memory_harvest", sub_sessions_configs)
 
     # -- Reflection backends --
     # Falls back to compaction backends when omitted.
-    refl_raw = llm_raw.get("reflection")
     compaction_configs = _get_role("compaction")
-    if refl_raw is None:
-        refl_configs = list(compaction_configs)
-    elif isinstance(refl_raw, list):
-        if not refl_raw:
-            refl_configs = list(compaction_configs)  # empty list → fallback
-        else:
-            refl_configs = _resolve_role("reflection", refl_raw, backends)
-    else:
-        print(f"ERROR: llm.reflection must be a list of backend names (got {type(refl_raw).__name__})")
-        sys.exit(1)
+    refl_configs = _get_role_with_fallback("reflection", compaction_configs)
 
     return MultiProviderConfig(
         main=_get_role("base"),
@@ -527,6 +516,9 @@ async def main() -> None:
     llm.inject_sub_session_manager(sub_sessions)
     tool_module.register_sub_session_manager(sub_sessions.spawn)
     tool_module.register_event_bus(event_bus)
+    searxng_url = (cfg.get("search") or {}).get("searxng_url")
+    if searxng_url:
+        tool_module.set_searxng_url(searxng_url)
     # register_self_model is wired later, after self_model is built.
 
     # Inject LLM into interfaces.
