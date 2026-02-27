@@ -30,6 +30,7 @@ from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 from wintermute.core import turing_protocol as turing_protocol_module
 from wintermute.core.inference_engine import ToolCallContext, process_tool_call
+from wintermute.core.tool_call_rescue import rescue_tool_calls
 from wintermute import tools as tool_module
 
 from typing import TYPE_CHECKING
@@ -1153,8 +1154,42 @@ class LLMThread:
                     })
                 continue  # next round
 
+            # -- Rescue XML/text-encoded tool calls -------------------
+            _raw_content = (choice.message.content or "").strip()
+            if _raw_content:
+                _known_names = {
+                    s["function"]["name"] for s in (tools or [])
+                }
+                _rescued = rescue_tool_calls(_raw_content, _known_names)
+                if _rescued:
+                    # Synthesise an assistant message with the rescued calls
+                    # and inject tool-result messages, then loop again.
+                    full_messages.append({
+                        "role": "assistant",
+                        "content": _raw_content,
+                        "tool_calls": [
+                            {"id": tc.id, "type": tc.type,
+                             "function": {"name": tc.function.name,
+                                          "arguments": tc.function.arguments}}
+                            for tc in _rescued
+                        ],
+                    })
+                    tc_ctx.pool_last_used = active_pool.last_used
+                    for tc in _rescued:
+                        outcome = await process_tool_call(
+                            tc, tc_ctx, tool_calls_made,
+                            assistant_response=_raw_content,
+                        )
+                        tool_call_details.extend(outcome.call_details)
+                        full_messages.append({
+                            "role":         "tool",
+                            "tool_call_id": tc.id,
+                            "content":      outcome.content,
+                        })
+                    continue  # next round
+
             # Terminal response.
-            content = (choice.message.content or "").strip()
+            content = _raw_content
             reasoning = "\n\n".join(reasoning_parts) if reasoning_parts else None
             return LLMReply(text=content, reasoning=reasoning,
                             tool_calls_made=tool_calls_made,
