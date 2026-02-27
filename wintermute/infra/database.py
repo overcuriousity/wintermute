@@ -428,29 +428,20 @@ def delete_task(task_id: str) -> bool:
 
 def list_tasks(status: str = "active", thread_id: Optional[str] = None) -> list[dict]:
     """Return tasks filtered by status, ordered by priority then id."""
+    conditions: list[str] = []
+    params: list = []
+    if status == "all":
+        conditions.append("status != 'deleted'")
+    else:
+        conditions.append("status = ?")
+        params.append(status)
+    if thread_id:
+        conditions.append("thread_id = ?")
+        params.append(thread_id)
+    sql = f"SELECT * FROM tasks WHERE {' AND '.join(conditions)} ORDER BY priority ASC, id ASC"
     with _connect() as conn:
         conn.row_factory = sqlite3.Row
-        if status == "all" and not thread_id:
-            rows = conn.execute(
-                "SELECT * FROM tasks WHERE status != 'deleted' ORDER BY priority ASC, id ASC"
-            ).fetchall()
-        elif status == "all" and thread_id:
-            rows = conn.execute(
-                "SELECT * FROM tasks WHERE status != 'deleted' AND thread_id=? "
-                "ORDER BY priority ASC, id ASC",
-                (thread_id,),
-            ).fetchall()
-        elif thread_id:
-            rows = conn.execute(
-                "SELECT * FROM tasks WHERE status=? AND thread_id=? "
-                "ORDER BY priority ASC, id ASC",
-                (status, thread_id),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM tasks WHERE status=? ORDER BY priority ASC, id ASC",
-                (status,),
-            ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
 
 
