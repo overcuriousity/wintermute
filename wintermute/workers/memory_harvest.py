@@ -338,6 +338,8 @@ class MemoryHarvestLoop:
                     f"{session_id} {status}",
                     "ok" if status == "completed" else status,
                 )
+            except asyncio.CancelledError:
+                raise
             except Exception:  # noqa: BLE001
                 pass
         except asyncio.CancelledError:
