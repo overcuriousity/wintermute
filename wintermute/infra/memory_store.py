@@ -906,21 +906,15 @@ class QdrantBackend:
         now = time.time()
         # Retrieve existing metadata and upsert under a single lock acquisition to
         # prevent a concurrent add() from overwriting metadata with stale data.
+        # retrieve() returns [] for a missing point — no exception for "not found".
         with self._lock:
             existing_payload: dict = {}
-            try:
-                pts = self._client.retrieve(
-                    collection_name=self._collection,
-                    ids=[eid], with_payload=True, with_vectors=False,
-                )
-                if pts:
-                    existing_payload = pts[0].payload or {}
-            except Exception as exc:  # noqa: BLE001
-                # "not found" means new entry — fall through to defaults.
-                # Any other error (network, auth, etc.) is re-raised so the
-                # caller knows metadata could not be preserved safely.
-                if "not found" not in str(exc).lower():
-                    raise
+            pts = self._client.retrieve(
+                collection_name=self._collection,
+                ids=[eid], with_payload=True, with_vectors=False,
+            )
+            if pts:
+                existing_payload = pts[0].payload or {}
             payload = {
                 "text": entry.strip(),
                 "created_at": existing_payload.get("created_at", now),
@@ -1025,54 +1019,47 @@ class QdrantBackend:
         now = time.time()
         new_ids = [_make_id(entry) for entry in entries]
 
-        # Read existing metadata before replacing, so we can carry it over.
-        # Paginate to handle collections larger than any single scroll page.
-        existing_meta: dict[str, dict] = {}
-        try:
-            offset = None
-            while True:
-                with self._lock:
-                    result = self._client.scroll(
-                        collection_name=self._collection,
-                        limit=1000,
-                        offset=offset,
-                        with_payload=True,
-                    )
-                if not result:
-                    break
-                for p in result[0]:
-                    existing_meta[str(p.id)] = p.payload or {}
-                offset = result[1] if len(result) > 1 else None
-                if offset is None:
-                    break
-        except Exception:  # noqa: BLE001
-            # Log and re-raise: silently proceeding with empty existing_meta
-            # would reset metadata for all points, defeating the purpose of
-            # this method.  Callers can catch if truly best-effort is needed.
-            logger.warning(
-                "Qdrant: failed to read existing metadata in replace_all; "
-                "aborting to avoid metadata loss",
-                exc_info=True,
-            )
-            raise
-
-        points = []
-        for entry, vec, eid in zip(entries, vectors, new_ids):
-            old = existing_meta.get(eid, {})
-            points.append(PointStruct(
-                id=eid,
-                vector=vec,
-                payload={
-                    "text": entry,
-                    "created_at": old.get("created_at", now),
-                    "last_accessed": old.get("last_accessed", now),
-                    "access_count": old.get("access_count", 0),
-                    "source": old.get("source", "dreaming"),
-                },
-            ))
-
-        # Delete points no longer present (avoids delete_collection race window).
+        # Hold a single lock for the entire retrieve-metadata → delete → upsert
+        # critical section so no concurrent add() / _track_access() can interleave
+        # and have its metadata overwritten by stale values from existing_meta.
         with self._lock:
+            # Fetch existing metadata only for the incoming IDs via batched
+            # retrieve() — cheaper than scrolling the whole collection.
+            existing_meta: dict[str, dict] = {}
+            try:
+                for i in range(0, len(new_ids), 256):
+                    pts = self._client.retrieve(
+                        collection_name=self._collection,
+                        ids=new_ids[i : i + 256],
+                        with_payload=True,
+                        with_vectors=False,
+                    )
+                    for p in pts or []:
+                        existing_meta[str(p.id)] = p.payload or {}
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Qdrant: failed to read existing metadata in replace_all; "
+                    "aborting to avoid metadata loss",
+                    exc_info=True,
+                )
+                raise
+
+            points = [
+                PointStruct(
+                    id=eid,
+                    vector=vec,
+                    payload={
+                        "text": entry,
+                        "created_at": existing_meta.get(eid, {}).get("created_at", now),
+                        "last_accessed": existing_meta.get(eid, {}).get("last_accessed", now),
+                        "access_count": existing_meta.get(eid, {}).get("access_count", 0),
+                        "source": existing_meta.get(eid, {}).get("source", "dreaming"),
+                    },
+                )
+                for entry, vec, eid in zip(entries, vectors, new_ids)
+            ]
+
+            # Delete points no longer present (avoids delete_collection race window).
             if new_ids:
                 self._client.delete(
                     collection_name=self._collection,
@@ -1083,13 +1070,12 @@ class QdrantBackend:
             else:
                 self._client.delete_collection(self._collection)
                 self.init()
-        # Upsert in batches of 100.
-        for i in range(0, len(points), 100):
-            batch = points[i:i + 100]
-            with self._lock:
+
+            # Upsert in batches of 100.
+            for i in range(0, len(points), 100):
                 self._client.upsert(
                     collection_name=self._collection,
-                    points=batch,
+                    points=points[i : i + 100],
                 )
         logger.info("Qdrant: replaced all entries (%d)", len(entries))
         _log_interaction(
