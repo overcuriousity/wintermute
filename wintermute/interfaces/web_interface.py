@@ -1490,6 +1490,7 @@ class WebInterface:
         self._matrix = None
         self._main_pool = None   # BackendPool for main role
         self._multi_cfg = None
+        self._background_tasks: set[asyncio.Task] = set()
 
     # ------------------------------------------------------------------
     # Public
@@ -1665,7 +1666,9 @@ class WebInterface:
                     content_type="application/json",
                     status=400,
                 )
-            asyncio.create_task(self._llm.enqueue_user_message(text, thread_id))
+            _task = asyncio.create_task(self._llm.enqueue_user_message(text, thread_id))
+            self._background_tasks.add(_task)
+            _task.add_done_callback(self._background_tasks.discard)
             return self._json({"ok": True, "thread_id": thread_id})
         except Exception as exc:  # noqa: BLE001
             return self._json({"error": str(exc)})

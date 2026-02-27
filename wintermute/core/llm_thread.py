@@ -287,6 +287,7 @@ class LLMThread:
         self._last_system_prompt: dict[str, str] = {}
         # Per-thread last activity timestamp (for session timeout tracking).
         self._last_activity: dict[str, float] = {}
+        self._background_tasks: set[asyncio.Task] = set()
 
     def inject_sub_session_manager(self, manager: "SubSessionManager") -> None:
         """Called after construction once SubSessionManager is built."""
@@ -624,7 +625,7 @@ class LLMThread:
                 # _prior_assistant and _recent_assistant were collected
                 # before _process() above, so they don't include the
                 # current reply.
-                asyncio.create_task(
+                _tp_task = asyncio.create_task(
                     self._run_turing_check(
                         user_message=item.text,
                         assistant_response=reply.text,
@@ -637,6 +638,8 @@ class LLMThread:
                     ),
                     name=f"turing_{item.thread_id}",
                 )
+                self._background_tasks.add(_tp_task)
+                _tp_task.add_done_callback(self._background_tasks.discard)
 
             # Emit main-thread turn event for reflection/synthesis.
             if (
