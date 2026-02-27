@@ -89,21 +89,25 @@ class EventBus:
         # single call_soon_threadsafe also prevents the double-schedule race
         # that would occur if two worker threads both see no existing timer and
         # enqueue two independent _schedule_later callbacks.
+        #
+        # _lock guards _debounce_pending and _debounce_timers against concurrent
+        # access from unsubscribe() or parallel emit() calls.
         def _do_debounce():
-            self._debounce_pending[sub_id] = event
-            existing = self._debounce_timers.pop(sub_id, None)
-            if existing:
-                existing.cancel()
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = self._loop
-            if loop is not None and loop.is_running():
-                handle = loop.call_later(
-                    debounce_ms / 1000.0,
-                    lambda: self._flush_debounce(sub_id, callback),
-                )
-                self._debounce_timers[sub_id] = handle
+            with self._lock:
+                self._debounce_pending[sub_id] = event
+                existing = self._debounce_timers.pop(sub_id, None)
+                if existing:
+                    existing.cancel()
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = self._loop
+                if loop is not None and loop.is_running():
+                    handle = loop.call_later(
+                        debounce_ms / 1000.0,
+                        lambda: self._flush_debounce(sub_id, callback),
+                    )
+                    self._debounce_timers[sub_id] = handle
 
         try:
             asyncio.get_running_loop()
@@ -117,8 +121,9 @@ class EventBus:
                 loop.call_soon_threadsafe(_do_debounce)
 
     def _flush_debounce(self, sub_id: str, callback: Callable) -> None:
-        self._debounce_timers.pop(sub_id, None)
-        event = self._debounce_pending.pop(sub_id, None)
+        with self._lock:
+            self._debounce_timers.pop(sub_id, None)
+            event = self._debounce_pending.pop(sub_id, None)
         if event:
             self._fire(sub_id, callback, event)
 
