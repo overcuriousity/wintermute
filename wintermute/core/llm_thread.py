@@ -47,6 +47,9 @@ class ContextTooLargeError(Exception):
 # Keep the last N messages untouched during compaction.
 COMPACTION_KEEP_RECENT = 10
 
+# Maximum consecutive empty-choices responses before aborting the inference loop.
+MAX_EMPTY_RETRIES = 3
+
 
 
 def _count_tokens(text: str, model: str) -> int:
@@ -1065,6 +1068,7 @@ class LLMThread:
             tp_check=_tp_check_main if tp_enabled else None,
         )
 
+        empty_retries = 0
         while True:
             # Trim oldest tool results if accumulated context exceeds budget.
             self._trim_tool_results(full_messages, token_budget)
@@ -1075,11 +1079,17 @@ class LLMThread:
             )
 
             if not response.choices:
-                logger.warning("LLM returned empty choices, retrying")
+                empty_retries += 1
+                if empty_retries >= MAX_EMPTY_RETRIES:
+                    raise RuntimeError(
+                        f"LLM returned empty choices {empty_retries} times in a row; aborting"
+                    )
+                logger.warning("LLM returned empty choices, retrying (%d/%d)", empty_retries, MAX_EMPTY_RETRIES)
                 logger.debug("Empty choices raw response: %s", response)
                 full_messages.append({"role": "assistant", "content": ""})
                 full_messages.append({"role": "user", "content": "Continue."})
                 continue
+            empty_retries = 0
 
             choice = response.choices[0]
 
