@@ -17,12 +17,7 @@ from wintermute import tools as tool_module
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Debug panel SPA
-# ---------------------------------------------------------------------------
-
 _DEBUG_HTML_PATH = Path(__file__).parent / "static" / "debug.html"
-_DEBUG_HTML = _DEBUG_HTML_PATH.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +129,12 @@ class WebInterface:
     # ------------------------------------------------------------------
 
     async def _handle_debug(self, _request: web.Request) -> web.Response:
-        return web.Response(text=_DEBUG_HTML, content_type="text/html")
+        try:
+            html = _DEBUG_HTML_PATH.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.error("Could not read debug panel HTML from %s: %s", _DEBUG_HTML_PATH, exc)
+            return web.Response(status=500, text=f"Debug panel unavailable: {exc}")
+        return web.Response(text=html, content_type="text/html")
 
     # ------------------------------------------------------------------
     # Debug REST API — helpers
