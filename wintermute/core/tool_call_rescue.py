@@ -127,13 +127,16 @@ def _try_parse_json_body(body: str, known_tools: set[str]) -> Optional[list[Synt
         if not isinstance(item, dict):
             continue
         name = item.get("name") or item.get("function", "")
-        if name not in known_tools:
+        if known_tools and name not in known_tools:
             continue
         args = item.get("arguments") or item.get("parameters") or {}
         if isinstance(args, str):
             args_str = args
-        else:
+        elif isinstance(args, dict):
             args_str = json.dumps(args)
+        else:
+            # Scalar or array — wrap so downstream always receives a JSON object.
+            args_str = json.dumps({"value": args})
         results.append(SyntheticToolCall.make(name, args_str))
     return results or None
 
@@ -178,14 +181,14 @@ def rescue_tool_calls(
     if not content:
         return []
 
-    known = known_tool_names or set()
+    known = known_tool_names if known_tool_names is not None else set()
     results: list[SyntheticToolCall] = []
-    seen_ids: set[str] = set()  # deduplicate
+    seen_calls: set[tuple[str, str]] = set()  # deduplicate by (name, arguments)
 
     def _add(tc: SyntheticToolCall) -> None:
         key = (tc.function.name, tc.function.arguments)
-        if key not in seen_ids:
-            seen_ids.add(key)
+        if key not in seen_calls:
+            seen_calls.add(key)
             results.append(tc)
 
     # --- Pattern 1: Generic XML wrappers ---
@@ -231,8 +234,9 @@ def rescue_tool_calls(
                 if isinstance(args, dict):
                     args_str = json.dumps(args)
                 else:
-                    # Bare value — wrap in first-param guess
-                    args_str = json.dumps(args)
+                    # Bare scalar or array — normalize to object so downstream
+                    # tools always receive a dict.
+                    args_str = json.dumps({"input": args})
             except (json.JSONDecodeError, ValueError):
                 kv = _parse_minimax_kv(body)
                 if kv:

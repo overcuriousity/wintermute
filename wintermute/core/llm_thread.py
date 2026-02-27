@@ -1162,6 +1162,28 @@ class LLMThread:
                 }
                 _rescued = rescue_tool_calls(_raw_content, _known_names)
                 if _rescued:
+                    # Log this as an inference round with rescued tool calls so
+                    # the interaction log reflects actual tool activity.
+                    try:
+                        _rescued_names = [tc.function.name for tc in _rescued]
+                        await database.async_call(
+                            database.save_interaction_log,
+                            _time.time(), "inference_round", thread_id,
+                            active_pool.last_used,
+                            _raw_content[:500] or f"[rescued {len(_rescued_names)} tool call(s)]",
+                            f"[rescued_tool_calls: {', '.join(_rescued_names)}]",
+                            "ok",
+                            raw_output=json.dumps({
+                                "tool_calls": [
+                                    {"name": tc.function.name, "arguments": tc.function.arguments}
+                                    for tc in _rescued
+                                ],
+                                "content": _raw_content,
+                                "rescue": True,
+                            }),
+                        )
+                    except Exception:
+                        pass
                     # Synthesise an assistant message with the rescued calls
                     # and inject tool-result messages, then loop again.
                     full_messages.append({

@@ -1587,6 +1587,11 @@ class SubSessionManager:
                             "tool_call_id": tc.id,
                             "content":      outcome.content,
                         }
+                    logger.info(
+                        "Rescued and executed %d tool call(s) from text-only response: %s",
+                        len(_rescued),
+                        [tc.function.name for tc in _rescued],
+                    )
                     continue
 
             # -- Terminal response: model produced text without tool calls --
