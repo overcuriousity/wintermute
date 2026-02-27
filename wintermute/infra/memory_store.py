@@ -963,13 +963,22 @@ class QdrantBackend:
                 pass  # Best-effort access tracking.
 
     def get_all(self) -> list[dict]:
-        with self._lock:
-            result = self._client.scroll(
-                collection_name=self._collection,
-                limit=10000,
-                with_payload=True,
-            )
-        points = result[0] if result else []
+        points = []
+        offset = None
+        while True:
+            with self._lock:
+                result = self._client.scroll(
+                    collection_name=self._collection,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=True,
+                )
+            if not result:
+                break
+            points.extend(result[0])
+            offset = result[1] if len(result) > 1 else None
+            if offset is None:
+                break
         return [
             {"id": str(p.id), "text": p.payload.get("text", ""), "score": 1.0}
             for p in points
@@ -1016,7 +1025,7 @@ class QdrantBackend:
                 for p in result[0]:
                     existing_meta[str(p.id)] = p.payload or {}
                 offset = result[1] if len(result) > 1 else None
-                if not offset:
+                if offset is None:
                     break
         except Exception:  # noqa: BLE001
             pass  # Fresh collection or scroll failed — use defaults.
@@ -1100,14 +1109,23 @@ class QdrantBackend:
         logger.info("Qdrant: rebuilt index from MEMORIES.txt (%d entries)", len(entries))
 
     def get_all_with_vectors(self) -> list[dict]:
-        with self._lock:
-            result = self._client.scroll(
-                collection_name=self._collection,
-                limit=10000,
-                with_payload=True,
-                with_vectors=True,
-            )
-        points = result[0] if result else []
+        points = []
+        offset = None
+        while True:
+            with self._lock:
+                result = self._client.scroll(
+                    collection_name=self._collection,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=True,
+                )
+            if not result:
+                break
+            points.extend(result[0])
+            offset = result[1] if len(result) > 1 else None
+            if offset is None:
+                break
         return [
             {
                 "id": str(p.id),
@@ -1124,17 +1142,27 @@ class QdrantBackend:
     def get_stale(self, max_age_days: int, min_access: int) -> list[dict]:
         from qdrant_client.models import Filter, FieldCondition, Range
         cutoff = time.time() - (max_age_days * 86400)
-        with self._lock:
-            result = self._client.scroll(
-                collection_name=self._collection,
-                scroll_filter=Filter(must=[
-                    FieldCondition(key="last_accessed", range=Range(lt=cutoff)),
-                    FieldCondition(key="access_count", range=Range(lt=min_access)),
-                ]),
-                limit=10000,
-                with_payload=True,
-            )
-        points = result[0] if result else []
+        scroll_filter = Filter(must=[
+            FieldCondition(key="last_accessed", range=Range(lt=cutoff)),
+            FieldCondition(key="access_count", range=Range(lt=min_access)),
+        ])
+        points = []
+        offset = None
+        while True:
+            with self._lock:
+                result = self._client.scroll(
+                    collection_name=self._collection,
+                    scroll_filter=scroll_filter,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=True,
+                )
+            if not result:
+                break
+            points.extend(result[0])
+            offset = result[1] if len(result) > 1 else None
+            if offset is None:
+                break
         return [
             {
                 "id": str(p.id), "text": p.payload.get("text", ""),
