@@ -16,8 +16,10 @@ Tool categories
 import json
 import logging
 import os
+import re
 import subprocess
 import time
+import urllib.parse
 from collections import deque
 from html.parser import HTMLParser
 from pathlib import Path
@@ -683,7 +685,6 @@ def _tool_task(inputs: dict, thread_id: Optional[str] = None,
             schedule_config = None
             schedule_desc = None
             if schedule_type:
-                from wintermute.workers.scheduler_thread import _describe_schedule
                 sched_inputs = {k: inputs[k] for k in
                     ("schedule_type", "at", "day_of_week", "day_of_month",
                      "interval_seconds", "window_start", "window_end")
@@ -1007,7 +1008,6 @@ class _HTMLTextExtractor(HTMLParser):
             self._pieces.append(data)
 
     def get_text(self) -> str:
-        import re
         text = "".join(self._pieces)
         # Collapse runs of whitespace but preserve paragraph breaks.
         text = re.sub(r"[ \t]+", " ", text)
@@ -1022,12 +1022,32 @@ def _html_to_text(html: str) -> str:
     return parser.get_text()
 
 
+def _describe_schedule(inputs: dict) -> str:
+    """Build a human-readable schedule string from structured inputs."""
+    t = inputs.get("schedule_type", "once")
+    if t == "once":
+        return f"once at {inputs.get('at', '?')}"
+    if t == "daily":
+        return f"daily at {inputs.get('at', '?')}"
+    if t == "weekly":
+        return f"weekly on {inputs.get('day_of_week', '?')} at {inputs.get('at', '?')}"
+    if t == "monthly":
+        return f"monthly on day {inputs.get('day_of_month', '?')} at {inputs.get('at', '?')}"
+    if t == "interval":
+        secs = inputs.get("interval_seconds", "?")
+        desc = f"every {secs}s"
+        ws, we = inputs.get("window_start"), inputs.get("window_end")
+        if ws and we:
+            desc += f" from {ws} to {we}"
+        return desc
+    return str(inputs)
+
+
 # ---------------------------------------------------------------------------
 # Research tool implementations
 # ---------------------------------------------------------------------------
 
 def _tool_search_web(inputs: dict, **_kw) -> str:
-    import urllib.parse
     query = inputs["query"]
     max_results = int(inputs.get("max_results", 5))
     logger.info("search_web: %s", query)
