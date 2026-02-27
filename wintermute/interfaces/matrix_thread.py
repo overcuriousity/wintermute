@@ -89,9 +89,9 @@ def _update_config_yaml(access_token: str, device_id: str) -> None:
     tempfile + os.replace to prevent concurrent writes from producing truncated
     YAML.
 
-    Values are stored as double-quoted scalars so PyYAML's safe_load() cannot
-    coerce them (e.g. a token that starts with 'yes' or 'null' stays a string).
-
+    Values are stored as double-quoted scalars so that PyYAML's safe_load()
+    does not coerce otherwise-ambiguous tokens (e.g. values like 'yes' or
+    'null' are read back as strings instead of bool/None).
     If the file cannot be parsed or the matrix section is missing, a warning is
     logged and the function returns without modifying the file.
     """
