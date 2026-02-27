@@ -59,6 +59,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 - `data/MEMORIES.txt` — Long-term memory (append-based, consolidated nightly)
 - `data/conversation.db` — SQLite: messages, summaries, tasks, interaction_log
 - `data/skills/*.md` — Learned procedures (first line = summary for TOC; full content loaded on demand)
+- `data/scratchpad/{workflow_id}/` — Ephemeral per-workflow directories for parallel worker communication (auto-cleaned on workflow completion)
 - `data/TURING_PROTOCOL_HOOKS.txt` — Hook definitions (JSON)
 - `config.yaml` — Runtime config (gitignored)
 
@@ -66,6 +67,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 
 - System prompt is reassembled fresh every turn via `PromptAssembler`
 - Sub-sessions use a DAG with event-driven dependency resolution (`_resolve_dependents()`)
+- Multi-node workflows get a scratchpad directory (`data/scratchpad/{workflow_id}/`) where parallel workers can share intermediate findings via `read_file`/`write_file` — each worker writes to its own namespaced file, reads sibling files; directory is auto-cleaned on workflow completion
 - Turing Protocol hooks have `phase` (post_inference/pre_execution/post_execution) and `scope` (main/sub_session) fields. Main thread uses async correction injection; sub-sessions use synchronous inline injection. `objective_completion` hook gates sub-session exit with LLM-based evaluation. Each hook fires at most once per turn (single-shot, no escalation). Stage 2 programmatic validators catch false positives (e.g. responses ending with `?` are not empty promises).
 - Database migrations are applied inline at startup via `ALTER TABLE ... ADD COLUMN`
 - Slash commands (`/new`, `/compact`, `/tasks`, `/status`, `/dream`, etc.) are handled at the interface layer before reaching the LLM

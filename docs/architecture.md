@@ -108,13 +108,14 @@ SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + s
 3. Dependency IDs are validated — unknown IDs are stripped with a warning to prevent deadlocks
 4. If `depends_on` is specified and dependencies aren't done yet, the node stays `pending`
 5. Otherwise the worker starts immediately with its own in-memory message list
-6. Worker runs `_worker_loop()`: inference + tool-call loop with filtered tools
-7. On completion, `_resolve_dependents()` checks if pending nodes can now start
-8. Result delivery depends on nesting:
+6. For multi-node workflows, a scratchpad directory (`data/scratchpad/{workflow_id}/`) is created and the worker's system prompt includes instructions to write intermediate findings to its own namespaced file and read sibling files for coordination
+7. Worker runs `_worker_loop()`: inference + tool-call loop with filtered tools
+8. On completion, `_resolve_dependents()` checks if pending nodes can now start
+9. Result delivery depends on nesting:
    - **Direct children** (depth 1): result enters the parent thread via `enqueue_system_event`
    - **Nested children** (depth 2): individual reports are suppressed; when all siblings finish, an aggregated result is delivered to the root (user-facing) thread
-9. If the worker times out, a continuation is auto-spawned (up to 3 hops)
-10. Outcome metadata (duration, tool calls, TP verdict, status) is persisted to `sub_session_outcomes` for historical feedback on future spawns
+10. If the worker times out, a continuation is auto-spawned (up to 3 hops)
+11. Outcome metadata (duration, tool calls, TP verdict, status) is persisted to `sub_session_outcomes` for historical feedback on future spawns
 
 ## Workflow DAG
 
@@ -127,6 +128,25 @@ SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + s
 - Workflows spanning multiple prior workflows are automatically merged
 - `depends_on_previous`: workers can automatically depend on all sessions they've previously spawned, eliminating the need to track session IDs manually
 - Unknown dependency IDs are stripped at spawn time to prevent deadlocks from hallucinated IDs
+- **Scratchpad**: multi-node workflows get a shared `data/scratchpad/{workflow_id}/` directory where parallel workers can write intermediate findings and read sibling output using existing `read_file`/`write_file` tools (see below)
+
+### Scratchpad Communication
+
+Parallel sub-sessions in a multi-node workflow can share intermediate results via a filesystem scratchpad — no new tools or APIs needed.
+
+**Convention:**
+```
+data/scratchpad/{workflow_id}/
+├── {session_id}_notes.md      # each worker writes to its own file
+└── ...                        # siblings read each other's files
+```
+
+- Created automatically when a node starts in a multi-node workflow
+- Each worker's system prompt includes concrete paths: write to `{session_id}_notes.md`, read from the directory
+- Only injected for multi-node workflows (single-task sessions are unaffected)
+- Cleaned up automatically via `shutil.rmtree()` when the workflow reaches a terminal state
+- Race conditions are avoided by convention: each worker writes to its own namespaced file
+- Purely additive: if a worker ignores the scratchpad, everything still works via the existing DAG `depends_on` mechanism
 
 ## Design for Small LLMs
 
@@ -159,6 +179,7 @@ data/
   local_vectors.db           -- SQLite vector store with metadata (only when backend=local_vector)
   conversation.db (tasks)     -- Active goals / working memory (managed via task tool, stored in SQLite)
   conversation.db (outcomes)  -- Sub-session outcome tracking (duration, status, TP verdict; used for historical feedback)
+  scratchpad/                -- Ephemeral per-workflow directories for parallel worker communication (auto-cleaned)
   skills/                    -- Learned procedures as *.md files (updated via add_skill tool)
   DREAM_MEMORIES_PROMPT.txt  -- Customisable dreaming prompt for MEMORIES consolidation (flat-file path)
   DREAM_DEDUP_PROMPT.txt     -- Dreaming deduplication merge prompt (vector-native path)

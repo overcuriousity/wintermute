@@ -59,10 +59,12 @@ hops are allowed before the chain gives up and reports partial progress.
 import asyncio
 import json
 import logging
+import shutil
 import time as _time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 from typing import Callable, Coroutine, Optional
 
@@ -621,6 +623,12 @@ class SubSessionManager:
         session_id = node.node_id
         node.status = "running"
 
+        # Create scratchpad directory for sibling communication.
+        workflow_id = self._session_to_workflow.get(session_id)
+        if workflow_id:
+            scratchpad_dir = Path(f"data/scratchpad/{workflow_id}")
+            scratchpad_dir.mkdir(parents=True, exist_ok=True)
+
         existing = self._states.get(session_id)
         state = SubSessionState(
             session_id=session_id,
@@ -796,6 +804,11 @@ class SubSessionManager:
         wf = self._workflows.get(workflow_id)
         if wf is None:
             return
+
+        # Remove scratchpad directory for this workflow.
+        scratchpad_dir = Path(f"data/scratchpad/{workflow_id}")
+        if scratchpad_dir.exists():
+            shutil.rmtree(scratchpad_dir, ignore_errors=True)
 
         # The workflow is terminal — aggregation guards are no longer needed.
         for nid in wf.nodes:
@@ -1327,10 +1340,20 @@ class SubSessionManager:
             tp_correction_depth = 0  # fresh TP budget for the resumed session
         else:
             # Fresh start — build the initial conversation.
+            # Determine scratchpad path for multi-node workflows.
+            _scratchpad_dir: Optional[str] = None
+            _wf_id = self._session_to_workflow.get(state.session_id)
+            if _wf_id:
+                _wf = self._workflows.get(_wf_id)
+                if _wf and len(_wf.nodes) > 1:
+                    _scratchpad_dir = f"data/scratchpad/{_wf_id}"
+
             system_prompt = self._build_system_prompt(
                 state.system_prompt_mode, state.objective, context_blobs,
                 thread_id=state.parent_thread_id,
                 available_tools=_available_tool_names,
+                scratchpad_dir=_scratchpad_dir,
+                session_id=state.session_id,
             )
             state.messages = [
                 {"role": "system", "content": system_prompt},
@@ -1581,6 +1604,8 @@ class SubSessionManager:
         context_blobs: list[str],
         thread_id: Optional[str] = None,
         available_tools: Optional[set[str]] = None,
+        scratchpad_dir: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> str:
         if mode == "none":
             base = ""
@@ -1603,6 +1628,16 @@ class SubSessionManager:
         if context_blobs:
             blobs_text = "\n\n".join(context_blobs)
             parts.append(f"# Task Context\n\n{blobs_text}")
+
+        if scratchpad_dir and session_id:
+            parts.append(
+                "## Scratchpad\n\n"
+                "You are part of a multi-worker pipeline. "
+                "Write intermediate findings to: "
+                f"{scratchpad_dir}/{session_id}_notes.md\n"
+                "Check sibling progress by reading files in: "
+                f"{scratchpad_dir}/"
+            )
 
         parts.append(prompt_loader.load("WORKER_OBJECTIVE.txt", objective=objective))
 

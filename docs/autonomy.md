@@ -246,6 +246,12 @@ Multi-step tasks are expressed as dependency graphs:
 
 Example: research A + research B -> upload C (depends_on=[A, B])
 
+#### Scratchpad Communication
+
+Parallel workers in a multi-node workflow can share intermediate findings via a filesystem scratchpad at `data/scratchpad/{workflow_id}/`. Each worker's system prompt includes instructions to write to its own namespaced file (`{session_id}_notes.md`) and check sibling files for coordination. This uses the existing `read_file`/`write_file` tools — no new tools or dependencies are needed.
+
+The scratchpad is purely additive: if a worker ignores it, everything still works via the DAG's `depends_on` result-passing mechanism. The directory is created on workflow start and cleaned up automatically when the workflow reaches a terminal state. Single-task sessions (single-node workflows) do not receive scratchpad instructions.
+
 #### `depends_on_previous`
 
 Instead of manually tracking and listing session IDs (which is error-prone and can lead to hallucinated IDs), workers can set `depends_on_previous: true` to automatically depend on all sessions they have previously spawned. The system resolves the IDs programmatically.

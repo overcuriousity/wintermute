@@ -122,6 +122,8 @@ When spawning sub-sessions, the system prompt varies by mode:
 
 Both `full` and `base_only` modes use the sectioned BASE_PROMPT — sections irrelevant to the worker's available tools are automatically omitted. All modes append the task context and objective at the end.
 
+For multi-node workflows, an additional `## Scratchpad` section is injected with concrete file paths for intermediate findings and sibling coordination (see [autonomy.md — Scratchpad Communication](autonomy.md#scratchpad-communication)). Single-task sessions do not receive this section.
+
 ## Size Limits and Auto-summarisation
 
 Each component has a configurable character limit (set in `config.yaml` under `context.component_size_limits`):
