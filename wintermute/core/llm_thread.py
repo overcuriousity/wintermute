@@ -190,8 +190,12 @@ class BackendPool:
                     break  # try next backend
 
         if last_error is None:
-            last_error = RuntimeError("All backends exhausted without a concrete error")
-        raise last_error  # type: ignore[misc]
+            if not self._backends:
+                last_error = RuntimeError("No backends configured or enabled for this role")
+            else:
+                last_error = RuntimeError("All backends exhausted without a concrete error")
+        assert last_error is not None
+        raise last_error
 
 
 @dataclass
