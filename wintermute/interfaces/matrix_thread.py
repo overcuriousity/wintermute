@@ -109,8 +109,11 @@ def _update_config_yaml(access_token: str, device_id: str) -> None:
             logger.warning("_update_config_yaml: failed to parse %s — skipping write", CONFIG_PATH, exc_info=True)
             return
 
-        if not isinstance(data, _Mapping) or not isinstance(data.get("matrix"), _Mapping):
-            logger.warning("_update_config_yaml: 'matrix' section missing in %s — skipping write", CONFIG_PATH)
+        if not isinstance(data, _Mapping):
+            logger.warning("_update_config_yaml: %s does not contain a YAML mapping at root — skipping write", CONFIG_PATH)
+            return
+        if not isinstance(data.get("matrix"), _Mapping):
+            logger.warning("_update_config_yaml: 'matrix' section missing or not a mapping in %s — skipping write", CONFIG_PATH)
             return
 
         # Force double-quoted scalars so PyYAML safe_load() always reads them
@@ -123,7 +126,7 @@ def _update_config_yaml(access_token: str, device_id: str) -> None:
             dir=str(CONFIG_PATH.parent), suffix=".tmp", prefix=".config_",
         )
         try:
-            with _os.fdopen(fd, "w", encoding="utf-8") as f:
+            with _os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
                 fd = -1  # fdopen took ownership of the descriptor
                 yaml.dump(data, f)
             _os.replace(tmp_path, str(CONFIG_PATH))
