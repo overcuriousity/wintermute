@@ -753,6 +753,10 @@ async def main() -> None:
     llm.stop()
     scheduler.stop()
 
+    # Drain any in-flight data-versioning commits before tearing down.
+    from wintermute.infra import data_versioning
+    data_versioning.drain()
+
     for task in tasks:
         if not task.done():
             task.cancel()

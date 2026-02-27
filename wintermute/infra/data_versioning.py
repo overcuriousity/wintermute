@@ -87,3 +87,40 @@ def auto_commit(message: str) -> None:
                 logger.debug("data_versioning: committed — %s", message)
         except Exception:  # noqa: BLE001
             logger.exception("data_versioning: auto_commit failed")
+
+
+# ---------------------------------------------------------------------------
+# Async commit helpers (non-daemon threads with shutdown drain)
+# ---------------------------------------------------------------------------
+
+_pending: set[threading.Thread] = set()
+_pending_lock = threading.Lock()
+
+
+def commit_async(message: str) -> None:
+    """Run ``auto_commit`` in a non-daemon thread tracked for shutdown drain."""
+
+    def _target() -> None:
+        try:
+            auto_commit(message)
+        finally:
+            with _pending_lock:
+                _pending.discard(threading.current_thread())
+
+    t = threading.Thread(target=_target, name=f"data-commit-{message}")
+    with _pending_lock:
+        _pending.add(t)
+    t.start()
+
+
+def drain(timeout: float = 5.0) -> None:
+    """Join all pending commit threads.  Called during shutdown."""
+    with _pending_lock:
+        threads = list(_pending)
+    if not threads:
+        return
+    logger.info("data_versioning: draining %d pending commit(s)…", len(threads))
+    for t in threads:
+        t.join(timeout=timeout)
+        if t.is_alive():
+            logger.warning("data_versioning: thread %s still alive after %.1fs", t.name, timeout)

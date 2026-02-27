@@ -531,12 +531,7 @@ async def _phase_working_set_export(pool: "BackendPool", cfg: dict,
         prompt_assembler.DATA_DIR.mkdir(parents=True, exist_ok=True)
         with prompt_assembler._memories_lock:
             prompt_assembler.MEMORIES_FILE.write_text(working_set, encoding="utf-8")
-        import threading
-        threading.Thread(
-            target=data_versioning.auto_commit,
-            args=("dreaming: working set export",),
-            daemon=True,
-        ).start()
+        data_versioning.commit_async("dreaming: working set export")
         result.items_processed = len(top)
         result.summary = f"exported {len(top)} entries to MEMORIES.txt"
     else:

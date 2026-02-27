@@ -108,11 +108,7 @@ def flush() -> None:
             yaml.dump({"skills": snapshot}, default_flow_style=False, allow_unicode=True),
             encoding="utf-8",
         )
-        threading.Thread(
-            target=data_versioning.auto_commit,
-            args=("skill_stats: update",),
-            daemon=True,
-        ).start()
+        data_versioning.commit_async("skill_stats: update")
     except Exception:
         logger.debug("[skill_stats] Failed to flush YAML", exc_info=True)
 

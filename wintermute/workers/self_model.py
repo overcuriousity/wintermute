@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import logging
 import time as _time
-import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
@@ -95,11 +94,7 @@ class SelfModelProfiler:
                 yaml.dump(self._state, default_flow_style=False, allow_unicode=True),
                 encoding="utf-8",
             )
-            threading.Thread(
-                target=data_versioning.auto_commit,
-                args=("self_model: update",),
-                daemon=True,
-            ).start()
+            data_versioning.commit_async("self_model: update")
         except Exception:
             logger.debug("[self_model] Failed to save YAML state", exc_info=True)
 
