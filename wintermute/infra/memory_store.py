@@ -265,12 +265,20 @@ class FTS5Backend:
             conn = self._connect()
             try:
                 # Delete entries no longer present.
+                # Use SET-DIFFERENCE delete in batches to stay under SQLite's
+                # parameter limit (~999 variables per statement).
                 if new_ids:
-                    placeholders = ",".join("?" for _ in new_ids)
-                    conn.execute(
-                        f"DELETE FROM memories_meta WHERE entry_id NOT IN ({placeholders})",
-                        new_ids,
-                    )
+                    cur = conn.execute("SELECT entry_id FROM memories_meta")
+                    existing_ids = [row[0] for row in cur.fetchall()]
+                    new_ids_set = set(new_ids)
+                    to_delete = [eid for eid in existing_ids if eid not in new_ids_set]
+                    for i in range(0, len(to_delete), 900):
+                        batch = to_delete[i : i + 900]
+                        placeholders = ",".join("?" for _ in batch)
+                        conn.execute(
+                            f"DELETE FROM memories_meta WHERE entry_id IN ({placeholders})",
+                            batch,
+                        )
                 else:
                     conn.execute("DELETE FROM memories_meta")
                 # Upsert: insert new entries, update text for existing (preserve metadata).
@@ -559,12 +567,20 @@ class LocalVectorBackend:
             conn = self._connect()
             try:
                 # Delete entries no longer present.
+                # Use SET-DIFFERENCE delete in batches to stay under SQLite's
+                # parameter limit (~999 variables per statement).
                 if new_ids:
-                    placeholders = ",".join("?" for _ in new_ids)
-                    conn.execute(
-                        f"DELETE FROM local_vectors WHERE entry_id NOT IN ({placeholders})",
-                        new_ids,
-                    )
+                    cur = conn.execute("SELECT entry_id FROM local_vectors")
+                    existing_ids = {row[0] for row in cur.fetchall()}
+                    new_ids_set = set(new_ids)
+                    to_delete = list(existing_ids - new_ids_set)
+                    for i in range(0, len(to_delete), 900):
+                        batch = to_delete[i : i + 900]
+                        placeholders = ",".join("?" for _ in batch)
+                        conn.execute(
+                            f"DELETE FROM local_vectors WHERE entry_id IN ({placeholders})",
+                            batch,
+                        )
                 else:
                     conn.execute("DELETE FROM local_vectors")
                 # Upsert: insert new, update text+vector for existing (preserve metadata).
@@ -900,9 +916,11 @@ class QdrantBackend:
                 if pts:
                     existing_payload = pts[0].payload or {}
             except Exception as exc:  # noqa: BLE001
-                # Point may not exist yet — use defaults.  Log unexpected failures.
+                # "not found" means new entry — fall through to defaults.
+                # Any other error (network, auth, etc.) is re-raised so the
+                # caller knows metadata could not be preserved safely.
                 if "not found" not in str(exc).lower():
-                    logger.debug("Failed to retrieve existing metadata for point %s: %s", eid, exc)
+                    raise
             payload = {
                 "text": entry.strip(),
                 "created_at": existing_payload.get("created_at", now),
@@ -1028,7 +1046,15 @@ class QdrantBackend:
                 if offset is None:
                     break
         except Exception:  # noqa: BLE001
-            pass  # Fresh collection or scroll failed — use defaults.
+            # Log and re-raise: silently proceeding with empty existing_meta
+            # would reset metadata for all points, defeating the purpose of
+            # this method.  Callers can catch if truly best-effort is needed.
+            logger.warning(
+                "Qdrant: failed to read existing metadata in replace_all; "
+                "aborting to avoid metadata loss",
+                exc_info=True,
+            )
+            raise
 
         points = []
         for entry, vec, eid in zip(entries, vectors, new_ids):
