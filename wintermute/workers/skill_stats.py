@@ -97,7 +97,7 @@ def record_session_outcome(skill_names: list[str], success: bool) -> None:
 
 
 def flush() -> None:
-    """Persist current stats to YAML and auto-commit in a daemon thread."""
+    """Persist current stats to YAML and queue a background auto-commit."""
     with _lock:
         snapshot = dict(_skills)
     if not snapshot:

@@ -753,10 +753,6 @@ async def main() -> None:
     llm.stop()
     scheduler.stop()
 
-    # Drain any in-flight data-versioning commits before tearing down.
-    from wintermute.infra import data_versioning
-    data_versioning.drain()
-
     for task in tasks:
         if not task.done():
             task.cancel()
@@ -764,6 +760,11 @@ async def main() -> None:
         await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10.0)
     except asyncio.TimeoutError:
         logger.warning("Some tasks did not stop within 10 s — forcing exit")
+
+    # Drain after tasks are cancelled so any commits queued during shutdown
+    # cleanup are also flushed before the process exits.
+    from wintermute.infra import data_versioning
+    data_versioning.drain()
 
     logger.info("Wintermute shutdown complete")
 
