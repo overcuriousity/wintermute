@@ -150,9 +150,11 @@ data/scratchpad/{workflow_id}/
 
 ## Design for Small LLMs
 
-Wintermute is explicitly designed to work with small, quantised models (3B–8B parameters) as the primary backend. Several architectural choices serve this goal:
+Wintermute aims to work with small, quantised models (3B–8B parameters) as the primary backend.
+We are not there yet - the reality is that it works at the moment quite impressively with cheap chinese models, even when a little bit dated: Development tests were performed with deepseek-chat (v3) mostly.
+But we anticipate a future where local llms get smart enough to reliably make even multiple tool calls, which current SOTA small (<=14B) often struggle.
 
-**No framework abstraction layer.** Tool calls use the OpenAI function-calling wire format directly. There is no LangChain, LlamaIndex, or other intermediary that rewrites prompts, adds hidden tokens, or applies transformations the model can't see. What the model receives is exactly what you configure. This makes behaviour predictable and debuggable even with weak models.
+These are some architectural choices, which should make it better for local LLMs:
 
 **Turing Protocol.** A three-stage (detect → validate → correct) post-inference validation pipeline that catches the hallucination patterns small models are most prone to — claiming to have done things they didn't, fabricating tool output, or making promises without acting. Rather than requiring a stronger model, corrections are injected automatically so the model can self-correct. See [turing-protocol.md](turing-protocol.md) for the full reference.
 
