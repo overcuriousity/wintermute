@@ -114,6 +114,9 @@ class ToolCallContext:
     tp_enabled: bool = False
     tp_check: Optional[TPCheckFn] = None
 
+    # Per-result tool output truncation (0 = no limit)
+    max_tool_output_chars: int = 0
+
 
 def make_tool_context(
     *,
@@ -129,6 +132,7 @@ def make_tool_context(
     timezone_str: str = "",
     tp_enabled: bool = False,
     tp_check: Optional[TPCheckFn] = None,
+    max_tool_output_chars: int = 0,
 ) -> ToolCallContext:
     """Create a ToolCallContext — single factory used by both inference loops."""
     return ToolCallContext(
@@ -144,6 +148,7 @@ def make_tool_context(
         timezone_str=timezone_str,
         tp_enabled=tp_enabled,
         tp_check=tp_check,
+        max_tool_output_chars=max_tool_output_chars,
     )
 
 
@@ -383,6 +388,19 @@ async def process_tool_call(
         ),
     )
     tool_calls_made.append(name)
+
+    # -- Step 4b: Truncate oversized output ---------------------------
+    if ctx.max_tool_output_chars and len(result) > ctx.max_tool_output_chars:
+        original_len = len(result)
+        result = (
+            result[:ctx.max_tool_output_chars]
+            + f"\n\n[...truncated — {original_len - ctx.max_tool_output_chars:,} chars omitted"
+            f" (total {original_len:,} chars)]"
+        )
+        logger.info(
+            "[%s] Truncated %s output: %d → %d chars",
+            ctx.thread_id, name, original_len, len(result),
+        )
 
     # -- Step 5: NL summary ------------------------------------------
     if nl_was_translated:
