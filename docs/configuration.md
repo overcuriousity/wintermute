@@ -349,6 +349,7 @@ When any non-`flat_file` backend is active, MEMORIES.txt is kept as a git-versio
 | `model` | no | `"text-embedding-3-small"` | Embedding model name |
 | `dimensions` | no | `1536` | Vector dimensions (must match the model's output and the Qdrant collection) |
 | `send_dimensions` | no | `false` | Send `dimensions` parameter in the embedding request (only OpenAI supports this) |
+| `batch_size` | no | `32` | Maximum number of texts sent per embeddings API call. Reduce if the server returns HTTP 500 "input too large to process" (e.g. LiteLLM with a low physical batch token limit). |
 
 #### `memory.qdrant` (qdrant only)
 
