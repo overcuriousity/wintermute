@@ -13,9 +13,10 @@ in their respective interface modules.
 
 from __future__ import annotations
 
+import asyncio
 import json as _json
 import logging
-from typing import Callable, Coroutine, Optional, TYPE_CHECKING
+from typing import Awaitable, Callable, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from wintermute.core.llm_thread import LLMThread
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Type alias for the async send callback each interface provides.
-SendFn = Callable[[str], Coroutine]
+SendFn = Callable[[str], Awaitable[None]]
 
 
 class SlashCommandHandler:
@@ -55,9 +56,9 @@ class SlashCommandHandler:
 
     def __init__(
         self,
-        llm: "LLMThread",
-        sub_sessions: "Optional[SubSessionManager]" = None,
-        thread_config_manager: "Optional[ThreadConfigManager]" = None,
+        llm: LLMThread,
+        sub_sessions: Optional[SubSessionManager] = None,
+        thread_config_manager: Optional[ThreadConfigManager] = None,
         dreaming_loop: object = None,
         memory_harvest: object = None,
         scheduler: object = None,
@@ -192,20 +193,25 @@ class SlashCommandHandler:
 
         # --- Memory & knowledge ---
         lines.append("\n**Memory & Knowledge**")
-        mem_text = prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or ""
+
+        def _read_memory_and_skills():
+            mem = prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or ""
+            skill_paths = sorted(prompt_assembler.SKILLS_DIR.glob("*.md")) if prompt_assembler.SKILLS_DIR.exists() else []
+            return mem, skill_paths
+
+        mem_text, skill_paths = await asyncio.to_thread(_read_memory_and_skills)
         mem_lines = mem_text.count("\n") + (1 if mem_text.strip() else 0)
-        skills_count = len(list(prompt_assembler.SKILLS_DIR.glob("*.md"))) if prompt_assembler.SKILLS_DIR.exists() else 0
         lines.append(f"MEMORIES.txt: {mem_lines} lines ({len(mem_text):,} chars)")
-        if skills_count:
-            lines.append(f"Skills ({skills_count}):")
-            for p in sorted(prompt_assembler.SKILLS_DIR.glob("*.md")):
+        if skill_paths:
+            lines.append(f"Skills ({len(skill_paths)}):")
+            for p in skill_paths:
                 lines.append(f"- {p.stem}")
         else:
             lines.append("Skills: none")
 
         # Active tasks
         try:
-            task_items = db.list_tasks("active")
+            task_items = await db.async_call(db.list_tasks, "active")
             if task_items:
                 lines.append(f"Tasks ({len(task_items)} active):")
                 for item in task_items:
@@ -329,10 +335,15 @@ class SlashCommandHandler:
 
         dl = self._dreaming_loop
         from wintermute.infra import database as db
-        mem_before = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
-        tasks_before = len(db.list_tasks("active"))
-        skills_before = sorted(prompt_assembler.SKILLS_DIR.glob("*.md")) if prompt_assembler.SKILLS_DIR.exists() else []
-        skills_size_before = sum(f.stat().st_size for f in skills_before)
+
+        def _snapshot_memory_skills():
+            mem_len = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
+            skill_files = sorted(prompt_assembler.SKILLS_DIR.glob("*.md")) if prompt_assembler.SKILLS_DIR.exists() else []
+            skills_size = sum(f.stat().st_size for f in skill_files)
+            return mem_len, len(skill_files), skills_size
+
+        mem_before, skills_count_before, skills_size_before = await asyncio.to_thread(_snapshot_memory_skills)
+        tasks_before = len(await db.async_call(db.list_tasks, "active"))
 
         await send_fn("Starting dream cycle...")
         try:
@@ -341,10 +352,8 @@ class SlashCommandHandler:
             await send_fn(f"Dream cycle failed: {exc}")
             return
 
-        mem_after = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
-        tasks_after = len(db.list_tasks("active"))
-        skills_after = sorted(prompt_assembler.SKILLS_DIR.glob("*.md")) if prompt_assembler.SKILLS_DIR.exists() else []
-        skills_size_after = sum(f.stat().st_size for f in skills_after)
+        mem_after, skills_count_after, skills_size_after = await asyncio.to_thread(_snapshot_memory_skills)
+        tasks_after = len(await db.async_call(db.list_tasks, "active"))
 
         # Build phase summary from DreamReport.
         phase_lines = []
@@ -358,7 +367,7 @@ class SlashCommandHandler:
             f"Dream cycle complete ({len(report.phases_run)} phases).\n"
             f"MEMORIES.txt: {mem_before} -> {mem_after} chars\n"
             f"Tasks: {tasks_before} -> {tasks_after} active\n"
-            f"Skills: {len(skills_before)} -> {len(skills_after)} files, "
+            f"Skills: {skills_count_before} -> {skills_count_after} files, "
             f"{skills_size_before} -> {skills_size_after} bytes\n"
             f"Phases:\n{phases_text}{errors_text}"
         )
