@@ -1366,7 +1366,8 @@ class MatrixThread:
     async def _dispatch(self, text: str, thread_id: str, *, content: list | None = None) -> None:
         # Shared slash commands (delegated to SlashCommandHandler).
         if content is None and self._slash_handler is not None:
-            send_fn = lambda msg: self.send_message(msg, thread_id)
+            async def send_fn(msg: str) -> None:
+                await self.send_message(msg, thread_id)
             if await self._slash_handler.dispatch(text, thread_id, send_fn):
                 return
 
