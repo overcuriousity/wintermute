@@ -35,6 +35,7 @@ from wintermute.core.types import (  # noqa: F401 — re-exported for backwards 
     MultiProviderConfig,
     ProviderConfig,
 )
+from wintermute.core.tool_call_rescue import rescue_tool_calls
 from wintermute import tools as tool_module
 
 from typing import TYPE_CHECKING
@@ -1002,8 +1003,64 @@ class LLMThread:
                     })
                 continue  # next round
 
+            # -- Rescue XML/text-encoded tool calls -------------------
+            _raw_content = (choice.message.content or "").strip()
+            if _raw_content and tools:
+                _known_names = {
+                    s["function"]["name"] for s in tools
+                }
+                _rescued = rescue_tool_calls(_raw_content, _known_names)
+                if _rescued:
+                    # Log this as an inference round with rescued tool calls so
+                    # the interaction log reflects actual tool activity.
+                    try:
+                        _rescued_names = [tc.function.name for tc in _rescued]
+                        await database.async_call(
+                            database.save_interaction_log,
+                            _time.time(), "inference_round", thread_id,
+                            active_pool.last_used,
+                            _raw_content[:500],
+                            f"[rescued_tool_calls: {', '.join(_rescued_names)}]",
+                            "ok",
+                            raw_output=json.dumps({
+                                "tool_calls": [
+                                    {"name": tc.function.name, "arguments": tc.function.arguments}
+                                    for tc in _rescued
+                                ],
+                                "content": _raw_content,
+                                "rescue": True,
+                            }),
+                        )
+                    except Exception:
+                        pass
+                    # Synthesise an assistant message with the rescued calls
+                    # and inject tool-result messages, then loop again.
+                    full_messages.append({
+                        "role": "assistant",
+                        "content": _raw_content,
+                        "tool_calls": [
+                            {"id": tc.id, "type": tc.type,
+                             "function": {"name": tc.function.name,
+                                          "arguments": tc.function.arguments}}
+                            for tc in _rescued
+                        ],
+                    })
+                    tc_ctx.pool_last_used = active_pool.last_used
+                    for tc in _rescued:
+                        outcome = await process_tool_call(
+                            tc, tc_ctx, tool_calls_made,
+                            assistant_response=_raw_content,
+                        )
+                        tool_call_details.extend(outcome.call_details)
+                        full_messages.append({
+                            "role":         "tool",
+                            "tool_call_id": tc.id,
+                            "content":      outcome.content,
+                        })
+                    continue  # next round
+
             # Terminal response.
-            content = (choice.message.content or "").strip()
+            content = _raw_content
             reasoning = "\n\n".join(reasoning_parts) if reasoning_parts else None
             return LLMReply(text=content, reasoning=reasoning,
                             tool_calls_made=tool_calls_made,
