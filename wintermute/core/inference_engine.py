@@ -278,6 +278,22 @@ async def _execute_multi_item(
 
     # Log once for the entire multi-item call (early return bypasses outer log).
     combined_content = "\n\n".join(combined)
+
+    # Cap the combined result so N items don't blow the context budget.
+    if ctx.max_tool_output_chars and len(combined_content) > ctx.max_tool_output_chars:
+        original_len = len(combined_content)
+        notice = (
+            f"\n\n[...truncated combined output — "
+            f"{original_len - ctx.max_tool_output_chars:,} chars omitted"
+            f" (total {original_len:,} chars)]"
+        )
+        keep = max(0, ctx.max_tool_output_chars - len(notice))
+        combined_content = combined_content[:keep] + notice
+        logger.info(
+            "[%s] Truncated combined multi-item %s output: %d → %d chars",
+            ctx.thread_id, name, original_len, len(combined_content),
+        )
+
     try:
         await database.async_call(
             database.save_interaction_log,
