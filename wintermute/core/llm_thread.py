@@ -34,6 +34,8 @@ from wintermute.core.types import (  # noqa: F401 — re-exported for backwards 
     ContextTooLargeError,
     MultiProviderConfig,
     ProviderConfig,
+    RateLimitError,
+    classify_api_error,
 )
 from wintermute.core.tool_call_rescue import rescue_tool_calls
 from wintermute import tools as tool_module
