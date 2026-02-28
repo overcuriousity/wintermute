@@ -17,6 +17,44 @@ class ContextTooLargeError(Exception):
     """The request payload or token count exceeds backend limits."""
 
 
+class RateLimitError(Exception):
+    """The provider returned a rate-limit (HTTP 429) error."""
+
+
+_CONTEXT_TOO_LARGE_PHRASES = (
+    "context length", "too many tokens", "maximum context",
+    "token limit", "content too large", "payload too large",
+)
+
+
+def classify_api_error(exc: Exception) -> type | None:
+    """Classify a provider exception as a normalized error type.
+
+    Returns :class:`RateLimitError` or :class:`ContextTooLargeError` if
+    the exception matches the corresponding pattern, or ``None`` for
+    unrecognised errors.
+    """
+    status = getattr(exc, "status_code", None)
+
+    # Rate-limit: HTTP 429 or "429" in the exception class name or code.
+    if (
+        status == 429
+        or "429" in type(exc).__name__
+        or (hasattr(exc, "code") and str(getattr(exc, "code", "")) == "429")
+    ):
+        return RateLimitError
+
+    # Context too large: HTTP 413, or 400 with matching phrases.
+    if status == 413:
+        return ContextTooLargeError
+    if status == 400:
+        msg = str(exc).lower()
+        if any(phrase in msg for phrase in _CONTEXT_TOO_LARGE_PHRASES):
+            return ContextTooLargeError
+
+    return None
+
+
 @dataclass
 class ProviderConfig:
     name: str               # unique backend name from inference_backends
@@ -100,12 +138,9 @@ class BackendPool:
                     self.last_used = cfg.name
                     return result
                 except Exception as exc:  # noqa: BLE001
-                    is_rate_limit = (
-                        getattr(exc, "status_code", None) == 429
-                        or "429" in str(type(exc).__name__)
-                        or (hasattr(exc, "code") and str(getattr(exc, "code", "")) == "429")
-                    )
-                    if is_rate_limit and attempt < self.RATE_LIMIT_MAX_RETRIES:
+                    error_cls = classify_api_error(exc)
+
+                    if error_cls is RateLimitError and attempt < self.RATE_LIMIT_MAX_RETRIES:
                         jitter = random.uniform(0, backoff * 0.5)
                         wait = min(backoff + jitter, self.RATE_LIMIT_MAX_BACKOFF)
                         backend_desc = f"'{cfg.name}' ({cfg.model})"
@@ -117,18 +152,7 @@ class BackendPool:
                         backoff = min(backoff * 2, self.RATE_LIMIT_MAX_BACKOFF)
                         continue
 
-                    is_context_too_large = (
-                        getattr(exc, "status_code", None) == 413
-                        or (
-                            getattr(exc, "status_code", None) == 400
-                            and any(
-                                phrase in str(exc).lower()
-                                for phrase in ("context length", "too many tokens", "maximum context",
-                                               "token limit", "content too large", "payload too large")
-                            )
-                        )
-                    )
-                    if is_context_too_large:
+                    if error_cls is ContextTooLargeError:
                         raise ContextTooLargeError(str(exc)) from exc
 
                     last_error = exc

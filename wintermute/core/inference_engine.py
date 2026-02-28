@@ -22,6 +22,7 @@ Pipeline per tool call
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import time as _time
@@ -33,6 +34,48 @@ from wintermute.infra import database
 from wintermute import tools as tool_module
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_message(message: Any) -> dict:
+    """Convert a ChatCompletionMessage to a plain dict.
+
+    Supports Pydantic models (``model_dump``), dataclass objects
+    (``dataclasses.asdict``), and plain dicts (returned as-is).  This
+    ensures message lists stay homogeneous ``list[dict]`` so downstream
+    code never needs isinstance dispatch.
+    """
+    if isinstance(message, dict):
+        return message
+    if hasattr(message, "model_dump"):
+        return message.model_dump(exclude_none=True, exclude_unset=True)
+    if dataclasses.is_dataclass(message) and not isinstance(message, type):
+        return dataclasses.asdict(message)
+    return dict(message)
+
+
+def extract_content_text(msg: dict) -> str:
+    """Safely extract text content from a normalized message dict.
+
+    Handles ``content`` being a string, a list of content parts (multimodal
+    messages), or ``None``.  Always returns a stripped string.
+    """
+    raw = msg.get("content")
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, list):
+        parts: list[str] = []
+        for part in raw:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return " ".join(parts).strip()
+    return str(raw).strip()
+
 
 # ---------------------------------------------------------------------------
 # Callback type for Turing Protocol pre/post-execution checks.
@@ -254,8 +297,15 @@ async def process_tool_call(
     execution).  Returns a :class:`ToolCallOutcome`; callers handle
     message placement in their own way.
     """
-    name = tc.function.name
-    raw_args = tc.function.arguments
+    # Support both Pydantic objects (legacy) and plain dicts (normalized).
+    if isinstance(tc, dict):
+        name = tc["function"]["name"]
+        raw_args = tc["function"]["arguments"]
+        tc_id = tc["id"]
+    else:
+        name = tc.function.name
+        raw_args = tc.function.arguments
+        tc_id = tc.id
 
     # -- Step 1: Parse JSON arguments --------------------------------
     try:
@@ -263,7 +313,7 @@ async def process_tool_call(
     except json.JSONDecodeError as exc:
         logger.warning(
             "Malformed tool args for %s in %s (id=%s): %s — raw: %s",
-            name, ctx.thread_id, tc.id, exc, raw_args[:500],
+            name, ctx.thread_id, tc_id, exc, raw_args[:500],
         )
         return ToolCallOutcome(
             content=(
