@@ -14,7 +14,7 @@ the per-turn arguments (phase, messages, tool info, etc.).
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from wintermute.core.types import BackendPool
@@ -29,8 +29,8 @@ class TuringProtocolRunner:
 
     Parameters
     ----------
-    pool : BackendPool
-        The LLM pool used for TP validation calls.
+    pool : BackendPool | None
+        The LLM pool used for TP validation calls (None in sub-sessions).
     scope : str
         ``"main"`` or ``"sub_session"``.
     enabled_validators : dict | None
@@ -39,7 +39,7 @@ class TuringProtocolRunner:
 
     def __init__(
         self,
-        pool: "BackendPool",
+        pool: "BackendPool | None",
         scope: str,
         enabled_validators: "Optional[dict]" = None,
     ) -> None:
@@ -70,12 +70,18 @@ class TuringProtocolRunner:
     ) -> Optional[turing_protocol_module.TuringResult]:
         """Run TP hooks for *phase* in the bound scope.
 
-        Returns ``TuringResult`` if violations were confirmed, ``None``
-        otherwise.  Exceptions are caught and logged as non-fatal.
+        Returns the full ``TuringResult`` (which may have
+        ``correction=None`` when no violation was confirmed), or ``None``
+        when TP is disabled, no hooks match, or an exception occurred.
+        Exceptions are caught and logged as non-fatal.
         """
         if not self.enabled:
             return None
 
+        # Fast-path: skip the heavier run_turing_protocol() call when no
+        # hooks match this phase/scope.  Note that run_turing_protocol()
+        # will reload hooks internally — acceptable overhead vs. adding a
+        # hooks-passthrough parameter to the lower-level function.
         hooks = turing_protocol_module.get_hooks(
             self._validators,
             phase_filter=phase,

@@ -908,7 +908,7 @@ class LLMThread:
                                  tool_result=None, assistant_response="",
                                  tool_calls_made=None, nl_tools=None):
             return await self._run_phase_check(
-                phase=phase, scope="main", thread_id=thread_id,
+                phase=phase, thread_id=thread_id,
                 tool_calls_made=tool_calls_made or [],
                 assistant_response=assistant_response,
                 tool_name=tool_name, tool_args=tool_args,
@@ -1073,7 +1073,6 @@ class LLMThread:
     async def _run_phase_check(
         self,
         phase: str,
-        scope: str,
         thread_id: str,
         tool_calls_made: list[str],
         assistant_response: str = "",
