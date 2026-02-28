@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.2-alpha](https://github.com/overcuriousity/wintermute/compare/v0.5.1-alpha...v0.5.2-alpha) (2026-02-28)
+
+
+### Bug Fixes
+
+* add configurable batch_size for embeddings to prevent LiteLLM 500 errors ([384ec8b](https://github.com/overcuriousity/wintermute/commit/384ec8b6943c0b6a27e4b4214af1dd243e66e9de))
+* add input validation for tuning config values ([609fbb6](https://github.com/overcuriousity/wintermute/commit/609fbb621b0c036d430e04c0ea9abae21efee96a))
+* address PR [#143](https://github.com/overcuriousity/wintermute/issues/143) review - unused import and reasoning_content round-trip ([2c05be3](https://github.com/overcuriousity/wintermute/commit/2c05be3eeb7e412291d6d66c51d5d6204a233fc9))
+* address review comments on TuringProtocolRunner ([0a760d3](https://github.com/overcuriousity/wintermute/commit/0a760d38711a46f844f3f7513794c54e13c6d6f5))
+* address review comments on TuringProtocolRunner ([bd690d0](https://github.com/overcuriousity/wintermute/commit/bd690d0b7d3933d7af09ebd125995ffc72703cbf))
+* configurable embeddings batch_size to prevent LiteLLM 500 errors ([a244df4](https://github.com/overcuriousity/wintermute/commit/a244df4d031e7779f58eaa6af74cf55023628ec5))
+* remove redundant _adopt_orphan_deps call from _find_or_create_workflow ([b393be0](https://github.com/overcuriousity/wintermute/commit/b393be0fae87f83f8a72bb15607a282697373e0a))
+* replace lambda with named function to satisfy E731 ([aa4e767](https://github.com/overcuriousity/wintermute/commit/aa4e7679f61212d53ed93cac488ba20ad5acb085))
+
 ## [0.5.1-alpha](https://github.com/overcuriousity/wintermute/compare/v0.5.0-alpha...v0.5.1-alpha) (2026-02-28)
 
 
