@@ -28,7 +28,9 @@ from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 from wintermute.core import turing_protocol as turing_protocol_module
-from wintermute.core.inference_engine import ToolCallContext, process_tool_call
+from wintermute.core.inference_engine import (
+    ToolCallContext, extract_content_text, normalize_message, process_tool_call,
+)
 from wintermute.core.types import (  # noqa: F401 — re-exported for backwards compat
     BackendPool,
     ContextTooLargeError,
@@ -72,7 +74,6 @@ def _count_tokens(text: str, model: str) -> int:
         return len(enc.encode(text))
     except Exception:  # noqa: BLE001
         return len(text) // 4
-
 
 
 @dataclass
@@ -830,12 +831,12 @@ class LLMThread:
         model = self._cfg.model
         total = sum(
             _count_tokens(
-                m.get("content") if isinstance(m, dict) and isinstance(m.get("content"), str)
+                m.get("content", "") if isinstance(m.get("content"), str)
                 else " ".join(
                     p.get("text", "") for p in m.get("content", [])
                     if isinstance(p, dict)
-                ) if isinstance(m, dict) and isinstance(m.get("content"), list)
-                else str(getattr(m, "content", "") or ""),
+                ) if isinstance(m.get("content"), list)
+                else str(m.get("content", "") or ""),
                 model,
             )
             for m in messages
@@ -846,14 +847,14 @@ class LLMThread:
         # Collect indices of tool-result messages, oldest first.
         tool_indices = [
             i for i, m in enumerate(messages)
-            if (m["role"] if isinstance(m, dict) else getattr(m, "role", "")) == "tool"
+            if m["role"] == "tool"
         ]
         truncation_notice = "[tool output truncated to fit context window]"
         for idx in tool_indices:
             if total <= token_budget:
                 break
             msg = messages[idx]
-            old_content = msg["content"] if isinstance(msg, dict) else msg.content
+            old_content = msg["content"]
             if old_content == truncation_notice:
                 continue
             old_tokens = _count_tokens(
@@ -861,10 +862,7 @@ class LLMThread:
                 model,
             )
             new_tokens = _count_tokens(truncation_notice, model)
-            if isinstance(msg, dict):
-                msg["content"] = truncation_notice
-            else:
-                msg.content = truncation_notice
+            msg["content"] = truncation_notice
             total -= (old_tokens - new_tokens)
             logger.info("Trimmed tool result at index %d (saved ~%d tokens)", idx, old_tokens - new_tokens)
 
@@ -960,58 +958,61 @@ class LLMThread:
                 if r:
                     reasoning_parts.append(r)
 
-            if choice.message.tool_calls:
+            # Normalize the Pydantic message to a plain dict immediately so
+            # the entire pipeline works with a homogeneous list[dict].
+            msg = normalize_message(choice.message)
+            msg_tool_calls = msg.get("tool_calls")
+            msg_content = extract_content_text(msg)
+
+            if msg_tool_calls:
+                _tc_names = [tc["function"]["name"] for tc in msg_tool_calls]
                 logger.debug(
                     "Tool calls detected (finish_reason=%s): %s",
-                    choice.finish_reason,
-                    [tc.function.name for tc in choice.message.tool_calls],
+                    choice.finish_reason, _tc_names,
                 )
                 # Log this inference round (intermediate, tool-use round).
                 try:
-                    _tc_names = [tc.function.name for tc in choice.message.tool_calls]
-                    _round_content = (choice.message.content or "").strip()
                     await database.async_call(
                         database.save_interaction_log,
                         _time.time(), "inference_round", thread_id,
                         active_pool.last_used,
-                        _round_content[:500] or f"[requesting {len(_tc_names)} tool call(s)]",
+                        msg_content[:500] or f"[requesting {len(_tc_names)} tool call(s)]",
                         f"[tool_calls: {', '.join(_tc_names)}]",
                         "ok",
                         raw_output=json.dumps({
                             "tool_calls": [
-                                {"name": tc.function.name, "arguments": tc.function.arguments}
-                                for tc in choice.message.tool_calls
+                                {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]}
+                                for tc in msg_tool_calls
                             ],
-                            "content": _round_content,
+                            "content": msg_content,
                         }),
                     )
                 except Exception:
                     pass
-                # Append the assistant's tool-call message.
-                full_messages.append(choice.message)
+                # Append the assistant's tool-call message (already a dict).
+                full_messages.append(msg)
 
                 # Execute each tool via the shared pipeline.
                 tc_ctx.pool_last_used = active_pool.last_used
-                for tc in choice.message.tool_calls:
+                for tc in msg_tool_calls:
                     outcome = await process_tool_call(
                         tc, tc_ctx, tool_calls_made,
-                        assistant_response=(choice.message.content or ""),
+                        assistant_response=msg_content,
                     )
                     tool_call_details.extend(outcome.call_details)
                     full_messages.append({
                         "role":         "tool",
-                        "tool_call_id": tc.id,
+                        "tool_call_id": tc["id"],
                         "content":      outcome.content,
                     })
                 continue  # next round
 
             # -- Rescue XML/text-encoded tool calls -------------------
-            _raw_content = (choice.message.content or "").strip()
-            if _raw_content and tools:
+            if msg_content and tools:
                 _known_names = {
                     s["function"]["name"] for s in tools
                 }
-                _rescued = rescue_tool_calls(_raw_content, _known_names)
+                _rescued = rescue_tool_calls(msg_content, _known_names)
                 if _rescued:
                     # Log this as an inference round with rescued tool calls so
                     # the interaction log reflects actual tool activity.
@@ -1021,7 +1022,7 @@ class LLMThread:
                             database.save_interaction_log,
                             _time.time(), "inference_round", thread_id,
                             active_pool.last_used,
-                            _raw_content[:500],
+                            msg_content[:500],
                             f"[rescued_tool_calls: {', '.join(_rescued_names)}]",
                             "ok",
                             raw_output=json.dumps({
@@ -1029,7 +1030,7 @@ class LLMThread:
                                     {"name": tc.function.name, "arguments": tc.function.arguments}
                                     for tc in _rescued
                                 ],
-                                "content": _raw_content,
+                                "content": msg_content,
                                 "rescue": True,
                             }),
                         )
@@ -1039,7 +1040,7 @@ class LLMThread:
                     # and inject tool-result messages, then loop again.
                     full_messages.append({
                         "role": "assistant",
-                        "content": _raw_content,
+                        "content": msg_content,
                         "tool_calls": [
                             {"id": tc.id, "type": tc.type,
                              "function": {"name": tc.function.name,
@@ -1051,7 +1052,7 @@ class LLMThread:
                     for tc in _rescued:
                         outcome = await process_tool_call(
                             tc, tc_ctx, tool_calls_made,
-                            assistant_response=_raw_content,
+                            assistant_response=msg_content,
                         )
                         tool_call_details.extend(outcome.call_details)
                         full_messages.append({
@@ -1062,7 +1063,7 @@ class LLMThread:
                     continue  # next round
 
             # Terminal response.
-            content = _raw_content
+            content = msg_content
             reasoning = "\n\n".join(reasoning_parts) if reasoning_parts else None
             return LLMReply(text=content, reasoning=reasoning,
                             tool_calls_made=tool_calls_made,

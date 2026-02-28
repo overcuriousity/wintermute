@@ -73,7 +73,9 @@ from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 from wintermute.core import turing_protocol as turing_protocol_module
-from wintermute.core.inference_engine import ToolCallContext, process_tool_call
+from wintermute.core.inference_engine import (
+    ToolCallContext, extract_content_text, normalize_message, process_tool_call,
+)
 from wintermute.core.tool_call_rescue import rescue_tool_calls
 from wintermute import tools as tool_module
 from wintermute.core.types import BackendPool, ContextTooLargeError
@@ -124,18 +126,14 @@ def _sanitize_tool_call_boundary(messages: list) -> list:
         return messages
 
     def _role(m) -> str:
-        return m.get("role") if isinstance(m, dict) else getattr(m, "role", "")
+        return m.get("role", "")
 
     def _tool_calls(m):
         """Return the tool_calls list (or None) for an assistant message."""
-        if isinstance(m, dict):
-            return m.get("tool_calls")
-        return getattr(m, "tool_calls", None)
+        return m.get("tool_calls")
 
     def _tool_call_id(m) -> str | None:
-        if isinstance(m, dict):
-            return m.get("tool_call_id")
-        return getattr(m, "tool_call_id", None)
+        return m.get("tool_call_id")
 
     # -- Step 1: drop orphaned leading tool-result messages ----------------
     start = 0
@@ -149,7 +147,7 @@ def _sanitize_tool_call_boundary(messages: list) -> list:
     first = msgs[0]
     if _role(first) == "assistant" and _tool_calls(first):
         expected_ids = {
-            (tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None))
+            tc.get("id")
             for tc in _tool_calls(first)
         } - {None, ""}
         # Collect the tool-result ids that immediately follow
@@ -1447,10 +1445,8 @@ class SubSessionManager:
                 # Return whatever text the model last produced, or a fallback.
                 last_text = None
                 for m in reversed(state.messages):
-                    role = m.get("role") if isinstance(m, dict) else getattr(m, "role", None)
-                    if role == "assistant":
-                        content = (m.get("content", "") if isinstance(m, dict)
-                                   else getattr(m, "content", "") or "")
+                    if m.get("role") == "assistant":
+                        content = m.get("content", "") or ""
                         if isinstance(content, str) and content.strip():
                             last_text = content.strip()
                             break
@@ -1492,17 +1488,22 @@ class SubSessionManager:
 
             choice = response.choices[0]
 
+            # Normalize the Pydantic message to a plain dict immediately so
+            # the entire pipeline works with a homogeneous list[dict].
+            msg = normalize_message(choice.message)
+            msg_tool_calls = msg.get("tool_calls")
+            msg_content = extract_content_text(msg)
+
             # Log this inference round
             try:
-                content_text = (choice.message.content or "").strip()
-                if choice.message.tool_calls:
-                    tc_names = [tc.function.name for tc in choice.message.tool_calls]
+                if msg_tool_calls:
+                    tc_names = [tc["function"]["name"] for tc in msg_tool_calls]
                     output_summary = f"[tool_calls: {', '.join(tc_names)}]"
                 else:
-                    output_summary = content_text[:500]
+                    output_summary = msg_content[:500]
                 raw_output_data = json.dumps({
-                    "content": content_text[:500],
-                    "tool_calls": [tc.function.name for tc in (choice.message.tool_calls or [])],
+                    "content": msg_content[:500],
+                    "tool_calls": [tc["function"]["name"] for tc in (msg_tool_calls or [])],
                 })
                 if tool_calls_made:
                     _recent = tool_calls_made[-3:]
@@ -1519,24 +1520,24 @@ class SubSessionManager:
             except Exception:
                 pass
 
-            if choice.message.tool_calls:
-                state.messages.append(choice.message)
+            if msg_tool_calls:
+                state.messages.append(msg)
                 # Pre-populate placeholder tool results for ALL tool_calls so
                 # state.messages is always API-valid even if a timeout cancels
                 # us mid-execution.  Each placeholder is overwritten in-place
                 # as the real result arrives.
                 _placeholder_start = len(state.messages)
-                for _i, _tc in enumerate(choice.message.tool_calls):
+                for _i, _tc in enumerate(msg_tool_calls):
                     state.messages.append({
                         "role":         "tool",
-                        "tool_call_id": _tc.id,
+                        "tool_call_id": _tc["id"],
                         "content":      "[Timed out — result not available]",
                     })
 
-                for tc_idx, tc in enumerate(choice.message.tool_calls):
+                for tc_idx, tc in enumerate(msg_tool_calls):
                     outcome = await process_tool_call(
                         tc, tc_ctx, tool_calls_made,
-                        assistant_response=(choice.message.content or ""),
+                        assistant_response=msg_content,
                     )
                     # Track progress on state for the timeout handler.
                     for cn in outcome.calls_made:
@@ -1544,22 +1545,21 @@ class SubSessionManager:
                         state.tool_calls_log.append((cn, preview))
                     state.messages[_placeholder_start + tc_idx] = {
                         "role":         "tool",
-                        "tool_call_id": tc.id,
+                        "tool_call_id": tc["id"],
                         "content":      outcome.content,
                     }
                 continue
 
             # -- Rescue XML/text-encoded tool calls -------------------
-            _raw_content = (choice.message.content or "").strip()
-            if _raw_content and tool_schemas:
+            if msg_content and tool_schemas:
                 _known_names = {
                     s["function"]["name"] for s in tool_schemas
                 }
-                _rescued = rescue_tool_calls(_raw_content, _known_names)
+                _rescued = rescue_tool_calls(msg_content, _known_names)
                 if _rescued:
                     state.messages.append({
                         "role": "assistant",
-                        "content": _raw_content,
+                        "content": msg_content,
                         "tool_calls": [
                             {"id": tc.id, "type": tc.type,
                              "function": {"name": tc.function.name,
@@ -1577,7 +1577,7 @@ class SubSessionManager:
                     for tc_idx, tc in enumerate(_rescued):
                         outcome = await process_tool_call(
                             tc, tc_ctx, tool_calls_made,
-                            assistant_response=_raw_content,
+                            assistant_response=msg_content,
                         )
                         for cn in outcome.calls_made:
                             preview = outcome.content[:120].replace("\n", " ")
@@ -1595,7 +1595,7 @@ class SubSessionManager:
                     continue
 
             # -- Terminal response: model produced text without tool calls --
-            final_text = _raw_content
+            final_text = msg_content
 
             # -- Turing Protocol: post_inference phase (objective gatekeeper) --
             # skip_tp_on_exit: when the model produces a text-only response,
@@ -1607,12 +1607,9 @@ class SubSessionManager:
                 _prior_assistant = None
                 _recent_assistant: list[str] = []
                 for m in reversed(state.messages):
-                    # state.messages contains a mix of plain dicts and
-                    # ChatCompletionMessage pydantic objects; handle both.
-                    role = m.get("role") if isinstance(m, dict) else getattr(m, "role", None)
+                    role = m.get("role", "")
                     if role == "assistant":
-                        content = (m.get("content", "") if isinstance(m, dict)
-                                   else getattr(m, "content", "") or "")
+                        content = m.get("content", "") or ""
                         if isinstance(content, str) and content:
                             _recent_assistant.append(content)
                             if _prior_assistant is None:
