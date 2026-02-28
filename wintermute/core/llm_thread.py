@@ -1081,10 +1081,10 @@ class LLMThread:
         tool_result: Optional[str] = None,
         nl_tools: "set[str] | None" = None,
     ) -> Optional["turing_protocol_module.TuringResult"]:
-        """Run Turing Protocol hooks for a specific phase/scope.
+        """Run Turing Protocol hooks for a specific phase.
 
-        Returns the TuringResult if any violations are confirmed, None otherwise.
-        Used by _inference_loop for pre/post_execution hooks.
+        Delegates to the bound ``TuringProtocolRunner`` (scope is fixed
+        at construction time to ``"main"``).
         """
         return await self._tp_runner.run_phase(
             phase,
