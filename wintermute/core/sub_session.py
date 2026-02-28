@@ -275,7 +275,6 @@ class SubSessionManager:
         self._cfg = pool.primary
         self._enqueue = enqueue_system_event
         self._tp_pool = turing_protocol_pool
-        self._tp_validators = turing_protocol_validators
         self._tp_runner = TuringProtocolRunner(
             turing_protocol_pool, "sub_session", turing_protocol_validators,
         )

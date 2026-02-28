@@ -30,7 +30,8 @@ class TuringProtocolRunner:
     Parameters
     ----------
     pool : BackendPool | None
-        The LLM pool used for TP validation calls (None in sub-sessions).
+        The LLM pool used for TP validation calls; may be ``None`` when
+        TP is not configured or disabled.
     scope : str
         ``"main"`` or ``"sub_session"``.
     enabled_validators : dict | None
@@ -70,24 +71,14 @@ class TuringProtocolRunner:
     ) -> Optional[turing_protocol_module.TuringResult]:
         """Run TP hooks for *phase* in the bound scope.
 
-        Returns the full ``TuringResult`` (which may have
-        ``correction=None`` when no violation was confirmed), or ``None``
-        when TP is disabled, no hooks match, or an exception occurred.
-        Exceptions are caught and logged as non-fatal.
+        Returns the full ``TuringResult`` produced by
+        :func:`turing_protocol.run_turing_protocol`, which may have
+        ``correction=None`` when no violation was confirmed or when no
+        hooks are registered for this phase/scope.
+        Returns ``None`` only when TP is disabled or an internal error
+        occurred (errors are logged as non-fatal).
         """
         if not self.enabled:
-            return None
-
-        # Fast-path: skip the heavier run_turing_protocol() call when no
-        # hooks match this phase/scope.  Note that run_turing_protocol()
-        # will reload hooks internally — acceptable overhead vs. adding a
-        # hooks-passthrough parameter to the lower-level function.
-        hooks = turing_protocol_module.get_hooks(
-            self._validators,
-            phase_filter=phase,
-            scope_filter=self._scope,
-        )
-        if not hooks:
             return None
 
         try:
@@ -111,7 +102,7 @@ class TuringProtocolRunner:
             )
         except Exception:  # noqa: BLE001
             logger.exception(
-                "Turing Protocol %s/%s check raised (non-fatal)",
-                phase, self._scope,
+                "Turing Protocol %s/%s (thread_id=%s) check raised (non-fatal)",
+                phase, self._scope, thread_id or "<unknown>",
             )
             return None

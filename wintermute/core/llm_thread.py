@@ -119,7 +119,6 @@ class LLMThread:
         self._main_pool = main_pool
         self._compaction_pool = compaction_pool
         self._turing_protocol_pool = turing_protocol_pool
-        self._turing_protocol_validators = turing_protocol_validators
         from wintermute.core.tp_runner import TuringProtocolRunner
         self._tp_runner = TuringProtocolRunner(
             pool=turing_protocol_pool,
