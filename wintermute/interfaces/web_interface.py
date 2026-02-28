@@ -49,6 +49,8 @@ class WebInterface:
         self._main_pool = None   # BackendPool for main role
         self._multi_cfg = None
         self._background_tasks: set[asyncio.Task] = set()
+        # Shared slash-command handler (injected from main.py).
+        self._slash_handler = None
 
     # ------------------------------------------------------------------
     # Public
@@ -229,6 +231,27 @@ class WebInterface:
                     content_type="application/json",
                     status=400,
                 )
+            # Try slash commands first (shared handler).
+            if self._slash_handler and text.startswith("/"):
+                async def _handle_slash() -> None:
+                    async def _send(msg: str) -> None:
+                        await self.broadcast(msg, thread_id)
+                    try:
+                        handled = await self._slash_handler.dispatch(text, thread_id, _send)
+                        if not handled:
+                            await self._llm.enqueue_user_message(text, thread_id)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("Slash command error for thread %s", thread_id)
+                        try:
+                            await self.broadcast("Error handling slash command.", thread_id)
+                        except Exception:  # noqa: BLE001
+                            pass
+
+                _cmd_task = asyncio.create_task(_handle_slash())
+                self._background_tasks.add(_cmd_task)
+                _cmd_task.add_done_callback(self._background_tasks.discard)
+                return self._json({"ok": True, "thread_id": thread_id, "command": True})
+
             _task = asyncio.create_task(self._llm.enqueue_user_message(text, thread_id))
             self._background_tasks.add(_task)
             _task.add_done_callback(self._background_tasks.discard)
