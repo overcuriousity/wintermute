@@ -78,7 +78,7 @@ from wintermute.infra.llm_utils import strip_fences
 from wintermute.infra import prompt_loader
 from wintermute.infra import paths as _paths
 
-from wintermute.tools import TOOL_SCHEMAS, _NL_SCHEMA_MAP
+from wintermute.core.tool_schemas import TOOL_SCHEMAS, NL_SCHEMA_MAP
 
 logger = logging.getLogger(__name__)
 
@@ -638,13 +638,13 @@ def validate_tool_schema(context: dict, detection_result: dict) -> bool:
     use_nl = (
         nl_tools
         and tool_name in nl_tools
-        and tool_name in _NL_SCHEMA_MAP
+        and tool_name in NL_SCHEMA_MAP
         and is_nl_tool_call(tool_name, tool_args)
     )
 
     schema = None
     if use_nl:
-        nl_schema = _NL_SCHEMA_MAP[tool_name]
+        nl_schema = NL_SCHEMA_MAP[tool_name]
         schema = nl_schema["function"]["parameters"]
     else:
         for tool in TOOL_SCHEMAS:
@@ -783,7 +783,7 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook
             effective_schema = _get_spawn_tool_schema(nl_tools)
         if not effective_schema and hook.name == "empty_promise":
             all_nl: list[str] = []
-            for tname in sorted(_NL_SCHEMA_MAP):
+            for tname in sorted(NL_SCHEMA_MAP):
                 all_nl.append(_get_tool_schema(tname, nl_tools=nl_tools))
             effective_schema = "\n\n".join(all_nl) if all_nl else "(no tool schemas available)"
         if not effective_schema and hook.name == "phantom_tool_result":
@@ -839,8 +839,8 @@ def _get_tool_schema(tool_name: str, nl_tools: "set[str] | None" = None) -> str:
 
     Falls back to a descriptive placeholder if the tool is not found.
     """
-    if nl_tools and tool_name in nl_tools and tool_name in _NL_SCHEMA_MAP:
-        return json.dumps(_NL_SCHEMA_MAP[tool_name], indent=2)
+    if nl_tools and tool_name in nl_tools and tool_name in NL_SCHEMA_MAP:
+        return json.dumps(NL_SCHEMA_MAP[tool_name], indent=2)
     for tool in TOOL_SCHEMAS:
         if tool.get("function", {}).get("name") == tool_name:
             return json.dumps(tool, indent=2)
@@ -867,7 +867,7 @@ def _get_phantom_tool_schemas(violation: dict, nl_tools: "set[str] | None" = Non
         # Fallback: provide all NL tool schemas so the model has something
         # concrete to work with.
         all_schemas = []
-        for tname in sorted(_NL_SCHEMA_MAP):
+        for tname in sorted(NL_SCHEMA_MAP):
             all_schemas.append(_get_tool_schema(tname, nl_tools=nl_tools))
         return "\n\n".join(all_schemas) if all_schemas else \
             "(call the tool that corresponds to the action you claimed)"
