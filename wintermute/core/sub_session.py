@@ -74,7 +74,8 @@ from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 from wintermute.core import turing_protocol as turing_protocol_module
 from wintermute.core.inference_engine import (
-    ToolCallContext, extract_content_text, normalize_message, process_tool_call,
+    ToolCallContext, extract_content_text, make_tool_context, normalize_message,
+    process_tool_call,
 )
 from wintermute.core.tool_call_rescue import rescue_tool_calls
 from wintermute import tools as tool_module
@@ -1375,7 +1376,7 @@ class SubSessionManager:
             )
 
         from wintermute.infra.prompt_assembler import _timezone as _pa_tz
-        tc_ctx = ToolCallContext(
+        tc_ctx = make_tool_context(
             thread_id=state.session_id,
             nesting_depth=state.nesting_depth,
             parent_thread_id=state.parent_thread_id,

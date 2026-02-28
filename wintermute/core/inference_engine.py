@@ -115,6 +115,38 @@ class ToolCallContext:
     tp_check: Optional[TPCheckFn] = None
 
 
+def make_tool_context(
+    *,
+    thread_id: str,
+    scope: str,
+    pool_last_used: str,
+    event_bus: Any = None,
+    nesting_depth: int = 0,
+    parent_thread_id: Optional[str] = None,
+    nl_enabled: bool = False,
+    nl_tools: set[str] | None = None,
+    nl_translation_pool: Any = None,
+    timezone_str: str = "",
+    tp_enabled: bool = False,
+    tp_check: Optional[TPCheckFn] = None,
+) -> ToolCallContext:
+    """Create a ToolCallContext — single factory used by both inference loops."""
+    return ToolCallContext(
+        thread_id=thread_id,
+        nesting_depth=nesting_depth,
+        parent_thread_id=parent_thread_id,
+        scope=scope,
+        pool_last_used=pool_last_used,
+        event_bus=event_bus,
+        nl_enabled=nl_enabled,
+        nl_tools=nl_tools,
+        nl_translation_pool=nl_translation_pool,
+        timezone_str=timezone_str,
+        tp_enabled=tp_enabled,
+        tp_check=tp_check,
+    )
+
+
 @dataclass
 class ToolCallOutcome:
     """Result of processing a single tool call."""

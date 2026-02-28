@@ -29,7 +29,8 @@ from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 from wintermute.core import turing_protocol as turing_protocol_module
 from wintermute.core.inference_engine import (
-    ToolCallContext, extract_content_text, normalize_message, process_tool_call,
+    ToolCallContext, extract_content_text, make_tool_context, normalize_message,
+    process_tool_call,
 )
 from wintermute.core.types import (  # noqa: F401 — re-exported for backwards compat
     BackendPool,
@@ -913,9 +914,8 @@ class LLMThread:
                 tool_result=tool_result, nl_tools=nl_tools,
             )
 
-        tc_ctx = ToolCallContext(
+        tc_ctx = make_tool_context(
             thread_id=thread_id,
-            nesting_depth=0,
             scope="main",
             pool_last_used=active_pool.last_used,
             event_bus=self._event_bus,
