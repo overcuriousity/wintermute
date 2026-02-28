@@ -1329,7 +1329,7 @@ def _embed(texts: list[str], embed_cfg: dict, task: str = "document") -> list[li
         headers["Authorization"] = f"Bearer {api_key}"
 
     # --- per-text truncation to stay within server token limits ---
-    # 1 token ≈ 4 chars for English; default 2000 chars ≈ 500 tokens.
+    # 1 token ≈ 4 chars for English; default 1024 chars ≈ 500 tokens.
     # Set memory.embeddings.max_text_chars in config.yaml to tune.
     max_chars: int = int(embed_cfg.get("max_text_chars", 2000))
     if max_chars > 0:

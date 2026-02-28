@@ -438,7 +438,7 @@ memory_harvest:
   enabled: true                           # Set false to disable entirely
   message_threshold: 20                   # Harvest after N new user messages
   inactivity_timeout_minutes: 15          # Or after N idle minutes (needs >= 5 msgs)
-  max_message_chars: 2000                 # Truncate long messages before analysis
+  max_message_chars: 1024                 # Truncate long messages before analysis
 
 
 # ── Scheduler ────────────────────────────────────────────────────────
@@ -486,7 +486,7 @@ memory:
     dimensions: 1536
     batch_size: 32                        # Max texts per embeddings API call. Lower this if you
                                           # get HTTP 500 errors about too many concurrent inputs.
-    max_text_chars: 2000                  # Truncate individual texts to this many characters
+    max_text_chars: 1024                  # Truncate individual texts to this many characters
                                           # before embedding. Prevents HTTP 500 "input too large
                                           # to process" when a single text exceeds the server's
                                           # physical batch token limit (n_batch). Rule of thumb:
