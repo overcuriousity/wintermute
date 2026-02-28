@@ -34,6 +34,19 @@ from wintermute import tools as tool_module
 
 logger = logging.getLogger(__name__)
 
+
+def normalize_message(message: Any) -> dict:
+    """Convert an OpenAI Pydantic ChatCompletionMessage to a plain dict.
+
+    If *message* is already a dict it is returned as-is.  This ensures
+    message lists stay homogeneous ``list[dict]`` so downstream code
+    never needs isinstance dispatch between dicts and Pydantic objects.
+    """
+    if isinstance(message, dict):
+        return message
+    return message.model_dump(exclude_none=True, exclude_unset=True)
+
+
 # ---------------------------------------------------------------------------
 # Callback type for Turing Protocol pre/post-execution checks.
 #
@@ -222,8 +235,15 @@ async def process_tool_call(
     execution).  Returns a :class:`ToolCallOutcome`; callers handle
     message placement in their own way.
     """
-    name = tc.function.name
-    raw_args = tc.function.arguments
+    # Support both Pydantic objects (legacy) and plain dicts (normalized).
+    if isinstance(tc, dict):
+        name = tc["function"]["name"]
+        raw_args = tc["function"]["arguments"]
+        tc_id = tc["id"]
+    else:
+        name = tc.function.name
+        raw_args = tc.function.arguments
+        tc_id = tc.id
 
     # -- Step 1: Parse JSON arguments --------------------------------
     try:
@@ -231,7 +251,7 @@ async def process_tool_call(
     except json.JSONDecodeError as exc:
         logger.warning(
             "Malformed tool args for %s in %s (id=%s): %s — raw: %s",
-            name, ctx.thread_id, tc.id, exc, raw_args[:500],
+            name, ctx.thread_id, tc_id, exc, raw_args[:500],
         )
         return ToolCallOutcome(
             content=(
