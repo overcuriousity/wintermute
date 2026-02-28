@@ -22,6 +22,7 @@ Pipeline per tool call
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import time as _time
@@ -36,15 +37,20 @@ logger = logging.getLogger(__name__)
 
 
 def normalize_message(message: Any) -> dict:
-    """Convert an OpenAI Pydantic ChatCompletionMessage to a plain dict.
+    """Convert a ChatCompletionMessage to a plain dict.
 
-    If *message* is already a dict it is returned as-is.  This ensures
-    message lists stay homogeneous ``list[dict]`` so downstream code
-    never needs isinstance dispatch between dicts and Pydantic objects.
+    Supports Pydantic models (``model_dump``), dataclass objects
+    (``dataclasses.asdict``), and plain dicts (returned as-is).  This
+    ensures message lists stay homogeneous ``list[dict]`` so downstream
+    code never needs isinstance dispatch.
     """
     if isinstance(message, dict):
         return message
-    return message.model_dump(exclude_none=True, exclude_unset=True)
+    if hasattr(message, "model_dump"):
+        return message.model_dump(exclude_none=True, exclude_unset=True)
+    if dataclasses.is_dataclass(message) and not isinstance(message, type):
+        return dataclasses.asdict(message)
+    return dict(message)
 
 
 def extract_content_text(msg: dict) -> str:

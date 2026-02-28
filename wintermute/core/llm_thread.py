@@ -74,7 +74,6 @@ def _count_tokens(text: str, model: str) -> int:
         return len(text) // 4
 
 
-
 @dataclass
 class LLMReply:
     """Response from the LLM, separating visible content from reasoning tokens."""
