@@ -444,7 +444,7 @@ async def main() -> None:
     max_continuation_depth = _tuning_int("max_continuation_depth", 3, minimum=0)
     max_nesting_depth = _tuning_int("max_nesting_depth", 2, minimum=0)
     max_blob_chars = _tuning_int("max_blob_chars", 60_000, minimum=1)
-    max_completed_workflows = _tuning_int("max_completed_workflows", 50, minimum=0)
+    max_completed_workflows = _tuning_int("max_completed_workflows", 50, minimum=1)
 
     harvest_cfg_raw = cfg.get("memory_harvest", {})
     harvest_config = MemoryHarvestConfig(
