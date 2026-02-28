@@ -47,6 +47,30 @@ def normalize_message(message: Any) -> dict:
     return message.model_dump(exclude_none=True, exclude_unset=True)
 
 
+def extract_content_text(msg: dict) -> str:
+    """Safely extract text content from a normalized message dict.
+
+    Handles ``content`` being a string, a list of content parts (multimodal
+    messages), or ``None``.  Always returns a stripped string.
+    """
+    raw = msg.get("content")
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, list):
+        parts: list[str] = []
+        for part in raw:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return " ".join(parts).strip()
+    return str(raw).strip()
+
+
 # ---------------------------------------------------------------------------
 # Callback type for Turing Protocol pre/post-execution checks.
 #

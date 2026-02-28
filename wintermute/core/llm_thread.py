@@ -28,7 +28,9 @@ from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 from wintermute.core import turing_protocol as turing_protocol_module
-from wintermute.core.inference_engine import ToolCallContext, normalize_message, process_tool_call
+from wintermute.core.inference_engine import (
+    ToolCallContext, extract_content_text, normalize_message, process_tool_call,
+)
 from wintermute.core.types import (  # noqa: F401 — re-exported for backwards compat
     BackendPool,
     ContextTooLargeError,
@@ -959,7 +961,7 @@ class LLMThread:
             # the entire pipeline works with a homogeneous list[dict].
             msg = normalize_message(choice.message)
             msg_tool_calls = msg.get("tool_calls")
-            msg_content = (msg.get("content") or "").strip()
+            msg_content = extract_content_text(msg)
 
             if msg_tool_calls:
                 _tc_names = [tc["function"]["name"] for tc in msg_tool_calls]

@@ -73,7 +73,9 @@ from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 from wintermute.core import turing_protocol as turing_protocol_module
-from wintermute.core.inference_engine import ToolCallContext, normalize_message, process_tool_call
+from wintermute.core.inference_engine import (
+    ToolCallContext, extract_content_text, normalize_message, process_tool_call,
+)
 from wintermute.core.tool_call_rescue import rescue_tool_calls
 from wintermute import tools as tool_module
 from wintermute.core.types import BackendPool, ContextTooLargeError
@@ -1490,7 +1492,7 @@ class SubSessionManager:
             # the entire pipeline works with a homogeneous list[dict].
             msg = normalize_message(choice.message)
             msg_tool_calls = msg.get("tool_calls")
-            msg_content = (msg.get("content") or "").strip()
+            msg_content = extract_content_text(msg)
 
             # Log this inference round
             try:
