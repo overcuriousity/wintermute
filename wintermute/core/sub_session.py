@@ -76,7 +76,7 @@ from wintermute.core import turing_protocol as turing_protocol_module
 from wintermute.core.inference_engine import ToolCallContext, process_tool_call
 from wintermute.core.tool_call_rescue import rescue_tool_calls
 from wintermute import tools as tool_module
-from wintermute.core.llm_thread import BackendPool, ContextTooLargeError
+from wintermute.core.types import BackendPool, ContextTooLargeError
 
 from typing import TYPE_CHECKING as _TYPE_CHECKING
 if _TYPE_CHECKING:

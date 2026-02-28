@@ -71,7 +71,7 @@ from typing import Any, Optional, TYPE_CHECKING
 from jsonschema import Draft7Validator
 
 if TYPE_CHECKING:
-    from wintermute.core.llm_thread import BackendPool
+    from wintermute.core.types import BackendPool
 
 from wintermute.infra import database
 from wintermute.infra.llm_utils import strip_fences
