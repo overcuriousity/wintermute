@@ -59,7 +59,15 @@ MAX_NESTING_DEPTH = 2
 def set_max_nesting_depth(depth: int) -> None:
     """Override the default nesting depth limit (called from main.py config)."""
     global MAX_NESTING_DEPTH
-    MAX_NESTING_DEPTH = depth
+    try:
+        value = int(depth)
+    except (TypeError, ValueError):
+        logger.warning("Invalid max nesting depth %r; keeping %d", depth, MAX_NESTING_DEPTH)
+        return
+    if value < 0:
+        logger.warning("Negative max nesting depth %r; clamping to 0", value)
+        value = 0
+    MAX_NESTING_DEPTH = value
 
 
 # ---------------------------------------------------------------------------
