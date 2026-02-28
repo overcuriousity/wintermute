@@ -35,6 +35,7 @@ from wintermute.core.inference_engine import (
 from wintermute.core.types import (  # noqa: F401 — re-exported for backwards compat
     BackendPool,
     ContextTooLargeError,
+    LLMBackend,
     MultiProviderConfig,
     ProviderConfig,
     RateLimitError,

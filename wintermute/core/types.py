@@ -1,16 +1,69 @@
 """
 Shared type definitions for the wintermute.core package.
 
-Houses configuration data classes and exception types that are used across
-multiple modules — extracted from llm_thread.py to break import coupling.
+Houses configuration data classes, exception types, and the ``LLMBackend``
+protocol — the structural contract every backend client must satisfy.
 """
 
 import asyncio
 import logging
 import random
 from dataclasses import dataclass, field
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# LLM backend protocol
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class LLMCompletions(Protocol):
+    """The ``completions`` namespace expected on every backend client."""
+
+    async def create(self, **kwargs: Any) -> Any:
+        """Send an inference request (OpenAI-compatible kwargs).
+
+        Expected keyword arguments (set by ``BackendPool.call``):
+
+        * ``model: str``
+        * ``messages: list[dict]``
+        * ``tools: list[dict] | None``
+        * ``tool_choice: str``  (``"auto"`` when tools are provided)
+        * ``max_tokens: int``  **or** ``max_completion_tokens: int``
+          (reasoning models use the latter)
+
+        Must return an object whose ``choices[0].message`` carries:
+
+        * ``content: str | None``
+        * ``tool_calls: list | None``
+        * ``reasoning_content: str | None``  (optional)
+
+        And ``choices[0].finish_reason: str``  (``"stop"`` | ``"tool_calls"`` | ``"length"``).
+        """
+        ...
+
+
+@runtime_checkable
+class LLMChat(Protocol):
+    """The ``chat`` namespace expected on every backend client."""
+
+    completions: LLMCompletions
+
+
+@runtime_checkable
+class LLMBackend(Protocol):
+    """Structural protocol for all LLM backend clients.
+
+    Every backend (``AsyncOpenAI``, ``AnthropicClient``,
+    ``GeminiCloudClient``, ``KimiCodeClient``) must expose a
+    ``chat.completions.create(**kwargs)`` async method.  This protocol
+    makes that contract explicit and verifiable at type-check time.
+    """
+
+    chat: LLMChat
 
 
 class ContextTooLargeError(Exception):
@@ -73,10 +126,13 @@ class BackendPool:
     On API errors the next backend in the list is tried automatically.
     An empty pool (``len(pool) == 0``) signals "disabled" — relevant for
     optional roles like turing_protocol.
+
+    Each backend must satisfy the :class:`LLMBackend` protocol (i.e. expose
+    ``client.chat.completions.create(**kwargs)``).
     """
 
-    def __init__(self, backends: "list[tuple[ProviderConfig, object]]") -> None:
-        self._backends = backends
+    def __init__(self, backends: "list[tuple[ProviderConfig, LLMBackend]]") -> None:
+        self._backends: list[tuple[ProviderConfig, LLMBackend]] = backends
         self.last_used: str = backends[0][0].name if backends else ""
 
     # -- Convenience accessors ------------------------------------------------
@@ -87,7 +143,7 @@ class BackendPool:
         return self._backends[0][0]
 
     @property
-    def primary_client(self) -> object:
+    def primary_client(self) -> LLMBackend:
         """Primary (first) client instance."""
         return self._backends[0][1]
 
