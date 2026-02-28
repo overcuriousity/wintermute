@@ -1217,6 +1217,76 @@ class QdrantBackend:
 # Embedding helper (used by QdrantBackend)
 # ---------------------------------------------------------------------------
 
+def _embed_batch(texts: list[str], embed_cfg: dict, model: str, url: str, headers: dict) -> list[list[float]]:
+    """Send a single HTTP request for a batch of (already-prefixed) texts.
+
+    Raises on error after up to 3 retries for transient 5xx/network failures.
+    On 5xx responses the server error body is logged prominently to aid diagnosis
+    (e.g. "input too large to process" from LiteLLM batch-size limits).
+    """
+    import httpx
+
+    payload: dict = {"input": texts, "model": model}
+    if embed_cfg.get("send_dimensions"):
+        dimensions = embed_cfg.get("dimensions")
+        if dimensions:
+            payload["dimensions"] = dimensions
+
+    max_retries = 3
+    t0 = time.time()
+    status = "ok"
+    last_exc: Exception | None = None
+    input_summary = f"{len(texts)} texts, model={model}"
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = httpx.post(url, json=payload, headers=headers, timeout=60.0)
+            resp.raise_for_status()
+            data = resp.json()
+            items = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
+            result = [item["embedding"] for item in items]
+            output_summary = f"{len(result)} vectors, {len(result[0])} dims" if result else "empty"
+            if attempt > 1:
+                status = f"ok (retry {attempt - 1})"
+            _log_interaction(t0, "embedding", input_summary, output_summary, status, llm=model)
+            return result
+        except (httpx.HTTPStatusError, httpx.ConnectError, httpx.ReadTimeout,
+                httpx.WriteTimeout, httpx.PoolTimeout, ConnectionError, OSError) as exc:
+            if isinstance(exc, httpx.HTTPStatusError):
+                if exc.response.status_code < 500:
+                    # 4xx — not retryable, log and raise immediately.
+                    status = f"error {exc.response.status_code}: {exc}"
+                    _log_interaction(t0, "embedding", input_summary, status, status, llm=model)
+                    raise
+                # 5xx — log the server error body so the cause is visible.
+                try:
+                    body = exc.response.json()
+                except Exception:
+                    body = exc.response.text
+                logger.warning(
+                    "Embedding endpoint returned HTTP %d (attempt %d/%d). "
+                    "Server response: %s. "
+                    "Hint: if the error mentions 'batch size' or 'too large', "
+                    "set memory.embeddings.batch_size in config.yaml to a smaller value.",
+                    exc.response.status_code, attempt, max_retries, body,
+                )
+            last_exc = exc
+            if attempt < max_retries:
+                backoff = 0.5 * (2 ** (attempt - 1))  # 0.5s, 1s
+                logger.warning("Embedding attempt %d/%d failed (%s), retrying in %.1fs",
+                               attempt, max_retries, exc, backoff)
+                time.sleep(backoff)
+            else:
+                status = f"error: {exc}"
+                _log_interaction(t0, "embedding", input_summary, status, status, llm=model)
+                raise
+        except Exception as exc:
+            status = f"error: {exc}"
+            _log_interaction(t0, "embedding", input_summary, status, status, llm=model)
+            raise
+    raise last_exc  # type: ignore[misc]
+
+
 def _embed(texts: list[str], embed_cfg: dict, task: str = "document") -> list[list[float]]:
     """Call an OpenAI-compatible embeddings endpoint.
 
@@ -1225,9 +1295,11 @@ def _embed(texts: list[str], embed_cfg: dict, task: str = "document") -> list[li
     *task* is ``"query"`` (search) or ``"document"`` (upsert/index).
     Prefix is auto-detected for known models (e.g. EmbeddingGemma) or
     can be overridden via ``query_prefix`` / ``document_prefix`` in config.
-    """
-    import httpx
 
+    Texts are sent in sub-batches of ``batch_size`` (config key
+    ``memory.embeddings.batch_size``, default 96) to avoid hitting server-side
+    physical batch token limits (e.g. LiteLLM's per-request token cap).
+    """
     endpoint = embed_cfg.get("endpoint", "").rstrip("/")
     model = embed_cfg.get("model", "text-embedding-3-small")
     api_key = embed_cfg.get("api_key", "") or None
@@ -1252,64 +1324,21 @@ def _embed(texts: list[str], embed_cfg: dict, task: str = "document") -> list[li
         texts = [f"{prefix}{t}" for t in texts]
 
     url = f"{endpoint}/embeddings"
-    payload = {"input": texts, "model": model}
-    # Only send dimensions if explicitly opted in — most non-OpenAI
-    # endpoints reject this parameter.
-    if embed_cfg.get("send_dimensions"):
-        dimensions = embed_cfg.get("dimensions")
-        if dimensions:
-            payload["dimensions"] = dimensions
-
-    headers = {}
+    headers: dict[str, str] = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    max_retries = 3
-    t0 = time.time()
-    status = "ok"
-    last_exc: Exception | None = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            resp = httpx.post(url, json=payload, headers=headers, timeout=60.0)
-            resp.raise_for_status()
-            data = resp.json()
-            # Sort by index to preserve order.
-            items = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
-            result = [item["embedding"] for item in items]
-            output_summary = f"{len(result)} vectors, {len(result[0])} dims" if result else "empty"
-            if attempt > 1:
-                status = f"ok (retry {attempt - 1})"
-            input_summary = f"{len(texts)} texts, model={model}"
-            _log_interaction(t0, "embedding", input_summary, output_summary, status, llm=model)
-            return result
-        except (httpx.HTTPStatusError, httpx.ConnectError, httpx.ReadTimeout,
-                httpx.WriteTimeout, httpx.PoolTimeout, ConnectionError, OSError) as exc:
-            # Only retry on transient errors (5xx, timeouts, connection issues).
-            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
-                status = f"error: {exc}"
-                output_summary = status
-                input_summary = f"{len(texts)} texts, model={model}"
-                _log_interaction(t0, "embedding", input_summary, output_summary, status, llm=model)
-                raise
-            last_exc = exc
-            if attempt < max_retries:
-                backoff = 0.5 * (2 ** (attempt - 1))  # 0.5s, 1s, 2s
-                logger.warning("Embedding attempt %d/%d failed (%s), retrying in %.1fs",
-                               attempt, max_retries, exc, backoff)
-                time.sleep(backoff)
-            else:
-                status = f"error: {exc}"
-                output_summary = status
-                input_summary = f"{len(texts)} texts, model={model}"
-                _log_interaction(t0, "embedding", input_summary, output_summary, status, llm=model)
-                raise
-        except Exception as exc:
-            status = f"error: {exc}"
-            output_summary = status
-            input_summary = f"{len(texts)} texts, model={model}"
-            _log_interaction(t0, "embedding", input_summary, output_summary, status, llm=model)
-            raise
-    raise last_exc  # type: ignore[misc]  # unreachable, satisfies type checker
+    batch_size: int = int(embed_cfg.get("batch_size", 32))
+    if len(texts) <= batch_size:
+        return _embed_batch(texts, embed_cfg, model, url, headers)
+
+    # Split into sub-batches and concatenate results.
+    logger.debug("Embedding %d texts in batches of %d", len(texts), batch_size)
+    result: list[list[float]] = []
+    for i in range(0, len(texts), batch_size):
+        chunk = texts[i : i + batch_size]
+        result.extend(_embed_batch(chunk, embed_cfg, model, url, headers))
+    return result
 
 
 # ---------------------------------------------------------------------------

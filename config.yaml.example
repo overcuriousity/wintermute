@@ -472,6 +472,9 @@ memory:
     api_key: ""                           # API key for the embeddings endpoint (if required)
     model: "text-embedding-3-small"
     dimensions: 1536
+    batch_size: 32                        # Max texts per embeddings API call. Lower this if the
+                                          # server returns HTTP 500 "input too large to process"
+                                          # (e.g. LiteLLM with a small physical batch token limit).
 
   # Dreaming (vector-native consolidation settings).
   # Only used when backend is local_vector or qdrant.
