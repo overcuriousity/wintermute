@@ -281,8 +281,24 @@ class SubSessionManager:
         self._nl_translation_pool = nl_translation_pool
         self._nl_translation_config = nl_translation_config or {}
         self._event_bus = event_bus
-        self._max_continuation_depth = max_continuation_depth
-        self._max_completed_workflows = max_completed_workflows
+        try:
+            _cont_depth = int(max_continuation_depth)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid max_continuation_depth %r; using default %d",
+                max_continuation_depth, MAX_CONTINUATION_DEPTH,
+            )
+            _cont_depth = MAX_CONTINUATION_DEPTH
+        self._max_continuation_depth = max(0, _cont_depth)
+        try:
+            _max_wf = int(max_completed_workflows)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid max_completed_workflows %r; using default %d",
+                max_completed_workflows, MAX_COMPLETED_WORKFLOWS,
+            )
+            _max_wf = MAX_COMPLETED_WORKFLOWS
+        self._max_completed_workflows = max(1, _max_wf)
         self._default_timeout: int = DEFAULT_TIMEOUT
         self._states: dict[str, SubSessionState] = {}
         self._tasks: dict[str, asyncio.Task] = {}

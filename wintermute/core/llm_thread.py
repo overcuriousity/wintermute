@@ -127,7 +127,18 @@ class LLMThread:
         self._event_bus = event_bus
         self._thread_config_manager = thread_config_manager
         self._backend_pools_by_name = backend_pools_by_name or {}
-        self._compaction_keep_recent = compaction_keep_recent
+        try:
+            _keep = int(compaction_keep_recent)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid compaction_keep_recent %r; falling back to default %d",
+                compaction_keep_recent, COMPACTION_KEEP_RECENT,
+            )
+            _keep = COMPACTION_KEEP_RECENT
+        if _keep < 1:
+            logger.warning("compaction_keep_recent %r < 1; clamping to 1", _keep)
+            _keep = 1
+        self._compaction_keep_recent = _keep
         # Convenience: primary config for context_size / model name lookups.
         self._cfg = main_pool.primary
         self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)

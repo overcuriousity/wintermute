@@ -425,7 +425,14 @@ async def main() -> None:
         timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
     )
     # --- Tuning constants (optional overrides from config) ---
-    tuning = cfg.get("tuning", {}) or {}
+    _tuning_raw = cfg.get("tuning")
+    if _tuning_raw is None:
+        tuning: dict = {}
+    elif not isinstance(_tuning_raw, dict):
+        logger.warning("tuning: expected a mapping, got %r; ignoring tuning section", type(_tuning_raw).__name__)
+        tuning = {}
+    else:
+        tuning = _tuning_raw
 
     def _tuning_int(key: str, default: int, minimum: int = 0) -> int:
         """Validate and coerce a tuning config value to a bounded int."""

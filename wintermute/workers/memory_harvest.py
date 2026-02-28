@@ -234,7 +234,8 @@ class MemoryHarvestLoop:
         blob = "\n".join(lines)
         max_chars = self._cfg.max_blob_chars
         if len(blob) > max_chars:
-            blob = blob[:max_chars] + "\n[... transcript truncated ...]"
+            marker = "\n[... transcript truncated ...]"
+            blob = blob[:max_chars - len(marker)] + marker if len(marker) < max_chars else blob[:max_chars]
         return blob
 
     @staticmethod
