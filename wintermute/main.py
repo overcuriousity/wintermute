@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
+from openai import AsyncOpenAI
 
 from wintermute.infra import database
 from wintermute.infra import prompt_assembler
@@ -34,8 +35,6 @@ from wintermute.infra.paths import DATA_DIR
 from wintermute.infra.event_bus import EventBus
 from wintermute.infra.thread_config import ThreadConfigManager
 from wintermute import tools as tool_module
-from openai import AsyncOpenAI
-
 from wintermute.core.llm_thread import LLMThread
 from wintermute.core.types import BackendPool, MultiProviderConfig, ProviderConfig
 from wintermute.interfaces.matrix_thread import MatrixConfig, MatrixThread
