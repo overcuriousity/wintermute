@@ -114,6 +114,9 @@ class ToolCallContext:
     tp_enabled: bool = False
     tp_check: Optional[TPCheckFn] = None
 
+    # Per-result tool output truncation (0 = no limit)
+    max_tool_output_chars: int = 0
+
 
 def make_tool_context(
     *,
@@ -129,6 +132,7 @@ def make_tool_context(
     timezone_str: str = "",
     tp_enabled: bool = False,
     tp_check: Optional[TPCheckFn] = None,
+    max_tool_output_chars: int = 0,
 ) -> ToolCallContext:
     """Create a ToolCallContext — single factory used by both inference loops."""
     return ToolCallContext(
@@ -144,6 +148,7 @@ def make_tool_context(
         timezone_str=timezone_str,
         tp_enabled=tp_enabled,
         tp_check=tp_check,
+        max_tool_output_chars=max_tool_output_chars,
     )
 
 
@@ -246,6 +251,19 @@ async def _execute_multi_item(
                 parent_thread_id=ctx.parent_thread_id,
             ),
         )
+        # Truncate individual item results (same logic as Step 4b).
+        if ctx.max_tool_output_chars and len(item_result) > ctx.max_tool_output_chars:
+            orig = len(item_result)
+            notice = (
+                f"\n\n[...truncated — {orig - ctx.max_tool_output_chars:,}"
+                f" chars omitted (total {orig:,} chars)]"
+            )
+            keep = max(0, ctx.max_tool_output_chars - len(notice))
+            item_result = item_result[:keep] + notice
+            logger.info(
+                "[%s] Truncated multi-item %s[%d] output: %d → %d chars",
+                ctx.thread_id, name, i, orig, len(item_result),
+            )
         summary = ", ".join(
             f"{k}={v!r}" for k, v in item_args.items() if k != "description"
         )
@@ -260,6 +278,22 @@ async def _execute_multi_item(
 
     # Log once for the entire multi-item call (early return bypasses outer log).
     combined_content = "\n\n".join(combined)
+
+    # Cap the combined result so N items don't blow the context budget.
+    if ctx.max_tool_output_chars and len(combined_content) > ctx.max_tool_output_chars:
+        original_len = len(combined_content)
+        notice = (
+            f"\n\n[...truncated combined output — "
+            f"{original_len - ctx.max_tool_output_chars:,} chars omitted"
+            f" (total {original_len:,} chars)]"
+        )
+        keep = max(0, ctx.max_tool_output_chars - len(notice))
+        combined_content = combined_content[:keep] + notice
+        logger.info(
+            "[%s] Truncated combined multi-item %s output: %d → %d chars",
+            ctx.thread_id, name, original_len, len(combined_content),
+        )
+
     try:
         await database.async_call(
             database.save_interaction_log,
@@ -383,6 +417,20 @@ async def process_tool_call(
         ),
     )
     tool_calls_made.append(name)
+
+    # -- Step 4b: Truncate oversized output ---------------------------
+    if ctx.max_tool_output_chars and len(result) > ctx.max_tool_output_chars:
+        original_len = len(result)
+        notice = (
+            f"\n\n[...truncated — {original_len - ctx.max_tool_output_chars:,}"
+            f" chars omitted (total {original_len:,} chars)]"
+        )
+        keep = max(0, ctx.max_tool_output_chars - len(notice))
+        result = result[:keep] + notice
+        logger.info(
+            "[%s] Truncated %s output: %d → %d chars",
+            ctx.thread_id, name, original_len, len(result),
+        )
 
     # -- Step 5: NL summary ------------------------------------------
     if nl_was_translated:

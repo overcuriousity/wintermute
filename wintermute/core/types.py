@@ -96,6 +96,7 @@ class RateLimitError(Exception):
 _CONTEXT_TOO_LARGE_PHRASES = (
     "context length", "too many tokens", "maximum context",
     "token limit", "content too large", "payload too large",
+    "context size", "exceeds the available context",
 )
 
 
