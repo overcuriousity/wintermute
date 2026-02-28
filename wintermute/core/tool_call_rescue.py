@@ -141,7 +141,14 @@ def _try_parse_json_body(body: str, known_tools: set[str]) -> Optional[list[Synt
             continue
         if known_tools and name not in known_tools:
             continue
-        args = item.get("arguments") or item.get("parameters") or nested_args or {}
+        # Require at least one explicit arguments field to avoid treating plain
+        # JSON examples or discussion snippets as tool calls.
+        has_args = "arguments" in item or "parameters" in item or nested_args is not None
+        if not has_args:
+            continue
+        args = item.get("arguments") if "arguments" in item else (
+            item.get("parameters") if "parameters" in item else (nested_args or {})
+        )
         if isinstance(args, str):
             args_str = args
         elif isinstance(args, dict):
@@ -191,6 +198,10 @@ def rescue_tool_calls(
         pipeline.  An empty list means no rescue was possible.
     """
     if not content:
+        return []
+
+    # Cheap pre-filter: skip all regex work if no known markup markers are present.
+    if not any(marker in content for marker in ("<", "```", "[/")):
         return []
 
     # An explicitly empty set means "no tools available" — nothing to rescue.
@@ -273,7 +284,7 @@ def rescue_tool_calls(
             _add(SyntheticToolCall.make(name, args_str))
 
     if results:
-        logger.warning(
+        logger.info(
             "Rescued %d XML-encoded tool call(s) from assistant content: %s",
             len(results),
             [tc.function.name for tc in results],
