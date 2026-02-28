@@ -652,8 +652,23 @@ async def main() -> None:
     else:
         logger.info("Update checker disabled by config")
 
-    # Inject remaining references for /status, /dream, /reflect commands.
+    # Build shared slash-command handler for all interfaces.
+    from wintermute.interfaces.slash_commands import SlashCommandHandler
+    slash_handler = SlashCommandHandler(
+        llm=llm,
+        sub_sessions=sub_sessions,
+        thread_config_manager=thread_config_mgr,
+        dreaming_loop=dreaming_loop,
+        memory_harvest=harvest_loop,
+        scheduler=scheduler,
+        reflection_loop=reflection_loop,
+        self_model=self_model,
+        update_checker=update_checker,
+    )
+
+    # Inject remaining references for interface-specific commands.
     if matrix:
+        matrix._slash_handler = slash_handler
         matrix._scheduler = scheduler
         matrix._dreaming_loop = dreaming_loop
         matrix._update_checker = update_checker
@@ -661,6 +676,7 @@ async def main() -> None:
         matrix._reflection_loop = reflection_loop
         matrix._self_model = self_model
     if web_iface:
+        web_iface._slash_handler = slash_handler
         web_iface._dreaming_loop = dreaming_loop
 
     scheduler.start()
