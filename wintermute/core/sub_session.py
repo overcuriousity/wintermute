@@ -282,7 +282,10 @@ class SubSessionManager:
         self._nl_translation_config = nl_translation_config or {}
         self._event_bus = event_bus
         self._max_continuation_depth = max_continuation_depth
-        self._max_completed_workflows = max_completed_workflows
+        # Clamp to at least 1: the purge logic excludes the just-completed
+        # workflow from its count, so allowing 0 would silently retain 1
+        # workflow in memory instead of purging everything.
+        self._max_completed_workflows = max(1, max_completed_workflows)
         self._default_timeout: int = DEFAULT_TIMEOUT
         self._states: dict[str, SubSessionState] = {}
         self._tasks: dict[str, asyncio.Task] = {}
