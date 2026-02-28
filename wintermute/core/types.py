@@ -7,7 +7,6 @@ contract every backend client must satisfy.
 """
 
 import asyncio
-import json
 import logging
 import random
 from dataclasses import dataclass, field
@@ -52,6 +51,8 @@ class LLMResponse:
         round-tripping) and omits ``None`` fields to keep messages compact.
         """
         d: dict[str, Any] = {"role": "assistant", "content": self.content or ""}
+        if self.reasoning_content is not None:
+            d["reasoning_content"] = self.reasoning_content
         if self.tool_calls:
             serialized: list[dict] = []
             for tc in self.tool_calls:
