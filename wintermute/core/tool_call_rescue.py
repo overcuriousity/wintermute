@@ -193,6 +193,11 @@ def rescue_tool_calls(
     if not content:
         return []
 
+    # An explicitly empty set means "no tools available" — nothing to rescue.
+    # None means "skip name validation" (useful in tests / tool-agnostic paths).
+    if known_tool_names is not None and not known_tool_names:
+        return []
+
     known = known_tool_names if known_tool_names is not None else set()
     results: list[SyntheticToolCall] = []
     seen_calls: set[tuple[str, str]] = set()  # deduplicate by (name, arguments)
@@ -226,7 +231,11 @@ def rescue_tool_calls(
         # Try JSON first, fall back to key=value
         try:
             args = json.loads(body)
-            args_str = json.dumps(args)
+            if isinstance(args, dict):
+                args_str = json.dumps(args)
+            else:
+                # Bare scalar or array — normalize to object.
+                args_str = json.dumps({"input": args})
         except (json.JSONDecodeError, ValueError):
             args = _parse_minimax_kv(body)
             if not args:

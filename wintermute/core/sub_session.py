@@ -1551,7 +1551,7 @@ class SubSessionManager:
 
             # -- Rescue XML/text-encoded tool calls -------------------
             _raw_content = (choice.message.content or "").strip()
-            if _raw_content:
+            if _raw_content and tool_schemas:
                 _known_names = {
                     s["function"]["name"] for s in tool_schemas
                 }

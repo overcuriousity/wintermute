@@ -1156,9 +1156,9 @@ class LLMThread:
 
             # -- Rescue XML/text-encoded tool calls -------------------
             _raw_content = (choice.message.content or "").strip()
-            if _raw_content:
+            if _raw_content and tools:
                 _known_names = {
-                    s["function"]["name"] for s in (tools or [])
+                    s["function"]["name"] for s in tools
                 }
                 _rescued = rescue_tool_calls(_raw_content, _known_names)
                 if _rescued:
