@@ -293,8 +293,8 @@ class SelfModelProfiler:
                 messages=[{"role": "user", "content": prompt_text}],
                 max_tokens_override=256,
             )
-            if response.choices:
-                text = (response.choices[0].message.content or "").strip()
+            if response.content is not None:
+                text = (response.content or "").strip()
                 return text[:self._cfg.summary_max_chars]
         except Exception:
             logger.debug("[self_model] LLM summary call failed", exc_info=True)

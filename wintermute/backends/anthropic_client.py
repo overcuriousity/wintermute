@@ -1,20 +1,20 @@
 """
-AsyncOpenAI-compatible client for Anthropic's native Messages API.
+LLMBackend client for Anthropic's native Messages API.
 
 Uses the ``anthropic`` Python SDK directly instead of routing through an
 OpenAI-compatible proxy.  Supports prompt caching (cache_control on large
 system prompts) and native tool calling.
 
-Drop-in replacement for ``AsyncOpenAI`` — no changes needed in llm_thread.py,
-sub_session.py, dreaming.py, or turing_protocol.py.
+Implements the :class:`LLMBackend` protocol via ``complete()``.
 """
 
 import json
 import logging
-from dataclasses import dataclass, field
 from typing import Any
 
 import anthropic
+
+from wintermute.core.types import LLMResponse, LLMToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -22,86 +22,24 @@ logger = logging.getLogger(__name__)
 # cache hits, so caching the (typically large) system prompt saves money.
 _CACHE_SYSTEM_THRESHOLD = 3072
 
-# ---------------------------------------------------------------------------
-# Response dataclasses (mimic OpenAI ChatCompletion shape)
-# ---------------------------------------------------------------------------
-
-@dataclass
-class FunctionCall:
-    name: str
-    arguments: str  # JSON string
-
-
-@dataclass
-class ToolCall:
-    id: str
-    type: str = "function"
-    function: FunctionCall | None = None
-
-
-@dataclass
-class UsageInfo:
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
-    cache_creation_input_tokens: int = 0
-    cache_read_input_tokens: int = 0
-
-
-@dataclass
-class Message:
-    role: str = "assistant"
-    content: str | None = None
-    tool_calls: list[ToolCall] | None = None
-    reasoning_content: str | None = None
-
-
-@dataclass
-class Choice:
-    index: int = 0
-    message: Message = field(default_factory=Message)
-    finish_reason: str | None = None
-
-
-@dataclass
-class ChatCompletion:
-    id: str = ""
-    object: str = "chat.completion"
-    choices: list[Choice] = field(default_factory=list)
-    usage: UsageInfo = field(default_factory=UsageInfo)
-
-
-# ---------------------------------------------------------------------------
-# Completions namespace (mirrors client.chat.completions.create)
-# ---------------------------------------------------------------------------
-
-class _Completions:
-    def __init__(self, parent: "AnthropicClient") -> None:
-        self._parent = parent
-
-    async def create(self, **kwargs) -> ChatCompletion:
-        return await self._parent._call(**kwargs)
-
-
-class _Chat:
-    def __init__(self, parent: "AnthropicClient") -> None:
-        self.completions = _Completions(parent)
-
 
 # ---------------------------------------------------------------------------
 # Main client
 # ---------------------------------------------------------------------------
 
 class AnthropicClient:
-    """Wraps the Anthropic Python SDK with an AsyncOpenAI-compatible interface."""
+    """Wraps the Anthropic Python SDK with the LLMBackend protocol."""
 
     def __init__(self, api_key: str) -> None:
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
-        self.chat = _Chat(self)
+
+    async def complete(self, **kwargs: Any) -> LLMResponse:
+        """Send an inference request and return a normalized LLMResponse."""
+        return await self._call(**kwargs)
 
     # -- OpenAI → Anthropic translation ------------------------------------
 
-    async def _call(self, **kwargs) -> ChatCompletion:
+    async def _call(self, **kwargs) -> LLMResponse:
         messages_in: list[dict] = kwargs.get("messages", [])
         tools_in: list[dict] | None = kwargs.get("tools")
         model: str = kwargs.get("model", "claude-sonnet-4-20250514")
@@ -253,23 +191,20 @@ class AnthropicClient:
             result.append(entry)
         return result
 
-    def _translate_response(self, response) -> ChatCompletion:
-        """Convert Anthropic response to OpenAI ChatCompletion shape."""
+    def _translate_response(self, response) -> LLMResponse:
+        """Convert Anthropic response to normalized LLMResponse."""
         text_parts: list[str] = []
-        tool_calls: list[ToolCall] = []
+        tool_calls: list[LLMToolCall] = []
         thinking_text: list[str] = []
 
         for block in response.content:
             if block.type == "text":
                 text_parts.append(block.text)
             elif block.type == "tool_use":
-                tool_calls.append(ToolCall(
+                tool_calls.append(LLMToolCall(
                     id=block.id,
-                    type="function",
-                    function=FunctionCall(
-                        name=block.name,
-                        arguments=json.dumps(block.input),
-                    ),
+                    name=block.name,
+                    arguments=json.dumps(block.input),
                 ))
             elif block.type == "thinking":
                 thinking_text.append(block.thinking)
@@ -286,23 +221,9 @@ class AnthropicClient:
         content = "\n".join(text_parts) if text_parts else None
         reasoning = "\n".join(thinking_text) if thinking_text else None
 
-        msg = Message(
-            role="assistant",
+        return LLMResponse(
             content=content,
             tool_calls=tool_calls if tool_calls else None,
+            finish_reason=finish_reason,
             reasoning_content=reasoning,
-        )
-
-        usage = UsageInfo(
-            prompt_tokens=response.usage.input_tokens,
-            completion_tokens=response.usage.output_tokens,
-            total_tokens=response.usage.input_tokens + response.usage.output_tokens,
-            cache_creation_input_tokens=getattr(response.usage, "cache_creation_input_tokens", 0) or 0,
-            cache_read_input_tokens=getattr(response.usage, "cache_read_input_tokens", 0) or 0,
-        )
-
-        return ChatCompletion(
-            id=response.id,
-            choices=[Choice(message=msg, finish_reason=finish_reason)],
-            usage=usage,
         )

@@ -29,13 +29,14 @@ from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 from wintermute.core import turing_protocol as turing_protocol_module
 from wintermute.core.inference_engine import (
-    ToolCallContext, extract_content_text, make_tool_context, normalize_message,
+    ToolCallContext, extract_content_text, make_tool_context,
     process_tool_call,
 )
 from wintermute.core.types import (  # noqa: F401 — re-exported for backwards compat
     BackendPool,
     ContextTooLargeError,
     LLMBackend,
+    LLMResponse,
     MultiProviderConfig,
     ProviderConfig,
     RateLimitError,
@@ -813,15 +814,6 @@ class LLMThread:
     # OpenAI inference loop (handles tool-use rounds)
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _extract_reasoning(message) -> Optional[str]:
-        """Extract reasoning/thinking content from a response message, if present."""
-        # OpenAI o-series and DeepSeek R1 use reasoning_content
-        reasoning = getattr(message, "reasoning_content", None)
-        if reasoning:
-            return reasoning.strip()
-        return None
-
     def _trim_tool_results(self, messages: list[dict], token_budget: int) -> None:
         """Truncate oldest tool-result messages if total tokens exceed budget.
 
@@ -938,30 +930,25 @@ class LLMThread:
                 tools=tools,
             )
 
-            if not response.choices:
+            if response.content is None and not response.tool_calls:
                 empty_retries += 1
                 if empty_retries >= MAX_EMPTY_RETRIES:
                     raise RuntimeError(
-                        f"LLM returned empty choices {empty_retries} times in a row; aborting"
+                        f"LLM returned empty response {empty_retries} times in a row; aborting"
                     )
-                logger.warning("LLM returned empty choices, retrying (%d/%d)", empty_retries, MAX_EMPTY_RETRIES)
-                logger.debug("Empty choices raw response: %s", response)
+                logger.warning("LLM returned empty response, retrying (%d/%d)", empty_retries, MAX_EMPTY_RETRIES)
+                logger.debug("Empty response: %s", response)
                 full_messages.append({"role": "assistant", "content": ""})
                 full_messages.append({"role": "user", "content": "Continue."})
                 continue
             empty_retries = 0
 
-            choice = response.choices[0]
-
             # Collect reasoning tokens from every round (including tool-use rounds).
-            if active_cfg.reasoning:
-                r = self._extract_reasoning(choice.message)
-                if r:
-                    reasoning_parts.append(r)
+            if active_cfg.reasoning and response.reasoning_content:
+                reasoning_parts.append(response.reasoning_content)
 
-            # Normalize the Pydantic message to a plain dict immediately so
-            # the entire pipeline works with a homogeneous list[dict].
-            msg = normalize_message(choice.message)
+            # Convert LLMResponse to a plain dict for conversation history.
+            msg = response.to_message_dict()
             msg_tool_calls = msg.get("tool_calls")
             msg_content = extract_content_text(msg)
 
@@ -969,7 +956,7 @@ class LLMThread:
                 _tc_names = [tc["function"]["name"] for tc in msg_tool_calls]
                 logger.debug(
                     "Tool calls detected (finish_reason=%s): %s",
-                    choice.finish_reason, _tc_names,
+                    response.finish_reason, _tc_names,
                 )
                 # Log this inference round (intermediate, tool-use round).
                 try:
@@ -1145,7 +1132,7 @@ class LLMThread:
                 messages=[{"role": "user", "content": summary_prompt}],
                 max_tokens_override=2048,
             )
-            summary = (summary_response.choices[0].message.content or "").strip()
+            summary = (summary_response.content or "").strip()
         except Exception:  # noqa: BLE001
             logger.exception("Compaction failed for thread %s — skipping", thread_id)
             return

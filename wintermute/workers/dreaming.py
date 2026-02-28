@@ -114,11 +114,11 @@ async def _consolidate(pool: "BackendPool",
     if json_mode:
         call_kwargs["response_format"] = {"type": "json_object"}
     response = await pool.call(**call_kwargs)
-    if not response.choices:
-        logger.warning("Dreaming (%s): LLM returned empty choices", label)
-        logger.debug("Empty choices raw response: %s", response)
+    if response.content is None:
+        logger.warning("Dreaming (%s): LLM returned empty response", label)
+        logger.debug("Empty response: %s", response)
         return ""
-    result = (response.choices[0].message.content or "").strip()
+    result = (response.content or "").strip()
     try:
         await database.async_call(
             database.save_interaction_log,
@@ -644,9 +644,9 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens_override=600,
             )
-            if not response.choices:
+            if response.content is None:
                 continue
-            condensed_text = (response.choices[0].message.content or "").strip()
+            condensed_text = (response.content or "").strip()
             if condensed_text:
                 fpath.write_text(condensed_text, encoding="utf-8")
                 condensed += 1

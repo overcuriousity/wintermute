@@ -556,11 +556,11 @@ class ReflectionLoop:
             logger.exception("[reflection] LLM analysis call failed")
             return
 
-        if not response.choices:
-            logger.warning("[reflection] LLM analysis returned empty choices")
+        if response.content is None:
+            logger.warning("[reflection] LLM analysis returned empty response")
             return
 
-        analysis_text = response.choices[0].message.content or ""
+        analysis_text = response.content or ""
         model_name = getattr(self._pool, "last_used", "unknown")
 
         logger.info("[reflection] LLM analysis complete (%d chars)", len(analysis_text))
@@ -756,10 +756,10 @@ class ReflectionLoop:
             logger.exception("[reflection] Synthesis LLM call failed")
             return
 
-        if not response.choices:
+        if response.content is None:
             return
 
-        text = response.choices[0].message.content or ""
+        text = response.content or ""
 
         # Extract skill_proposals from JSON using brace-depth tracking to
         # correctly handle nested objects within the proposals array.

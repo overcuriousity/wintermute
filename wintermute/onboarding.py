@@ -786,11 +786,10 @@ async def run_onboarding(
     api_key: str,
 ) -> None:
     """Main onboarding conversation loop."""
-    from openai import AsyncOpenAI
-
-    # Build bootstrap client
+    # Build bootstrap client (LLMBackend protocol)
     if provider == "openai":
-        client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        from wintermute.backends.openai_wrapper import OpenAIBackend
+        client = OpenAIBackend(api_key=api_key, base_url=base_url)
     elif provider == "kimi-code":
         from wintermute.backends import kimi_auth, kimi_client
 
@@ -870,7 +869,7 @@ async def run_onboarding(
     consecutive_errors = 0
     while True:
         try:
-            response = await client.chat.completions.create(
+            response = await client.complete(
                 model=model,
                 messages=messages,
                 tools=TOOLS,
@@ -893,8 +892,8 @@ async def run_onboarding(
                 print(f"\n  {C_DIM}Onboarding interrupted.{C_RESET}")
                 break
 
-        if not response.choices:
-            _warn("LLM returned empty choices (response.choices is None/empty), retrying")
+        if response.content is None and not response.tool_calls:
+            _warn("LLM returned empty response, retrying")
             _warn(f"Raw response: {response}")
             consecutive_errors += 1
             if consecutive_errors >= 3:
@@ -902,33 +901,17 @@ async def run_onboarding(
                 break
             continue
 
-        msg = response.choices[0].message
-
-        # Serialize the message for history, preserving all provider-specific
-        # fields (e.g. reasoning_content for Kimi thinking models).
-        msg_dict: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
-        if msg.tool_calls:
-            msg_dict["tool_calls"] = [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
-                }
-                for tc in msg.tool_calls
-            ]
-        # Preserve reasoning_content if the model returns it (Kimi thinking models)
-        reasoning = getattr(msg, "reasoning_content", None)
-        if reasoning is not None:
-            msg_dict["reasoning_content"] = reasoning
+        # Serialize to a plain dict for conversation history.
+        msg_dict = response.to_message_dict()
         messages.append(msg_dict)
 
         # Handle tool calls
-        if msg.tool_calls:
+        if response.tool_calls:
             finished = False
-            for tc in msg.tool_calls:
-                fn_name = tc.function.name
+            for tc in response.tool_calls:
+                fn_name = tc.name
                 try:
-                    fn_args = json.loads(tc.function.arguments)
+                    fn_args = json.loads(tc.arguments)
                 except json.JSONDecodeError:
                     fn_args = {}
 
@@ -952,11 +935,11 @@ async def run_onboarding(
             if finished:
                 # Let the LLM give a final summary
                 try:
-                    final = await client.chat.completions.create(
+                    final = await client.complete(
                         model=model, messages=messages, max_tokens=1024,
                     )
-                    if final.choices[0].message.content:
-                        print(_format_assistant_text(final.choices[0].message.content))
+                    if final.content:
+                        print(_format_assistant_text(final.content))
                 except Exception:
                     pass
                 print()
@@ -966,8 +949,8 @@ async def run_onboarding(
             continue  # go back for LLM to process tool results
 
         # Display assistant text
-        if msg.content:
-            print(_format_assistant_text(msg.content))
+        if response.content:
+            print(_format_assistant_text(response.content))
 
         # Get user input
         print()

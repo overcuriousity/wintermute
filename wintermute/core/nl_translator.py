@@ -196,11 +196,11 @@ async def translate_nl_tool_call(
 
     try:
         response = await pool.call(messages=messages)
-        if not response.choices:
-            logger.warning("NL translator: LLM returned empty choices for %s", tool_name)
-            logger.debug("Empty choices raw response: %s", response)
+        if response.content is None:
+            logger.warning("NL translator: LLM returned empty response for %s", tool_name)
+            logger.debug("Empty response: %s", response)
             return None
-        raw = (response.choices[0].message.content or "").strip()
+        raw = (response.content or "").strip()
     except Exception:
         logger.exception("NL translator LLM call failed for %s", tool_name)
         return None

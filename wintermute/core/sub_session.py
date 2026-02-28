@@ -74,7 +74,7 @@ from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 from wintermute.core import turing_protocol as turing_protocol_module
 from wintermute.core.inference_engine import (
-    ToolCallContext, extract_content_text, make_tool_context, normalize_message,
+    ToolCallContext, extract_content_text, make_tool_context,
     process_tool_call,
 )
 from wintermute.core.tool_call_rescue import rescue_tool_calls
@@ -1480,18 +1480,15 @@ class SubSessionManager:
                     continue
                 raise  # Can't trim further, let _run() handle it
 
-            if not response.choices:
-                logger.warning("Sub-session %s: LLM returned empty choices, retrying", state.session_id)
-                logger.debug("Empty choices raw response: %s", response)
+            if response.content is None and not response.tool_calls:
+                logger.warning("Sub-session %s: LLM returned empty response, retrying", state.session_id)
+                logger.debug("Empty response: %s", response)
                 state.messages.append({"role": "assistant", "content": ""})
                 state.messages.append({"role": "user", "content": "Continue."})
                 continue
 
-            choice = response.choices[0]
-
-            # Normalize the Pydantic message to a plain dict immediately so
-            # the entire pipeline works with a homogeneous list[dict].
-            msg = normalize_message(choice.message)
+            # Convert LLMResponse to a plain dict for conversation history.
+            msg = response.to_message_dict()
             msg_tool_calls = msg.get("tool_calls")
             msg_content = extract_content_text(msg)
 

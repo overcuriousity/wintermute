@@ -1,11 +1,13 @@
 """
 Shared type definitions for the wintermute.core package.
 
-Houses configuration data classes, exception types, and the ``LLMBackend``
-protocol — the structural contract every backend client must satisfy.
+Houses configuration data classes, exception types, the ``LLMResponse``
+normalized return type, and the ``LLMBackend`` protocol — the structural
+contract every backend client must satisfy.
 """
 
 import asyncio
+import json
 import logging
 import random
 from dataclasses import dataclass, field
@@ -15,55 +17,71 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# LLM backend protocol
+# Normalized response types
 # ---------------------------------------------------------------------------
 
 
-@runtime_checkable
-class LLMCompletions(Protocol):
-    """The ``completions`` namespace expected on every backend client."""
+@dataclass
+class LLMToolCall:
+    """A single tool call returned by the LLM."""
 
-    async def create(self, **kwargs: Any) -> Any:
-        """Send an inference request (OpenAI-compatible kwargs).
+    id: str
+    name: str
+    arguments: str  # JSON string
+    thought_signature: str | None = None  # Gemini thinking models require this
 
-        Expected keyword arguments (set by ``BackendPool.call``):
 
-        * ``model: str``
-        * ``messages: list[dict]``
-        * ``tools: list[dict] | None``
-        * ``tool_choice: str``  (``"auto"`` when tools are provided)
-        * ``max_tokens: int``  **or** ``max_completion_tokens: int``
-          (reasoning models use the latter)
+@dataclass
+class LLMResponse:
+    """Normalized response from any LLM backend.
 
-        Must return an object whose ``choices[0].message`` carries:
+    Every backend's ``complete()`` returns this, replacing the
+    provider-specific response shapes (OpenAI ``ChatCompletion``,
+    Anthropic ``Message``, Gemini SSE chunks, etc.).
+    """
 
-        * ``content: str | None``
-        * ``tool_calls: list | None``
-        * ``reasoning_content: str | None``  (optional)
+    content: str | None
+    tool_calls: list[LLMToolCall] | None
+    finish_reason: str
+    reasoning_content: str | None = None
 
-        And ``choices[0].finish_reason: str``  (``"stop"`` | ``"tool_calls"`` | ``"length"``).
+    def to_message_dict(self) -> dict:
+        """Produce a ``{"role": "assistant", ...}`` dict for conversation history.
+
+        Preserves ``thought_signature`` on tool calls (needed for Gemini
+        round-tripping) and omits ``None`` fields to keep messages compact.
         """
-        ...
+        d: dict[str, Any] = {"role": "assistant", "content": self.content or ""}
+        if self.tool_calls:
+            serialized: list[dict] = []
+            for tc in self.tool_calls:
+                entry: dict[str, Any] = {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.name, "arguments": tc.arguments},
+                }
+                if tc.thought_signature:
+                    entry["thought_signature"] = tc.thought_signature
+                serialized.append(entry)
+            d["tool_calls"] = serialized
+        return d
 
 
-@runtime_checkable
-class LLMChat(Protocol):
-    """The ``chat`` namespace expected on every backend client."""
-
-    completions: LLMCompletions
+# ---------------------------------------------------------------------------
+# LLM backend protocol
+# ---------------------------------------------------------------------------
 
 
 @runtime_checkable
 class LLMBackend(Protocol):
     """Structural protocol for all LLM backend clients.
 
-    Every backend (``AsyncOpenAI``, ``AnthropicClient``,
-    ``GeminiCloudClient``, ``KimiCodeClient``) must expose a
-    ``chat.completions.create(**kwargs)`` async method.  This protocol
-    makes that contract explicit and verifiable at type-check time.
+    Every backend (``OpenAIBackend``, ``AnthropicClient``,
+    ``GeminiCloudClient``, ``KimiCodeClient``) must expose an
+    ``async complete(**kwargs) -> LLMResponse`` method.
     """
 
-    chat: LLMChat
+    async def complete(self, **kwargs: Any) -> LLMResponse: ...
 
 
 class ContextTooLargeError(Exception):
@@ -128,7 +146,7 @@ class BackendPool:
     optional roles like turing_protocol.
 
     Each backend must satisfy the :class:`LLMBackend` protocol (i.e. expose
-    ``client.chat.completions.create(**kwargs)``).
+    ``client.complete(**kwargs) -> LLMResponse``).
     """
 
     def __init__(self, backends: "list[tuple[ProviderConfig, LLMBackend]]") -> None:
@@ -164,8 +182,8 @@ class BackendPool:
     async def call(self, *, messages: list[dict],
                    tools: "list[dict] | None" = None,
                    max_tokens_override: "int | None" = None,
-                   **extra_kwargs) -> object:
-        """Call ``chat.completions.create`` with automatic failover.
+                   **extra_kwargs) -> LLMResponse:
+        """Call ``complete()`` on the first available backend, with failover.
 
         Each backend uses its own model, max_tokens, and reasoning setting.
         *max_tokens_override* replaces the backend's configured max_tokens
@@ -190,7 +208,7 @@ class BackendPool:
             backoff = self.RATE_LIMIT_INITIAL_BACKOFF
             for attempt in range(self.RATE_LIMIT_MAX_RETRIES + 1):
                 try:
-                    result = await client.chat.completions.create(**call_kwargs)
+                    result = await client.complete(**call_kwargs)
                     self.last_used = cfg.name
                     return result
                 except Exception as exc:  # noqa: BLE001
