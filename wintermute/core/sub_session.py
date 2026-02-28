@@ -396,46 +396,15 @@ class SubSessionManager:
         session_id = f"sub_{uuid.uuid4().hex[:8]}"
         now = datetime.now(timezone.utc).isoformat()
 
-        # Resolve depends_on_previous: automatically depend on all sessions
-        # the calling worker has spawned so far.
-        if depends_on_previous and parent_thread_id:
-            previous = list(self._worker_spawned.get(parent_thread_id, []))
-            raw_deps = previous + (depends_on or [])
-            if previous:
-                logger.info(
-                    "Sub-session %s: depends_on_previous resolved to %s",
-                    session_id, previous,
-                )
-        else:
-            raw_deps = depends_on or []
+        deps = self._resolve_deps(
+            session_id, depends_on, depends_on_previous, parent_thread_id,
+        )
 
         # Track this session as a child of its parent worker.
         if parent_thread_id:
             self._worker_spawned.setdefault(parent_thread_id, []).append(session_id)
 
-        # Validate dependency IDs — strip any that don't correspond to a known
-        # session.  This prevents permanent deadlocks caused by hallucinated or
-        # mistyped session IDs in depends_on.
-        deps = []
-        for dep_id in raw_deps:
-            if dep_id in self._states:
-                deps.append(dep_id)
-            else:
-                logger.warning(
-                    "Sub-session %s: dropping unknown dependency '%s' "
-                    "(session does not exist — possibly hallucinated by LLM)",
-                    session_id, dep_id,
-                )
-
-        # Derive root_thread_id: the original user-facing thread.
-        # When a sub-session spawns children, parent_thread_id is "sub_xxxx".
-        # We resolve through to the original chat thread so aggregated results
-        # can be delivered there deterministically.
-        if parent_thread_id and parent_thread_id.startswith("sub_"):
-            parent_state = self._states.get(parent_thread_id)
-            root_thread_id = (parent_state.root_thread_id or parent_state.parent_thread_id) if parent_state else None
-        else:
-            root_thread_id = parent_thread_id
+        root_thread_id = self._resolve_root_thread(parent_thread_id)
 
         # -- Parse not_before time gate --
         not_before_dt: Optional[datetime] = None
@@ -464,86 +433,8 @@ class SubSessionManager:
         )
 
         if deps:
-            # Collect all distinct workflows that the dependencies belong to.
-            dep_wf_ids: set[str] = set()
-            for dep_id in deps:
-                wf_id = self._session_to_workflow.get(dep_id)
-                if wf_id:
-                    dep_wf_ids.add(wf_id)
-
-            if not dep_wf_ids:
-                # No deps are in a workflow yet — create a fresh one and
-                # retroactively register the dependency sessions.
-                workflow_id = f"wf_{uuid.uuid4().hex[:8]}"
-                wf = Workflow(
-                    workflow_id=workflow_id,
-                    parent_thread_id=parent_thread_id,
-                    created_at=now,
-                )
-                self._workflows[workflow_id] = wf
-                for dep_id in deps:
-                    dep_state = self._states.get(dep_id)
-                    if dep_state:
-                        dep_node = TaskNode(
-                            node_id=dep_id,
-                            objective=dep_state.objective,
-                            context_blobs=[],
-                            system_prompt_mode=dep_state.system_prompt_mode,
-                            timeout=DEFAULT_TIMEOUT,
-                            depends_on=[],
-                            nesting_depth=dep_state.nesting_depth,
-                            parent_thread_id=dep_state.parent_thread_id,
-                            status=dep_state.status,
-                            result=dep_state.result,
-                            error=dep_state.error,
-                        )
-                        wf.nodes[dep_id] = dep_node
-                        self._session_to_workflow[dep_id] = workflow_id
-            elif len(dep_wf_ids) == 1:
-                # All deps share one workflow — just use it.
-                workflow_id = next(iter(dep_wf_ids))
-            else:
-                # Dependencies span multiple workflows — merge them all
-                # into the first one.
-                wf_list = sorted(dep_wf_ids)
-                workflow_id = wf_list[0]
-                target_wf = self._workflows[workflow_id]
-                for other_id in wf_list[1:]:
-                    other_wf = self._workflows.pop(other_id, None)
-                    if other_wf is None:
-                        continue
-                    # Move all nodes from the other workflow into target.
-                    for nid, n in other_wf.nodes.items():
-                        target_wf.nodes[nid] = n
-                        self._session_to_workflow[nid] = workflow_id
-                    logger.info(
-                        "Merged workflow %s into %s (%d nodes)",
-                        other_id, workflow_id, len(other_wf.nodes),
-                    )
-
-            # Also adopt any deps that weren't in any workflow yet
-            # (possible when some deps had workflows and others didn't).
+            workflow_id = self._find_or_create_workflow(deps, parent_thread_id, now)
             wf = self._workflows[workflow_id]
-            for dep_id in deps:
-                if dep_id not in self._session_to_workflow:
-                    dep_state = self._states.get(dep_id)
-                    if dep_state:
-                        dep_node = TaskNode(
-                            node_id=dep_id,
-                            objective=dep_state.objective,
-                            context_blobs=[],
-                            system_prompt_mode=dep_state.system_prompt_mode,
-                            timeout=DEFAULT_TIMEOUT,
-                            depends_on=[],
-                            nesting_depth=dep_state.nesting_depth,
-                            parent_thread_id=dep_state.parent_thread_id,
-                            status=dep_state.status,
-                            result=dep_state.result,
-                            error=dep_state.error,
-                        )
-                        wf.nodes[dep_id] = dep_node
-                        self._session_to_workflow[dep_id] = workflow_id
-
             wf.nodes[session_id] = node
             self._session_to_workflow[session_id] = workflow_id
 
@@ -561,7 +452,6 @@ class SubSessionManager:
                 node.status = "failed"
                 node.error = "dependency failed before task was started"
                 logger.info("Sub-session %s skipped (dependency failed)", session_id)
-                # Create a minimal state so _report and list_all work.
                 state = SubSessionState(
                     session_id=session_id, objective=objective,
                     parent_thread_id=parent_thread_id,
@@ -577,7 +467,6 @@ class SubSessionManager:
 
             if not all_done:
                 node.status = "pending"
-                # Create a placeholder state so list_all/cancel work.
                 state = SubSessionState(
                     session_id=session_id, objective=objective,
                     parent_thread_id=parent_thread_id,
@@ -628,6 +517,129 @@ class SubSessionManager:
 
         # -- Spawn immediately --
         return self._start_node(node, prior_messages, continuation_depth, continued_from)
+
+    # -- spawn() helpers -------------------------------------------------------
+
+    def _resolve_deps(
+        self,
+        session_id: str,
+        depends_on: Optional[list[str]],
+        depends_on_previous: bool,
+        parent_thread_id: Optional[str],
+    ) -> list[str]:
+        """Resolve and validate dependency IDs, dropping unknown ones."""
+        if depends_on_previous and parent_thread_id:
+            previous = list(self._worker_spawned.get(parent_thread_id, []))
+            raw_deps = previous + (depends_on or [])
+            if previous:
+                logger.info(
+                    "Sub-session %s: depends_on_previous resolved to %s",
+                    session_id, previous,
+                )
+        else:
+            raw_deps = depends_on or []
+
+        deps = []
+        for dep_id in raw_deps:
+            if dep_id in self._states:
+                deps.append(dep_id)
+            else:
+                logger.warning(
+                    "Sub-session %s: dropping unknown dependency '%s' "
+                    "(session does not exist — possibly hallucinated by LLM)",
+                    session_id, dep_id,
+                )
+        return deps
+
+    def _resolve_root_thread(self, parent_thread_id: Optional[str]) -> Optional[str]:
+        """Derive the original user-facing thread ID from a parent."""
+        if not parent_thread_id:
+            return None
+        if not parent_thread_id.startswith("sub_"):
+            return parent_thread_id
+        parent_state = self._states.get(parent_thread_id)
+        if not parent_state:
+            return None
+        return parent_state.root_thread_id or parent_state.parent_thread_id
+
+    def _find_or_create_workflow(
+        self,
+        deps: list[str],
+        parent_thread_id: Optional[str],
+        now: str,
+    ) -> str:
+        """Find an existing workflow for *deps*, merging if needed, or create a new one.
+
+        Adopts any orphan deps (sessions not yet registered in any workflow)
+        into the returned workflow before returning.
+        Returns the workflow_id that the new node should be registered in.
+        """
+        dep_wf_ids: set[str] = set()
+        for dep_id in deps:
+            wf_id = self._session_to_workflow.get(dep_id)
+            if wf_id:
+                dep_wf_ids.add(wf_id)
+
+        if not dep_wf_ids:
+            # No deps are in a workflow yet — create a fresh one.
+            workflow_id = f"wf_{uuid.uuid4().hex[:8]}"
+            wf = Workflow(
+                workflow_id=workflow_id,
+                parent_thread_id=parent_thread_id,
+                created_at=now,
+            )
+            self._workflows[workflow_id] = wf
+            self._adopt_orphan_deps(wf, workflow_id, deps)
+            return workflow_id
+
+        if len(dep_wf_ids) == 1:
+            workflow_id = next(iter(dep_wf_ids))
+            self._adopt_orphan_deps(self._workflows[workflow_id], workflow_id, deps)
+            return workflow_id
+
+        # Dependencies span multiple workflows — merge them all into the first.
+        wf_list = sorted(dep_wf_ids)
+        workflow_id = wf_list[0]
+        self._merge_workflows(workflow_id, wf_list[1:])
+        self._adopt_orphan_deps(self._workflows[workflow_id], workflow_id, deps)
+        return workflow_id
+
+    def _merge_workflows(self, target_id: str, source_ids: list[str]) -> None:
+        """Merge *source_ids* workflows into *target_id*."""
+        target_wf = self._workflows[target_id]
+        for other_id in source_ids:
+            other_wf = self._workflows.pop(other_id, None)
+            if other_wf is None:
+                continue
+            for nid, n in other_wf.nodes.items():
+                target_wf.nodes[nid] = n
+                self._session_to_workflow[nid] = target_id
+            logger.info(
+                "Merged workflow %s into %s (%d nodes)",
+                other_id, target_id, len(other_wf.nodes),
+            )
+
+    def _adopt_orphan_deps(self, wf: Workflow, workflow_id: str, deps: list[str]) -> None:
+        """Register dependency sessions that aren't in any workflow yet."""
+        for dep_id in deps:
+            if dep_id not in self._session_to_workflow:
+                dep_state = self._states.get(dep_id)
+                if dep_state:
+                    dep_node = TaskNode(
+                        node_id=dep_id,
+                        objective=dep_state.objective,
+                        context_blobs=[],
+                        system_prompt_mode=dep_state.system_prompt_mode,
+                        timeout=DEFAULT_TIMEOUT,
+                        depends_on=[],
+                        nesting_depth=dep_state.nesting_depth,
+                        parent_thread_id=dep_state.parent_thread_id,
+                        status=dep_state.status,
+                        result=dep_state.result,
+                        error=dep_state.error,
+                    )
+                    wf.nodes[dep_id] = dep_node
+                    self._session_to_workflow[dep_id] = workflow_id
 
     def _collect_dep_results(self, dep_ids: list[str]) -> list[str]:
         """Gather result texts from completed dependency sessions."""
