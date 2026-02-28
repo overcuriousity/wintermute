@@ -28,7 +28,7 @@ from wintermute.infra import database
 from wintermute.infra import prompt_loader
 
 if TYPE_CHECKING:
-    from wintermute.core.llm_thread import BackendPool
+    from wintermute.core.types import BackendPool
     from wintermute.core.sub_session import SubSessionManager
     from wintermute.infra.event_bus import EventBus
 

@@ -44,7 +44,7 @@ from wintermute.infra import prompt_loader
 from wintermute.infra.llm_utils import parse_json_from_llm
 
 if TYPE_CHECKING:
-    from wintermute.core.llm_thread import BackendPool
+    from wintermute.core.types import BackendPool
     from wintermute.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)

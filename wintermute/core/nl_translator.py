@@ -24,7 +24,7 @@ from wintermute.infra.llm_utils import strip_fences
 from wintermute.infra import prompt_loader
 
 if TYPE_CHECKING:
-    from wintermute.core.llm_thread import BackendPool
+    from wintermute.core.types import BackendPool
 
 logger = logging.getLogger(__name__)
 
