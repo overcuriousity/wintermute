@@ -120,6 +120,12 @@ class LLMThread:
         self._compaction_pool = compaction_pool
         self._turing_protocol_pool = turing_protocol_pool
         self._turing_protocol_validators = turing_protocol_validators
+        from wintermute.core.tp_runner import TuringProtocolRunner
+        self._tp_runner = TuringProtocolRunner(
+            pool=turing_protocol_pool,
+            scope="main",
+            enabled_validators=turing_protocol_validators,
+        )
         self._nl_translation_pool = nl_translation_pool
         self._nl_translation_config = nl_translation_config or {}
         self._seed_language = seed_language
@@ -564,7 +570,7 @@ class LLMThread:
         stale (the user has already sent a follow-up and the context has moved
         on).
         """
-        if not self._turing_protocol_pool.enabled:
+        if not self._tp_runner.enabled:
             return
 
         active_sessions = self._sub_sessions.list_active() if self._sub_sessions else []
@@ -572,23 +578,18 @@ class LLMThread:
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
 
-        try:
-            result = await turing_protocol_module.run_turing_protocol(
-                pool=self._turing_protocol_pool,
-                user_message=user_message,
-                assistant_response=assistant_response,
-                tool_calls_made=tool_calls_made,
-                active_sessions=active_sessions,
-                enabled_validators=self._turing_protocol_validators,
-                thread_id=thread_id,
-                phase="post_inference",
-                scope="main",
-                nl_tools=nl_tools,
-                prior_assistant_message=prior_assistant_message,
-                recent_assistant_messages=recent_assistant_messages,
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("Turing Protocol check raised (non-fatal)")
+        result = await self._tp_runner.run_phase(
+            "post_inference",
+            thread_id=thread_id,
+            user_message=user_message,
+            assistant_response=assistant_response,
+            tool_calls_made=tool_calls_made,
+            active_sessions=active_sessions,
+            nl_tools=nl_tools,
+            prior_assistant_message=prior_assistant_message,
+            recent_assistant_messages=recent_assistant_messages,
+        )
+        if result is None:
             return
 
         if result.correction:
@@ -1086,34 +1087,16 @@ class LLMThread:
         Returns the TuringResult if any violations are confirmed, None otherwise.
         Used by _inference_loop for pre/post_execution hooks.
         """
-        # Quick check: are there any hooks for this phase+scope?
-        hooks = turing_protocol_module.get_hooks(
-            self._turing_protocol_validators,
-            phase_filter=phase,
-            scope_filter=scope,
+        return await self._tp_runner.run_phase(
+            phase,
+            thread_id=thread_id,
+            tool_calls_made=tool_calls_made,
+            assistant_response=assistant_response,
+            tool_name=tool_name,
+            tool_args=tool_args,
+            tool_result=tool_result,
+            nl_tools=nl_tools,
         )
-        if not hooks:
-            return None
-
-        try:
-            return await turing_protocol_module.run_turing_protocol(
-                pool=self._turing_protocol_pool,
-                user_message="",
-                assistant_response=assistant_response,
-                tool_calls_made=tool_calls_made,
-                active_sessions=[],
-                enabled_validators=self._turing_protocol_validators,
-                thread_id=thread_id,
-                phase=phase,
-                scope=scope,
-                tool_name=tool_name,
-                tool_args=tool_args,
-                tool_result=tool_result,
-                nl_tools=nl_tools,
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("Turing Protocol %s check raised (non-fatal)", phase)
-            return None
 
     # ------------------------------------------------------------------
     # Context compaction
