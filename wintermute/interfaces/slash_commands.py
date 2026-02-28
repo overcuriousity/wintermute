@@ -505,5 +505,8 @@ class SlashCommandHandler:
             "- `/config reset <key>` — Remove a single per-thread override\n\n"
             "**System**\n"
             "- `/status` — Show runtime status: models, token budget, memory, loops, sub-sessions\n"
-            "- `/commands` — Show this list"
+            "- `/commands` — Show this list\n\n"
+            "**Interface-Specific** *(may not be available in all clients)*\n"
+            "- `/verify-session` — Matrix: verify your encryption session with the bot\n"
+            "- `/kimi-auth` — Matrix: authenticate Kimi integration for this account"
         )
