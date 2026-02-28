@@ -1427,7 +1427,7 @@ class SubSessionManager:
             timezone_str=_pa_tz,
             tp_enabled=tp_enabled,
             tp_check=_tp_check_sub if tp_enabled else None,
-            max_tool_output_chars=self._cfg.context_size,
+            max_tool_output_chars=self._cfg.context_size * 4,  # tokens → approx chars
         )
 
         # Derive the set of available tool names for prompt section filtering.

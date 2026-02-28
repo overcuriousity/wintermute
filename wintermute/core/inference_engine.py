@@ -251,6 +251,19 @@ async def _execute_multi_item(
                 parent_thread_id=ctx.parent_thread_id,
             ),
         )
+        # Truncate individual item results (same logic as Step 4b).
+        if ctx.max_tool_output_chars and len(item_result) > ctx.max_tool_output_chars:
+            orig = len(item_result)
+            notice = (
+                f"\n\n[...truncated — {orig - ctx.max_tool_output_chars:,}"
+                f" chars omitted (total {orig:,} chars)]"
+            )
+            keep = max(0, ctx.max_tool_output_chars - len(notice))
+            item_result = item_result[:keep] + notice
+            logger.info(
+                "[%s] Truncated multi-item %s[%d] output: %d → %d chars",
+                ctx.thread_id, name, i, orig, len(item_result),
+            )
         summary = ", ".join(
             f"{k}={v!r}" for k, v in item_args.items() if k != "description"
         )
@@ -392,11 +405,12 @@ async def process_tool_call(
     # -- Step 4b: Truncate oversized output ---------------------------
     if ctx.max_tool_output_chars and len(result) > ctx.max_tool_output_chars:
         original_len = len(result)
-        result = (
-            result[:ctx.max_tool_output_chars]
-            + f"\n\n[...truncated — {original_len - ctx.max_tool_output_chars:,} chars omitted"
-            f" (total {original_len:,} chars)]"
+        notice = (
+            f"\n\n[...truncated — {original_len - ctx.max_tool_output_chars:,}"
+            f" chars omitted (total {original_len:,} chars)]"
         )
+        keep = max(0, ctx.max_tool_output_chars - len(notice))
+        result = result[:keep] + notice
         logger.info(
             "[%s] Truncated %s output: %d → %d chars",
             ctx.thread_id, name, original_len, len(result),

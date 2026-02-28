@@ -931,7 +931,7 @@ class LLMThread:
             timezone_str=prompt_assembler._timezone,
             tp_enabled=tp_enabled,
             tp_check=_tp_check_main if tp_enabled else None,
-            max_tool_output_chars=active_cfg.context_size,
+            max_tool_output_chars=active_cfg.context_size * 4,  # tokens → approx chars
         )
 
         empty_retries = 0
