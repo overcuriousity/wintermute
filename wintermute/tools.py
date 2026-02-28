@@ -51,9 +51,15 @@ _NL_SCHEMA_MAP = NL_SCHEMA_MAP
 _TOOL_CALL_LOG: deque[dict] = deque(maxlen=500)
 
 
-# Maximum nesting depth for sub-session spawning.
+# Maximum nesting depth for sub-session spawning (default; overridable via config).
 # 0 = main agent, 1 = sub-session, 2 = sub-sub-session (max).
 MAX_NESTING_DEPTH = 2
+
+
+def set_max_nesting_depth(depth: int) -> None:
+    """Override the default nesting depth limit (called from main.py config)."""
+    global MAX_NESTING_DEPTH
+    MAX_NESTING_DEPTH = depth
 
 
 # ---------------------------------------------------------------------------

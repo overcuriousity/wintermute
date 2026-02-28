@@ -424,13 +424,21 @@ async def main() -> None:
     scheduler_cfg = SchedulerConfig(
         timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
     )
+    # --- Tuning constants (optional overrides from config) ---
+    tuning = cfg.get("tuning", {}) or {}
+
     harvest_cfg_raw = cfg.get("memory_harvest", {})
     harvest_config = MemoryHarvestConfig(
         enabled=harvest_cfg_raw.get("enabled", True),
         message_threshold=harvest_cfg_raw.get("message_threshold", 20),
         inactivity_timeout_minutes=harvest_cfg_raw.get("inactivity_timeout_minutes", 15),
         max_message_chars=harvest_cfg_raw.get("max_message_chars", 2000),
+        max_blob_chars=tuning.get("max_blob_chars", 60_000),
     )
+
+    # Apply max_nesting_depth to the tools module.
+    if "max_nesting_depth" in tuning:
+        tool_module.set_max_nesting_depth(tuning["max_nesting_depth"])
 
     # --- Optional interfaces ---
     matrix_cfg_raw: Optional[dict] = cfg.get("matrix")
@@ -498,7 +506,8 @@ async def main() -> None:
                     seed_language=seed_language,
                     event_bus=event_bus,
                     thread_config_manager=thread_config_mgr,
-                    backend_pools_by_name=backend_pools_by_name)
+                    backend_pools_by_name=backend_pools_by_name,
+                    compaction_keep_recent=tuning.get("compaction_keep_recent", 10))
 
     # Build SubSessionManager — shares the LLM backend pool, reports back via
     # enqueue_system_event so results enter the parent thread's queue.
@@ -512,6 +521,8 @@ async def main() -> None:
         nl_translation_pool=nl_translation_pool,
         nl_translation_config=nl_translation_config,
         event_bus=event_bus,
+        max_continuation_depth=tuning.get("max_continuation_depth", 3),
+        max_completed_workflows=tuning.get("max_completed_workflows", 50),
     )
     llm.inject_sub_session_manager(sub_sessions)
     tool_module.register_sub_session_manager(sub_sessions.spawn)
