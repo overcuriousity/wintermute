@@ -1328,6 +1328,20 @@ def _embed(texts: list[str], embed_cfg: dict, task: str = "document") -> list[li
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    # --- per-text truncation to stay within server token limits ---
+    # 1 token ≈ 4 chars for English; default 2000 chars ≈ 500 tokens.
+    # Set memory.embeddings.max_text_chars in config.yaml to tune.
+    max_chars: int = int(embed_cfg.get("max_text_chars", 2000))
+    if max_chars > 0:
+        truncated = []
+        for t in texts:
+            if len(t) > max_chars:
+                logger.debug("Truncating embedding input from %d to %d chars", len(t), max_chars)
+                truncated.append(t[:max_chars])
+            else:
+                truncated.append(t)
+        texts = truncated
+
     batch_size: int = int(embed_cfg.get("batch_size", 32))
     if len(texts) <= batch_size:
         return _embed_batch(texts, embed_cfg, model, url, headers)
