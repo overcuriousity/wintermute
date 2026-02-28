@@ -547,7 +547,8 @@ class SubSessionManager:
         """Find an existing workflow for *deps*, merging if needed, or create a new one.
 
         Returns the workflow_id that the new node should be registered in.
-        Dependency sessions that aren't tracked yet are retroactively adopted.
+        The caller is responsible for adopting orphan deps via
+        ``_adopt_orphan_deps()``.
         """
         dep_wf_ids: set[str] = set()
         for dep_id in deps:
@@ -556,8 +557,8 @@ class SubSessionManager:
                 dep_wf_ids.add(wf_id)
 
         if not dep_wf_ids:
-            # No deps are in a workflow yet — create a fresh one and
-            # retroactively register the dependency sessions.
+            # No deps are in a workflow yet — create a fresh one.
+            # Orphan deps will be adopted by the caller.
             workflow_id = f"wf_{uuid.uuid4().hex[:8]}"
             wf = Workflow(
                 workflow_id=workflow_id,
@@ -565,7 +566,6 @@ class SubSessionManager:
                 created_at=now,
             )
             self._workflows[workflow_id] = wf
-            self._adopt_orphan_deps(wf, workflow_id, deps)
             return workflow_id
 
         if len(dep_wf_ids) == 1:
