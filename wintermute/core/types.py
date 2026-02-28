@@ -1,16 +1,88 @@
 """
 Shared type definitions for the wintermute.core package.
 
-Houses configuration data classes and exception types that are used across
-multiple modules — extracted from llm_thread.py to break import coupling.
+Houses configuration data classes, exception types, the ``LLMResponse``
+normalized return type, and the ``LLMBackend`` protocol — the structural
+contract every backend client must satisfy.
 """
 
 import asyncio
 import logging
 import random
 from dataclasses import dataclass, field
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Normalized response types
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LLMToolCall:
+    """A single tool call returned by the LLM."""
+
+    id: str
+    name: str
+    arguments: str  # JSON string
+    thought_signature: str | None = None  # Gemini thinking models require this
+
+
+@dataclass
+class LLMResponse:
+    """Normalized response from any LLM backend.
+
+    Every backend's ``complete()`` returns this, replacing the
+    provider-specific response shapes (OpenAI ``ChatCompletion``,
+    Anthropic ``Message``, Gemini SSE chunks, etc.).
+    """
+
+    content: str | None
+    tool_calls: list[LLMToolCall] | None
+    finish_reason: str
+    reasoning_content: str | None = None
+
+    def to_message_dict(self) -> dict:
+        """Produce a ``{"role": "assistant", ...}`` dict for conversation history.
+
+        Preserves ``thought_signature`` on tool calls (needed for Gemini
+        round-tripping) and omits ``None`` fields to keep messages compact.
+        """
+        d: dict[str, Any] = {"role": "assistant", "content": self.content or ""}
+        if self.reasoning_content is not None:
+            d["reasoning_content"] = self.reasoning_content
+        if self.tool_calls:
+            serialized: list[dict] = []
+            for tc in self.tool_calls:
+                entry: dict[str, Any] = {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.name, "arguments": tc.arguments},
+                }
+                if tc.thought_signature:
+                    entry["thought_signature"] = tc.thought_signature
+                serialized.append(entry)
+            d["tool_calls"] = serialized
+        return d
+
+
+# ---------------------------------------------------------------------------
+# LLM backend protocol
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class LLMBackend(Protocol):
+    """Structural protocol for all LLM backend clients.
+
+    Every backend (``OpenAIBackend``, ``AnthropicClient``,
+    ``GeminiCloudClient``, ``KimiCodeClient``) must expose an
+    ``async complete(**kwargs) -> LLMResponse`` method.
+    """
+
+    async def complete(self, **kwargs: Any) -> LLMResponse: ...
 
 
 class ContextTooLargeError(Exception):
@@ -73,10 +145,13 @@ class BackendPool:
     On API errors the next backend in the list is tried automatically.
     An empty pool (``len(pool) == 0``) signals "disabled" — relevant for
     optional roles like turing_protocol.
+
+    Each backend must satisfy the :class:`LLMBackend` protocol (i.e. expose
+    ``client.complete(**kwargs) -> LLMResponse``).
     """
 
-    def __init__(self, backends: "list[tuple[ProviderConfig, object]]") -> None:
-        self._backends = backends
+    def __init__(self, backends: "list[tuple[ProviderConfig, LLMBackend]]") -> None:
+        self._backends: list[tuple[ProviderConfig, LLMBackend]] = backends
         self.last_used: str = backends[0][0].name if backends else ""
 
     # -- Convenience accessors ------------------------------------------------
@@ -87,7 +162,7 @@ class BackendPool:
         return self._backends[0][0]
 
     @property
-    def primary_client(self) -> object:
+    def primary_client(self) -> LLMBackend:
         """Primary (first) client instance."""
         return self._backends[0][1]
 
@@ -108,8 +183,8 @@ class BackendPool:
     async def call(self, *, messages: list[dict],
                    tools: "list[dict] | None" = None,
                    max_tokens_override: "int | None" = None,
-                   **extra_kwargs) -> object:
-        """Call ``chat.completions.create`` with automatic failover.
+                   **extra_kwargs) -> LLMResponse:
+        """Call ``complete()`` on the first available backend, with failover.
 
         Each backend uses its own model, max_tokens, and reasoning setting.
         *max_tokens_override* replaces the backend's configured max_tokens
@@ -134,7 +209,7 @@ class BackendPool:
             backoff = self.RATE_LIMIT_INITIAL_BACKOFF
             for attempt in range(self.RATE_LIMIT_MAX_RETRIES + 1):
                 try:
-                    result = await client.chat.completions.create(**call_kwargs)
+                    result = await client.complete(**call_kwargs)
                     self.last_used = cfg.name
                     return result
                 except Exception as exc:  # noqa: BLE001

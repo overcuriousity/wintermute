@@ -1051,11 +1051,11 @@ async def run_turing_protocol(
                 ],
             )
 
-            if not response.choices:
-                logger.warning("Turing Protocol Stage 1: LLM returned empty choices")
-                logger.debug("Empty choices raw response: %s", response)
+            if response.content is None:
+                logger.warning("Turing Protocol Stage 1: LLM returned empty response")
+                logger.debug("Empty response: %s", response)
                 return TuringResult(correction=None)
-            stage1_raw = (response.choices[0].message.content or "").strip()
+            stage1_raw = (response.content or "").strip()
             if not stage1_raw:
                 logger.warning(
                     "Turing Protocol Stage 1 returned empty content "
@@ -1286,11 +1286,11 @@ async def _check_objective_completion(
         ],
     )
 
-    if not response.choices:
-        logger.warning("objective_completion: LLM returned empty choices — assuming objective met")
-        logger.debug("Empty choices raw response: %s", response)
+    if response.content is None:
+        logger.warning("objective_completion: LLM returned empty response — assuming objective met")
+        logger.debug("Empty response: %s", response)
         return None
-    raw = (response.choices[0].message.content or "").strip()
+    raw = (response.content or "").strip()
     if not raw:
         logger.warning("objective_completion: empty LLM response — assuming objective met")
         return None

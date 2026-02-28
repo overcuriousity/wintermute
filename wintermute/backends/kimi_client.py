@@ -1,39 +1,26 @@
 """
-AsyncOpenAI-compatible client for Kimi-Code API.
+LLMBackend client for Kimi-Code API.
 
 Kimi-Code exposes an OpenAI-compatible endpoint at
 https://api.kimi.com/coding/v1, so this is a thin wrapper that handles
-OAuth token refresh transparently.  Drop-in replacement for AsyncOpenAI.
+OAuth token refresh transparently.
+
+Implements the :class:`LLMBackend` protocol via ``complete()``.
 """
 
 import asyncio
 import logging
+from typing import Any
 
 from openai import AsyncOpenAI
 
 from wintermute.backends import kimi_auth
+from wintermute.backends.openai_wrapper import openai_response_to_llm_response
+from wintermute.core.types import LLMResponse
 
 logger = logging.getLogger(__name__)
 
 KIMI_BASE_URL = "https://api.kimi.com/coding/v1"
-
-
-class _Completions:
-    """Namespace that mirrors ``client.chat.completions``."""
-
-    def __init__(self, parent: "KimiCodeClient") -> None:
-        self._parent = parent
-
-    async def create(self, **kwargs):
-        await self._parent._ensure_valid_token()
-        return await self._parent._openai_client.chat.completions.create(**kwargs)
-
-
-class _Chat:
-    """Namespace that mirrors ``client.chat``."""
-
-    def __init__(self, parent: "KimiCodeClient") -> None:
-        self.completions = _Completions(parent)
 
 
 class KimiCodeClient:
@@ -43,7 +30,12 @@ class KimiCodeClient:
         self._creds = creds or {}
         self._refresh_lock = asyncio.Lock()
         self._openai_client = self._build_client()
-        self.chat = _Chat(self)
+
+    async def complete(self, **kwargs: Any) -> LLMResponse:
+        """Send an inference request and return a normalized LLMResponse."""
+        await self._ensure_valid_token()
+        raw = await self._openai_client.chat.completions.create(**kwargs)
+        return openai_response_to_llm_response(raw)
 
     def _build_client(self) -> AsyncOpenAI:
         token = self._creds.get("access_token", "placeholder")

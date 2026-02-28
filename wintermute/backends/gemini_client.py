@@ -1,11 +1,8 @@
 """
-AsyncOpenAI-compatible client for Google Cloud Code Assist API.
+LLMBackend client for Google Cloud Code Assist API.
 
-Implements the ``client.chat.completions.create()`` interface used by all
-wintermute inference code, translating between OpenAI and Google formats.
-
-Drop-in replacement for ``AsyncOpenAI`` — no changes needed in llm_thread.py,
-sub_session.py, dreaming.py, or turing_protocol.py.
+Implements the :class:`LLMBackend` protocol via ``complete()``, translating
+between OpenAI-style kwargs and the Google Cloud Code Assist format.
 """
 
 import asyncio
@@ -14,12 +11,12 @@ import logging
 import random
 import time
 import uuid
-from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 
 from wintermute.backends import gemini_auth
+from wintermute.core.types import LLMResponse, LLMToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -33,76 +30,11 @@ MAX_BACKOFF = 60.0
 
 
 # ---------------------------------------------------------------------------
-# Response dataclasses (mimic OpenAI ChatCompletion shape)
-# ---------------------------------------------------------------------------
-
-@dataclass
-class FunctionCall:
-    name: str
-    arguments: str  # JSON string
-
-
-@dataclass
-class ToolCall:
-    id: str
-    type: str = "function"
-    function: FunctionCall = None
-    thought_signature: str | None = None  # Gemini thinking models require this
-
-
-@dataclass
-class Message:
-    role: str = "assistant"
-    content: str | None = None
-    tool_calls: list[ToolCall] | None = None
-    reasoning_content: str | None = None
-
-
-@dataclass
-class Choice:
-    index: int = 0
-    message: Message = None
-    finish_reason: str = "stop"
-
-
-@dataclass
-class Usage:
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
-
-
-@dataclass
-class ChatCompletion:
-    id: str = ""
-    object: str = "chat.completion"
-    choices: list[Choice] = field(default_factory=list)
-    usage: Usage = field(default_factory=Usage)
-
-
-# ---------------------------------------------------------------------------
-# Namespace objects to mimic client.chat.completions.create()
-# ---------------------------------------------------------------------------
-
-class _Completions:
-    def __init__(self, client: "GeminiCloudClient"):
-        self._client = client
-
-    async def create(self, **kwargs) -> ChatCompletion:
-        return await self._client._create(**kwargs)
-
-
-class _Chat:
-    def __init__(self, client: "GeminiCloudClient"):
-        self.completions = _Completions(client)
-
-
-# ---------------------------------------------------------------------------
 # Main client
 # ---------------------------------------------------------------------------
 
 class GeminiCloudClient:
-    """AsyncOpenAI-compatible client backed by Google Cloud Code Assist."""
+    """LLMBackend client backed by Google Cloud Code Assist."""
 
     # Max concurrent requests to avoid bursting rate limits
     _MAX_CONCURRENT = 2
@@ -110,11 +42,14 @@ class GeminiCloudClient:
 
     def __init__(self, creds: dict):
         self._creds = dict(creds)
-        self.chat = _Chat(self)
         self._http = httpx.AsyncClient(timeout=300)
         self._refresh_lock = asyncio.Lock()
         self._request_sem = asyncio.Semaphore(self._MAX_CONCURRENT)
         self._last_request_time = 0.0
+
+    async def complete(self, **kwargs: Any) -> LLMResponse:
+        """Send an inference request and return a normalized LLMResponse."""
+        return await self._create(**kwargs)
 
     async def _ensure_valid_token(self) -> str:
         """Return a valid access token, refreshing if expired."""
@@ -306,13 +241,11 @@ class GeminiCloudClient:
     # Response translation: Google SSE → OpenAI ChatCompletion
     # -------------------------------------------------------------------
 
-    def _translate_response(self, chunks: list[dict]) -> ChatCompletion:
-        """Assemble Google SSE chunks into an OpenAI-shaped ChatCompletion."""
+    def _translate_response(self, chunks: list[dict]) -> LLMResponse:
+        """Assemble Google SSE chunks into an LLMResponse."""
         text_parts = []
-        tool_calls = []
+        tool_calls: list[LLMToolCall] = []
         finish_reason = "stop"
-        prompt_tokens = 0
-        completion_tokens = 0
         tc_counter = 0
 
         for chunk in chunks:
@@ -327,12 +260,10 @@ class GeminiCloudClient:
                     if "functionCall" in part:
                         fc = part["functionCall"]
                         tc_counter += 1
-                        tool_calls.append(ToolCall(
+                        tool_calls.append(LLMToolCall(
                             id=f"call_{tc_counter}",
-                            function=FunctionCall(
-                                name=fc.get("name", ""),
-                                arguments=json.dumps(fc.get("args", {})),
-                            ),
+                            name=fc.get("name", ""),
+                            arguments=json.dumps(fc.get("args", {})),
                             thought_signature=fc.get("thoughtSignature"),
                         ))
 
@@ -345,35 +276,20 @@ class GeminiCloudClient:
                 elif fr == "SAFETY":
                     finish_reason = "stop"
 
-            # Usage metadata
-            usage_meta = inner.get("usageMetadata", {})
-            if usage_meta:
-                prompt_tokens = max(prompt_tokens, usage_meta.get("promptTokenCount", 0))
-                completion_tokens = max(completion_tokens, usage_meta.get("candidatesTokenCount", 0))
-
         if tool_calls:
             finish_reason = "tool_calls"
 
-        message = Message(
+        return LLMResponse(
             content="".join(text_parts) if text_parts else None,
             tool_calls=tool_calls if tool_calls else None,
-        )
-
-        return ChatCompletion(
-            id=f"gemini-{int(time.time())}",
-            choices=[Choice(message=message, finish_reason=finish_reason)],
-            usage=Usage(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=prompt_tokens + completion_tokens,
-            ),
+            finish_reason=finish_reason,
         )
 
     # -------------------------------------------------------------------
     # Core create method
     # -------------------------------------------------------------------
 
-    async def _create(self, **kwargs) -> ChatCompletion:
+    async def _create(self, **kwargs) -> LLMResponse:
         """Send an inference request to Cloud Code Assist."""
         async with self._request_sem:
             # Enforce minimum interval between requests
@@ -384,7 +300,7 @@ class GeminiCloudClient:
             self._last_request_time = time.time()
             return await self._create_inner(**kwargs)
 
-    async def _create_inner(self, **kwargs) -> ChatCompletion:
+    async def _create_inner(self, **kwargs) -> LLMResponse:
         """Internal: translate, send, and parse a request."""
         inner = self._translate_request(**kwargs)
         model = inner.pop("model", "gemini-2.5-pro")

@@ -26,8 +26,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from openai import AsyncOpenAI
-
 from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
@@ -286,7 +284,8 @@ def _make_client_for_config(cfg: ProviderConfig, cache: dict) -> Any:
     else:
         key = (cfg.base_url, cfg.api_key)
         if key not in cache:
-            cache[key] = AsyncOpenAI(api_key=cfg.api_key, base_url=cfg.base_url)
+            from wintermute.backends.openai_wrapper import OpenAIBackend
+            cache[key] = OpenAIBackend(api_key=cfg.api_key, base_url=cfg.base_url)
         return cache[key]
 
 
@@ -566,6 +565,7 @@ async def main() -> None:
         # Whisper voice transcription.
         whisper_raw = cfg.get("whisper", {}) or {}
         if whisper_raw.get("enabled"):
+            from openai import AsyncOpenAI
             matrix._whisper_client = AsyncOpenAI(
                 api_key=whisper_raw.get("api_key", ""),
                 base_url=whisper_raw.get("base_url", ""),
