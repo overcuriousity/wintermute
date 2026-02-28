@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 # Minimum new user messages required before the inactivity timer can trigger.
 _INACTIVITY_MIN_MESSAGES = 5
 
-# Maximum total characters in the conversation blob sent to the worker.
+# Maximum total characters in the conversation blob sent to the worker (default; overridable via config).
 # ~15k tokens — leaves headroom for the prompt and tool schemas.
 _MAX_BLOB_CHARS = 60_000
 
@@ -48,6 +48,7 @@ class MemoryHarvestConfig:
     message_threshold: int = 20
     inactivity_timeout_minutes: int = 15
     max_message_chars: int = 2000
+    max_blob_chars: int = _MAX_BLOB_CHARS
     poll_interval_seconds: int = 60
 
 
@@ -231,8 +232,10 @@ class MemoryHarvestLoop:
             lines.append(f"{label}: {content}")
 
         blob = "\n".join(lines)
-        if len(blob) > _MAX_BLOB_CHARS:
-            blob = blob[:_MAX_BLOB_CHARS] + "\n[... transcript truncated ...]"
+        max_chars = self._cfg.max_blob_chars
+        if len(blob) > max_chars:
+            marker = "\n[... transcript truncated ...]"
+            blob = blob[:max_chars - len(marker)] + marker if len(marker) < max_chars else blob[:max_chars]
         return blob
 
     @staticmethod

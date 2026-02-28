@@ -325,6 +325,18 @@ seed:
   language: "en"                        # ISO-639-1 language code: "en", "de", etc.
 
 
+# ── Tuning Constants ─────────────────────────────────────────────────
+# Behavioral constants that control core limits.  Defaults work well for
+# most setups; tune these for small-model deployments or heavy workloads.
+#
+tuning:
+  compaction_keep_recent: 10          # Messages preserved verbatim during compaction
+  max_continuation_depth: 3           # Auto-continuation hops before a sub-session gives up
+  max_nesting_depth: 2                # 0 = main, 1 = sub-session, 2 = sub-sub-session (max)
+  max_blob_chars: 60000               # Max chars in memory-harvest conversation blob (~15k tokens)
+  max_completed_workflows: 50         # Completed workflows kept in memory for the debug UI
+
+
 # ── Context Compaction ───────────────────────────────────────────────
 # When conversation history exceeds the token budget (context_size minus
 # max_tokens minus system prompt), older messages are summarised into a

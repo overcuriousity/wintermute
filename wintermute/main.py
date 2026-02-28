@@ -424,13 +424,46 @@ async def main() -> None:
     scheduler_cfg = SchedulerConfig(
         timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
     )
+    # --- Tuning constants (optional overrides from config) ---
+    _tuning_raw = cfg.get("tuning")
+    if _tuning_raw is None:
+        tuning: dict = {}
+    elif not isinstance(_tuning_raw, dict):
+        logger.warning("tuning: expected a mapping, got %r; ignoring tuning section", type(_tuning_raw).__name__)
+        tuning = {}
+    else:
+        tuning = _tuning_raw
+
+    def _tuning_int(key: str, default: int, minimum: int = 0) -> int:
+        """Validate and coerce a tuning config value to a bounded int."""
+        raw = tuning.get(key, default)
+        try:
+            val = int(raw)
+        except (TypeError, ValueError):
+            logger.warning("Invalid tuning.%s=%r; using default %d", key, raw, default)
+            return default
+        if val < minimum:
+            logger.warning("tuning.%s=%d below minimum %d; clamping", key, val, minimum)
+            return minimum
+        return val
+
+    compaction_keep_recent = _tuning_int("compaction_keep_recent", 10, minimum=1)
+    max_continuation_depth = _tuning_int("max_continuation_depth", 3, minimum=0)
+    max_nesting_depth = _tuning_int("max_nesting_depth", 2, minimum=0)
+    max_blob_chars = _tuning_int("max_blob_chars", 60_000, minimum=1)
+    max_completed_workflows = _tuning_int("max_completed_workflows", 50, minimum=1)
+
     harvest_cfg_raw = cfg.get("memory_harvest", {})
     harvest_config = MemoryHarvestConfig(
         enabled=harvest_cfg_raw.get("enabled", True),
         message_threshold=harvest_cfg_raw.get("message_threshold", 20),
         inactivity_timeout_minutes=harvest_cfg_raw.get("inactivity_timeout_minutes", 15),
         max_message_chars=harvest_cfg_raw.get("max_message_chars", 2000),
+        max_blob_chars=max_blob_chars,
     )
+
+    # Apply max_nesting_depth to the tools module.
+    tool_module.set_max_nesting_depth(max_nesting_depth)
 
     # --- Optional interfaces ---
     matrix_cfg_raw: Optional[dict] = cfg.get("matrix")
@@ -498,7 +531,8 @@ async def main() -> None:
                     seed_language=seed_language,
                     event_bus=event_bus,
                     thread_config_manager=thread_config_mgr,
-                    backend_pools_by_name=backend_pools_by_name)
+                    backend_pools_by_name=backend_pools_by_name,
+                    compaction_keep_recent=compaction_keep_recent)
 
     # Build SubSessionManager — shares the LLM backend pool, reports back via
     # enqueue_system_event so results enter the parent thread's queue.
@@ -512,6 +546,8 @@ async def main() -> None:
         nl_translation_pool=nl_translation_pool,
         nl_translation_config=nl_translation_config,
         event_bus=event_bus,
+        max_continuation_depth=max_continuation_depth,
+        max_completed_workflows=max_completed_workflows,
     )
     llm.inject_sub_session_manager(sub_sessions)
     tool_module.register_sub_session_manager(sub_sessions.spawn)

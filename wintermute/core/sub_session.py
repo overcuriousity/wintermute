@@ -88,7 +88,8 @@ if _TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 300       # seconds per hop
-MAX_CONTINUATION_DEPTH = 3  # max auto-continuation hops before giving up
+MAX_CONTINUATION_DEPTH = 3  # max auto-continuation hops (default; overridable via config)
+MAX_COMPLETED_WORKFLOWS = 50  # completed workflows kept in memory (default; overridable via config)
 
 # Tool categories available per system_prompt_mode.
 _MODE_TOOL_CATEGORIES: dict[str, set[str]] = {
@@ -265,6 +266,8 @@ class SubSessionManager:
         nl_translation_pool: Optional[BackendPool] = None,
         nl_translation_config: Optional[dict] = None,
         event_bus: "Optional[EventBus]" = None,
+        max_continuation_depth: int = MAX_CONTINUATION_DEPTH,
+        max_completed_workflows: int = MAX_COMPLETED_WORKFLOWS,
     ) -> None:
         # Capture the running event loop so that spawn() (which is synchronous
         # and may be called from a thread-pool worker via run_in_executor) can
@@ -278,6 +281,24 @@ class SubSessionManager:
         self._nl_translation_pool = nl_translation_pool
         self._nl_translation_config = nl_translation_config or {}
         self._event_bus = event_bus
+        try:
+            _cont_depth = int(max_continuation_depth)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid max_continuation_depth %r; using default %d",
+                max_continuation_depth, MAX_CONTINUATION_DEPTH,
+            )
+            _cont_depth = MAX_CONTINUATION_DEPTH
+        self._max_continuation_depth = max(0, _cont_depth)
+        try:
+            _max_wf = int(max_completed_workflows)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid max_completed_workflows %r; using default %d",
+                max_completed_workflows, MAX_COMPLETED_WORKFLOWS,
+            )
+            _max_wf = MAX_COMPLETED_WORKFLOWS
+        self._max_completed_workflows = max(1, _max_wf)
         self._default_timeout: int = DEFAULT_TIMEOUT
         self._states: dict[str, SubSessionState] = {}
         self._tasks: dict[str, asyncio.Task] = {}
@@ -873,10 +894,9 @@ class SubSessionManager:
     def _cleanup_workflow(self, workflow_id: str) -> None:
         """Remove a completed/failed workflow and its sessions from tracking dicts.
 
-        Keeps the last 50 completed workflows for the debug UI (list_workflows /
+        Keeps the most recent completed workflows for the debug UI (list_workflows /
         list_all) and purges the rest to prevent unbounded memory growth.
         """
-        _MAX_COMPLETED = 50
         wf = self._workflows.get(workflow_id)
         if wf is None:
             return
@@ -895,9 +915,9 @@ class SubSessionManager:
             wid for wid, w in self._workflows.items()
             if w.status in ("completed", "failed") and wid != workflow_id
         ]
-        if len(completed_wfs) >= _MAX_COMPLETED:
+        if len(completed_wfs) >= self._max_completed_workflows:
             # Remove the oldest completed workflows to stay within budget.
-            to_purge = completed_wfs[:len(completed_wfs) - _MAX_COMPLETED + 1]
+            to_purge = completed_wfs[:len(completed_wfs) - self._max_completed_workflows + 1]
             for old_wid in to_purge:
                 old_wf = self._workflows.pop(old_wid, None)
                 if old_wf:
@@ -1027,7 +1047,7 @@ class SubSessionManager:
                 len(state.tool_calls_log),
             )
 
-            if state.continuation_depth < MAX_CONTINUATION_DEPTH and state.messages:
+            if state.continuation_depth < self._max_continuation_depth and state.messages:
                 # Auto-continue: spawn a new worker with the full message history.
                 # It will append a resumption note and pick up where we left off.
                 cont_id = self.spawn(
@@ -1056,13 +1076,13 @@ class SubSessionManager:
                     f"[SUB-SESSION {state.session_id} TIMEOUT → CONTINUING as {cont_id}]\n"
                     f"Exceeded {timeout}s after {len(state.tool_calls_log)} tool call(s). "
                     f"Automatically resuming from where it left off in {cont_id} "
-                    f"(hop {state.continuation_depth + 1}/{MAX_CONTINUATION_DEPTH})."
+                    f"(hop {state.continuation_depth + 1}/{self._max_continuation_depth})."
                 )
             else:
                 # Terminal timeout — report what was accomplished across the chain.
                 if state.continuation_depth > 0:
                     chain_note = (
-                        f"Task chain exhausted all {MAX_CONTINUATION_DEPTH} continuation(s) "
+                        f"Task chain exhausted all {self._max_continuation_depth} continuation(s) "
                         f"and still did not complete. "
                     )
                 else:

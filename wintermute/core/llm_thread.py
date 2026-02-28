@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Keep the last N messages untouched during compaction.
+# Keep the last N messages untouched during compaction (default; overridable via config).
 COMPACTION_KEEP_RECENT = 10
 
 # Maximum consecutive empty-choices responses before aborting the inference loop.
@@ -115,7 +115,8 @@ class LLMThread:
                  seed_language: str = "en",
                  event_bus: "Optional[EventBus]" = None,
                  thread_config_manager: "Optional[ThreadConfigManager]" = None,
-                 backend_pools_by_name: "Optional[dict[str, BackendPool]]" = None) -> None:
+                 backend_pools_by_name: "Optional[dict[str, BackendPool]]" = None,
+                 compaction_keep_recent: int = COMPACTION_KEEP_RECENT) -> None:
         self._main_pool = main_pool
         self._compaction_pool = compaction_pool
         self._turing_protocol_pool = turing_protocol_pool
@@ -126,6 +127,18 @@ class LLMThread:
         self._event_bus = event_bus
         self._thread_config_manager = thread_config_manager
         self._backend_pools_by_name = backend_pools_by_name or {}
+        try:
+            _keep = int(compaction_keep_recent)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid compaction_keep_recent %r; falling back to default %d",
+                compaction_keep_recent, COMPACTION_KEEP_RECENT,
+            )
+            _keep = COMPACTION_KEEP_RECENT
+        if _keep < 1:
+            logger.warning("compaction_keep_recent %r < 1; clamping to 1", _keep)
+            _keep = 1
+        self._compaction_keep_recent = _keep
         # Convenience: primary config for context_size / model name lookups.
         self._cfg = main_pool.primary
         self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)
@@ -1121,10 +1134,10 @@ class LLMThread:
 
     async def _compact_context(self, thread_id: str = "default") -> None:
         rows = await database.async_call(database.load_active_messages, thread_id)
-        if len(rows) <= COMPACTION_KEEP_RECENT:
+        if len(rows) <= self._compaction_keep_recent:
             return
 
-        to_summarise = rows[:-COMPACTION_KEEP_RECENT]
+        to_summarise = rows[:-self._compaction_keep_recent]
 
         # Include the previous compaction summary so information chains
         # across compaction cycles instead of being lost.
