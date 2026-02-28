@@ -358,6 +358,15 @@
             <option value="completed">completed</option>
             <option value="timeout">timeout</option>
             <option value="failed">failed</option>
+            <option value="error">error</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Source</label>
+          <select id="oc-filter-source" onchange="loadOutcomes()" style="min-width:160px">
+            <option value="">All sources</option>
+            <option value="sub_session">Sub-sessions only</option>
+            <option value="main_thread">Main thread only</option>
           </select>
         </div>
       </div>
@@ -366,12 +375,12 @@
         <table class="data-table">
           <thead>
             <tr>
-              <th>Time</th><th>Status</th><th>Session</th><th>Mode</th>
+              <th>Time</th><th>Source</th><th>Status</th><th>Session</th><th>Mode</th>
               <th>Duration</th><th>Tools used</th><th>TP verdict</th><th>Objective</th>
             </tr>
           </thead>
           <tbody id="outcomes-body">
-            <tr><td colspan="8" class="empty">Loading\u2026</td></tr>
+            <tr><td colspan="9" class="empty">Loading\u2026</td></tr>
           </tbody>
         </table>
       </div>
@@ -1358,8 +1367,10 @@ function updateMemoryCount(count) {
 // ── Outcomes ──
 async function loadOutcomes() {
   const status = document.getElementById('oc-filter-status').value;
+  const source = document.getElementById('oc-filter-source').value;
   const params = new URLSearchParams({limit: 200, offset: 0});
   if (status) params.set('status', status);
+  if (source) params.set('source', source);
   try {
     const r = await fetch('/api/debug/outcomes?' + params);
     const d = await r.json();
@@ -1377,11 +1388,14 @@ async function loadOutcomes() {
     ].flat().filter(Boolean).join(' \u2502 ');
     const tbody = document.getElementById('outcomes-body');
     if (!entries.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty">No outcomes recorded yet</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="empty">No outcomes recorded yet</td></tr>';
       return;
     }
     tbody.innerHTML = entries.map(o => {
       const ts = o.timestamp ? new Date(o.timestamp * 1000).toLocaleString() : '-';
+      const isMainThread = o.system_prompt_mode === 'main_thread';
+      const sourceLabel = isMainThread ? 'main' : 'sub';
+      const sourceColor = isMainThread ? '#a8d8ea' : '#c4b5fd';
       const dur = o.duration_seconds != null ? o.duration_seconds.toFixed(1) + 's' : '-';
       const tc = o.tool_call_count != null ? o.tool_call_count : '-';
       let toolsUsed = '-';
@@ -1392,6 +1406,7 @@ async function loadOutcomes() {
       const obj = (o.objective || '').slice(0, 80);
       return '<tr>' +
         '<td style="white-space:nowrap;color:#888">' + esc(ts) + '</td>' +
+        '<td style="color:' + sourceColor + ';font-weight:600;font-size:.75rem">' + esc(sourceLabel) + '</td>' +
         '<td style="color:' + statusColor + '">' + esc(o.status || '') + '</td>' +
         '<td style="font-family:monospace;font-size:.75rem;color:#888">' + esc((o.session_id || '').slice(0,12)) + '</td>' +
         '<td>' + esc(o.system_prompt_mode || '') + '</td>' +

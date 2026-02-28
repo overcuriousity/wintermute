@@ -504,8 +504,10 @@ class WebInterface:
         limit = int(request.query.get("limit", "200"))
         offset = int(request.query.get("offset", "0"))
         status_filter = request.query.get("status") or None
+        source_filter = request.query.get("source") or None
         rows, total, stats = await database.async_call(
-            database.get_outcomes_page, limit=limit, offset=offset, status_filter=status_filter
+            database.get_outcomes_page, limit=limit, offset=offset,
+            status_filter=status_filter, source_filter=source_filter,
         )
         return self._json({"entries": rows, "total": total, "stats": stats})
 

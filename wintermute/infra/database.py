@@ -869,10 +869,27 @@ def get_outcomes_page(
     limit: int = 200,
     offset: int = 0,
     status_filter: Optional[str] = None,
+    source_filter: Optional[str] = None,
 ) -> tuple[list[dict], int, dict]:
-    """Return a page of sub-session outcomes plus totals and aggregate stats."""
-    where = "WHERE status = ?" if status_filter else ""
-    params: list = [status_filter] if status_filter else []
+    """Return a page of sub-session outcomes plus totals and aggregate stats.
+
+    source_filter: "main_thread" → only main-thread turns,
+                   "sub_session" → only sub-session outcomes,
+                   None/empty    → all rows.
+    """
+    conditions: list[str] = []
+    params: list = []
+
+    if status_filter:
+        conditions.append("status = ?")
+        params.append(status_filter)
+
+    if source_filter == "main_thread":
+        conditions.append("system_prompt_mode = 'main_thread'")
+    elif source_filter == "sub_session":
+        conditions.append("system_prompt_mode != 'main_thread'")
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
     with _connect() as conn:
         conn.row_factory = sqlite3.Row

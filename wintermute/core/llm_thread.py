@@ -86,6 +86,8 @@ class LLMReply:
     reasoning: Optional[str] = None  # reasoning/thinking tokens (if model supports it)
     tool_calls_made: list[str] = field(default_factory=list)  # tool names called during inference
     tool_call_details: list[dict] = field(default_factory=list)  # [{name, arguments, result}, ...]
+    duration_seconds: Optional[float] = None   # wall-clock inference time
+    backend_used: Optional[str] = None         # model/backend that served the request
 
     def __str__(self) -> str:
         return self.text
@@ -549,6 +551,31 @@ class LLMThread:
                     had_error="[Error" in (reply.text or ""),
                 )
 
+            # Record main-thread turn in outcomes table so the debug UI
+            # shows it alongside sub-session outcomes.
+            if (
+                not item.thread_id.startswith("sub_")
+                and not item.is_system_event
+                and item.turing_depth == 0
+            ):
+                _had_error = "[Error" in (reply.text or "")
+                try:
+                    await database.async_call(
+                        database.save_sub_session_outcome,
+                        session_id=item.thread_id,
+                        timestamp=_time.time(),
+                        objective=item.text[:200] if item.text else "",
+                        system_prompt_mode="main_thread",
+                        tools_used=reply.tool_calls_made or None,
+                        tool_call_count=len(reply.tool_call_details) if reply.tool_call_details else 0,
+                        duration_seconds=reply.duration_seconds,
+                        status="error" if _had_error else "completed",
+                        result_length=len(reply.text) if reply.text else 0,
+                        backend_used=reply.backend_used,
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug("Failed to save main-thread outcome", exc_info=True)
+
             self._queue.task_done()
 
     def stop(self) -> None:
@@ -821,6 +848,11 @@ class LLMThread:
         await self._maybe_summarise_components(
             thread_id, _from_system_event=item.is_system_event,
         )
+
+        # Attach timing/backend metadata so callers can use it.
+        reply.duration_seconds = round(_inference_duration, 2)
+        reply.backend_used = pool.last_used
+
         return reply
 
     # ------------------------------------------------------------------
