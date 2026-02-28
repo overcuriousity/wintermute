@@ -414,7 +414,6 @@ class SubSessionManager:
         if deps:
             workflow_id = self._find_or_create_workflow(deps, parent_thread_id, now)
             wf = self._workflows[workflow_id]
-            self._adopt_orphan_deps(wf, workflow_id, deps)
             wf.nodes[session_id] = node
             self._session_to_workflow[session_id] = workflow_id
 
@@ -533,10 +532,14 @@ class SubSessionManager:
 
     def _resolve_root_thread(self, parent_thread_id: Optional[str]) -> Optional[str]:
         """Derive the original user-facing thread ID from a parent."""
-        if parent_thread_id and parent_thread_id.startswith("sub_"):
-            parent_state = self._states.get(parent_thread_id)
-            return (parent_state.root_thread_id or parent_state.parent_thread_id) if parent_state else None
-        return parent_thread_id
+        if not parent_thread_id:
+            return None
+        if not parent_thread_id.startswith("sub_"):
+            return parent_thread_id
+        parent_state = self._states.get(parent_thread_id)
+        if not parent_state:
+            return None
+        return parent_state.root_thread_id or parent_state.parent_thread_id
 
     def _find_or_create_workflow(
         self,
@@ -546,9 +549,9 @@ class SubSessionManager:
     ) -> str:
         """Find an existing workflow for *deps*, merging if needed, or create a new one.
 
+        Adopts any orphan deps (sessions not yet registered in any workflow)
+        into the returned workflow before returning.
         Returns the workflow_id that the new node should be registered in.
-        The caller is responsible for adopting orphan deps via
-        ``_adopt_orphan_deps()``.
         """
         dep_wf_ids: set[str] = set()
         for dep_id in deps:
@@ -558,7 +561,6 @@ class SubSessionManager:
 
         if not dep_wf_ids:
             # No deps are in a workflow yet — create a fresh one.
-            # Orphan deps will be adopted by the caller.
             workflow_id = f"wf_{uuid.uuid4().hex[:8]}"
             wf = Workflow(
                 workflow_id=workflow_id,
@@ -566,15 +568,19 @@ class SubSessionManager:
                 created_at=now,
             )
             self._workflows[workflow_id] = wf
+            self._adopt_orphan_deps(wf, workflow_id, deps)
             return workflow_id
 
         if len(dep_wf_ids) == 1:
-            return next(iter(dep_wf_ids))
+            workflow_id = next(iter(dep_wf_ids))
+            self._adopt_orphan_deps(self._workflows[workflow_id], workflow_id, deps)
+            return workflow_id
 
         # Dependencies span multiple workflows — merge them all into the first.
         wf_list = sorted(dep_wf_ids)
         workflow_id = wf_list[0]
         self._merge_workflows(workflow_id, wf_list[1:])
+        self._adopt_orphan_deps(self._workflows[workflow_id], workflow_id, deps)
         return workflow_id
 
     def _merge_workflows(self, target_id: str, source_ids: list[str]) -> None:
@@ -592,7 +598,7 @@ class SubSessionManager:
                 other_id, target_id, len(other_wf.nodes),
             )
 
-    def _adopt_orphan_deps(self, wf: "Workflow", workflow_id: str, deps: list[str]) -> None:
+    def _adopt_orphan_deps(self, wf: Workflow, workflow_id: str, deps: list[str]) -> None:
         """Register dependency sessions that aren't in any workflow yet."""
         for dep_id in deps:
             if dep_id not in self._session_to_workflow:
