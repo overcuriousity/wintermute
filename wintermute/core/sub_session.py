@@ -79,6 +79,7 @@ from wintermute.core.inference_engine import (
 )
 from wintermute.core.tool_call_rescue import rescue_tool_calls
 from wintermute import tools as tool_module
+from wintermute.core.tp_runner import TuringProtocolRunner
 from wintermute.core.types import BackendPool, ContextTooLargeError
 
 from typing import TYPE_CHECKING as _TYPE_CHECKING
@@ -277,7 +278,9 @@ class SubSessionManager:
         self._cfg = pool.primary
         self._enqueue = enqueue_system_event
         self._tp_pool = turing_protocol_pool
-        self._tp_validators = turing_protocol_validators
+        self._tp_runner = TuringProtocolRunner(
+            turing_protocol_pool, "sub_session", turing_protocol_validators,
+        )
         self._nl_translation_pool = nl_translation_pool
         self._nl_translation_config = nl_translation_config or {}
         self._event_bus = event_bus
@@ -1399,12 +1402,15 @@ class SubSessionManager:
         async def _tp_check_sub(phase, *, tool_name=None, tool_args=None,
                                 tool_result=None, assistant_response="",
                                 tool_calls_made=None, nl_tools=None):
-            return await self._run_tp_phase(
-                phase=phase, state=state,
+            return await self._tp_runner.run_phase(
+                phase,
+                thread_id=state.session_id,
                 tool_calls_made=tool_calls_made or [],
                 assistant_response=assistant_response,
+                user_message=state.objective,
                 tool_name=tool_name, tool_args=tool_args,
                 tool_result=tool_result, nl_tools=nl_tools,
+                objective=state.objective,
             )
 
         from wintermute.infra.prompt_assembler import _timezone as _pa_tz
@@ -1648,12 +1654,14 @@ class SubSessionManager:
                                 break
                 _recent_assistant.reverse()
 
-                pi_result = await self._run_tp_phase(
-                    phase="post_inference",
-                    state=state,
+                pi_result = await self._tp_runner.run_phase(
+                    "post_inference",
+                    thread_id=state.session_id,
                     tool_calls_made=tool_calls_made,
                     assistant_response=final_text,
+                    user_message=state.objective,
                     nl_tools=nl_tools,
+                    objective=state.objective,
                     prior_assistant_message=_prior_assistant,
                     recent_assistant_messages=_recent_assistant,
                 )
@@ -1711,45 +1719,22 @@ class SubSessionManager:
     ) -> Optional[turing_protocol_module.TuringResult]:
         """Run Turing Protocol hooks for a specific phase in sub-session scope.
 
-        Returns TuringResult if violations confirmed, None otherwise.
+        Delegates to :class:`TuringProtocolRunner`.
         """
-        if not self._tp_pool or not self._tp_pool.enabled:
-            return None
-
-        # Quick check: any hooks for this phase+scope?
-        hooks = turing_protocol_module.get_hooks(
-            self._tp_validators,
-            phase_filter=phase,
-            scope_filter="sub_session",
+        return await self._tp_runner.run_phase(
+            phase,
+            thread_id=state.session_id,
+            tool_calls_made=tool_calls_made,
+            assistant_response=assistant_response,
+            user_message=state.objective,
+            tool_name=tool_name,
+            tool_args=tool_args,
+            tool_result=tool_result,
+            nl_tools=nl_tools,
+            objective=state.objective,
+            prior_assistant_message=prior_assistant_message,
+            recent_assistant_messages=recent_assistant_messages,
         )
-        if not hooks:
-            return None
-
-        try:
-            return await turing_protocol_module.run_turing_protocol(
-                pool=self._tp_pool,
-                user_message=state.objective,
-                assistant_response=assistant_response,
-                tool_calls_made=tool_calls_made,
-                active_sessions=[],
-                enabled_validators=self._tp_validators,
-                thread_id=state.session_id,
-                phase=phase,
-                scope="sub_session",
-                objective=state.objective,
-                tool_name=tool_name,
-                tool_args=tool_args,
-                tool_result=tool_result,
-                nl_tools=nl_tools,
-                prior_assistant_message=prior_assistant_message,
-                recent_assistant_messages=recent_assistant_messages,
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception(
-                "Sub-session %s: Turing Protocol %s check raised (non-fatal)",
-                state.session_id, phase,
-            )
-            return None
 
     # ------------------------------------------------------------------
     # System prompt construction
