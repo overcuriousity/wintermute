@@ -41,7 +41,7 @@ combination that can be referenced by name in the `llm` role mapping.
 | `api_key` | openai/anthropic | — | API key (not needed for `gemini-cli` or `kimi-code`) |
 | `model` | yes | — | Model name the endpoint accepts |
 | `context_size` | no | `32768` | Total token window the model supports |
-| `max_tokens` | no | `4096` | Maximum tokens per response |
+| `max_tokens` | no | `4096` | Maximum tokens per response. Set to `0` to omit the limit entirely (API defaults to its full remaining context window). Sub-sessions always call with `0` internally to prevent large tool calls (`write_file`, `execute_shell` heredocs) from being truncated mid-JSON. |
 | `reasoning` | no | `false` | Enable reasoning/thinking token support |
 
 ### `llm`

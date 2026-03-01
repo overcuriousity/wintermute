@@ -110,6 +110,11 @@ search:
 #   context_size  Token window size. Default: 32768. Match your model's actual
 #                 context length — this controls when compaction triggers.
 #   max_tokens    Max tokens per response. Default: 4096.
+#                 Set to 0 to omit the limit entirely (API uses its own
+#                 default, typically the full remaining context window).
+#                 Sub-sessions always use 0 internally so that large tool
+#                 calls (write_file, execute_shell heredocs, etc.) are never
+#                 truncated mid-JSON regardless of this setting.
 #   reasoning     Set true for reasoning models (o1, o3, DeepSeek R1, QwQ).
 #                 Uses max_completion_tokens instead of max_tokens.
 #

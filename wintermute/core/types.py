@@ -189,7 +189,11 @@ class BackendPool:
 
         Each backend uses its own model, max_tokens, and reasoning setting.
         *max_tokens_override* replaces the backend's configured max_tokens
-        (useful for compaction's hard-coded 2048).
+        (useful for compaction's hard-coded 2048).  Pass ``0`` to omit the
+        max_tokens parameter entirely (lets the API use its own default,
+        which is the full remaining context window — useful for sub-sessions
+        that must emit large tool calls such as ``write_file`` / ``execute_shell``
+        with multi-hundred-line content).
 
         Rate-limit errors (HTTP 429) are retried with exponential backoff
         before failing over to the next backend.
@@ -201,10 +205,11 @@ class BackendPool:
                 call_kwargs["tools"] = tools
                 call_kwargs["tool_choice"] = "auto"
             max_tok = max_tokens_override if max_tokens_override is not None else cfg.max_tokens
-            if cfg.reasoning:
-                call_kwargs["max_completion_tokens"] = max_tok
-            else:
-                call_kwargs["max_tokens"] = max_tok
+            if max_tok != 0:  # 0 = omit limit, let API default to full context window
+                if cfg.reasoning:
+                    call_kwargs["max_completion_tokens"] = max_tok
+                else:
+                    call_kwargs["max_tokens"] = max_tok
             call_kwargs.update(extra_kwargs)
 
             backoff = self.RATE_LIMIT_INITIAL_BACKOFF

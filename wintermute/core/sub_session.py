@@ -1587,6 +1587,7 @@ class SubSessionManager:
                 response = await pool.call(
                     messages=state.messages,
                     tools=tool_schemas,
+                    max_tokens_override=0,  # no limit — allows large tool calls (write_file, heredocs)
                 )
             except ContextTooLargeError:
                 if len(state.messages) > 4:
