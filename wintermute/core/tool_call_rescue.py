@@ -91,12 +91,13 @@ _RE_MINIMAX = re.compile(
 
 
 def _build_tool_name_pattern(tool_names: set[str]) -> re.Pattern[str]:
-    """Build a regex that matches ``<known_tool>…</known_tool>``."""
+    """Build a regex that matches ``<known_tool>…</known_tool>`` or
+    ``[known_tool]…[/known_tool]`` (bracket-style tags)."""
     escaped = "|".join(re.escape(n) for n in sorted(tool_names))
     return re.compile(
-        rf"<\s*(?:\w+:)?\s*({escaped})\s*>"
+        rf"(?:<\s*(?:\w+:)?\s*({escaped})\s*>|\[({escaped})\])"
         rf"(.*?)"
-        rf"(?:<\s*/\s*(?:\w+:)?\s*\1\s*>|\[/\1\])",
+        rf"(?:<\s*/\s*(?:\w+:)?\s*(?:{escaped})\s*>|\[/(?:{escaped})\])",
         re.DOTALL | re.IGNORECASE,
     )
 
@@ -169,6 +170,47 @@ def _parse_minimax_kv(body: str) -> dict:
             result[m.group(1)] = m.group(2).replace('\\"', '"')
         elif m.group(3):
             result[m.group(3)] = m.group(4)
+    return result
+
+
+def _parse_yaml_like_kv(body: str) -> dict:
+    """Parse YAML-like ``key: value`` or ``- key: value`` pairs.
+
+    Handles bodies like::
+
+        - objective: "Implement GUI functionality"
+        - timeout: 600
+        - sub_session_id: "sub_aa62f3c8"
+
+    Values may be quoted (``"…"``) or unquoted.  Numeric strings are
+    converted to ``int`` / ``float`` where appropriate.
+    """
+    result: dict = {}
+    for m in re.finditer(
+        r'^\s*-?\s*(\w+)\s*:\s*'
+        r'(?:"((?:[^"\\]|\\.)*)"'
+        r"|'((?:[^'\\]|\\.)*)'"   # single-quoted
+        r'|(.*?))'                    # unquoted – rest of line
+        r'\s*$',
+        body,
+        re.MULTILINE,
+    ):
+        key = m.group(1)
+        if m.group(2) is not None:
+            val: "str | int | float" = m.group(2)
+        elif m.group(3) is not None:
+            val = m.group(3)
+        else:
+            raw = (m.group(4) or "").strip()
+            # Try numeric conversion.
+            try:
+                val = int(raw)
+            except ValueError:
+                try:
+                    val = float(raw)
+                except ValueError:
+                    val = raw
+        result[key] = val
     return result
 
 
@@ -261,9 +303,11 @@ def rescue_tool_calls(
         _known_lower: dict[str, str] = {n.lower(): n for n in known}
         pat = _build_tool_name_pattern(known)
         for m in pat.finditer(content):
-            name = _known_lower.get(m.group(1).lower(), m.group(1))
-            body = m.group(2).strip()
-            # Could be JSON, key=value, or a single string argument
+            # Group 1 = angle-bracket name, Group 2 = square-bracket name
+            raw_name = m.group(1) or m.group(2)
+            name = _known_lower.get(raw_name.lower(), raw_name)
+            body = m.group(3).strip()
+            # Could be JSON, key=value, YAML-like, or a single string argument
             try:
                 args = json.loads(body)
                 if isinstance(args, dict):
@@ -274,6 +318,8 @@ def rescue_tool_calls(
                     args_str = json.dumps({"input": args})
             except (json.JSONDecodeError, ValueError):
                 kv = _parse_minimax_kv(body)
+                if not kv:
+                    kv = _parse_yaml_like_kv(body)
                 if kv:
                     args_str = json.dumps(kv)
                 elif body:
