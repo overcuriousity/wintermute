@@ -216,6 +216,18 @@
   .section-hdr:hover { color: #ccc; }
   .section-hdr.open { color: #a8d8ea; }
   .section-body { margin-bottom: .4rem; }
+  /* Scratchpad */
+  .scratchpad-btn {
+    display: inline-block; font-size: .68rem; padding: .1rem .45rem;
+    background: #162040; color: #e0a060; border: 1px solid #2a4a6a;
+    border-radius: .25rem; cursor: pointer; margin-left: .5rem;
+    transition: background .15s;
+  }
+  .scratchpad-btn:hover { background: #1e305a; color: #f0b870; }
+  .scratchpad-panel {
+    margin: 0 0 .3rem 0; padding: .5rem .7rem;
+    background: #0a0f1e; border: 1px solid #1a3a5a; border-radius: .3rem;
+  }
   /* Empty state */
   .empty { padding: 1.5rem; text-align: center; color: #555; font-size: .82rem; }
   /* Context bar in header */
@@ -448,6 +460,8 @@
 let currentTab = 'sessions';
 let selectedSession = null;
 const _closedWorkerGroups = new Set();
+const _expandedScratchpads = new Set();
+const _scratchpadCache = {};
 let ilMaxId = 0;
 let ilMinId = null;
 let ilAllLoaded = false;
@@ -972,6 +986,7 @@ function renderWorkers(sessions, workflows) {
       ? ' <span style="color:#6fe06f">\u25cf ' + runningCount + ' active</span>' : '';
     const wfStatus = wf ? wf.status : (runningCount > 0 ? 'running' : 'done');
     const isClosed = _closedWorkerGroups.has(wfId);
+    const spExpanded = _expandedScratchpads.has(wfId);
     html += `
       <div class="section-hdr${isClosed ? '' : ' open'}"
            data-section-id="${esc(wfId)}" data-section-type="workergroup"
@@ -981,8 +996,12 @@ function renderWorkers(sessions, workflows) {
           ${badge(wfStatus, wfStatus)}${activityNote}
           <span class="dim">${members.length} worker${members.length !== 1 ? 's' : ''}</span>
           ${wf ? '<span class="dim">' + esc(wf.parent_thread_id || '') + '</span>' : ''}
+          <span class="scratchpad-btn" onclick="event.stopPropagation(); toggleScratchpad('${esc(wfId)}')" title="View scratchpad files">\u{1F4CB} Scratchpad</span>
         </span>
         <span>\u25bc</span>
+      </div>
+      <div id="scratchpad-${esc(wfId)}" class="scratchpad-panel" style="display:${spExpanded ? '' : 'none'}">
+        <div id="scratchpad-content-${esc(wfId)}" style="font-size:.8rem;color:#999">${spExpanded && _scratchpadCache[wfId] ? _scratchpadCache[wfId] : (spExpanded ? 'Loading\u2026' : '')}</div>
       </div>
       <div class="section-body" style="${isClosed ? 'display:none' : ''}">
         ${tableHeader}
@@ -1075,6 +1094,68 @@ async function fetchWorkerDetail(sid) {
     el.innerHTML = html;
   } catch (e) {
     el.innerHTML = '<span style="color:#ff9090">Failed to load: ' + esc(String(e)) + '</span>';
+  }
+}
+
+// ── Scratchpad ──
+async function toggleScratchpad(wfId) {
+  const panel = document.getElementById('scratchpad-' + wfId);
+  if (!panel) return;
+  if (_expandedScratchpads.has(wfId)) {
+    _expandedScratchpads.delete(wfId);
+    delete _scratchpadCache[wfId];
+    panel.style.display = 'none';
+  } else {
+    _expandedScratchpads.add(wfId);
+    panel.style.display = '';
+    await fetchScratchpad(wfId);
+  }
+}
+
+async function fetchScratchpad(wfId) {
+  const el = document.getElementById('scratchpad-content-' + wfId);
+  if (!el) return;
+  el.innerHTML = 'Loading\u2026';
+  try {
+    const r = await fetch('/api/debug/workflows/' + encodeURIComponent(wfId) + '/scratchpad');
+    const data = await r.json();
+    if (data.error) {
+      el.innerHTML = '<span style="color:#ff9090">' + esc(data.error) + '</span>';
+      return;
+    }
+    if (!data.exists) {
+      const rendered = '<span class="dim">Scratchpad directory does not exist (not yet created or already cleaned up)</span>';
+      el.innerHTML = rendered;
+      _scratchpadCache[wfId] = rendered;
+      return;
+    }
+    if (!data.files.length) {
+      const rendered = '<span class="dim">Scratchpad is empty (no files written yet)</span>';
+      el.innerHTML = rendered;
+      _scratchpadCache[wfId] = rendered;
+      return;
+    }
+    let html = '<div style="margin-bottom:.4rem"><strong style="color:#a8d8ea">\u{1F4CB} Scratchpad Files (' + data.files.length + ')</strong>'
+      + ' <button onclick="fetchScratchpad(\'' + esc(wfId) + '\')" style="font-size:.68rem;padding:.1rem .4rem;background:#0f3460;color:#a8d8ea;border:1px solid #1a4a7a;border-radius:.2rem;cursor:pointer;margin-left:.4rem" title="Refresh">\u21bb Refresh</button>'
+      + '</div>';
+    html += '<div style="max-height:500px;overflow-y:auto;border:1px solid #0f3460;border-radius:.3rem;padding:.5rem">';
+    data.files.forEach(f => {
+      const sizeStr = f.size < 1024 ? f.size + ' B' : (f.size / 1024).toFixed(1) + ' KB';
+      html += '<div style="margin-bottom:.6rem;padding:.4rem .6rem;background:#080e1c;border:1px solid #0f3460;border-radius:.3rem">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem">';
+      html += '<span class="mono" style="color:#e0a060;font-size:.76rem">\u{1F4C4} ' + esc(f.name) + '</span>';
+      html += '<span class="dim" style="font-size:.68rem">' + sizeStr + '</span>';
+      html += '</div>';
+      html += '<pre style="white-space:pre-wrap;word-break:break-word;margin:0;padding:.4rem;background:#060a14;border-radius:.2rem;font-size:.74rem;color:#bbb;max-height:300px;overflow-y:auto">' + esc(f.content) + '</pre>';
+      html += '</div>';
+    });
+    html += '</div>';
+    el.innerHTML = html;
+    _scratchpadCache[wfId] = html;
+  } catch (e) {
+    const rendered = '<span style="color:#ff9090">Failed to load: ' + esc(String(e)) + '</span>';
+    el.innerHTML = rendered;
+    _scratchpadCache[wfId] = rendered;
   }
 }
 

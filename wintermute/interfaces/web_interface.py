@@ -94,6 +94,7 @@ class WebInterface:
         app.router.add_get("/api/debug/subsessions",                    self._api_subsessions)
         app.router.add_get("/api/debug/subsessions/{id}/messages",      self._api_subsession_messages)
         app.router.add_get("/api/debug/workflows",                     self._api_workflows)
+        app.router.add_get("/api/debug/workflows/{workflow_id}/scratchpad", self._api_workflow_scratchpad)
         app.router.add_get("/api/debug/jobs",                           self._api_jobs)
         app.router.add_get("/api/debug/config",                          self._api_config)
         app.router.add_get("/api/debug/system-prompt",                  self._api_system_prompt)
@@ -386,6 +387,29 @@ class WebInterface:
         if self._sub_sessions is None:
             return self._json({"workflows": []})
         return self._json({"workflows": self._sub_sessions.list_workflows()})
+
+    # ------------------------------------------------------------------
+    # Debug REST API — workflow scratchpad
+    # ------------------------------------------------------------------
+
+    async def _api_workflow_scratchpad(self, request: web.Request) -> web.Response:
+        """GET /api/debug/workflows/{workflow_id}/scratchpad — list scratchpad files with contents."""
+        workflow_id = request.match_info["workflow_id"]
+        # Sanitise: only allow alphanumeric, dash, underscore
+        if not all(c.isalnum() or c in "-_" for c in workflow_id):
+            return self._json({"error": "invalid workflow_id"})
+        scratchpad_dir = Path("data/scratchpad") / workflow_id
+        if not scratchpad_dir.is_dir():
+            return self._json({"workflow_id": workflow_id, "files": [], "exists": False})
+        files = []
+        for p in sorted(scratchpad_dir.iterdir()):
+            if p.is_file():
+                try:
+                    content = p.read_text(errors="replace")
+                except Exception as exc:
+                    content = f"[read error: {exc}]"
+                files.append({"name": p.name, "size": p.stat().st_size, "content": content})
+        return self._json({"workflow_id": workflow_id, "files": files, "exists": True})
 
     # ------------------------------------------------------------------
     # Debug REST API — scheduler jobs
