@@ -877,34 +877,78 @@ class SubSessionManager:
         Returns the number of sessions cancelled.
         """
         cancelled = 0
-        needs_resolve: list[str] = []
         for sid, state in list(self._states.items()):
             if state.parent_thread_id != thread_id:
                 continue
-            if state.status == "running":
-                task = self._tasks.get(sid)
-                if task and not task.done():
-                    # Mark failed before cancelling so _resolve_dependents sees
-                    # the correct state immediately (CancelledError handler would
-                    # otherwise race with ensure_future(_resolve_dependents)).
-                    state.status = "failed"
-                    state.error = "Cancelled"
-                    state.completed_at = datetime.now(timezone.utc).isoformat()
-                    task.cancel()
+            if state.status in ("running", "pending"):
+                if await self._cancel_node(sid):
                     logger.info("Cancelled sub-session %s (thread reset)", sid)
                     cancelled += 1
-                    needs_resolve.append(sid)
-            elif state.status == "pending":
+        return cancelled
+
+    async def _cancel_node(self, sid: str) -> bool:
+        """Cancel a single session by ID. Returns True if it was active."""
+        state = self._states.get(sid)
+        if state is None:
+            return False
+        if state.status == "running":
+            task = self._tasks.get(sid)
+            if task and not task.done():
                 state.status = "failed"
                 state.error = "Cancelled"
                 state.completed_at = datetime.now(timezone.utc).isoformat()
-                logger.info("Cancelled pending sub-session %s (thread reset)", sid)
-                cancelled += 1
-                needs_resolve.append(sid)
-        # Resolve dependents so nothing stays deadlocked.
-        for sid in needs_resolve:
+                task.cancel()
+                await self._resolve_dependents(sid)
+                return True
+        elif state.status == "pending":
+            state.status = "failed"
+            state.error = "Cancelled"
+            state.completed_at = datetime.now(timezone.utc).isoformat()
             await self._resolve_dependents(sid)
+            return True
+        return False
+
+    async def _cancel_workflow(self, workflow_id: str) -> int:
+        """Cancel all active nodes in a workflow. Returns count cancelled."""
+        wf = self._workflows.get(workflow_id)
+        if wf is None:
+            return 0
+        cancelled = 0
+        for nid in list(wf.nodes):
+            if await self._cancel_node(nid):
+                cancelled += 1
         return cancelled
+
+    def cancel(self, target_id: str, thread_id: Optional[str] = None) -> str:
+        """Cancel a session, workflow, or all workers for a thread."""
+        import asyncio as _asyncio
+
+        if target_id == "all":
+            if not thread_id:
+                return "No thread context — cannot cancel all."
+            future = _asyncio.run_coroutine_threadsafe(
+                self.cancel_for_thread(thread_id), self._loop
+            )
+            n = future.result(timeout=10)
+            return f"Cancelled {n} worker(s)."
+
+        # Check workflow
+        if target_id in self._workflows:
+            future = _asyncio.run_coroutine_threadsafe(
+                self._cancel_workflow(target_id), self._loop
+            )
+            n = future.result(timeout=10)
+            return f"Cancelled workflow {target_id} ({n} node(s))."
+
+        # Check session
+        if target_id in self._states:
+            future = _asyncio.run_coroutine_threadsafe(
+                self._cancel_node(target_id), self._loop
+            )
+            ok = future.result(timeout=10)
+            return f"Cancelled {target_id}." if ok else f"{target_id} already finished."
+
+        return f"Unknown ID: {target_id}"
 
     def _cleanup_workflow(self, workflow_id: str) -> None:
         """Remove a completed/failed workflow and its sessions from tracking dicts.

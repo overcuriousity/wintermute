@@ -79,8 +79,10 @@ _task_scheduler_ensure = None   # Callable[[str, dict, str|None, str|None, bool]
 _task_scheduler_remove = None   # Callable[[str], None]
 _task_scheduler_list = None     # Callable[[], list[dict]]
 
-# This will be injected by the SubSessionManager at startup.
-_sub_session_spawn = None  # Callable[[dict, str], str]
+# These will be injected by the SubSessionManager at startup.
+_sub_session_spawn = None   # Callable[[dict, str], str]
+_sub_session_cancel = None  # Callable[[str, Optional[str]], str]
+_sub_session_status = None  # Callable[[], list[dict]]
 
 # Event bus — injected by main.py at startup.
 _event_bus = None  # Optional[EventBus]
@@ -106,6 +108,14 @@ def register_sub_session_manager(fn) -> None:
     _sub_session_spawn = fn
 
 
+def register_sub_session_lifecycle(spawn_fn, cancel_fn, status_fn) -> None:
+    """Register all sub-session lifecycle hooks at once."""
+    global _sub_session_spawn, _sub_session_cancel, _sub_session_status
+    _sub_session_spawn = spawn_fn
+    _sub_session_cancel = cancel_fn
+    _sub_session_status = status_fn
+
+
 def register_event_bus(bus) -> None:
     """Called once by main.py to provide the event bus."""
     global _event_bus
@@ -124,6 +134,28 @@ def register_self_model(profiler) -> None:
 
 def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
                             nesting_depth: int = 0, **_kw) -> str:
+    action = inputs.get("action", "spawn")
+
+    if action == "status":
+        if _sub_session_status is None:
+            return json.dumps({"error": "Sub-session manager not ready."})
+        sessions = _sub_session_status()
+        if not sessions:
+            return json.dumps({"status": "No active background workers."})
+        return json.dumps({"active_workers": sessions})
+
+    if action == "cancel":
+        target = inputs.get("target_id")
+        if not target:
+            return json.dumps({"error": "target_id required for cancel."})
+        if _sub_session_cancel is None:
+            return json.dumps({"error": "Sub-session manager not ready."})
+        result = _sub_session_cancel(target, thread_id)
+        return json.dumps({"result": result})
+
+    # action == "spawn" — existing logic below
+    if not inputs.get("objective"):
+        return json.dumps({"error": "objective is required for spawn."})
     if nesting_depth >= MAX_NESTING_DEPTH:
         return json.dumps({
             "error": (

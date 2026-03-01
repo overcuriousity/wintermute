@@ -23,12 +23,29 @@ TOOL_SCHEMAS = [
     _fn(
         "spawn_sub_session",
         (
-            "Spawn an autonomous background worker. Returns a session_id immediately; "
-            "result arrives as a [SYSTEM EVENT]."
+            "Manage background workers: spawn autonomous tasks, "
+            "check status of running workers, or cancel them. "
+            "Results arrive later as [SYSTEM EVENT]."
         ),
         {
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["spawn", "status", "cancel"],
+                    "description": (
+                        "'spawn' (default): start a new worker. "
+                        "'status': list all running/pending workers. "
+                        "'cancel': stop a worker or workflow by target_id."
+                    ),
+                },
+                "target_id": {
+                    "type": "string",
+                    "description": (
+                        "For cancel: session ID (sub_xxx), workflow ID, or 'all'. "
+                        "Ignored for spawn/status."
+                    ),
+                },
                 "objective": {
                     "type": "string",
                     "description": (
@@ -83,15 +100,14 @@ TOOL_SCHEMAS = [
                     ),
                 },
             },
-            "required": ["objective"],
+            "required": [],
         },
     ),
     _fn(
         "task",
         (
-            "Manage tracked tasks — goals, reminders, and scheduled actions. "
-            "Use action 'add' to create, 'complete' to finish, 'pause'/'resume' to control schedules, "
-            "'update' to modify, 'delete' to remove, 'list' to show."
+            "Manage tasks — goals, reminders, and scheduled actions. "
+            "Actions: add, complete, update, delete, pause, resume, list."
         ),
         {
             "type": "object",
@@ -171,7 +187,7 @@ TOOL_SCHEMAS = [
     ),
     _fn(
         "append_memory",
-        "Append a fact to MEMORIES.txt. One entry per call",
+        "Save a fact to long-term memory. One entry per call.",
         {
             "type": "object",
             "properties": {
@@ -189,7 +205,7 @@ TOOL_SCHEMAS = [
     ),
     _fn(
         "add_skill",
-        "Create or overwrite a skill in data/skills/. A summary appears in the system prompt; full content is loaded on demand via read_file.",
+        "Save a reusable procedure as a skill. Summary appears in your prompt; full content loaded on demand.",
         {
             "type": "object",
             "properties": {
@@ -211,7 +227,7 @@ TOOL_SCHEMAS = [
     ),
     _fn(
         "execute_shell",
-        "Run a shell command. Returns stdout, stderr, and exit_code.",
+        "Run a shell command. Returns stdout, stderr, exit_code.",
         {
             "type": "object",
             "properties": {
@@ -261,7 +277,7 @@ TOOL_SCHEMAS = [
     ),
     _fn(
         "search_web",
-        "Search the web via SearXNG. Returns titles, URLs, and snippets.",
+        "Search the web. Returns titles, URLs, and snippets.",
         {
             "type": "object",
             "properties": {
@@ -279,7 +295,7 @@ TOOL_SCHEMAS = [
     ),
     _fn(
         "query_telemetry",
-        "Query your own operational telemetry — success rates, recent outcomes, skill stats, tool usage, interaction logs, and self-model summary.",
+        "Query your own performance stats — success rates, outcomes, tool usage, and self-assessment.",
         {
             "type": "object",
             "properties": {
@@ -356,9 +372,8 @@ NL_TOOL_SCHEMAS = [
     _fn(
         "task",
         (
-            "Manage tasks — tracked goals, reminders, and scheduled actions. "
-            "Describe what you want in plain English — the system will translate "
-            "it into structured arguments."
+            "Manage tasks — goals, reminders, and scheduled actions. "
+            "Describe what you want in plain English."
         ),
         {
             "type": "object",
@@ -381,12 +396,9 @@ NL_TOOL_SCHEMAS = [
     _fn(
         "spawn_sub_session",
         (
-            "Spawn one or more autonomous background workers as a DAG pipeline. "
-            "Describe all tasks in plain English, including sequencing and parallel "
-            "branches — the system will translate it into a dependency graph. "
-            "Examples: 'research X then summarise it' (sequential), "
-            "'check weather in Berlin and Tokyo' (parallel), "
-            "'fetch A and B, then combine results' (fan-in)."
+            "Manage background workers — spawn tasks (as DAG pipelines), "
+            "check which workers are running, or cancel them. "
+            "Describe what you need in plain English."
         ),
         {
             "type": "object",
@@ -394,10 +406,11 @@ NL_TOOL_SCHEMAS = [
                 "description": {
                     "type": "string",
                     "description": (
-                        "Plain-English description of the full DAG pipeline: what "
-                        "each worker should do, which tasks must run before others, "
-                        "and which can run in parallel. Be explicit about sequencing "
-                        "(e.g. 'then', 'after that', 'at the same time as')."
+                        "Plain-English description: what to spawn, or ask for status, "
+                        "or which worker to cancel. "
+                        "Examples: 'research AI safety then summarise', "
+                        "'what workers are running?', 'cancel sub_a1b2c3d4', "
+                        "'stop all background tasks'."
                     ),
                 },
             },
@@ -407,9 +420,8 @@ NL_TOOL_SCHEMAS = [
     _fn(
         "add_skill",
         (
-            "Save a learned procedure as a reusable skill. Describe what skill "
-            "to save and the procedure details in plain English — the system "
-            "will format it into a properly structured skill file."
+            "Save a reusable procedure as a skill. "
+            "Describe the skill name and steps in plain English."
         ),
         {
             "type": "object",

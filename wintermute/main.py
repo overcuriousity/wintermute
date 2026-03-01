@@ -549,7 +549,9 @@ async def main() -> None:
         max_completed_workflows=max_completed_workflows,
     )
     llm.inject_sub_session_manager(sub_sessions)
-    tool_module.register_sub_session_manager(sub_sessions.spawn)
+    tool_module.register_sub_session_lifecycle(
+        sub_sessions.spawn, sub_sessions.cancel, sub_sessions.list_active,
+    )
     tool_module.register_event_bus(event_bus)
     searxng_url = (cfg.get("search") or {}).get("searxng_url")
     if searxng_url:
