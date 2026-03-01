@@ -670,10 +670,11 @@ class LLMThread:
 
     async def _prepare_inference_context(
         self, item: _QueueItem,
-    ) -> tuple[list[dict], str, str, "BackendPool", object, bool]:
+    ) -> tuple[list[dict], str, str | None, "BackendPool", "ProviderConfig", bool, str, list | None]:
         """Resolve config, build messages, fetch memories, assemble system prompt.
 
-        Returns (messages, system_prompt, memory_query, pool, pool_cfg, is_sub_session_result).
+        Returns (messages, system_prompt, memory_query, pool, pool_cfg,
+        is_sub_session_result, prompt_mode, memory_results).
         Also handles pre-compaction if the history exceeds the token budget.
         """
         thread_id = item.thread_id
@@ -746,10 +747,11 @@ class LLMThread:
         self._last_system_prompt[thread_id] = system_prompt
 
         is_sub_session_result = item.is_system_event and "[SUB-SESSION " in item.text
-        return messages, system_prompt, _memory_query, pool, pool_cfg, is_sub_session_result
+        return (messages, system_prompt, _memory_query, pool, pool_cfg,
+                is_sub_session_result, prompt_mode, _memory_results)
 
     async def _save_user_message(
-        self, item: _QueueItem, pool_cfg: object, is_sub_session_result: bool,
+        self, item: _QueueItem, pool_cfg: "ProviderConfig", is_sub_session_result: bool,
     ) -> None:
         """Persist the incoming user/system message to DB and emit events."""
         thread_id = item.thread_id
@@ -778,7 +780,7 @@ class LLMThread:
 
     async def _save_inference_result(
         self, item: _QueueItem, reply: LLMReply,
-        pool: "BackendPool", pool_cfg: object,
+        pool: "BackendPool", pool_cfg: "ProviderConfig",
         inference_duration: float, memory_query: str | None,
     ) -> None:
         """Log inference results, save assistant message, emit events, run post-inference tasks."""
@@ -850,8 +852,9 @@ class LLMThread:
         thread_id = item.thread_id
 
         # 1. Prepare context: config, messages, memory, system prompt, pre-compaction.
-        (messages, system_prompt, _memory_query,
-         pool, pool_cfg, is_sub_session_result) = await self._prepare_inference_context(item)
+        (messages, system_prompt, _memory_query, pool, pool_cfg,
+         is_sub_session_result, _prompt_mode,
+         _memory_results) = await self._prepare_inference_context(item)
 
         # 2. Save the incoming message to DB.
         await self._save_user_message(item, pool_cfg, is_sub_session_result)
@@ -871,7 +874,7 @@ class LLMThread:
             summary = self._compaction_summaries.get(thread_id)
             system_prompt = prompt_assembler.assemble(
                 extra_summary=summary, query=_memory_query,
-                memory_results=None, prompt_mode="full",
+                memory_results=_memory_results, prompt_mode=_prompt_mode,
             )
             reply = await self._inference_loop(
                 system_prompt, messages, thread_id,
