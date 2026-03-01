@@ -877,34 +877,110 @@ class SubSessionManager:
         Returns the number of sessions cancelled.
         """
         cancelled = 0
-        needs_resolve: list[str] = []
         for sid, state in list(self._states.items()):
             if state.parent_thread_id != thread_id:
                 continue
-            if state.status == "running":
-                task = self._tasks.get(sid)
-                if task and not task.done():
-                    # Mark failed before cancelling so _resolve_dependents sees
-                    # the correct state immediately (CancelledError handler would
-                    # otherwise race with ensure_future(_resolve_dependents)).
-                    state.status = "failed"
-                    state.error = "Cancelled"
-                    state.completed_at = datetime.now(timezone.utc).isoformat()
-                    task.cancel()
+            if state.status in ("running", "pending"):
+                if await self._cancel_node(sid):
                     logger.info("Cancelled sub-session %s (thread reset)", sid)
                     cancelled += 1
-                    needs_resolve.append(sid)
-            elif state.status == "pending":
+        return cancelled
+
+    async def _cancel_node(self, sid: str) -> bool:
+        """Cancel a single session by ID. Returns True if it was active."""
+        state = self._states.get(sid)
+        if state is None:
+            return False
+        if state.status == "running":
+            task = self._tasks.get(sid)
+            if task and not task.done():
                 state.status = "failed"
                 state.error = "Cancelled"
                 state.completed_at = datetime.now(timezone.utc).isoformat()
-                logger.info("Cancelled pending sub-session %s (thread reset)", sid)
-                cancelled += 1
-                needs_resolve.append(sid)
-        # Resolve dependents so nothing stays deadlocked.
-        for sid in needs_resolve:
+                task.cancel()
+                await self._resolve_dependents(sid)
+                return True
+        elif state.status == "pending":
+            state.status = "failed"
+            state.error = "Cancelled"
+            state.completed_at = datetime.now(timezone.utc).isoformat()
             await self._resolve_dependents(sid)
+            return True
+        return False
+
+    async def _cancel_workflow(self, workflow_id: str) -> int:
+        """Cancel all active nodes in a workflow. Returns count cancelled."""
+        wf = self._workflows.get(workflow_id)
+        if wf is None:
+            return 0
+        cancelled = 0
+        for nid in list(wf.nodes):
+            if await self._cancel_node(nid):
+                cancelled += 1
         return cancelled
+
+    async def _cancel_target(self, target_id: str, thread_id: Optional[str] = None) -> str:
+        """Resolve and cancel a target entirely on the event loop thread."""
+        if target_id == "all":
+            if not thread_id:
+                return "No thread context — cannot cancel all."
+            n = await self.cancel_for_thread(thread_id)
+            return f"Cancelled {n} worker(s)."
+
+        # Check workflow — verify thread ownership.
+        if target_id in self._workflows:
+            wf = self._workflows[target_id]
+            if thread_id:
+                # Verify at least one node belongs to this thread.
+                owns = any(
+                    self._states.get(nid) and self._states[nid].parent_thread_id == thread_id
+                    for nid in wf.nodes
+                )
+                if not owns:
+                    return f"Workflow {target_id} does not belong to this thread."
+            n = await self._cancel_workflow(target_id)
+            return f"Cancelled workflow {target_id} ({n} node(s))."
+
+        # Check session — verify thread ownership.
+        if target_id in self._states:
+            state = self._states[target_id]
+            if thread_id and state.parent_thread_id != thread_id:
+                return f"{target_id} does not belong to this thread."
+            ok = await self._cancel_node(target_id)
+            return f"Cancelled {target_id}." if ok else f"{target_id} already finished."
+
+        return f"Unknown ID: {target_id}"
+
+    def cancel(self, target_id: str, thread_id: Optional[str] = None) -> str:
+        """Cancel a session, workflow, or all workers for a thread (thread-safe)."""
+        import asyncio as _asyncio
+        from concurrent.futures import TimeoutError as FuturesTimeoutError
+        try:
+            future = _asyncio.run_coroutine_threadsafe(
+                self._cancel_target(target_id, thread_id), self._loop
+            )
+            return future.result(timeout=10)
+        except FuturesTimeoutError:
+            return f"Cancel timed out for {target_id}."
+        except Exception as exc:
+            logger.exception("cancel(%s) failed", target_id)
+            return f"Cancel failed: {exc}"
+
+    async def _list_active_async(self, thread_id: Optional[str] = None) -> list[dict]:
+        """Async wrapper so list_active runs on the event loop thread."""
+        return self.list_active(thread_id)
+
+    def list_active_threadsafe(self, thread_id: Optional[str] = None) -> list[dict]:
+        """Thread-safe wrapper for list_active, scheduled on the event loop."""
+        import asyncio as _asyncio
+        try:
+            future = _asyncio.run_coroutine_threadsafe(
+                self._list_active_async(thread_id), self._loop,
+            )
+            return future.result(timeout=5)
+        except Exception:
+            logger.debug("list_active_threadsafe failed", exc_info=True)
+            return []
 
     def _cleanup_workflow(self, workflow_id: str) -> None:
         """Remove a completed/failed workflow and its sessions from tracking dicts.
@@ -951,12 +1027,17 @@ class SubSessionManager:
                         self._aggregated_parents.discard(nid)
                     logger.debug("Purged completed workflow %s from memory", old_wid)
 
-    def list_active(self) -> list[dict]:
-        """Return serialisable state dicts for all non-completed sub-sessions."""
+    def list_active(self, thread_id: Optional[str] = None) -> list[dict]:
+        """Return serialisable state dicts for active sub-sessions.
+
+        When *thread_id* is given, only sessions belonging to that thread
+        are returned (prevents cross-thread information leakage).
+        """
         return [
             self._serialise(state)
             for state in self._states.values()
             if state.status in ("running", "pending")
+            and (thread_id is None or state.parent_thread_id == thread_id)
         ]
 
     def list_all(self) -> list[dict]:
