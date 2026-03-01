@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import re
-import subprocess
 import urllib.parse
 from html.parser import HTMLParser
 from typing import Optional
@@ -89,17 +88,23 @@ def tool_search_web(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -
     except Exception as exc:  # noqa: BLE001
         logger.warning("SearXNG error (%s), falling back to curl", exc)
 
-    # --- Fallback: DuckDuckGo Instant Answer API via curl (no auth required) ---
+    # --- Fallback: DuckDuckGo Instant Answer API via direct HTTP (no auth required) ---
     try:
-        safe_q = urllib.parse.quote_plus(query)
-        proc = subprocess.run(
-            f'curl -s --max-time 15 -A "wintermute/0.1" '
-            f'"https://api.duckduckgo.com/?q={safe_q}&format=json&no_html=1&skip_disambig=1"',
-            shell=True, capture_output=True, text=True, timeout=20,
+        params = urllib.parse.urlencode({
+            "q": query,
+            "format": "json",
+            "no_html": "1",
+            "skip_disambig": "1",
+        })
+        req = Request(
+            f"https://api.duckduckgo.com/?{params}",
+            headers={"User-Agent": "wintermute/0.1"},
         )
-        if proc.returncode != 0 or not proc.stdout.strip():
-            raise RuntimeError(f"curl exited {proc.returncode}: {proc.stderr[:200]}")
-        data = json.loads(proc.stdout)
+        with urlopen(req, timeout=15) as resp:
+            body = resp.read().decode("utf-8")
+        if not body.strip():
+            raise RuntimeError("DuckDuckGo response was empty")
+        data = json.loads(body)
         results = []
         if data.get("AbstractText") and data.get("AbstractURL"):
             results.append({"title": data.get("Heading", query), "url": data["AbstractURL"], "snippet": data["AbstractText"]})
@@ -139,7 +144,35 @@ def tool_fetch_url(inputs: dict, **_kw) -> str:
         })
         with urlopen(req, timeout=20) as resp:
             content_type = resp.headers.get("Content-Type", "")
-            raw = resp.read()
+
+            # Limit bytes read to avoid unbounded memory usage.
+            # Use a generous upper bound to account for multibyte encodings.
+            max_bytes = max_chars * 8 + 1024
+
+            content_length = resp.headers.get("Content-Length")
+            if content_length is not None:
+                try:
+                    if int(content_length) > max_bytes:
+                        return json.dumps({
+                            "error": (
+                                f"Content too large to fetch safely "
+                                f"({content_length} bytes reported)"
+                            )
+                        })
+                except ValueError:
+                    pass  # Invalid Content-Length, fall back to capped read.
+
+            raw_chunks: list[bytes] = []
+            bytes_read = 0
+            chunk_size = 8192
+            while bytes_read < max_bytes:
+                chunk = resp.read(min(chunk_size, max_bytes - bytes_read))
+                if not chunk:
+                    break
+                raw_chunks.append(chunk)
+                bytes_read += len(chunk)
+
+            raw = b"".join(raw_chunks)
 
             charset = "utf-8"
             if "charset=" in content_type:

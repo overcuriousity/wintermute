@@ -41,7 +41,7 @@ def tool_read_file(inputs: dict, **_kw) -> str:
         result = json.dumps({"content": path.read_text(encoding="utf-8")})
     except FileNotFoundError:
         return json.dumps({"error": f"File not found: {path}"})
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         return json.dumps({"error": str(exc)})
     # Track skill reads for skill_stats (only canonical data/skills/*.md).
     try:

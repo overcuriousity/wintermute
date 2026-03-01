@@ -27,7 +27,7 @@ from wintermute.core.tool_schemas import (  # noqa: F401 — re-exported
     NL_SCHEMA_MAP,
     get_tool_schemas,
 )
-from wintermute.tools.task_tools import tool_task
+from wintermute.tools.task_tools import tool_task, _describe_schedule  # noqa: F401
 from wintermute.tools.memory_tools import tool_append_memory, tool_add_skill
 from wintermute.tools.io_tools import tool_execute_shell, tool_read_file, tool_write_file
 from wintermute.tools.web_tools import tool_search_web, tool_fetch_url
