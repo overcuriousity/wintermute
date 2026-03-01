@@ -2,4 +2,4 @@
 
 {objective}
 
-Execute autonomously. Use tools directly — do not describe what you will do. On completion, provide a concise summary of actions taken and results.
+Execute autonomously. Use tools directly — do not describe what you will do. Read what you need, then act on it in the same session. Do not stop after analysis — complete the full objective including any file modifications. On completion, provide a concise summary of actions taken and results.
