@@ -452,6 +452,11 @@ async def main() -> None:
     max_nesting_depth = _tuning_int("max_nesting_depth", 2, minimum=0)
     max_blob_chars = _tuning_int("max_blob_chars", 60_000, minimum=1)
     max_completed_workflows = _tuning_int("max_completed_workflows", 50, minimum=1)
+    max_inline_tool_rounds = _tuning_int("max_inline_tool_rounds", 3, minimum=0)
+
+    # Push the inline tool limit into the Turing Protocol module.
+    from wintermute.core.turing_protocol import set_max_inline_tool_rounds
+    set_max_inline_tool_rounds(max_inline_tool_rounds)
 
     harvest_cfg_raw = cfg.get("memory_harvest", {})
     harvest_config = MemoryHarvestConfig(

@@ -263,6 +263,13 @@ turing_protocol:
                                            # before execution (required fields, types,
                                            # enums, min/max). (pre_execution, all scopes)
 
+    #inline_tool_limit: true               # Enforces delegation to sub-sessions when the
+                                           # main thread exceeds max_inline_tool_rounds
+                                           # execution/research tool calls. Blocks further
+                                           # inline tool calls and injects a correction
+                                           # telling the model to spawn a sub-session.
+                                           # (pre_execution, main scope only)
+
 
 # ── NL Translation (Natural-Language Tool Pipe) ─────────────────────
 # For weak models that struggle with complex tool-call schemas, NL
@@ -335,6 +342,13 @@ tuning:
   max_nesting_depth: 2                # 0 = main, 1 = sub-session, 2 = sub-sub-session (max)
   max_blob_chars: 60000               # Max chars in memory-harvest conversation blob (~15k tokens)
   max_completed_workflows: 50         # Completed workflows kept in memory for the debug UI
+  max_inline_tool_rounds: 3           # Max execution/research tool calls the main thread can
+                                      # make inline per turn before the Turing Protocol
+                                      # enforces delegation to a sub-session. Only counts
+                                      # execution+research tools (execute_shell, read_file,
+                                      # write_file, search_web, fetch_url). Orchestration
+                                      # tools (spawn_sub_session, task, append_memory, etc.)
+                                      # do not count. Set 0 to disable the limit.
 
 
 # ── Context Compaction ───────────────────────────────────────────────

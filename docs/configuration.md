@@ -227,6 +227,7 @@ Currently available validators:
 | `objective_completion` | post_inference | sub_session | LLM | Gates sub-session exit: uses a dedicated LLM call to evaluate whether the worker's response genuinely satisfies its objective before allowing it to finish |
 | `task_complete` | pre_execution | sub_session | programmatic | Blocks `task(action='complete')` calls that lack a substantive `reason`. Always-on; not configurable via the `validators` map |
 | `tool_schema_validation` | pre_execution | main + sub_session | programmatic | Validates tool arguments against the tool's JSON Schema before execution (required fields, types, enums, constraints). Always-on; not configurable via the `validators` map |
+| `inline_tool_limit` | pre_execution | main | programmatic | Enforces delegation to sub-sessions when the main thread exceeds `tuning.max_inline_tool_rounds` execution/research tool calls in a single turn. Blocks further inline tool calls and injects a correction telling the model to spawn a sub-session. Orchestration tools (spawn_sub_session, task, etc.) are never counted or blocked |
 
 For a detailed explanation of each hook, phases, scopes, and how to write custom hooks, see [turing-protocol.md](turing-protocol.md).
 
@@ -521,3 +522,16 @@ Seed prompts are language-specific files in `data/prompts/SEED_{language}.txt`. 
 | `memories` | `10000` | Char limit before MEMORIES.txt auto-summarisation |
 | `tasks` | `5000` | Char limit before tasks auto-summarisation |
 | `skills_total` | `2000` | Char limit for the skills TOC (summaries only; full skills are loaded on demand) |
+
+### `tuning`
+
+Behavioral constants that control core limits. Defaults work well for most setups; tune for small-model deployments or heavy workloads.
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `compaction_keep_recent` | no | `10` | Messages preserved verbatim during context compaction |
+| `max_continuation_depth` | no | `3` | Auto-continuation hops before a sub-session gives up |
+| `max_nesting_depth` | no | `2` | Maximum sub-session nesting (0=main, 1=sub, 2=sub-sub) |
+| `max_blob_chars` | no | `60000` | Max chars in memory-harvest conversation blob |
+| `max_completed_workflows` | no | `50` | Completed workflows kept in memory for the debug UI |
+| `max_inline_tool_rounds` | no | `3` | Max execution/research tool calls the main thread can make inline per turn before the `inline_tool_limit` TP hook enforces delegation to a sub-session. Only counts execution+research tools (`execute_shell`, `read_file`, `write_file`, `search_web`, `fetch_url`). Orchestration tools are never counted or blocked. Set `0` to disable |

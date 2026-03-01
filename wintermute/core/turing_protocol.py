@@ -88,6 +88,17 @@ HOOKS_FILE = _paths.HOOKS_FILE
 # Avoids re-reading + re-parsing the file on every protocol call.
 _hooks_file_cache: tuple[float, dict[str, "TuringHook"]] = (0.0, {})
 
+# Configurable threshold for the inline_tool_limit hook.
+# Set from main.py at startup via set_max_inline_tool_rounds().
+# 0 = disabled (no limit).
+_max_inline_tool_rounds: int = 3
+
+
+def set_max_inline_tool_rounds(value: int) -> None:
+    """Set the max inline tool rounds threshold (called from main.py)."""
+    global _max_inline_tool_rounds
+    _max_inline_tool_rounds = max(0, value)
+
 
 # ------------------------------------------------------------------
 # Data model
@@ -330,6 +341,34 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         kill_on_detect=False,
         phase="pre_execution",
         scope=["main", "sub_session"],
+    ),
+    # -- inline_tool_limit: main-thread delegation enforcer --
+    # Fires during pre_execution in the main thread when the cumulative
+    # count of execution/research tool calls exceeds the configured
+    # max_inline_tool_rounds threshold.  Blocks further inline tool
+    # execution and instructs the model to delegate via spawn_sub_session.
+    TuringHook(
+        name="inline_tool_limit",
+        detection_prompt="",  # programmatic-only: no Stage 1 LLM call
+        validator_type="programmatic",
+        validator_fn_name="validate_inline_tool_limit",
+        validator_prompt=None,
+        correction_template=(
+            "[TURING PROTOCOL — INLINE TOOL LIMIT] You have used {reason} "
+            "inline tool calls in the main thread, exceeding the limit.\n\n"
+            "STOP making direct tool calls. Delegate the remaining work "
+            "to a background worker:\n"
+            "1. Summarise what you have learned so far from the tool results.\n"
+            "2. Call spawn_sub_session with a comprehensive objective that "
+            "includes your findings and the remaining steps.\n\n"
+            "The worker can read files, execute commands, and write files "
+            "autonomously. Give it the FULL task — do not split into "
+            "analyze and implement."
+        ),
+        halt_inference=False,
+        kill_on_detect=False,
+        phase="pre_execution",
+        scope=["main"],
     ),
 ]
 
@@ -720,6 +759,57 @@ def validate_repetition_loop(context: dict, detection_result: dict) -> bool:
     return False
 
 
+def validate_inline_tool_limit(context: dict, detection_result: dict) -> bool:
+    """Enforce delegation when the main thread exceeds inline tool-call limit.
+
+    Counts execution and research category tool calls in ``tool_calls_made``
+    (which accumulates across inference rounds within a single turn).
+    When the count meets or exceeds ``_max_inline_tool_rounds`` and the
+    current tool is also an execution/research tool, the violation is
+    confirmed — blocking the call and instructing the model to delegate.
+
+    Orchestration tools (spawn_sub_session, task, append_memory, etc.)
+    never count and are never blocked, so the model can always delegate.
+
+    Returns True if the violation is confirmed (limit exceeded).
+    """
+    if _max_inline_tool_rounds <= 0:
+        return False  # disabled
+
+    # Only applies in main scope.
+    if context.get("scope") != "main":
+        return False
+
+    tool_name = context.get("tool_name", "")
+
+    # Import here to avoid circular imports at module level.
+    from wintermute.core.tool_schemas import TOOL_CATEGORIES
+
+    # Don't block orchestration tools — the model needs them to delegate.
+    tool_cat = TOOL_CATEGORIES.get(tool_name, "")
+    if tool_cat not in ("execution", "research"):
+        return False
+
+    # Count execution/research tools already called this turn.
+    tool_calls_made = context.get("tool_calls_made", [])
+    exec_count = sum(
+        1 for t in tool_calls_made
+        if TOOL_CATEGORIES.get(t, "") in ("execution", "research")
+    )
+
+    if exec_count < _max_inline_tool_rounds:
+        return False
+
+    context["_turing_hook_reason"] = (
+        f"{exec_count} execution/research"
+    )
+    logger.info(
+        "inline_tool_limit: blocking %s (exec_count=%d >= limit=%d)",
+        tool_name, exec_count, _max_inline_tool_rounds,
+    )
+    return True
+
+
 # Registry of programmatic validator functions.
 _PROGRAMMATIC_VALIDATORS = {
     "validate_workflow_spawn": validate_workflow_spawn,
@@ -728,6 +818,7 @@ _PROGRAMMATIC_VALIDATORS = {
     "validate_tool_schema": validate_tool_schema,
     "validate_task_complete": validate_task_complete,
     "validate_repetition_loop": validate_repetition_loop,
+    "validate_inline_tool_limit": validate_inline_tool_limit,
 }
 
 

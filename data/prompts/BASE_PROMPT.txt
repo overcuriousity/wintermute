@@ -28,7 +28,7 @@ Shortcut: "User likes X" → memory | "Do X daily at 9" → task+schedule | "Tra
 <!-- section: delegation requires: spawn_sub_session -->
 # Delegation
 
-spawn_sub_session for tasks needing 2+ tool calls or waiting.
+spawn_sub_session for tasks needing 2+ tool calls or waiting. Keep inline tool use to 1-2 quick lookups; for multi-step work, always delegate.
 
 **Minimize workers.** Prefer ONE worker with a full objective — it can read, analyze, AND write in one session. Only split when tasks are truly independent (parallel), need different contexts (web research → local action), or exceed max timeout.
 
