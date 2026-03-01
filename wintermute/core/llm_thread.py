@@ -319,7 +319,10 @@ class LLMThread:
             except Exception:  # noqa: BLE001
                 sp_text = ""
         sp_tokens = _count_tokens(sp_text, model)
-        active_schemas = tool_module.get_tool_schemas(nl_tools=nl_tools)
+        active_schemas = tool_module.get_tool_schemas(
+            nl_tools=nl_tools,
+            tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
+        )
         tools_tokens = _count_tokens(json.dumps(active_schemas), model)
 
         stats = database.get_thread_stats(thread_id)
@@ -729,7 +732,10 @@ class LLMThread:
             self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
             nl_tools=nl_tools,
         )
-        active_schemas = tool_module.get_tool_schemas(nl_tools=nl_tools)
+        active_schemas = tool_module.get_tool_schemas(
+            nl_tools=nl_tools,
+            tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
+        )
         overhead_tokens = (
             _count_tokens(system_prompt, pool_cfg.model)
             + _count_tokens(json.dumps(active_schemas), pool_cfg.model)
@@ -1002,10 +1008,11 @@ class LLMThread:
         full_messages = [{"role": "system", "content": system_prompt}] + messages
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
+        _profiles = self._tool_deps.tool_profiles if self._tool_deps else None
         if disable_tools:
             tools = None
-        elif nl_tools:
-            tools = tool_module.get_tool_schemas(nl_tools=nl_tools)
+        elif nl_tools or _profiles:
+            tools = tool_module.get_tool_schemas(nl_tools=nl_tools, tool_profiles=_profiles)
         else:
             tools = tool_module.TOOL_SCHEMAS
         token_budget = active_cfg.context_size - active_cfg.max_tokens

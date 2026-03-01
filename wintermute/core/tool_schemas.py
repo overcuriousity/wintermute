@@ -95,9 +95,9 @@ TOOL_SCHEMAS = [
                 "profile": {
                     "type": "string",
                     "description": (
-                        "Named tool profile (e.g. 'researcher', 'file_worker'). "
-                        "Overrides system_prompt_mode and sets an optimised tool set. "
-                        "See available profiles in config."
+                        "Named tool profile. Overrides system_prompt_mode and "
+                        "sets an optimised tool set. Only use a profile name "
+                        "listed as available in the system prompt."
                     ),
                 },
             },
@@ -446,8 +446,28 @@ NL_SCHEMA_MAP: dict[str, dict] = {
 }
 
 
+def _inject_profiles(schema: dict, profiles: dict[str, dict]) -> dict:
+    """Return a copy of *schema* with profile names injected into the description."""
+    import copy
+    props = schema.get("function", {}).get("parameters", {}).get("properties", {})
+    profile_prop = props.get("profile")
+    if profile_prop is None:
+        return schema
+    names = ", ".join(sorted(profiles))
+    new_desc = (
+        f"Named tool profile. Available: {names}. "
+        "Overrides system_prompt_mode and sets an optimised tool set. "
+        "Only use one of the listed names."
+    )
+    schema = copy.deepcopy(schema)
+    schema["function"]["parameters"]["properties"]["profile"]["description"] = new_desc
+    schema["function"]["parameters"]["properties"]["profile"]["enum"] = sorted(profiles)
+    return schema
+
+
 def get_tool_schemas(categories: set[str] | None = None,
-                     nl_tools: set[str] | None = None) -> list[dict]:
+                     nl_tools: set[str] | None = None,
+                     tool_profiles: dict[str, dict] | None = None) -> list[dict]:
     """Return tool schemas filtered by category, with optional NL substitution.
 
     If *categories* is None, return all schemas (used by the main agent).
@@ -456,13 +476,25 @@ def get_tool_schemas(categories: set[str] | None = None,
 
     When *nl_tools* is provided, any tool whose name is in the set gets its
     schema replaced with the simplified single-field NL variant.
+
+    When *tool_profiles* is provided, the ``worker_delegation`` schema's
+    ``profile`` field gets an ``enum`` constraint and description listing
+    the available profile names.
     """
     if categories is None:
-        schemas = TOOL_SCHEMAS
+        schemas = list(TOOL_SCHEMAS)
     else:
         schemas = [
             schema for schema in TOOL_SCHEMAS
             if TOOL_CATEGORIES.get(schema["function"]["name"]) in categories
+        ]
+    # Inject profile names into the worker_delegation schema.
+    if tool_profiles:
+        schemas = [
+            _inject_profiles(s, tool_profiles)
+            if s["function"]["name"] == "worker_delegation"
+            else s
+            for s in schemas
         ]
     if not nl_tools:
         return schemas

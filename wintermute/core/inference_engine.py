@@ -192,6 +192,7 @@ async def _translate_nl(
         ctx.nl_translation_pool, name, inputs["description"],
         thread_id=ctx.thread_id,
         timezone_str=ctx.timezone_str,
+        tool_profiles=ctx.tool_deps.tool_profiles if ctx.tool_deps else None,
     )
     # Log the NL translation.
     try:

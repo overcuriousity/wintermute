@@ -144,6 +144,7 @@ async def translate_nl_tool_call(
     thread_id: Optional[str] = None,
     timezone_str: str = "UTC",
     current_datetime: Optional[str] = None,
+    tool_profiles: Optional[dict[str, dict]] = None,
 ) -> "dict | list | None":
     """Call the translator LLM to expand a natural-language description
     into structured tool arguments.
@@ -168,8 +169,19 @@ async def translate_nl_tool_call(
         logger.error("No NL translator prompt for tool %s", tool_name)
         return None
 
+    # Build template kwargs for prompts that support placeholders.
+    tpl_kwargs: dict[str, str] = {}
+    if tool_name == "worker_delegation":
+        _profiles = tool_profiles or {}
+        if _profiles:
+            tpl_kwargs["available_profiles"] = (
+                "Available profiles: " + ", ".join(sorted(_profiles)) + ". "
+            )
+        else:
+            tpl_kwargs["available_profiles"] = "No profiles configured — omit this field. "
+
     try:
-        system_prompt = prompt_loader.load(prompt_file)
+        system_prompt = prompt_loader.load(prompt_file, **tpl_kwargs)
     except FileNotFoundError:
         logger.error("NL translator prompt file missing: %s", prompt_file)
         return None

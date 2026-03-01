@@ -130,7 +130,6 @@ def _get_sections() -> list[tuple[str, set[str], str]]:
 
 
 def _assemble_base(available_tools: set[str] | None = None,
-                   tool_profiles: dict[str, dict] | None = None,
                    nl_tools: set[str] | None = None) -> str:
     """Assemble the BASE_PROMPT, optionally filtering sections by available tools.
 
@@ -146,14 +145,9 @@ def _assemble_base(available_tools: set[str] | None = None,
     ``_nl`` variant is used instead of the base version.  For example,
     ``delegation_nl`` replaces ``delegation`` when ``worker_delegation``
     is NL-translated.
-
-    The ``delegation`` / ``delegation_nl`` section gets dynamic profile
-    names appended when tool profiles are configured and
-    ``worker_delegation`` is available.
     """
     sections = _get_sections()
     parts: list[str] = []
-    _profiles = tool_profiles or {}
 
     # Collect section names to detect _nl variant pairs.
     section_names = {s[0] for s in sections}
@@ -175,13 +169,7 @@ def _assemble_base(available_tools: set[str] | None = None,
             if nl_tools and required_tools and (required_tools & nl_tools):
                 continue
 
-        text = content
-        # Inject tool profile names into the delegation section.
-        if name in ("delegation", "delegation_nl") and _profiles:
-            if available_tools is None or "worker_delegation" in available_tools:
-                profile_names = ", ".join(sorted(_profiles))
-                text += f"\n\nAvailable tool profiles: {profile_names}"
-        parts.append(text)
+        parts.append(content)
 
     return "\n\n".join(parts)
 
@@ -256,7 +244,7 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
              query: Optional[str] = None,
              memory_results: Optional[list[dict]] = None,
              prompt_mode: str = "full",
-             tool_profiles: Optional[dict[str, dict]] = None,
+             tool_profiles: Optional[dict[str, dict]] = None,  # deprecated — profiles now in tool schemas
              self_model_profiler: Optional[object] = None,
              nl_tools: Optional[set[str]] = None) -> str:
     """
@@ -287,8 +275,7 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
 
     sections: list[str] = []
 
-    base = _assemble_base(available_tools, tool_profiles=tool_profiles,
-                           nl_tools=nl_tools)
+    base = _assemble_base(available_tools, nl_tools=nl_tools)
     sections.append(f"# Core Instructions\n\n{base}")
 
     # Inject current local datetime so the LLM has accurate time awareness.

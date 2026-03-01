@@ -1476,7 +1476,10 @@ class SubSessionManager:
             categories = _MODE_TOOL_CATEGORIES.get(
                 state.system_prompt_mode, {"execution", "research"}
             )
-            tool_schemas = tool_module.get_tool_schemas(categories, nl_tools=nl_tools)
+            tool_schemas = tool_module.get_tool_schemas(
+                categories, nl_tools=nl_tools,
+                tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
+            )
 
         tp_enabled = bool(self._tp_pool and self._tp_pool.enabled)
         tp_correction_depth = 0  # depth-2 re-check: 0=unchecked, 1=corrected once, >=2=graceful fallback

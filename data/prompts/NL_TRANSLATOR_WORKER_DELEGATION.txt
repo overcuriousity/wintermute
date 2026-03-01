@@ -11,7 +11,8 @@ You are a JSON translator. Convert natural-language worker descriptions into wor
   "timeout": "(integer, optional) Seconds. Default 300. Use 600 for multi-file implementation work",
   "depends_on": "(array of strings, optional) Session IDs to wait for; results auto-passed as context.",
   "depends_on_previous": "(boolean) If true, wait for all prior workers. Prefer this over listing IDs manually",
-  "not_before": "(string, optional) Earliest start time, ISO-8601. Waits even if deps are satisfied."
+  "not_before": "(string, optional) Earliest start time, ISO-8601. Waits even if deps are satisfied.",
+  "profile": "(string, optional) Tool profile name to use for this worker."
 }}
 
 ## Decomposition
