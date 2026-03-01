@@ -954,12 +954,13 @@ class SubSessionManager:
     def cancel(self, target_id: str, thread_id: Optional[str] = None) -> str:
         """Cancel a session, workflow, or all workers for a thread (thread-safe)."""
         import asyncio as _asyncio
+        from concurrent.futures import TimeoutError as FuturesTimeoutError
         try:
             future = _asyncio.run_coroutine_threadsafe(
                 self._cancel_target(target_id, thread_id), self._loop
             )
             return future.result(timeout=10)
-        except TimeoutError:
+        except FuturesTimeoutError:
             return f"Cancel timed out for {target_id}."
         except Exception as exc:
             logger.exception("cancel(%s) failed", target_id)

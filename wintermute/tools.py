@@ -82,7 +82,7 @@ _task_scheduler_list = None     # Callable[[], list[dict]]
 # These will be injected by the SubSessionManager at startup.
 _sub_session_spawn = None   # Callable[[dict, str], str]
 _sub_session_cancel = None  # Callable[[str, Optional[str]], str]
-_sub_session_status = None  # Callable[[], list[dict]]
+_sub_session_status = None  # Callable[[Optional[str]], list[dict]]
 
 # Event bus — injected by main.py at startup.
 _event_bus = None  # Optional[EventBus]
