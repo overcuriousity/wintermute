@@ -130,7 +130,8 @@ def _get_sections() -> list[tuple[str, set[str], str]]:
 
 
 def _assemble_base(available_tools: set[str] | None = None,
-                   tool_profiles: dict[str, dict] | None = None) -> str:
+                   tool_profiles: dict[str, dict] | None = None,
+                   nl_tools: set[str] | None = None) -> str:
     """Assemble the BASE_PROMPT, optionally filtering sections by available tools.
 
     When *available_tools* is None, all sections are included (backward
@@ -140,21 +141,43 @@ def _assemble_base(available_tools: set[str] | None = None,
     required tool is in the set (or the section has no requirements, i.e.
     ``always``) are included.
 
-    The ``delegation`` section gets dynamic profile names appended when
-    tool profiles are configured and ``worker_delegation`` is available.
+    When *nl_tools* is provided, sections that have an ``_nl`` variant are
+    swapped: if the section's required tools overlap with *nl_tools*, the
+    ``_nl`` variant is used instead of the base version.  For example,
+    ``delegation_nl`` replaces ``delegation`` when ``worker_delegation``
+    is NL-translated.
+
+    The ``delegation`` / ``delegation_nl`` section gets dynamic profile
+    names appended when tool profiles are configured and
+    ``worker_delegation`` is available.
     """
     sections = _get_sections()
     parts: list[str] = []
     _profiles = tool_profiles or {}
+
+    # Collect section names to detect _nl variant pairs.
+    section_names = {s[0] for s in sections}
 
     for name, required_tools, content in sections:
         if available_tools is not None and required_tools:
             # Section requires specific tools — include only if at least one is available.
             if not required_tools & available_tools:
                 continue
+
+        # NL variant selection: if both "X" and "X_nl" exist, pick based
+        # on whether the section's required tools are NL-translated.
+        if name.endswith("_nl"):
+            # Include the _nl variant only when its tools are NL-enabled.
+            if not nl_tools or not (required_tools & nl_tools):
+                continue
+        elif f"{name}_nl" in section_names:
+            # Base variant has an _nl counterpart — skip if the NL one applies.
+            if nl_tools and required_tools and (required_tools & nl_tools):
+                continue
+
         text = content
         # Inject tool profile names into the delegation section.
-        if name == "delegation" and _profiles:
+        if name in ("delegation", "delegation_nl") and _profiles:
             if available_tools is None or "worker_delegation" in available_tools:
                 profile_names = ", ".join(sorted(_profiles))
                 text += f"\n\nAvailable tool profiles: {profile_names}"
@@ -234,7 +257,8 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
              memory_results: Optional[list[dict]] = None,
              prompt_mode: str = "full",
              tool_profiles: Optional[dict[str, dict]] = None,
-             self_model_profiler: Optional[object] = None) -> str:
+             self_model_profiler: Optional[object] = None,
+             nl_tools: Optional[set[str]] = None) -> str:
     """
     Build and return the full system prompt string.
 
@@ -263,7 +287,8 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
 
     sections: list[str] = []
 
-    base = _assemble_base(available_tools, tool_profiles=tool_profiles)
+    base = _assemble_base(available_tools, tool_profiles=tool_profiles,
+                           nl_tools=nl_tools)
     sections.append(f"# Core Instructions\n\n{base}")
 
     # Inject current local datetime so the LLM has accurate time awareness.

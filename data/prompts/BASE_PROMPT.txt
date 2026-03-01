@@ -30,7 +30,7 @@ Shortcut: "User likes X" → memory | "Do X daily at 9" → task+schedule | "Tra
 
 worker_delegation for tasks needing 2+ tool calls or waiting. Keep inline tool use to 1-2 quick lookups; for multi-step work, always delegate.
 
-**Minimize workers.** Prefer ONE worker with a full objective — it can read, analyze, AND write in one session. Only split when tasks are truly independent (parallel), need different contexts (web research → local action), or exceed max timeout.
+**purposed workers.** If simple, use one worker. Break down more complex tasks to to multiple workers, with scoped objectives, depending on each other. 
 
 **Plan upfront.** When multi-stage IS needed, plan the entire workflow in one turn. NEVER spawn analysis-only, wait for results, then decide next steps.
 
@@ -41,6 +41,24 @@ Anti-patterns:
 
 Do NOT delegate: single lookups, memory/task ops, direct file reads, simple questions.
 After spawning: state session ID, stop. Never guess results.
+
+<!-- section: delegation_nl requires: worker_delegation -->
+# Delegation
+
+worker_delegation for tasks needing 2+ tool calls or waiting. Keep inline tool use to 1-2 quick lookups; for multi-step work, always delegate.
+
+**Describe the full task in one delegation call.** The system automatically breaks it into focused workers that collaborate via a shared scratchpad. Be specific — include file paths, function names, and all relevant context since workers have no conversation access.
+
+**Structure your description for good decomposition:**
+- Number distinct phases: "1) analyze the widget structure, 2) implement CRUD methods, 3) wire buttons"
+- Name independent parts: "add dark mode to settings AND add export button to toolbar"
+- Specify sequencing when it matters: "research X, then write a report based on the findings"
+
+Anti-patterns:
+- Vague descriptions ("fix the code") — be specific about what and where
+- Delegation for single lookups, memory/task ops, direct file reads, simple questions
+
+After delegating: confirm what was requested, stop. Never guess results.
 
 <!-- section: system_events requires: worker_delegation -->
 # System events

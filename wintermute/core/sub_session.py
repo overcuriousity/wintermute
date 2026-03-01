@@ -1554,6 +1554,7 @@ class SubSessionManager:
                 scratchpad_dir=_scratchpad_dir,
                 session_id=state.session_id,
                 tool_deps=self._tool_deps,
+                nl_tools=nl_tools,
             )
             state.messages = [
                 {"role": "system", "content": system_prompt},
@@ -1837,6 +1838,7 @@ class SubSessionManager:
         scratchpad_dir: Optional[str] = None,
         session_id: Optional[str] = None,
         tool_deps: Optional[ToolDeps] = None,
+        nl_tools: Optional[set[str]] = None,
     ) -> str:
         if mode == "none":
             base = ""
@@ -1851,11 +1853,13 @@ class SubSessionManager:
                 query=objective,
                 tool_profiles=tool_deps.tool_profiles if tool_deps else None,
                 self_model_profiler=tool_deps.self_model_profiler if tool_deps else None,
+                nl_tools=nl_tools,
             )
         else:  # "base_only"
             base_text = prompt_assembler._assemble_base(
                 available_tools,
                 tool_profiles=tool_deps.tool_profiles if tool_deps else None,
+                nl_tools=nl_tools,
             )
             base = f"# Core Instructions\n\n{base_text}" if base_text else ""
 

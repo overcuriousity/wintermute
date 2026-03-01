@@ -303,6 +303,9 @@ class LLMThread:
         model = self._cfg.model
 
         # Prefer the cached prompt that was actually sent to the LLM.
+        nl_enabled = self._nl_translation_config.get("enabled", False)
+        nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
+
         sp_text = self._last_system_prompt.get(thread_id)
         if sp_text is None:
             summary = self._compaction_summaries.get(thread_id)
@@ -311,13 +314,11 @@ class LLMThread:
                     extra_summary=summary,
                     tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
                     self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
+                    nl_tools=nl_tools,
                 )
             except Exception:  # noqa: BLE001
                 sp_text = ""
         sp_tokens = _count_tokens(sp_text, model)
-
-        nl_enabled = self._nl_translation_config.get("enabled", False)
-        nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
         active_schemas = tool_module.get_tool_schemas(nl_tools=nl_tools)
         tools_tokens = _count_tokens(json.dumps(active_schemas), model)
 
@@ -718,15 +719,16 @@ class LLMThread:
             _memory_results = None
 
         # Assemble system prompt first so we can measure its real token cost.
+        nl_enabled = self._nl_translation_config.get("enabled", False)
+        nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
         summary = self._compaction_summaries.get(thread_id)
         system_prompt = prompt_assembler.assemble(
             extra_summary=summary, query=_memory_query,
             memory_results=_memory_results, prompt_mode=prompt_mode,
             tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
             self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
+            nl_tools=nl_tools,
         )
-        nl_enabled = self._nl_translation_config.get("enabled", False)
-        nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
         active_schemas = tool_module.get_tool_schemas(nl_tools=nl_tools)
         overhead_tokens = (
             _count_tokens(system_prompt, pool_cfg.model)
@@ -754,6 +756,7 @@ class LLMThread:
                 memory_results=_memory_results, prompt_mode=prompt_mode,
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
                 self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
+                nl_tools=nl_tools,
             )
 
         self._last_system_prompt[thread_id] = system_prompt
@@ -885,12 +888,15 @@ class LLMThread:
             messages = await self._build_messages(
                 item.text, item.is_system_event, thread_id, item.content,
             )
+            nl_enabled = self._nl_translation_config.get("enabled", False)
+            nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
             summary = self._compaction_summaries.get(thread_id)
             system_prompt = prompt_assembler.assemble(
                 extra_summary=summary, query=memory_query,
                 memory_results=memory_results, prompt_mode=prompt_mode,
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
                 self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
+                nl_tools=nl_tools,
             )
             return await self._inference_loop(
                 system_prompt, messages, thread_id,
