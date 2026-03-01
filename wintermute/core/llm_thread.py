@@ -668,7 +668,14 @@ class LLMThread:
     # Core inference
     # ------------------------------------------------------------------
 
-    async def _process(self, item: _QueueItem) -> LLMReply:
+    async def _prepare_inference_context(
+        self, item: _QueueItem,
+    ) -> tuple[list[dict], str, str, "BackendPool", object, bool]:
+        """Resolve config, build messages, fetch memories, assemble system prompt.
+
+        Returns (messages, system_prompt, memory_query, pool, pool_cfg, is_sub_session_result).
+        Also handles pre-compaction if the history exceeds the token budget.
+        """
         thread_id = item.thread_id
         messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
 
@@ -739,6 +746,13 @@ class LLMThread:
         self._last_system_prompt[thread_id] = system_prompt
 
         is_sub_session_result = item.is_system_event and "[SUB-SESSION " in item.text
+        return messages, system_prompt, _memory_query, pool, pool_cfg, is_sub_session_result
+
+    async def _save_user_message(
+        self, item: _QueueItem, pool_cfg: object, is_sub_session_result: bool,
+    ) -> None:
+        """Persist the incoming user/system message to DB and emit events."""
+        thread_id = item.thread_id
         if not item.is_system_event:
             db_text = item.text
             if item.content is not None:
@@ -762,30 +776,15 @@ class LLMThread:
                 database.save_message, "user", item.text, thread_id,
                 token_count=_count_tokens(item.text, pool_cfg.model))
 
-        _inference_start = _time.time()
-        try:
-            reply = await self._inference_loop(
-                system_prompt, messages, thread_id,
-                disable_tools=is_sub_session_result,
-                pool=pool,
-            )
-        except ContextTooLargeError:
-            logger.warning("Context too large for thread %s — forcing compaction", thread_id)
-            await self._compact_context(thread_id)
-            messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
-            summary = self._compaction_summaries.get(thread_id)
-            system_prompt = prompt_assembler.assemble(
-                extra_summary=summary, query=_memory_query,
-                memory_results=_memory_results, prompt_mode=prompt_mode,
-            )
-            # Retry once after compaction
-            reply = await self._inference_loop(
-                system_prompt, messages, thread_id,
-                disable_tools=is_sub_session_result,
-                pool=pool,
-            )
+    async def _save_inference_result(
+        self, item: _QueueItem, reply: LLMReply,
+        pool: "BackendPool", pool_cfg: object,
+        inference_duration: float, memory_query: str | None,
+    ) -> None:
+        """Log inference results, save assistant message, emit events, run post-inference tasks."""
+        thread_id = item.thread_id
 
-        # Determine action type for interaction log
+        # Determine action type for interaction log.
         if item.turing_depth > 0:
             _action = "turing_response"
         elif thread_id.startswith("sub_"):
@@ -812,12 +811,11 @@ class LLMThread:
             logger.debug("Failed to save interaction log entry", exc_info=True)
 
         # Emit inference.completed event for self-model metrics.
-        _inference_duration = _time.time() - _inference_start
         if self._event_bus:
             self._event_bus.emit(
                 "inference.completed",
                 thread_id=thread_id,
-                duration_s=round(_inference_duration, 2),
+                duration_s=round(inference_duration, 2),
                 tool_calls=len(reply.tool_call_details) if reply.tool_call_details else 0,
                 model=pool.last_used,
             )
@@ -826,7 +824,7 @@ class LLMThread:
                 database.save_interaction_log,
                 _time.time(), "inference_completed", thread_id,
                 pool.last_used,
-                f"duration={_inference_duration:.2f}s",
+                f"duration={inference_duration:.2f}s",
                 f"tool_calls={len(reply.tool_call_details) if reply.tool_call_details else 0}",
                 "ok",
             )
@@ -840,18 +838,52 @@ class LLMThread:
         if self._event_bus:
             self._event_bus.emit("message.sent", thread_id=thread_id, text=_assistant_text)
 
-        # Turing correction cleanup: if the re-check (at depth+1) confirms
-        # the model STILL violated after the correction, the failed exchange
-        # will be cleaned up by the next depth's check.  For now, keep the
-        # response in DB — it may be a valid explanation of why the model
-        # can't comply.
         await self._maybe_summarise_components(
             thread_id, _from_system_event=item.is_system_event,
         )
 
         # Attach timing/backend metadata so callers can use it.
-        reply.duration_seconds = round(_inference_duration, 2)
+        reply.duration_seconds = round(inference_duration, 2)
         reply.backend_used = pool.last_used
+
+    async def _process(self, item: _QueueItem) -> LLMReply:
+        thread_id = item.thread_id
+
+        # 1. Prepare context: config, messages, memory, system prompt, pre-compaction.
+        (messages, system_prompt, _memory_query,
+         pool, pool_cfg, is_sub_session_result) = await self._prepare_inference_context(item)
+
+        # 2. Save the incoming message to DB.
+        await self._save_user_message(item, pool_cfg, is_sub_session_result)
+
+        # 3. Run inference (with compaction retry on context overflow).
+        _inference_start = _time.time()
+        try:
+            reply = await self._inference_loop(
+                system_prompt, messages, thread_id,
+                disable_tools=is_sub_session_result,
+                pool=pool,
+            )
+        except ContextTooLargeError:
+            logger.warning("Context too large for thread %s — forcing compaction", thread_id)
+            await self._compact_context(thread_id)
+            messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
+            summary = self._compaction_summaries.get(thread_id)
+            system_prompt = prompt_assembler.assemble(
+                extra_summary=summary, query=_memory_query,
+                memory_results=None, prompt_mode="full",
+            )
+            reply = await self._inference_loop(
+                system_prompt, messages, thread_id,
+                disable_tools=is_sub_session_result,
+                pool=pool,
+            )
+        _inference_duration = _time.time() - _inference_start
+
+        # 4. Save results, log, emit events, run post-inference tasks.
+        await self._save_inference_result(
+            item, reply, pool, pool_cfg, _inference_duration, _memory_query,
+        )
 
         return reply
 
