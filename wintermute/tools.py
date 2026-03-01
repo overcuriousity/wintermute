@@ -27,6 +27,7 @@ from typing import Any, Optional
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from wintermute.core.tool_deps import ToolDeps
 from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.core.tool_schemas import (  # noqa: F401 — re-exported
@@ -51,98 +52,24 @@ _NL_SCHEMA_MAP = NL_SCHEMA_MAP
 _TOOL_CALL_LOG: deque[dict] = deque(maxlen=500)
 
 
-# Maximum nesting depth for sub-session spawning (default; overridable via config).
-# 0 = main agent, 1 = sub-session, 2 = sub-sub-session (max).
-MAX_NESTING_DEPTH = 2
-
-
-def set_max_nesting_depth(depth: int) -> None:
-    """Override the default nesting depth limit (called from main.py config)."""
-    global MAX_NESTING_DEPTH
-    try:
-        value = int(depth)
-    except (TypeError, ValueError):
-        logger.warning("Invalid max nesting depth %r; keeping %d", depth, MAX_NESTING_DEPTH)
-        return
-    if value < 0:
-        logger.warning("Negative max nesting depth %r; clamping to 0", value)
-        value = 0
-    MAX_NESTING_DEPTH = value
-
-
 # ---------------------------------------------------------------------------
 # Tool implementations
 # ---------------------------------------------------------------------------
 
-# These will be injected by the scheduler thread at startup.
-_task_scheduler_ensure = None   # Callable[[str, dict, str|None, str|None, bool], None]
-_task_scheduler_remove = None   # Callable[[str], None]
-_task_scheduler_list = None     # Callable[[], list[dict]]
-
-# These will be injected by the SubSessionManager at startup.
-_sub_session_spawn = None   # Callable[[dict, str], str]
-_sub_session_cancel = None  # Callable[[str, Optional[str]], str]
-_sub_session_status = None  # Callable[[Optional[str]], list[dict]]
-
-# Event bus — injected by main.py at startup.
-_event_bus = None  # Optional[EventBus]
-
-
-def register_task_scheduler(ensure_fn, remove_fn, list_fn) -> None:
-    """Called once by the scheduler thread to provide task schedule management."""
-    global _task_scheduler_ensure, _task_scheduler_remove, _task_scheduler_list
-    _task_scheduler_ensure = ensure_fn
-    _task_scheduler_remove = remove_fn
-    _task_scheduler_list = list_fn
-
-
-def set_searxng_url(url: str) -> None:
-    """Override the default SearXNG URL (called from main.py config)."""
-    global SEARXNG_URL
-    SEARXNG_URL = url
-
-
-def register_sub_session_manager(fn) -> None:
-    """Called once by SubSessionManager to provide the spawn hook."""
-    global _sub_session_spawn
-    _sub_session_spawn = fn
-
-
-def register_sub_session_lifecycle(spawn_fn, cancel_fn, status_fn) -> None:
-    """Register all sub-session lifecycle hooks at once."""
-    global _sub_session_spawn, _sub_session_cancel, _sub_session_status
-    _sub_session_spawn = spawn_fn
-    _sub_session_cancel = cancel_fn
-    _sub_session_status = status_fn
-
-
-def register_event_bus(bus) -> None:
-    """Called once by main.py to provide the event bus."""
-    global _event_bus
-    _event_bus = bus
-
-
-# Self-model profiler — injected by main.py at startup.
-_self_model_profiler = None  # Optional[SelfModelProfiler]
-
-
-def register_self_model(profiler) -> None:
-    """Called once by main.py to provide the SelfModelProfiler instance."""
-    global _self_model_profiler
-    _self_model_profiler = profiler
-
 
 def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
-                            nesting_depth: int = 0, **_kw) -> str:
+                            nesting_depth: int = 0,
+                            tool_deps: Optional[ToolDeps] = None, **_kw) -> str:
+    deps = tool_deps or ToolDeps()
     action = inputs.get("action", "spawn")
 
     if action not in ("spawn", "status", "cancel"):
         return json.dumps({"error": f"Unknown action: {action}. Use spawn, status, or cancel."})
 
     if action == "status":
-        if _sub_session_status is None:
+        if deps.sub_session_status is None:
             return json.dumps({"error": "Sub-session manager not ready."})
-        sessions = _sub_session_status(thread_id)
+        sessions = deps.sub_session_status(thread_id)
         if not sessions:
             return json.dumps({"status": "No active background workers."})
         return json.dumps({"active_workers": sessions})
@@ -151,22 +78,22 @@ def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
         target = inputs.get("target_id")
         if not target:
             return json.dumps({"error": "target_id required for cancel."})
-        if _sub_session_cancel is None:
+        if deps.sub_session_cancel is None:
             return json.dumps({"error": "Sub-session manager not ready."})
-        result = _sub_session_cancel(target, thread_id)
+        result = deps.sub_session_cancel(target, thread_id)
         return json.dumps({"result": result})
 
     # action == "spawn" — existing logic below
     if not inputs.get("objective"):
         return json.dumps({"error": "objective is required for spawn."})
-    if nesting_depth >= MAX_NESTING_DEPTH:
+    if nesting_depth >= deps.max_nesting_depth:
         return json.dumps({
             "error": (
-                f"Maximum nesting depth ({MAX_NESTING_DEPTH}) reached. "
+                f"Maximum nesting depth ({deps.max_nesting_depth}) reached. "
                 "Cannot spawn further sub-sessions."
             )
         })
-    if _sub_session_spawn is None:
+    if deps.sub_session_spawn is None:
         return json.dumps({"error": "Sub-session manager not ready yet."})
     try:
         context_blobs = list(inputs.get("context_blobs") or [])
@@ -236,7 +163,7 @@ def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
             kwargs["not_before"] = inputs["not_before"]
         if "profile" in inputs:
             kwargs["profile"] = inputs["profile"]
-        session_id = _sub_session_spawn(**kwargs)
+        session_id = deps.sub_session_spawn(**kwargs)
         has_deps = bool(inputs.get("depends_on")) or bool(inputs.get("depends_on_previous"))
         has_gate = bool(inputs.get("not_before"))
         if has_deps or has_gate:
@@ -265,7 +192,8 @@ def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
         return json.dumps({"error": str(exc)})
 
 
-def _task_add(inputs: dict, effective_scope: Optional[str]) -> str:
+def _task_add(inputs: dict, effective_scope: Optional[str],
+              tool_deps: Optional[ToolDeps] = None) -> str:
     content = inputs.get("content")
     if not content:
         return json.dumps({"error": "content is required for add action"})
@@ -295,15 +223,16 @@ def _task_add(inputs: dict, effective_scope: Optional[str]) -> str:
         background=background,
     )
 
-    if schedule_type and _task_scheduler_ensure is not None:
-        _task_scheduler_ensure(
+    deps = tool_deps or ToolDeps()
+    if schedule_type and deps.task_scheduler_ensure is not None:
+        deps.task_scheduler_ensure(
             task_id, json.loads(schedule_config),
             ai_prompt, add_thread, background,
         )
         database.update_task(task_id, apscheduler_job_id=task_id)
 
-    if _event_bus:
-        _event_bus.emit("task.created", task_id=task_id,
+    if deps.event_bus:
+        deps.event_bus.emit("task.created", task_id=task_id,
                         content=content[:200],
                         schedule_type=schedule_type)
     result = {"status": "ok", "task_id": task_id}
@@ -312,7 +241,9 @@ def _task_add(inputs: dict, effective_scope: Optional[str]) -> str:
     return json.dumps(result)
 
 
-def _task_complete(inputs: dict, effective_scope: Optional[str]) -> str:
+def _task_complete(inputs: dict, effective_scope: Optional[str],
+                   tool_deps: Optional[ToolDeps] = None) -> str:
+    deps = tool_deps or ToolDeps()
     task_id = inputs.get("task_id")
     if not task_id:
         return json.dumps({"error": "task_id is required for complete action"})
@@ -320,26 +251,30 @@ def _task_complete(inputs: dict, effective_scope: Optional[str]) -> str:
     if not reason:
         return json.dumps({"error": "reason is required for complete action — explain why this task is finished"})
     task = database.get_task(task_id)
-    if task and task.get("apscheduler_job_id") and _task_scheduler_remove:
-        _task_scheduler_remove(task_id)
+    if task and task.get("apscheduler_job_id") and deps.task_scheduler_remove:
+        deps.task_scheduler_remove(task_id)
     ok = database.complete_task(task_id, reason=reason, thread_id=effective_scope)
-    if ok and _event_bus:
-        _event_bus.emit("task.completed", task_id=task_id, reason=reason[:200])
+    if ok and deps.event_bus:
+        deps.event_bus.emit("task.completed", task_id=task_id, reason=reason[:200])
     return json.dumps({"status": "ok" if ok else "not_found", "reason": reason})
 
 
-def _task_pause(inputs: dict, effective_scope: Optional[str]) -> str:
+def _task_pause(inputs: dict, effective_scope: Optional[str],
+                tool_deps: Optional[ToolDeps] = None) -> str:
+    deps = tool_deps or ToolDeps()
     task_id = inputs.get("task_id")
     if not task_id:
         return json.dumps({"error": "task_id is required for pause action"})
     task = database.get_task(task_id)
-    if task and task.get("apscheduler_job_id") and _task_scheduler_remove:
-        _task_scheduler_remove(task_id)
+    if task and task.get("apscheduler_job_id") and deps.task_scheduler_remove:
+        deps.task_scheduler_remove(task_id)
     ok = database.pause_task(task_id)
     return json.dumps({"status": "ok" if ok else "not_found"})
 
 
-def _task_resume(inputs: dict, effective_scope: Optional[str]) -> str:
+def _task_resume(inputs: dict, effective_scope: Optional[str],
+                 tool_deps: Optional[ToolDeps] = None) -> str:
+    deps = tool_deps or ToolDeps()
     task_id = inputs.get("task_id")
     if not task_id:
         return json.dumps({"error": "task_id is required for resume action"})
@@ -347,9 +282,9 @@ def _task_resume(inputs: dict, effective_scope: Optional[str]) -> str:
     if ok:
         # Re-register schedule with APScheduler.
         task = database.get_task(task_id)
-        if task and task.get("schedule_config") and _task_scheduler_ensure:
+        if task and task.get("schedule_config") and deps.task_scheduler_ensure:
             sched = json.loads(task["schedule_config"])
-            _task_scheduler_ensure(
+            deps.task_scheduler_ensure(
                 task_id, sched,
                 task.get("ai_prompt"), task.get("thread_id"),
                 bool(task.get("background")),
@@ -357,18 +292,21 @@ def _task_resume(inputs: dict, effective_scope: Optional[str]) -> str:
     return json.dumps({"status": "ok" if ok else "not_found"})
 
 
-def _task_delete(inputs: dict, effective_scope: Optional[str]) -> str:
+def _task_delete(inputs: dict, effective_scope: Optional[str],
+                 tool_deps: Optional[ToolDeps] = None) -> str:
+    deps = tool_deps or ToolDeps()
     task_id = inputs.get("task_id")
     if not task_id:
         return json.dumps({"error": "task_id is required for delete action"})
     task = database.get_task(task_id)
-    if task and task.get("apscheduler_job_id") and _task_scheduler_remove:
-        _task_scheduler_remove(task_id)
+    if task and task.get("apscheduler_job_id") and deps.task_scheduler_remove:
+        deps.task_scheduler_remove(task_id)
     ok = database.delete_task(task_id)
     return json.dumps({"status": "ok" if ok else "not_found"})
 
 
-def _task_update(inputs: dict, effective_scope: Optional[str]) -> str:
+def _task_update(inputs: dict, effective_scope: Optional[str],
+                 tool_deps: Optional[ToolDeps] = None) -> str:
     task_id = inputs.get("task_id")
     if not task_id:
         return json.dumps({"error": "task_id is required for update action"})
@@ -381,7 +319,8 @@ def _task_update(inputs: dict, effective_scope: Optional[str]) -> str:
     return json.dumps({"status": "ok" if ok else "not_found"})
 
 
-def _task_list(inputs: dict, effective_scope: Optional[str]) -> str:
+def _task_list(inputs: dict, effective_scope: Optional[str],
+               tool_deps: Optional[ToolDeps] = None) -> str:
     status = inputs.get("status", "active")
     items = database.list_tasks(status, thread_id=effective_scope)
     formatted = []
@@ -417,7 +356,8 @@ _TASK_ACTIONS: dict[str, Any] = {
 
 
 def _tool_task(inputs: dict, thread_id: Optional[str] = None,
-               parent_thread_id: Optional[str] = None, **_kw) -> str:
+               parent_thread_id: Optional[str] = None,
+               tool_deps: Optional[ToolDeps] = None, **_kw) -> str:
     """Unified task tool — handles add/update/complete/pause/resume/delete/list."""
     effective_scope = parent_thread_id or thread_id
     try:
@@ -425,18 +365,19 @@ def _tool_task(inputs: dict, thread_id: Optional[str] = None,
         handler = _TASK_ACTIONS.get(action)
         if handler is None:
             return json.dumps({"error": f"Unknown action: {action}"})
-        return handler(inputs, effective_scope)
+        return handler(inputs, effective_scope, tool_deps=tool_deps)
     except Exception as exc:  # noqa: BLE001
         logger.exception("task tool failed")
         return json.dumps({"error": str(exc)})
 
 
-def _tool_append_memory(inputs: dict, **_kw) -> str:
+def _tool_append_memory(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -> str:
     try:
+        deps = tool_deps or ToolDeps()
         source = inputs.get("source", "user_explicit")
         total_len = prompt_assembler.append_memory(inputs["entry"], source=source)
-        if _event_bus:
-            _event_bus.emit("memory.appended", entry=inputs["entry"][:200])
+        if deps.event_bus:
+            deps.event_bus.emit("memory.appended", entry=inputs["entry"][:200])
         return json.dumps({"status": "ok", "total_chars": total_len})
     except Exception as exc:  # noqa: BLE001
         logger.exception("append_memory failed")
@@ -445,15 +386,16 @@ def _tool_append_memory(inputs: dict, **_kw) -> str:
 
 
 
-def _tool_add_skill(inputs: dict, **_kw) -> str:
+def _tool_add_skill(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -> str:
     try:
+        deps = tool_deps or ToolDeps()
         prompt_assembler.add_skill(
             inputs["skill_name"],
             inputs["documentation"],
             summary=inputs.get("summary"),
         )
-        if _event_bus:
-            _event_bus.emit("skill.added", skill_name=inputs["skill_name"])
+        if deps.event_bus:
+            deps.event_bus.emit("skill.added", skill_name=inputs["skill_name"])
         try:
             from wintermute.workers import skill_stats
             skill_stats.record_skill_written(inputs["skill_name"])
@@ -520,7 +462,7 @@ def _tool_write_file(inputs: dict, **_kw) -> str:
 
 
 
-def _tool_query_telemetry(inputs: dict, **_kw) -> str:
+def _tool_query_telemetry(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -> str:
     """Query operational telemetry data."""
     query_type = inputs.get("query_type", "")
     since_hours = int(inputs.get("since_hours", 24))
@@ -572,13 +514,14 @@ def _tool_query_telemetry(inputs: dict, **_kw) -> str:
             return json.dumps({"entries": rows, "count": len(rows)})
 
         elif query_type == "self_model":
-            if _self_model_profiler is None:
+            deps = tool_deps or ToolDeps()
+            if deps.self_model_profiler is None:
                 return json.dumps({"error": "Self-model profiler not available"})
-            summary = _self_model_profiler.get_summary()
+            summary = deps.self_model_profiler.get_summary()
             # Read raw YAML metrics.
             raw_metrics = {}
             try:
-                yaml_path = _self_model_profiler.yaml_path
+                yaml_path = deps.self_model_profiler.yaml_path
                 if yaml_path.exists():
                     import yaml
                     raw_metrics = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
@@ -662,15 +605,16 @@ def _describe_schedule(inputs: dict) -> str:
 # Research tool implementations
 # ---------------------------------------------------------------------------
 
-def _tool_search_web(inputs: dict, **_kw) -> str:
+def _tool_search_web(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -> str:
     query = inputs["query"]
     max_results = int(inputs.get("max_results", 5))
     logger.info("search_web: %s", query)
+    searxng_url = (tool_deps.searxng_url if tool_deps else "") or SEARXNG_URL
 
     # --- Try SearXNG first ---
     try:
         params = urllib.parse.urlencode({"q": query, "format": "json", "categories": "general"})
-        req = Request(f"{SEARXNG_URL}/search?{params}", headers={"User-Agent": "wintermute/0.1"})
+        req = Request(f"{searxng_url}/search?{params}", headers={"User-Agent": "wintermute/0.1"})
         with urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         results = [
@@ -785,7 +729,8 @@ _DISPATCH: dict[str, Any] = {
 
 
 def execute_tool(name: str, inputs: dict, thread_id: Optional[str] = None,
-                 nesting_depth: int = 0, parent_thread_id: Optional[str] = None) -> str:
+                 nesting_depth: int = 0, parent_thread_id: Optional[str] = None,
+                 tool_deps: Optional[ToolDeps] = None) -> str:
     """Execute a tool by name and return its JSON-string result."""
     fn = _DISPATCH.get(name)
     if fn is None:
@@ -794,7 +739,7 @@ def execute_tool(name: str, inputs: dict, thread_id: Optional[str] = None,
     t0 = time.monotonic()
     try:
         result = fn(inputs, thread_id=thread_id, nesting_depth=nesting_depth,
-                    parent_thread_id=parent_thread_id)
+                    parent_thread_id=parent_thread_id, tool_deps=tool_deps)
         error_flag = None
     except (KeyError, TypeError, ValueError) as exc:
         result = json.dumps({"error": f"Tool '{name}' called with invalid arguments: {exc}"})

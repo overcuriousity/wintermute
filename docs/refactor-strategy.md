@@ -1,10 +1,10 @@
 # Refactor Strategy: Issues #79–#108
 
-**Status as of 2026-03-01** — Phase 1 complete. This document covers the remaining 7 open issues and their implementation order.
+**Status as of 2026-03-01** — Phase 2 complete (#104 + #83). This document covers the remaining 5 open issues and their implementation order.
 
 ## Completed (Phase 1)
 
-All six Phase 1 issues have been merged:
+All Phase 1 and Phase 2 issues have been merged:
 
 | Issue | Summary | PR |
 |---|---|---|
@@ -16,14 +16,14 @@ All six Phase 1 issues have been merged:
 | #99 | `make_tool_context()` factory function | Merged |
 | #100 | Unified TP runner (`core/tp_runner.py`) | Merged |
 | #108 | Magic numbers exposed in `config.yaml` | Merged |
+| #104 | `_process()` compaction retry extracted to `_run_inference_with_retry()` | Merged |
+| #83 | Module-level DI globals replaced with `ToolDeps` dataclass | Merged |
 
-## Remaining Open Issues (7)
+## Remaining Open Issues (5)
 
 | # | Type | File(s) | Current Size | Summary |
 |---|---|---|---|---|
-| **104** | refactor | `core/llm_thread.py` | 1199 lines | `_process()` does 9+ things in ~180 lines |
-| **83** | arch | `tools.py`, `infra/prompt_assembler.py`, `infra/memory_store.py` | — | 6+ module-level `None` globals used as DI, with `register_*`/`set_*` wiring |
-| **80** | arch | `tools.py` | 778 lines | Mixes DI globals, 10 tool implementations, utility classes, dispatcher |
+| **80** | arch | `tools.py` | 778 lines | Mixes 10 tool implementations, utility classes, dispatcher |
 | **81** | arch | `infra/prompt_assembler.py` | 481 lines | Mixes prompt assembly, file I/O (`append_memory`, `add_skill`), object registry |
 | **82** | arch | `main.py` | 826 lines | 4 post-construction injection blocks (~17 `obj._attr = ...` assignments) |
 | **79** | arch | `core/llm_thread.py` | 1199 lines | God object: queue, history, compaction, prompt assembly, inference, TP, sessions |
@@ -31,41 +31,13 @@ All six Phase 1 issues have been merged:
 
 ## Implementation Plan
 
-### Phase 2A — `_process()` decomposition (independent)
+### Phase 2A — `_process()` decomposition ✅
 
-**Issue #104** — Split `_process()` into focused helpers
+**Issue #104** — Completed. Extracted `_run_inference_with_retry()` from `_process()`.
 
-`_process()` (lines 629–809, 181 lines) performs 11 distinct operations. This is self-contained and benefits from the Phase 1 work (#99 factory, #100 TP runner).
+### Phase 2B — DI mechanism ✅
 
-Extract into named helpers:
-- `_resolve_thread_context()` — config/pool resolution + activity tracking
-- `_fetch_memory_context()` — vector query construction + memory search
-- `_assemble_and_compact()` — prompt assembly + token budget + compaction
-- `_persist_user_message()` — DB save with per-message-type logic
-- `_run_inference_with_retry()` — inference loop + ContextTooLargeError retry
-- `_persist_result()` — interaction log + assistant message save + events
-
-**Depends on:** nothing (Phase 1 is done)
-**Enables:** #79 (LLMThread decomposition is easier with smaller methods)
-
-### Phase 2B — DI mechanism (independent, parallel with 2A)
-
-**Issue #83** — Replace module-level globals with explicit dependency injection
-
-Current state (6 globals):
-- `tools.py`: `_task_scheduler_ensure`, `_task_scheduler_remove`, `_task_scheduler_list`, `_sub_session_spawn`, `_event_bus`, `_self_model_profiler`
-- `prompt_assembler.py`: `_tool_profiles`, `_self_model_profiler` (duplicated!)
-- `memory_store.py`: `_backend`, `_config` (singleton via `init()`)
-
-Approach:
-1. Create a `ToolDeps` dataclass (or similar) holding all tool-execution dependencies
-2. Pass it through `ToolCallContext` (which already flows through the call chain)
-3. Remove `register_*`/`set_*` functions and module-level globals from `tools.py`
-4. For `prompt_assembler.py`: pass deps as arguments to `assemble()` instead of module globals
-5. `memory_store.py` singleton is acceptable (it's a true singleton, initialized once)
-
-**Depends on:** nothing
-**Enables:** #80, #81, #82
+**Issue #83** — Completed. Created `ToolDeps` dataclass in `core/tool_deps.py`. Removed all `register_*`/`set_*` globals from `tools.py` and `prompt_assembler.py`. Dependencies now flow via `ToolDeps` through `ToolCallContext` and explicit parameters.
 
 ### Phase 3 — God object decomposition (sequential, after Phase 2B)
 
@@ -137,9 +109,9 @@ Phase 2A              Phase 2B           Phase 3              Phase 4       Phas
 
 ## Summary: Execution Order
 
-| Order | Issue(s) | Phase | Parallel? |
-|---|---|---|---|
-| 1 | **#104**, **#83** | 2A + 2B | Yes, parallel |
-| 2 | **#80**, **#81**, **#82** | 3 | Yes, parallel (all need #83 done) |
-| 3 | **#79** | 4 | No (needs #104 + #80 + #83) |
-| 4 | **#85** | 5 | No (needs #79) |
+| Order | Issue(s) | Phase | Parallel? | Status |
+|---|---|---|---|---|
+| 1 | **#104**, **#83** | 2A + 2B | Yes, parallel | ✅ Done |
+| 2 | **#80**, **#81**, **#82** | 3 | Yes, parallel (all need #83 done) | Next |
+| 3 | **#79** | 4 | No (needs #104 + #80 + #83) | |
+| 4 | **#85** | 5 | No (needs #79) | |

@@ -45,6 +45,8 @@ from wintermute.core.types import (  # noqa: F401 — re-exported for backwards 
 from wintermute.core.tool_call_rescue import rescue_tool_calls
 from wintermute import tools as tool_module
 
+from wintermute.core.tool_deps import ToolDeps
+
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager
@@ -120,7 +122,8 @@ class LLMThread:
                  event_bus: "Optional[EventBus]" = None,
                  thread_config_manager: "Optional[ThreadConfigManager]" = None,
                  backend_pools_by_name: "Optional[dict[str, BackendPool]]" = None,
-                 compaction_keep_recent: int = COMPACTION_KEEP_RECENT) -> None:
+                 compaction_keep_recent: int = COMPACTION_KEEP_RECENT,
+                 tool_deps: "Optional[ToolDeps]" = None) -> None:
         self._main_pool = main_pool
         self._compaction_pool = compaction_pool
         self._turing_protocol_pool = turing_protocol_pool
@@ -152,6 +155,7 @@ class LLMThread:
         self._cfg = main_pool.primary
         self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)
         self._sub_sessions = sub_session_manager  # set post-init via inject_sub_session_manager
+        self._tool_deps = tool_deps
         self._queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         self._running = False
         # Per-thread compaction summaries: thread_id -> summary text
@@ -303,7 +307,11 @@ class LLMThread:
         if sp_text is None:
             summary = self._compaction_summaries.get(thread_id)
             try:
-                sp_text = prompt_assembler.assemble(extra_summary=summary)
+                sp_text = prompt_assembler.assemble(
+                    extra_summary=summary,
+                    tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
+                    self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
+                )
             except Exception:  # noqa: BLE001
                 sp_text = ""
         sp_tokens = _count_tokens(sp_text, model)
@@ -714,6 +722,8 @@ class LLMThread:
         system_prompt = prompt_assembler.assemble(
             extra_summary=summary, query=_memory_query,
             memory_results=_memory_results, prompt_mode=prompt_mode,
+            tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
+            self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
         )
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
@@ -742,6 +752,8 @@ class LLMThread:
             system_prompt = prompt_assembler.assemble(
                 extra_summary=summary, query=_memory_query,
                 memory_results=_memory_results, prompt_mode=prompt_mode,
+                tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
+                self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
             )
 
         self._last_system_prompt[thread_id] = system_prompt
@@ -848,6 +860,44 @@ class LLMThread:
         reply.duration_seconds = round(inference_duration, 2)
         reply.backend_used = pool.last_used
 
+    async def _run_inference_with_retry(
+        self,
+        item: _QueueItem,
+        system_prompt: str,
+        messages: list[dict],
+        pool: "BackendPool",
+        is_sub_session_result: bool,
+        memory_query: "str | None",
+        memory_results: "list | None",
+        prompt_mode: str,
+    ) -> "LLMReply":
+        """Run the inference loop, retrying once after compaction on context overflow."""
+        thread_id = item.thread_id
+        try:
+            return await self._inference_loop(
+                system_prompt, messages, thread_id,
+                disable_tools=is_sub_session_result,
+                pool=pool,
+            )
+        except ContextTooLargeError:
+            logger.warning("Context too large for thread %s — forcing compaction", thread_id)
+            await self._compact_context(thread_id)
+            messages = await self._build_messages(
+                item.text, item.is_system_event, thread_id, item.content,
+            )
+            summary = self._compaction_summaries.get(thread_id)
+            system_prompt = prompt_assembler.assemble(
+                extra_summary=summary, query=memory_query,
+                memory_results=memory_results, prompt_mode=prompt_mode,
+                tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
+                self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
+            )
+            return await self._inference_loop(
+                system_prompt, messages, thread_id,
+                disable_tools=is_sub_session_result,
+                pool=pool,
+            )
+
     async def _process(self, item: _QueueItem) -> LLMReply:
         thread_id = item.thread_id
 
@@ -861,26 +911,10 @@ class LLMThread:
 
         # 3. Run inference (with compaction retry on context overflow).
         _inference_start = _time.time()
-        try:
-            reply = await self._inference_loop(
-                system_prompt, messages, thread_id,
-                disable_tools=is_sub_session_result,
-                pool=pool,
-            )
-        except ContextTooLargeError:
-            logger.warning("Context too large for thread %s — forcing compaction", thread_id)
-            await self._compact_context(thread_id)
-            messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
-            summary = self._compaction_summaries.get(thread_id)
-            system_prompt = prompt_assembler.assemble(
-                extra_summary=summary, query=_memory_query,
-                memory_results=_memory_results, prompt_mode=_prompt_mode,
-            )
-            reply = await self._inference_loop(
-                system_prompt, messages, thread_id,
-                disable_tools=is_sub_session_result,
-                pool=pool,
-            )
+        reply = await self._run_inference_with_retry(
+            item, system_prompt, messages, pool,
+            is_sub_session_result, _memory_query, _memory_results, _prompt_mode,
+        )
         _inference_duration = _time.time() - _inference_start
 
         # 4. Save results, log, emit events, run post-inference tasks.
@@ -999,6 +1033,7 @@ class LLMThread:
             tp_enabled=tp_enabled,
             tp_check=_tp_check_main if tp_enabled else None,
             max_tool_output_chars=active_cfg.context_size * 4,  # tokens → approx chars
+            tool_deps=self._tool_deps,
         )
 
         empty_retries = 0
