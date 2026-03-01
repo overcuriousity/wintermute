@@ -40,7 +40,7 @@ The Turing Protocol verdict (`pass`/`fail`/`skipped`) is captured from the `post
 
 ## Historical Feedback
 
-When `spawn_sub_session` is called, the system queries `sub_session_outcomes` for similar past objectives before creating the worker. If matches are found, a context blob is prepended:
+When `worker_delegation` is called, the system queries `sub_session_outcomes` for similar past objectives before creating the worker. If matches are found, a context blob is prepended:
 
 ```
 [Historical Feedback] Similar past sub-sessions:

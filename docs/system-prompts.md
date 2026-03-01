@@ -34,9 +34,9 @@ Each section declares which tool(s) it requires. When a sub-session is spawned w
 |---------|---------------|---------|
 | `core` | always | Personality, environment, prompt note |
 | `knowledge_routing` | `append_memory`, `task`, `add_skill` (any) | Memory/task/skill routing |
-| `delegation` | `spawn_sub_session` | Task delegation patterns |
+| `delegation` | `worker_delegation` | Task delegation patterns |
 | `scheduled_tasks` | `task` | Scheduled task instructions |
-| `system_events` | `spawn_sub_session` | System event handling |
+| `system_events` | `worker_delegation` | System event handling |
 | `introspection` | `query_telemetry` | Self-introspection via telemetry queries |
 | `guidelines` | always | Guidelines, critical rules, personality |
 

@@ -37,7 +37,7 @@ User (Matrix / Browser)
         |                  search_web / fetch_url
         |                  append_memory / task / add_skill / query_telemetry
         |
-        +-- spawn_sub_session --> SubSessionManager
+        +-- worker_delegation --> SubSessionManager
                                         |
                                         |-- Workflow DAG
                                         |   |-- worker A (no deps) --> starts immediately
@@ -95,7 +95,7 @@ SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + s
    pipeline (detect → validate → correct) against the response, scoped by
    phase (`post_inference`, `pre_execution`, `post_execution`) and context
    (`main` thread or `sub_session`). If violations are confirmed (e.g. the
-   model claimed to spawn a session but `spawn_sub_session` is not in
+   model claimed to spawn a session but `worker_delegation` is not in
    `tool_calls_made`), a corrective system event is injected so the model
    can self-correct. Both main thread and sub-sessions support depth-2
    re-checking: if the model ignores the first correction, a graceful
@@ -103,7 +103,7 @@ SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + s
 
 ## Sub-session Lifecycle
 
-1. Orchestrator (main LLM or a `full`-mode worker) calls `spawn_sub_session`
+1. Orchestrator (main LLM or a `full`-mode worker) calls `worker_delegation`
 2. `SubSessionManager.spawn()` registers a `TaskNode` in a workflow DAG
 3. Dependency IDs are validated — unknown IDs are stripped with a warning to prevent deadlocks
 4. If `depends_on` is specified and dependencies aren't done yet, the node stays `pending`
@@ -158,7 +158,7 @@ These are some architectural choices, which should make it better for local LLMs
 
 **Turing Protocol.** A three-stage (detect → validate → correct) post-inference validation pipeline that catches the hallucination patterns small models are most prone to — claiming to have done things they didn't, fabricating tool output, or making promises without acting. Rather than requiring a stronger model, corrections are injected automatically so the model can self-correct. See [turing-protocol.md](turing-protocol.md) for the full reference.
 
-**NL Translation (optional).** For models that struggle with multi-field structured JSON schemas, complex tool calls (`task`, `spawn_sub_session`, `add_skill`) can be exposed as a single plain-English `description` field. A dedicated small translator LLM expands the description into structured arguments. See [tools.md — NL Translation Mode](tools.md#nl-translation-mode).
+**NL Translation (optional).** For models that struggle with multi-field structured JSON schemas, complex tool calls (`task`, `worker_delegation`, `add_skill`) can be exposed as a single plain-English `description` field. A dedicated small translator LLM expands the description into structured arguments. See [tools.md — NL Translation Mode](tools.md#nl-translation-mode).
 
 **Lean system prompt.** The system prompt is assembled from independent file-based components (`BASE_PROMPT.txt`, `MEMORIES.txt`, tasks, skills TOC). Skills inject only a one-line-per-skill table of contents; full procedures are loaded on demand via `read_file`. Components have configurable character caps with auto-summarisation when exceeded. No framework boilerplate is injected — the prompt contains only what you wrote and what the model genuinely needs.
 

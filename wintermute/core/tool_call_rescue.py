@@ -70,8 +70,8 @@ _RE_XML_GENERIC = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
-# 2. Tool-name tags: <spawn_sub_session …>…</spawn_sub_session> or
-#    <spawn_sub_session>…[/spawn_sub_session]
+# 2. Tool-name tags: <worker_delegation …>…</worker_delegation> or
+#    <worker_delegation>…[/worker_delegation]
 #    Built dynamically per call so it only matches known tool names.
 
 # 3. Fenced code block containing a tool-call JSON object.
@@ -299,7 +299,7 @@ def rescue_tool_calls(
     # --- Pattern 4: Known tool-name tags ---
     if known:
         # Build a lowercase lookup so case-insensitive tag matches (e.g.
-        # <SPAWN_SUB_SESSION>) resolve to the canonical tool name.
+        # <WORKER_DELEGATION>) resolve to the canonical tool name.
         _known_lower: dict[str, str] = {n.lower(): n for n in known}
         pat = _build_tool_name_pattern(known)
         for m in pat.finditer(content):

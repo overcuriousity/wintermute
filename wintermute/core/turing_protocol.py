@@ -143,7 +143,7 @@ _BUILTIN_HOOKS: list[TuringHook] = [
             '- **workflow_spawn**: The assistant\'s text claims -- in any tense or '
             'phrasing -- that a session, workflow, or background task was '
             'started/spawned/launched during this response, AND '
-            '"spawn_sub_session" is NOT in tool_calls_made. Do NOT flag pure '
+            '"worker_delegation" is NOT in tool_calls_made. Do NOT flag pure '
             'intentions ("I\'ll start..."). Do NOT flag references to sessions '
             'in active_sessions.'
         ),
@@ -152,13 +152,13 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         validator_prompt=None,
         correction_template=(
             "[TURING PROTOCOL CORRECTION] You claimed a background session/workflow "
-            "was started, but spawn_sub_session was never called.\n"
+            "was started, but worker_delegation was never called.\n"
             "Issue: {reason}\n\n"
-            "Either call spawn_sub_session now, or acknowledge no session was started.\n\n"
+            "Either call worker_delegation now, or acknowledge no session was started.\n\n"
             "IMPORTANT: Do NOT write JSON arguments as plain text in your message. "
             "You must use the function-calling mechanism — the same way you would "
             "normally invoke any tool.\n\n"
-            "spawn_sub_session tool schema:\n"
+            "worker_delegation tool schema:\n"
             "```json\n{tool_schema}\n```"
         ),
         halt_inference=False,
@@ -346,7 +346,7 @@ _BUILTIN_HOOKS: list[TuringHook] = [
     # Fires during pre_execution in the main thread when the cumulative
     # count of execution/research tool calls exceeds the configured
     # max_inline_tool_rounds threshold.  Blocks further inline tool
-    # execution and instructs the model to delegate via spawn_sub_session.
+    # execution and instructs the model to delegate via worker_delegation.
     TuringHook(
         name="inline_tool_limit",
         detection_prompt="",  # programmatic-only: no Stage 1 LLM call
@@ -359,7 +359,7 @@ _BUILTIN_HOOKS: list[TuringHook] = [
             "STOP making direct tool calls. Delegate the remaining work "
             "to a background worker:\n"
             "1. Summarise what you have learned so far from the tool results.\n"
-            "2. Call spawn_sub_session with a comprehensive objective that "
+            "2. Call worker_delegation with a comprehensive objective that "
             "includes your findings and the remaining steps.\n\n"
             "The worker can read files, execute commands, and write files "
             "autonomously. Give it the FULL task — do not split into "
@@ -519,17 +519,17 @@ def _build_stage1_system_prompt(hooks: list[TuringHook]) -> str:
 def validate_workflow_spawn(context: dict, detection_result: dict) -> bool:
     """Programmatic validator for workflow_spawn.
 
-    Returns True if the violation is confirmed (spawn_sub_session NOT in
+    Returns True if the violation is confirmed (worker_delegation NOT in
     tool_calls_made), False if it's a false positive.
     """
     tool_calls_made = context.get("tool_calls_made", [])
-    if "spawn_sub_session" in tool_calls_made:
+    if "worker_delegation" in tool_calls_made:
         logger.info(
-            "Stage 2: False positive — spawn_sub_session was actually called. "
+            "Stage 2: False positive — worker_delegation was actually called. "
             "LLM reason: %s", detection_result.get("reason", "?"),
         )
         return False
-    logger.warning("Stage 2: Confirmed hallucination — spawn_sub_session NOT in tool_calls_made")
+    logger.warning("Stage 2: Confirmed hallucination — worker_delegation NOT in tool_calls_made")
     return True
 
 
@@ -768,7 +768,7 @@ def validate_inline_tool_limit(context: dict, detection_result: dict) -> bool:
     current tool is also an execution/research tool, the violation is
     confirmed — blocking the call and instructing the model to delegate.
 
-    Orchestration tools (spawn_sub_session, task, append_memory, etc.)
+    Orchestration tools (worker_delegation, task, append_memory, etc.)
     never count and are never blocked, so the model can always delegate.
 
     Returns True if the violation is confirmed (limit exceeded).
@@ -838,7 +838,7 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook
     When *context* is provided and contains ``tool_name`` (i.e. in the
     ``pre_execution`` phase), the tool schema embedded in correction messages
     is loaded dynamically for the tool that was called.  Otherwise it falls
-    back to the spawn_sub_session schema for backward compatibility with
+    back to the worker_delegation schema for backward compatibility with
     ``post_inference`` hooks such as ``workflow_spawn``.
     """
     parts = []
@@ -939,8 +939,8 @@ def _get_tool_schema(tool_name: str, nl_tools: "set[str] | None" = None) -> str:
 
 
 def _get_spawn_tool_schema(nl_tools: "set[str] | None" = None) -> str:
-    """Return a compact JSON string of the spawn_sub_session tool schema."""
-    return _get_tool_schema("spawn_sub_session", nl_tools=nl_tools)
+    """Return a compact JSON string of the worker_delegation tool schema."""
+    return _get_tool_schema("worker_delegation", nl_tools=nl_tools)
 
 
 def _get_phantom_tool_schemas(violation: dict, nl_tools: "set[str] | None" = None) -> str:

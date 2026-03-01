@@ -227,7 +227,7 @@ async def _translate_nl(
         for item in translated:
             if (merged
                     and "objective" not in item
-                    and name == "spawn_sub_session"):
+                    and name == "worker_delegation"):
                 merged[-1].update(item)
             else:
                 merged.append(item)

@@ -11,7 +11,7 @@ from wintermute.infra import database
 logger = logging.getLogger(__name__)
 
 
-def tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
+def tool_worker_delegation(inputs: dict, thread_id: Optional[str] = None,
                            nesting_depth: int = 0,
                            tool_deps: Optional[ToolDeps] = None, **_kw) -> str:
     deps = tool_deps or ToolDeps()
@@ -140,7 +140,7 @@ def tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
             ),
         })
     except Exception as exc:  # noqa: BLE001
-        logger.exception("spawn_sub_session failed")
+        logger.exception("worker_delegation failed")
         return json.dumps({"error": str(exc)})
 
 

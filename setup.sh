@@ -1140,7 +1140,7 @@ nl_translation:
   backends: ${_nl_backend}
   tools:
     - task
-    - spawn_sub_session
+    - worker_delegation
     - add_skill
 YAML
     else
@@ -1151,7 +1151,7 @@ YAML
 #   backends: ["small"]
 #   tools:
 #     - task
-#     - spawn_sub_session
+#     - worker_delegation
 #     - add_skill
 YAML
     fi

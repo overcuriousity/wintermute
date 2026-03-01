@@ -10,7 +10,7 @@ Tools are grouped into three categories that control which tools are available i
 |----------|-------------|-------|
 | **execution** | All agents | `execute_shell`, `read_file`, `write_file` |
 | **research** | All agents | `search_web`, `fetch_url` |
-| **orchestration** | Main agent + `full`-mode sub-sessions | `spawn_sub_session`, `task`, `append_memory`, `add_skill`, `query_telemetry` |
+| **orchestration** | Main agent + `full`-mode sub-sessions | `worker_delegation`, `task`, `append_memory`, `add_skill`, `query_telemetry` |
 
 ## Tool Filtering by Sub-session Mode
 
@@ -32,7 +32,7 @@ Named tool profiles provide config-driven presets for common sub-session worker 
 | `researcher` | `search_web`, `fetch_url` | `minimal` |
 | `file_worker` | `execute_shell`, `read_file`, `write_file` | `minimal` |
 | `full_worker` | `execute_shell`, `read_file`, `write_file`, `search_web`, `fetch_url` | `minimal` |
-| `orchestrator` | `spawn_sub_session`, `task`, `append_memory`, `add_skill` | `full` |
+| `orchestrator` | `worker_delegation`, `task`, `append_memory`, `add_skill` | `full` |
 
 ### Custom Profiles
 
@@ -109,7 +109,7 @@ Returns: `url`, `content_type`, `length`, `content`
 
 ### Orchestration Tools
 
-#### `spawn_sub_session`
+#### `worker_delegation`
 
 Spawn an isolated background worker for a complex, multi-step task.
 
@@ -200,7 +200,7 @@ Query the system's own operational telemetry — success rates, recent outcomes,
 ## NL Translation Mode
 
 When `nl_translation.enabled: true` in config, `task`,
-`spawn_sub_session`, and `add_skill` are presented to the main LLM with
+`worker_delegation`, and `add_skill` are presented to the main LLM with
 simplified single-field schemas. Instead of filling in all structured
 parameters, the LLM writes a plain-English description:
 

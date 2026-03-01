@@ -51,7 +51,7 @@ Completed. `tools.py` converted to `tools/` package:
 - `tools/memory_tools.py` — `tool_append_memory`, `tool_add_skill`
 - `tools/io_tools.py` — `tool_read_file`, `tool_write_file`, `tool_execute_shell`
 - `tools/web_tools.py` — `tool_search_web`, `tool_fetch_url`, `_HTMLTextExtractor`
-- `tools/session_tools.py` — `tool_spawn_sub_session`, `tool_query_telemetry`
+- `tools/session_tools.py` — `tool_worker_delegation`, `tool_query_telemetry`
 
 All external consumers (`from wintermute import tools as tool_module`) remain unchanged.
 

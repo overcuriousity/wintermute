@@ -226,7 +226,7 @@ turing_protocol:
   validators:
     workflow_spawn: true                   # Detects when the LLM claims it spawned a
                                            # background worker but didn't actually call
-                                           # the spawn_sub_session tool.
+                                           # the worker_delegation tool.
 
     phantom_tool_result: true              # Detects when the LLM fabricates tool output
                                            # (e.g. "I searched the web and found...")
@@ -277,7 +277,7 @@ turing_protocol:
 # A translator LLM then expands the plain-English description into the
 # full structured arguments the tool actually needs.
 #
-# Example: Instead of filling spawn_sub_session's 7 fields, the model
+# Example: Instead of filling worker_delegation's 7 fields, the model
 # just writes: "search the web for Python asyncio tutorials and summarise"
 # and the translator expands it into proper objective, timeout, etc.
 #
@@ -289,7 +289,7 @@ nl_translation:
   backends: ["local_small"]               # Translator LLM (small/fast recommended)
   tools:                                  # Which tools get NL-simplified schemas
     - task                                # Task management (add/complete/schedule/pause/resume)
-    - spawn_sub_session                   # Background worker spawning (DAG dependencies)
+    - worker_delegation                   # Background worker spawning (DAG dependencies)
     - add_skill                           # Skill creation (summary + documentation formatting)
 
 
@@ -315,7 +315,7 @@ tool_profiles:
     tools: [execute_shell, read_file, write_file, search_web, fetch_url]
     prompt_mode: minimal
   orchestrator:
-    tools: [spawn_sub_session, task, append_memory, add_skill]
+    tools: [worker_delegation, task, append_memory, add_skill]
     prompt_mode: full
 
 
@@ -347,7 +347,7 @@ tuning:
                                       # enforces delegation to a sub-session. Only counts
                                       # execution+research tools (execute_shell, read_file,
                                       # write_file, search_web, fetch_url). Orchestration
-                                      # tools (spawn_sub_session, task, append_memory, etc.)
+                                      # tools (worker_delegation, task, append_memory, etc.)
                                       # do not count. Set 0 to disable the limit.
 
 

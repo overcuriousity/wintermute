@@ -141,7 +141,7 @@ def _assemble_base(available_tools: set[str] | None = None,
     ``always``) are included.
 
     The ``delegation`` section gets dynamic profile names appended when
-    tool profiles are configured and ``spawn_sub_session`` is available.
+    tool profiles are configured and ``worker_delegation`` is available.
     """
     sections = _get_sections()
     parts: list[str] = []
@@ -155,7 +155,7 @@ def _assemble_base(available_tools: set[str] | None = None,
         text = content
         # Inject tool profile names into the delegation section.
         if name == "delegation" and _profiles:
-            if available_tools is None or "spawn_sub_session" in available_tools:
+            if available_tools is None or "worker_delegation" in available_tools:
                 profile_names = ", ".join(sorted(_profiles))
                 text += f"\n\nAvailable tool profiles: {profile_names}"
         parts.append(text)

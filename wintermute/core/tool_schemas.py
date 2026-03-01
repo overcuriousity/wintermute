@@ -21,7 +21,7 @@ def _fn(name: str, description: str, parameters: dict) -> dict:
 
 TOOL_SCHEMAS = [
     _fn(
-        "spawn_sub_session",
+        "worker_delegation",
         (
             "Manage background workers: spawn autonomous tasks, "
             "check status of running workers, or cancel them. "
@@ -361,7 +361,7 @@ TOOL_CATEGORIES: dict[str, str] = {
     "write_file":         "execution",
     "search_web":         "research",
     "fetch_url":          "research",
-    "spawn_sub_session":  "orchestration",
+    "worker_delegation":  "orchestration",
     "task":               "orchestration",
     "append_memory":      "orchestration",
     "add_skill":          "orchestration",
@@ -395,7 +395,7 @@ NL_TOOL_SCHEMAS = [
         },
     ),
     _fn(
-        "spawn_sub_session",
+        "worker_delegation",
         (
             "Manage background workers — spawn tasks (as DAG pipelines), "
             "check which workers are running, or cancel them. "

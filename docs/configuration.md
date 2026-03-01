@@ -221,13 +221,13 @@ Currently available validators:
 
 | Validator | Phase | Scope | Type | Description |
 |-----------|-------|-------|------|-------------|
-| `workflow_spawn` | post_inference | main | programmatic | Detects when the model claims to have spawned a session without calling `spawn_sub_session` |
+| `workflow_spawn` | post_inference | main | programmatic | Detects when the model claims to have spawned a session without calling `worker_delegation` |
 | `phantom_tool_result` | post_inference | main | programmatic | Detects when the model presents fabricated tool output ("I checked and found…") without having called the tool |
 | `empty_promise` | post_inference | main | programmatic | Detects when the model commits to an action ("I'll do X") as a final response without calling any tool. Excludes responses that end with a question (seeking confirmation) |
 | `objective_completion` | post_inference | sub_session | LLM | Gates sub-session exit: uses a dedicated LLM call to evaluate whether the worker's response genuinely satisfies its objective before allowing it to finish |
 | `task_complete` | pre_execution | sub_session | programmatic | Blocks `task(action='complete')` calls that lack a substantive `reason`. Always-on; not configurable via the `validators` map |
 | `tool_schema_validation` | pre_execution | main + sub_session | programmatic | Validates tool arguments against the tool's JSON Schema before execution (required fields, types, enums, constraints). Always-on; not configurable via the `validators` map |
-| `inline_tool_limit` | pre_execution | main | programmatic | Enforces delegation to sub-sessions when the main thread exceeds `tuning.max_inline_tool_rounds` execution/research tool calls in a single turn. Blocks further inline tool calls and injects a correction telling the model to spawn a sub-session. Orchestration tools (spawn_sub_session, task, etc.) are never counted or blocked |
+| `inline_tool_limit` | pre_execution | main | programmatic | Enforces delegation to sub-sessions when the main thread exceeds `tuning.max_inline_tool_rounds` execution/research tool calls in a single turn. Blocks further inline tool calls and injects a correction telling the model to spawn a sub-session. Orchestration tools (worker_delegation, task, etc.) are never counted or blocked |
 
 For a detailed explanation of each hook, phases, scopes, and how to write custom hooks, see [turing-protocol.md](turing-protocol.md).
 
@@ -248,7 +248,7 @@ turing_protocol:
 ### `nl_translation`
 
 Natural-language tool call translation for weak/small LLMs. When enabled,
-complex tools (`task`, `spawn_sub_session`, `add_skill`) are
+complex tools (`task`, `worker_delegation`, `add_skill`) are
 presented to the main LLM as a single "describe in English" field. A
 dedicated translator LLM expands the description into structured arguments.
 
@@ -256,7 +256,7 @@ dedicated translator LLM expands the description into structured arguments.
 |-----|----------|---------|-------------|
 | `enabled` | no | `false` | Enable NL translation (opt-in) |
 | `backends` | no | turing_protocol backends | Ordered list of backend names for the translator LLM |
-| `tools` | no | `[task, spawn_sub_session, add_skill]` | Which tools use simplified NL schemas |
+| `tools` | no | `[task, worker_delegation, add_skill]` | Which tools use simplified NL schemas |
 
 The translator can return JSON arrays to add multiple tasks or
 spawn multiple sub-sessions from a single description. Ambiguous input
@@ -494,7 +494,7 @@ tool_profiles:
     tools: [execute_shell, read_file, write_file, search_web, fetch_url]
     prompt_mode: minimal
   orchestrator:
-    tools: [spawn_sub_session, task, append_memory, add_skill]
+    tools: [worker_delegation, task, append_memory, add_skill]
     prompt_mode: full
 ```
 
@@ -503,7 +503,7 @@ tool_profiles:
 | `tools` | yes | — | List of tool names available to the worker |
 | `prompt_mode` | no | `"minimal"` | System prompt mode: `"minimal"`, `"full"`, `"base_only"`, or `"none"` |
 
-Profiles are used via `spawn_sub_session(profile="researcher")`. Available profile names are automatically injected into the delegation section of the system prompt so the LLM knows what's available.
+Profiles are used via `worker_delegation(profile="researcher")`. Available profile names are automatically injected into the delegation section of the system prompt so the LLM knows what's available.
 
 ### `seed`
 

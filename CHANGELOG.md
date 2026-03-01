@@ -5,8 +5,8 @@
 
 ### Features
 
-* add status/cancel actions to spawn_sub_session + audit tool descriptions ([0a1ca38](https://github.com/overcuriousity/wintermute/commit/0a1ca38bdaa97e4262e88af9452407a1506c0432))
-* add status/cancel to spawn_sub_session + audit descriptions ([d8d6834](https://github.com/overcuriousity/wintermute/commit/d8d6834b224aab4daccfae9761f361f1a522c69f))
+* add status/cancel actions to worker_delegation + audit tool descriptions ([0a1ca38](https://github.com/overcuriousity/wintermute/commit/0a1ca38bdaa97e4262e88af9452407a1506c0432))
+* add status/cancel to worker_delegation + audit descriptions ([d8d6834](https://github.com/overcuriousity/wintermute/commit/d8d6834b224aab4daccfae9761f361f1a522c69f))
 
 
 ### Bug Fixes
@@ -178,7 +178,7 @@
 * cache memory count in SSE snapshot to avoid Qdrant polling spam ([81f52dc](https://github.com/overcuriousity/wintermute/commit/81f52dc1da1557dba32ec2ae9e052f84a6d91559))
 * exclude pool_override from sub-session JSON serialization ([6688f51](https://github.com/overcuriousity/wintermute/commit/6688f51fba67b9a15a5c2515f4276112aa1b2418))
 * make dreaming memory prompt backend-agnostic ([7d1cc3c](https://github.com/overcuriousity/wintermute/commit/7d1cc3cc668534ff2203f64fdd5a95ecbde5f176))
-* merge orphan metadata in NL-translated spawn_sub_session lists ([27bc3aa](https://github.com/overcuriousity/wintermute/commit/27bc3aa7a16aa125cb37804c4d24d4b5bf6c0808))
+* merge orphan metadata in NL-translated worker_delegation lists ([27bc3aa](https://github.com/overcuriousity/wintermute/commit/27bc3aa7a16aa125cb37804c4d24d4b5bf6c0808))
 * missing database import in slash commands, don't send dimensions in embed request ([3f90579](https://github.com/overcuriousity/wintermute/commit/3f90579466d7077507c4521b30fceb2aa5767f8d))
 * parse Qdrant URL into host/port/https for reliable HTTPS connections ([344f72b](https://github.com/overcuriousity/wintermute/commit/344f72b8bdea8317a6d19b1e78f36d8f30aca45f))
 * use REST API instead of gRPC for Qdrant client ([85f05e5](https://github.com/overcuriousity/wintermute/commit/85f05e5eb48edc0e1b3ba7d4306c989531fd5e26))

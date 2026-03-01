@@ -68,11 +68,11 @@ Correction injection differs by scope:
 
 **Phase:** `post_inference` | **Scope:** `main` | **Type:** programmatic
 
-Detects when the model's text response claims that a background session, workflow, or task was started during this turn, but `spawn_sub_session` was never actually called.
+Detects when the model's text response claims that a background session, workflow, or task was started during this turn, but `worker_delegation` was never actually called.
 
-Stage 2 check: verifies `spawn_sub_session` is absent from `tool_calls_made`. If it is present, the detection is treated as a false positive and suppressed.
+Stage 2 check: verifies `worker_delegation` is absent from `tool_calls_made`. If it is present, the detection is treated as a false positive and suppressed.
 
-Correction: instructs the model to either call `spawn_sub_session` now or acknowledge no session was started; includes the full tool schema.
+Correction: instructs the model to either call `worker_delegation` now or acknowledge no session was started; includes the full tool schema.
 
 ---
 

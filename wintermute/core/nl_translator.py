@@ -2,7 +2,7 @@
 Natural-Language Tool Call Translator.
 
 Small/weak LLMs frequently produce malformed arguments for complex tools
-like ``task`` (many properties) and ``spawn_sub_session`` (DAG semantics).
+like ``task`` (many properties) and ``worker_delegation`` (DAG semantics).
 This module presents those tools as single-field "describe in English"
 schemas to the main LLM, then uses a dedicated translator LLM to expand
 the description into structured arguments.
@@ -29,12 +29,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Tools that have NL translation variants.
-NL_TOOLS: frozenset[str] = frozenset({"task", "spawn_sub_session", "add_skill"})
+NL_TOOLS: frozenset[str] = frozenset({"task", "worker_delegation", "add_skill"})
 
 # Maps tool name -> prompt template filename.
 _PROMPT_MAP: dict[str, str] = {
     "task": "NL_TRANSLATOR_TASK.txt",
-    "spawn_sub_session": "NL_TRANSLATOR_SPAWN_SUB_SESSION.txt",
+    "worker_delegation": "NL_TRANSLATOR_WORKER_DELEGATION.txt",
     "add_skill": "NL_TRANSLATOR_ADD_SKILL.txt",
 }
 

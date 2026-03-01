@@ -31,7 +31,7 @@ from wintermute.tools.task_tools import tool_task, _describe_schedule  # noqa: F
 from wintermute.tools.memory_tools import tool_append_memory, tool_add_skill
 from wintermute.tools.io_tools import tool_execute_shell, tool_read_file, tool_write_file
 from wintermute.tools.web_tools import tool_search_web, tool_fetch_url
-from wintermute.tools.session_tools import tool_spawn_sub_session, tool_query_telemetry
+from wintermute.tools.session_tools import tool_worker_delegation, tool_query_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ _TOOL_CALL_LOG: deque[dict] = deque(maxlen=500)
 # ---------------------------------------------------------------------------
 
 _DISPATCH: dict[str, Any] = {
-    "spawn_sub_session":  tool_spawn_sub_session,
+    "worker_delegation":  tool_worker_delegation,
     "task":               tool_task,
     "append_memory":      tool_append_memory,
     "add_skill":          tool_add_skill,

@@ -229,7 +229,7 @@ Both `full` and `base_only` modes use conditional BASE_PROMPT sections — only 
 As an alternative to manually selecting `system_prompt_mode` and `tool_names`, named tool profiles provide config-driven presets for common worker patterns:
 
 ```
-spawn_sub_session(objective="Search for X", profile="researcher")
+worker_delegation(objective="Search for X", profile="researcher")
 ```
 
 See [tools.md — Tool Profiles](tools.md#tool-profiles) for available profiles and how to define custom ones.
@@ -265,8 +265,8 @@ Unknown session IDs in `depends_on` are automatically stripped with a warning lo
 Tasks can include a `not_before` parameter (ISO-8601 datetime) to delay execution until a specific time, even if all dependencies are already satisfied. This enables workflows like "research now, upload after 20:00":
 
 ```
-spawn_sub_session(objective="Research topic")           → sub_aaa
-spawn_sub_session(objective="Upload report",
+worker_delegation(objective="Research topic")           → sub_aaa
+worker_delegation(objective="Upload report",
                   depends_on=["sub_aaa"],
                   not_before="2025-01-15T20:00:00")    → sub_bbb
 ```
@@ -285,7 +285,7 @@ When a worker times out (default: 300 seconds):
 ### Nesting
 
 - Maximum nesting depth: 2 (main agent -> sub-session -> sub-sub-session)
-- Only `full`-mode workers have the `spawn_sub_session` tool available
+- Only `full`-mode workers have the `worker_delegation` tool available
 - Other modes have no orchestration tools at all
 
 ### Nested Result Aggregation

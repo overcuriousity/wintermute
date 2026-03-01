@@ -9,7 +9,7 @@ the LLM to remember follow-up steps.
 
 Lifecycle
 ---------
-1. Orchestrator calls spawn_sub_session (optionally with depends_on).
+1. Orchestrator calls worker_delegation (optionally with depends_on).
    SubSessionManager.spawn() registers a TaskNode in a Workflow DAG and
    either starts the worker immediately (no deps / all deps done) or
    defers it as "pending".
@@ -44,7 +44,7 @@ Tool filtering by mode
 Nesting
 -------
   "full"-mode workers may spawn sub-sessions up to MAX_NESTING_DEPTH (2).
-  Other modes have no spawn_sub_session in their tool set at all.
+  Other modes have no worker_delegation in their tool set at all.
 
 Continuation on timeout
 -----------------------
