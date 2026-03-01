@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
 from wintermute.core import nl_translator
+from wintermute.core.tool_deps import ToolDeps
 from wintermute.infra import database
 from wintermute import tools as tool_module
 
@@ -117,6 +118,9 @@ class ToolCallContext:
     # Per-result tool output truncation (0 = no limit)
     max_tool_output_chars: int = 0
 
+    # Dependency container for tool execution.
+    tool_deps: Optional[ToolDeps] = None
+
 
 def make_tool_context(
     *,
@@ -133,6 +137,7 @@ def make_tool_context(
     tp_enabled: bool = False,
     tp_check: Optional[TPCheckFn] = None,
     max_tool_output_chars: int = 0,
+    tool_deps: Optional[ToolDeps] = None,
 ) -> ToolCallContext:
     """Create a ToolCallContext — single factory used by both inference loops."""
     return ToolCallContext(
@@ -149,6 +154,7 @@ def make_tool_context(
         tp_enabled=tp_enabled,
         tp_check=tp_check,
         max_tool_output_chars=max_tool_output_chars,
+        tool_deps=tool_deps,
     )
 
 
@@ -249,6 +255,7 @@ async def _execute_multi_item(
                 thread_id=ctx.thread_id,
                 nesting_depth=ctx.nesting_depth,
                 parent_thread_id=ctx.parent_thread_id,
+                tool_deps=ctx.tool_deps,
             ),
         )
         # Truncate individual item results (same logic as Step 4b).
@@ -414,6 +421,7 @@ async def process_tool_call(
             thread_id=ctx.thread_id,
             nesting_depth=ctx.nesting_depth,
             parent_thread_id=ctx.parent_thread_id,
+            tool_deps=ctx.tool_deps,
         ),
     )
     tool_calls_made.append(name)

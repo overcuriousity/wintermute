@@ -33,6 +33,7 @@ from wintermute.infra.paths import DATA_DIR
 from wintermute.infra.event_bus import EventBus
 from wintermute.infra.thread_config import ThreadConfigManager
 from wintermute import tools as tool_module
+from wintermute.core.tool_deps import ToolDeps
 from wintermute.core.llm_thread import LLMThread
 from wintermute.core.types import BackendPool, MultiProviderConfig, ProviderConfig
 from wintermute.interfaces.matrix_thread import MatrixConfig, MatrixThread
@@ -363,8 +364,8 @@ async def main() -> None:
         skills=csl.get("skills_total", 2_000),
     )
 
-    # Load tool profiles for sub-session spawning.
-    prompt_assembler.set_tool_profiles(cfg.get("tool_profiles", {}) or {})
+    # Tool profiles for sub-session spawning (passed via ToolDeps).
+    _tool_profiles = cfg.get("tool_profiles", {}) or {}
 
     multi_cfg = _build_multi_provider_config(cfg)
 
@@ -461,8 +462,16 @@ async def main() -> None:
         max_blob_chars=max_blob_chars,
     )
 
-    # Apply max_nesting_depth to the tools module.
-    tool_module.set_max_nesting_depth(max_nesting_depth)
+    # SearXNG URL from config.
+    searxng_url = (cfg.get("search") or {}).get("searxng_url", "")
+
+    # Build the shared ToolDeps container.  Sub-session and scheduler callables
+    # are injected after their owners are constructed (see below).
+    tool_deps = ToolDeps(
+        max_nesting_depth=max_nesting_depth,
+        searxng_url=searxng_url,
+        tool_profiles=_tool_profiles,
+    )
 
     # --- Optional interfaces ---
     matrix_cfg_raw: Optional[dict] = cfg.get("matrix")
@@ -531,7 +540,8 @@ async def main() -> None:
                     event_bus=event_bus,
                     thread_config_manager=thread_config_mgr,
                     backend_pools_by_name=backend_pools_by_name,
-                    compaction_keep_recent=compaction_keep_recent)
+                    compaction_keep_recent=compaction_keep_recent,
+                    tool_deps=tool_deps)
 
     # Build SubSessionManager — shares the LLM backend pool, reports back via
     # enqueue_system_event so results enter the parent thread's queue.
@@ -547,16 +557,14 @@ async def main() -> None:
         event_bus=event_bus,
         max_continuation_depth=max_continuation_depth,
         max_completed_workflows=max_completed_workflows,
+        tool_deps=tool_deps,
     )
     llm.inject_sub_session_manager(sub_sessions)
-    tool_module.register_sub_session_lifecycle(
-        sub_sessions.spawn, sub_sessions.cancel, sub_sessions.list_active_threadsafe,
-    )
-    tool_module.register_event_bus(event_bus)
-    searxng_url = (cfg.get("search") or {}).get("searxng_url")
-    if searxng_url:
-        tool_module.set_searxng_url(searxng_url)
-    # register_self_model is wired later, after self_model is built.
+    # Wire sub-session lifecycle into ToolDeps.
+    tool_deps.sub_session_spawn = sub_sessions.spawn
+    tool_deps.sub_session_cancel = sub_sessions.cancel
+    tool_deps.sub_session_status = sub_sessions.list_active_threadsafe
+    tool_deps.event_bus = event_bus
 
     # Inject LLM into interfaces.
     if matrix:
@@ -653,8 +661,7 @@ async def main() -> None:
                 memory_harvest_loop=harvest_loop,
             )
             reflection_loop.inject_self_model(self_model)
-            prompt_assembler.set_self_model(self_model)
-            tool_module.register_self_model(self_model)
+            tool_deps.self_model_profiler = self_model
             logger.info("Self-model profiler enabled")
         except Exception:
             logger.exception("Self-model profiler failed to initialise — disabling")
@@ -718,6 +725,10 @@ async def main() -> None:
         web_iface._dreaming_loop = dreaming_loop
 
     scheduler.start()
+    # Wire scheduler callables into ToolDeps (after scheduler.start() creates the APScheduler).
+    tool_deps.task_scheduler_ensure = scheduler.ensure_job
+    tool_deps.task_scheduler_remove = scheduler.remove_job
+    tool_deps.task_scheduler_list = scheduler.list_jobs
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

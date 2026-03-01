@@ -79,6 +79,7 @@ from wintermute.core.inference_engine import (
 )
 from wintermute.core.tool_call_rescue import rescue_tool_calls
 from wintermute import tools as tool_module
+from wintermute.core.tool_deps import ToolDeps
 from wintermute.core.tp_runner import TuringProtocolRunner
 from wintermute.core.types import BackendPool, ContextTooLargeError
 
@@ -269,6 +270,7 @@ class SubSessionManager:
         event_bus: "Optional[EventBus]" = None,
         max_continuation_depth: int = MAX_CONTINUATION_DEPTH,
         max_completed_workflows: int = MAX_COMPLETED_WORKFLOWS,
+        tool_deps: Optional[ToolDeps] = None,
     ) -> None:
         # Capture the running event loop so that spawn() (which is synchronous
         # and may be called from a thread-pool worker via run_in_executor) can
@@ -284,6 +286,7 @@ class SubSessionManager:
         self._nl_translation_pool = nl_translation_pool
         self._nl_translation_config = nl_translation_config or {}
         self._event_bus = event_bus
+        self._tool_deps = tool_deps
         try:
             _cont_depth = int(max_continuation_depth)
         except (TypeError, ValueError):
@@ -378,7 +381,7 @@ class SubSessionManager:
             timeout = self._default_timeout
         # Resolve tool profile if provided.
         if profile:
-            profiles = prompt_assembler.get_tool_profiles()
+            profiles = self._tool_deps.tool_profiles if self._tool_deps else {}
             if profile in profiles:
                 prof = profiles[profile]
                 if tool_names is None:
@@ -1509,6 +1512,7 @@ class SubSessionManager:
             tp_enabled=tp_enabled,
             tp_check=_tp_check_sub if tp_enabled else None,
             max_tool_output_chars=self._cfg.context_size * 4,  # tokens → approx chars
+            tool_deps=self._tool_deps,
         )
 
         # Derive the set of available tool names for prompt section filtering.
@@ -1549,6 +1553,7 @@ class SubSessionManager:
                 available_tools=_available_tool_names,
                 scratchpad_dir=_scratchpad_dir,
                 session_id=state.session_id,
+                tool_deps=self._tool_deps,
             )
             state.messages = [
                 {"role": "system", "content": system_prompt},
@@ -1831,6 +1836,7 @@ class SubSessionManager:
         available_tools: Optional[set[str]] = None,
         scratchpad_dir: Optional[str] = None,
         session_id: Optional[str] = None,
+        tool_deps: Optional[ToolDeps] = None,
     ) -> str:
         if mode == "none":
             base = ""
@@ -1843,9 +1849,14 @@ class SubSessionManager:
             base = prompt_assembler.assemble(
                 thread_id=thread_id, available_tools=available_tools,
                 query=objective,
+                tool_profiles=tool_deps.tool_profiles if tool_deps else None,
+                self_model_profiler=tool_deps.self_model_profiler if tool_deps else None,
             )
         else:  # "base_only"
-            base_text = prompt_assembler._assemble_base(available_tools)
+            base_text = prompt_assembler._assemble_base(
+                available_tools,
+                tool_profiles=tool_deps.tool_profiles if tool_deps else None,
+            )
             base = f"# Core Instructions\n\n{base_text}" if base_text else ""
 
         parts = [base] if base else []

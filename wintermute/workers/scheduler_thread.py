@@ -30,9 +30,9 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from dateutil import parser as dateutil_parser
 
-from wintermute import tools as tool_module
 from wintermute.infra import database
 from wintermute.infra.paths import DATA_DIR, SCHEDULER_DB
+from wintermute import tools as tool_module
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager
@@ -117,9 +117,6 @@ class TaskScheduler:
 
         global _instance
         _instance = self
-
-        # Register into the tools module.
-        tool_module.register_task_scheduler(self.ensure_job, self.remove_job, self.list_jobs)
 
         self._recover_missed()
 

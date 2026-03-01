@@ -37,23 +37,10 @@ _timezone: str = "UTC"
 # Lock guarding read-modify-write operations on MEMORIES.txt.
 _memories_lock = threading.Lock()
 
-# Configured tool profiles — set by main.py at startup via set_tool_profiles().
-_tool_profiles: dict[str, dict] = {}
-
 # Cached parsed BASE_PROMPT sections — populated on first call to _get_sections().
 _cached_sections: list[tuple[str, set[str], str]] | None = None
 _cached_sections_mtime: float = 0.0
 _sections_lock = threading.Lock()
-
-# Self-model profiler — set by main.py at startup via set_self_model().
-_self_model_profiler = None
-
-
-def set_self_model(profiler) -> None:
-    """Set the SelfModelProfiler for system prompt injection."""
-    global _self_model_profiler
-    _self_model_profiler = profiler
-    logger.info("Self-model profiler registered with prompt assembler")
 
 
 def set_component_limits(memories: int = 10_000, tasks: int = 5_000,
@@ -72,19 +59,6 @@ def set_timezone(tz: str) -> None:
     global _timezone
     _timezone = tz
     logger.info("Prompt assembler timezone set to %s", tz)
-
-
-def set_tool_profiles(profiles: dict[str, dict]) -> None:
-    """Set tool profiles from config (called once at startup by main.py)."""
-    global _tool_profiles
-    _tool_profiles = dict(profiles) if profiles else {}
-    if _tool_profiles:
-        logger.info("Tool profiles loaded: %s", ", ".join(_tool_profiles))
-
-
-def get_tool_profiles() -> dict[str, dict]:
-    """Return the configured tool profiles."""
-    return _tool_profiles
 
 
 # ---------------------------------------------------------------------------
@@ -155,7 +129,8 @@ def _get_sections() -> list[tuple[str, set[str], str]]:
         return _cached_sections
 
 
-def _assemble_base(available_tools: set[str] | None = None) -> str:
+def _assemble_base(available_tools: set[str] | None = None,
+                   tool_profiles: dict[str, dict] | None = None) -> str:
     """Assemble the BASE_PROMPT, optionally filtering sections by available tools.
 
     When *available_tools* is None, all sections are included (backward
@@ -170,6 +145,7 @@ def _assemble_base(available_tools: set[str] | None = None) -> str:
     """
     sections = _get_sections()
     parts: list[str] = []
+    _profiles = tool_profiles or {}
 
     for name, required_tools, content in sections:
         if available_tools is not None and required_tools:
@@ -178,9 +154,9 @@ def _assemble_base(available_tools: set[str] | None = None) -> str:
                 continue
         text = content
         # Inject tool profile names into the delegation section.
-        if name == "delegation" and _tool_profiles:
+        if name == "delegation" and _profiles:
             if available_tools is None or "spawn_sub_session" in available_tools:
-                profile_names = ", ".join(sorted(_tool_profiles))
+                profile_names = ", ".join(sorted(_profiles))
                 text += f"\n\nAvailable tool profiles: {profile_names}"
         parts.append(text)
 
@@ -256,7 +232,9 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
              available_tools: Optional[set[str]] = None,
              query: Optional[str] = None,
              memory_results: Optional[list[dict]] = None,
-             prompt_mode: str = "full") -> str:
+             prompt_mode: str = "full",
+             tool_profiles: Optional[dict[str, dict]] = None,
+             self_model_profiler: Optional[object] = None) -> str:
     """
     Build and return the full system prompt string.
 
@@ -285,7 +263,7 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
 
     sections: list[str] = []
 
-    base = _assemble_base(available_tools)
+    base = _assemble_base(available_tools, tool_profiles=tool_profiles)
     sections.append(f"# Core Instructions\n\n{base}")
 
     # Inject current local datetime so the LLM has accurate time awareness.
@@ -326,8 +304,8 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
             if reflection:
                 sections.append(f"# System Observations\n\n{reflection}")
 
-            if _self_model_profiler:
-                sm = _self_model_profiler.get_summary()
+            if self_model_profiler:
+                sm = self_model_profiler.get_summary()
                 if sm:
                     sections.append(f"# Self-Assessment\n\n{sm}")
 
