@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.6.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.5.1-alpha...v0.6.0-alpha) (2026-03-01)
+
+
+### Features
+
+* add status/cancel actions to spawn_sub_session + audit tool descriptions ([0a1ca38](https://github.com/overcuriousity/wintermute/commit/0a1ca38bdaa97e4262e88af9452407a1506c0432))
+* add status/cancel to spawn_sub_session + audit descriptions ([d8d6834](https://github.com/overcuriousity/wintermute/commit/d8d6834b224aab4daccfae9761f361f1a522c69f))
+
+
+### Bug Fixes
+
+* add configurable batch_size for embeddings to prevent LiteLLM 500 errors ([384ec8b](https://github.com/overcuriousity/wintermute/commit/384ec8b6943c0b6a27e4b4214af1dd243e66e9de))
+* add input validation for tuning config values ([609fbb6](https://github.com/overcuriousity/wintermute/commit/609fbb621b0c036d430e04c0ea9abae21efee96a))
+* address PR [#143](https://github.com/overcuriousity/wintermute/issues/143) review - unused import and reasoning_content round-trip ([2c05be3](https://github.com/overcuriousity/wintermute/commit/2c05be3eeb7e412291d6d66c51d5d6204a233fc9))
+* address PR review — thread safety, scoping, validation ([e4840a8](https://github.com/overcuriousity/wintermute/commit/e4840a8330d750482c75403464ac178b9e3d2e87))
+* address PR review — truncation notice cap, multi-item coverage, token→char conversion ([008e379](https://github.com/overcuriousity/wintermute/commit/008e3795e3f1c52e7dd8441ab836119cd24299f9))
+* address PR review — type annotations and retry path consistency ([cbfc68a](https://github.com/overcuriousity/wintermute/commit/cbfc68a018b161148c1f8edeb48f58950a35a9f4))
+* address PR review comments ([594e6b2](https://github.com/overcuriousity/wintermute/commit/594e6b2daf7517cf599bcccb152649461446ea69))
+* address review comments on TuringProtocolRunner ([0a760d3](https://github.com/overcuriousity/wintermute/commit/0a760d38711a46f844f3f7513794c54e13c6d6f5))
+* address review comments on TuringProtocolRunner ([bd690d0](https://github.com/overcuriousity/wintermute/commit/bd690d0b7d3933d7af09ebd125995ffc72703cbf))
+* cap combined multi-item output to prevent context overflow ([b462a30](https://github.com/overcuriousity/wintermute/commit/b462a30d55582872bd8f59daf603d4a4718d5958))
+* catch concurrent.futures.TimeoutError, fix status callable signature ([27a8874](https://github.com/overcuriousity/wintermute/commit/27a88742cc9529ab2be27147fe4791696d1f8ea6))
+* configurable embeddings batch_size to prevent LiteLLM 500 errors ([a244df4](https://github.com/overcuriousity/wintermute/commit/a244df4d031e7779f58eaa6af74cf55023628ec5))
+* pass tool_deps as parameter to static _build_system_prompt ([f78101d](https://github.com/overcuriousity/wintermute/commit/f78101dddfdc54c351e9016cb8334a9ceffb885b))
+* remove redundant _adopt_orphan_deps call from _find_or_create_workflow ([b393be0](https://github.com/overcuriousity/wintermute/commit/b393be0fae87f83f8a72bb15607a282697373e0a))
+* replace lambda with named function to satisfy E731 ([aa4e767](https://github.com/overcuriousity/wintermute/commit/aa4e7679f61212d53ed93cac488ba20ad5acb085))
+* truncate oversized tool outputs to prevent context overflow in sub-sessions ([6e2ce5c](https://github.com/overcuriousity/wintermute/commit/6e2ce5ce873f0fe61d8077bba499d4d8314f7a68))
+* truncate oversized tool outputs to prevent sub-session context overflow ([f3f0e60](https://github.com/overcuriousity/wintermute/commit/f3f0e60324c176fd93880a3a91fcef7b8f7ce75e))
+
+
+### Documentation
+
+* add refactor strategy for remaining issues [#79](https://github.com/overcuriousity/wintermute/issues/79)-[#108](https://github.com/overcuriousity/wintermute/issues/108) ([a246424](https://github.com/overcuriousity/wintermute/commit/a246424749f6539b333cf1e18c83e5083ed88cf4))
+* refactor strategy for remaining issues [#79](https://github.com/overcuriousity/wintermute/issues/79)–[#108](https://github.com/overcuriousity/wintermute/issues/108) ([e855b3e](https://github.com/overcuriousity/wintermute/commit/e855b3e657494bc9b257cc95eb82680560a96c99))
+
 ## [0.5.1-alpha](https://github.com/overcuriousity/wintermute/compare/v0.5.0-alpha...v0.5.1-alpha) (2026-02-28)
 
 
