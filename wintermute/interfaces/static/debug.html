@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Wintermute Debug</title>
+<title>Wintermute Dashboard</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    font-family: system-ui, sans-serif;
+    font-family: system-ui, -apple-system, sans-serif;
     background: #1a1a2e; color: #e0e0e0;
     display: flex; flex-direction: column; height: 100dvh;
-    font-size: 13px;
+    font-size: 13.5px; line-height: 1.5;
   }
   header {
     padding: .5rem 1rem;
@@ -19,7 +19,7 @@
     display: flex; align-items: center; gap: .8rem;
     flex-shrink: 0;
   }
-  header h1 { font-size: 1rem; font-weight: 600; color: #a8d8ea; }
+  header h1 { font-size: 1rem; font-weight: 600; color: #a8d8ea; letter-spacing: .02em; }
   header a { color: #a8d8ea; text-decoration: none; font-size: .82rem; }
   header a:hover { text-decoration: underline; }
   .header-right { margin-left: auto; display: flex; align-items: center; gap: .8rem; }
@@ -28,7 +28,7 @@
   #layout { display: flex; flex: 1; overflow: hidden; }
   /* Sidebar */
   #sidebar {
-    width: 150px; min-width: 150px;
+    width: 170px; min-width: 170px;
     background: #0d1526;
     border-right: 1px solid #0f3460;
     display: flex; flex-direction: column;
@@ -36,16 +36,19 @@
     flex-shrink: 0;
   }
   .tab-btn {
-    padding: .55rem .9rem;
+    padding: .6rem 1rem;
     background: none; border: none;
-    color: #777; cursor: pointer;
+    color: #666; cursor: pointer;
     text-align: left; font-size: .82rem;
-    border-left: 2px solid transparent;
-    transition: color .12s, background .12s;
+    border-left: 3px solid transparent;
+    transition: color .15s, background .15s, border-color .15s;
     white-space: nowrap;
+    font-weight: 500;
+    letter-spacing: .01em;
   }
-  .tab-btn:hover { color: #ccc; background: #16213e; }
+  .tab-btn:hover { color: #bbb; background: #16213e; }
   .tab-btn.active { color: #a8d8ea; border-left-color: #a8d8ea; background: #16213e; }
+  .tab-icon { display: inline-block; width: 1.4em; text-align: center; margin-right: .3rem; }
   .tab-count {
     float: right; font-size: .68rem;
     background: #1a3060; color: #7aa; padding: .05rem .35rem;
@@ -66,11 +69,11 @@
   }
   .session-item {
     padding: .45rem .6rem;
-    border-radius: .35rem;
+    border-radius: .4rem;
     cursor: pointer;
     margin-bottom: .25rem;
     border: 1px solid transparent;
-    transition: background .1s;
+    transition: background .15s;
   }
   .session-item:hover { background: #16213e; }
   .session-item.selected { border-color: #2a5a8a; background: #16213e; }
@@ -122,13 +125,13 @@
   .msg-inject input {
     flex: 1; padding: .35rem .6rem;
     background: #1a1a2e; color: #e0e0e0;
-    border: 1px solid #0f3460; border-radius: .35rem;
+    border: 1px solid #0f3460; border-radius: .4rem;
     font-size: .82rem; outline: none;
   }
   .msg-inject input:focus { border-color: #a8d8ea; }
   /* Badges */
   .badge {
-    font-size: .62rem; padding: .1rem .38rem;
+    font-size: .62rem; padding: .12rem .4rem;
     border-radius: 99px; font-weight: 600;
     text-transform: uppercase; white-space: nowrap;
   }
@@ -146,21 +149,27 @@
   .badge-cancelled{ background: #2a2a2a; color: #999; }
   /* Scrollable area */
   .scroll-area { flex: 1; overflow-y: auto; padding: .6rem 1rem; }
+  .scroll-area::-webkit-scrollbar { width: 6px; }
+  .scroll-area::-webkit-scrollbar-track { background: transparent; }
+  .scroll-area::-webkit-scrollbar-thumb { background: #2a3a5a; border-radius: 3px; }
   /* Tables */
   .data-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
   .data-table th {
-    text-align: left; padding: .4rem .6rem;
-    background: #0d1526; color: #777;
+    text-align: left; padding: .45rem .6rem;
+    background: #0d1526; color: #6a7a8a;
     border-bottom: 1px solid #0f3460;
     font-weight: 600; white-space: nowrap;
     position: sticky; top: 0; z-index: 1;
+    font-size: .72rem; text-transform: uppercase;
+    letter-spacing: .04em;
   }
   .data-table td {
-    padding: .38rem .6rem;
+    padding: .4rem .6rem;
     border-bottom: 1px solid #141428;
     vertical-align: top;
   }
-  .data-table tr:hover td { background: #16213e; }
+  .data-table tr:nth-child(even) td { background: #0e1428; }
+  .data-table tr:hover td { background: #16213e; transition: background .1s; }
   .mono { font-family: monospace; font-size: .75rem; }
   .trunc {
     max-width: 280px; overflow: hidden;
@@ -170,10 +179,10 @@
   /* Buttons */
   .btn {
     padding: .3rem .7rem;
-    border: 1px solid #0f3460; border-radius: .35rem;
+    border: 1px solid #0f3460; border-radius: .4rem;
     cursor: pointer; font-size: .78rem;
     background: #16213e; color: #a8d8ea;
-    transition: background .1s;
+    transition: background .15s;
   }
   .btn:hover { background: #1a4a80; }
   .btn-danger { background: #2a1010; border-color: #5a2020; color: #ff9090; }
@@ -181,6 +190,14 @@
   .btn-sm { padding: .15rem .45rem; font-size: .72rem; }
   .btn-primary { background: #0f3460; border-color: #1a5490; color: #a8d8ea; }
   .btn-primary:hover { background: #1a4a80; }
+  .action-btn {
+    padding: .3rem .7rem;
+    border: 1px solid #0f3460; border-radius: .4rem;
+    cursor: pointer; font-size: .78rem;
+    background: #16213e; color: #a8d8ea;
+    transition: background .15s;
+  }
+  .action-btn:hover { background: #1a4a80; }
   /* Forms */
   .form-bar {
     display: flex; gap: .5rem; flex-wrap: wrap; align-items: flex-end;
@@ -190,11 +207,11 @@
     flex-shrink: 0;
   }
   .form-group { display: flex; flex-direction: column; gap: .2rem; }
-  .form-group label { font-size: .7rem; color: #777; }
+  .form-group label { font-size: .7rem; color: #777; font-weight: 500; }
   .form-group input, .form-group select, .form-group textarea {
     padding: .3rem .5rem;
     background: #1a1a2e; color: #e0e0e0;
-    border: 1px solid #0f3460; border-radius: .35rem;
+    border: 1px solid #0f3460; border-radius: .4rem;
     font-size: .82rem; outline: none;
   }
   .form-group input:focus,
@@ -203,15 +220,16 @@
   .form-group textarea { resize: vertical; min-height: 48px; }
   /* Section headers */
   .section-hdr {
-    padding: .4rem .6rem;
+    padding: .45rem .7rem;
     background: #0d1526;
     border: 1px solid #0f3460;
-    border-radius: .3rem;
+    border-radius: .4rem;
     cursor: pointer;
     display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: .3rem; margin-top: .6rem;
+    margin-bottom: .35rem; margin-top: .7rem;
     font-size: .82rem; color: #888;
     user-select: none;
+    box-shadow: 0 1px 3px rgba(0,0,0,.2);
   }
   .section-hdr:hover { color: #ccc; }
   .section-hdr.open { color: #a8d8ea; }
@@ -226,7 +244,7 @@
   .scratchpad-btn:hover { background: #1e305a; color: #f0b870; }
   .scratchpad-panel {
     margin: 0 0 .3rem 0; padding: .5rem .7rem;
-    background: #0a0f1e; border: 1px solid #1a3a5a; border-radius: .3rem;
+    background: #0a0f1e; border: 1px solid #1a3a5a; border-radius: .4rem;
   }
   /* Empty state */
   .empty { padding: 1.5rem; text-align: center; color: #555; font-size: .82rem; }
@@ -239,11 +257,84 @@
     width: 80px; height: 5px; background: #252535; border-radius: 3px; overflow: hidden;
   }
   .ctx-bar-header .bar-fill { height: 5px; border-radius: 3px; }
+  /* Modal overlay */
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.7);
+    backdrop-filter: blur(4px);
+    z-index: 100;
+    display: flex; align-items: center; justify-content: center;
+    animation: fadeIn .15s ease-out;
+  }
+  .modal-content {
+    background: #16213e;
+    border: 1px solid #0f3460;
+    border-radius: .5rem;
+    box-shadow: 0 8px 32px rgba(0,0,0,.5);
+    overflow: hidden;
+    display: flex; flex-direction: column;
+    animation: slideIn .15s ease-out;
+  }
+  .modal-header {
+    padding: .6rem 1rem;
+    background: #0d1526;
+    border-bottom: 1px solid #0f3460;
+    display: flex; align-items: center; gap: .7rem;
+    flex-shrink: 0;
+  }
+  .modal-header h2 { font-size: .9rem; font-weight: 600; color: #a8d8ea; }
+  .modal-close {
+    margin-left: auto;
+    background: none; border: 1px solid #0f3460; border-radius: .3rem;
+    color: #888; cursor: pointer; padding: .15rem .5rem; font-size: .78rem;
+    transition: color .15s;
+  }
+  .modal-close:hover { color: #e0e0e0; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+  /* Skills */
+  .skill-stats-bar {
+    display: flex; gap: 2rem; padding: .6rem 1rem;
+    background: #0d1526; border-bottom: 1px solid #0f3460;
+    font-size: .8rem; color: #888;
+    flex-shrink: 0;
+  }
+  .skill-stats-bar strong { color: #a8d8ea; }
+  .skill-card {
+    background: #0e1428;
+    border: 1px solid #0f3460;
+    border-radius: .4rem;
+    padding: .6rem .8rem;
+    margin-bottom: .5rem;
+    box-shadow: 0 1px 3px rgba(0,0,0,.15);
+    transition: border-color .15s;
+  }
+  .skill-card:hover { border-color: #1a5490; }
+  .skill-card-header {
+    display: flex; align-items: center; gap: .6rem;
+    cursor: pointer;
+  }
+  .skill-card-name { font-weight: 600; color: #a8d8ea; font-size: .88rem; }
+  .skill-card-summary { color: #888; font-size: .78rem; flex: 1; }
+  .skill-card-stats {
+    display: flex; gap: 1rem; margin-top: .4rem;
+    font-size: .72rem; color: #666;
+  }
+  .skill-card-stats span strong { color: #999; }
+  .skill-card-body {
+    margin-top: .5rem; padding-top: .5rem;
+    border-top: 1px solid #0f3460;
+    display: none;
+  }
+  .skill-card-body.open { display: block; }
+  .skill-card-actions {
+    display: flex; gap: .4rem; margin-top: .5rem;
+  }
 </style>
 </head>
 <body>
 <header>
-  <h1>Wintermute Debug</h1>
+  <h1>Wintermute Dashboard</h1>
   <span id="cfg-info" style="font-size:.72rem;color:#888"></span>
   <div class="header-right">
     <span id="stream-status" style="font-size:.72rem;color:#555">\u25cf connecting</span>
@@ -252,30 +343,33 @@
 <div id="layout">
   <nav id="sidebar">
     <button class="tab-btn active" data-tab="sessions" onclick="showTab('sessions')">
-      Sessions <span class="tab-count" id="cnt-sessions">0</span>
+      <span class="tab-icon">\ud83d\udcac</span>Sessions <span class="tab-count" id="cnt-sessions">0</span>
     </button>
     <button class="tab-btn" data-tab="workers" onclick="showTab('workers')">
-      Workers <span class="tab-count" id="cnt-workers">0</span>
+      <span class="tab-icon">\u2699</span>Workers <span class="tab-count" id="cnt-workers">0</span>
     </button>
     <button class="tab-btn" data-tab="jobs" onclick="showTab('jobs')">
-      Jobs <span class="tab-count" id="cnt-jobs">0</span>
+      <span class="tab-icon">\ud83d\udcc5</span>Jobs <span class="tab-count" id="cnt-jobs">0</span>
     </button>
     <button class="tab-btn" data-tab="tasks" onclick="showTab('tasks')">
-      Tasks <span class="tab-count" id="cnt-tasks">0</span>
+      <span class="tab-icon">\u2705</span>Tasks <span class="tab-count" id="cnt-tasks">0</span>
     </button>
     <button class="tab-btn" data-tab="memory" onclick="showTab('memory')">
-      Memory <span class="tab-count" id="cnt-memory">0</span>
+      <span class="tab-icon">\ud83e\udde0</span>Memory <span class="tab-count" id="cnt-memory">0</span>
     </button>
     <button class="tab-btn" data-tab="interactions" onclick="showTab('interactions')">
-      Interactions <span class="tab-count" id="cnt-interactions">0</span>
+      <span class="tab-icon">\ud83d\udcca</span>Interactions <span class="tab-count" id="cnt-interactions">0</span>
     </button>
     <button class="tab-btn" data-tab="outcomes" onclick="showTab('outcomes')">
-      Outcomes <span class="tab-count" id="cnt-outcomes">0</span>
+      <span class="tab-icon">\ud83c\udfaf</span>Outcomes <span class="tab-count" id="cnt-outcomes">0</span>
+    </button>
+    <button class="tab-btn" data-tab="skills" onclick="showTab('skills')">
+      <span class="tab-icon">\ud83d\udcda</span>Skills <span class="tab-count" id="cnt-skills">0</span>
     </button>
   </nav>
 
   <div id="main">
-    <!-- ── Sessions ── -->
+    <!-- Sessions -->
     <div class="tab-panel active" id="panel-sessions">
       <div class="sessions-split">
         <div class="session-list" id="session-list">
@@ -297,14 +391,14 @@
       </div>
     </div>
 
-    <!-- ── Workers ── -->
+    <!-- Workers -->
     <div class="tab-panel" id="panel-workers">
       <div class="scroll-area" id="workers-area">
         <div class="empty">Loading\u2026</div>
       </div>
     </div>
 
-    <!-- ── Jobs ── -->
+    <!-- Jobs -->
     <div class="tab-panel" id="panel-jobs">
       <div class="scroll-area">
         <table class="data-table">
@@ -320,7 +414,7 @@
       </div>
     </div>
 
-    <!-- ── Tasks ── -->
+    <!-- Tasks -->
     <div class="tab-panel" id="panel-tasks">
       <div class="scroll-area">
         <table class="data-table">
@@ -336,8 +430,7 @@
       </div>
     </div>
 
-    <!-- ── Interaction Log ── -->
-    <!-- ── Memory ── -->
+    <!-- Memory -->
     <div class="tab-panel" id="panel-memory">
       <div class="scroll-area" style="padding:1rem">
         <div id="memory-stats" style="margin-bottom:1rem">
@@ -360,7 +453,7 @@
       </div>
     </div>
 
-    <!-- ── Outcomes ── -->
+    <!-- Outcomes -->
     <div class="tab-panel" id="panel-outcomes">
       <div class="form-bar" style="gap:.8rem">
         <div class="form-group">
@@ -398,6 +491,7 @@
       </div>
     </div>
 
+    <!-- Interactions -->
     <div class="tab-panel" id="panel-interactions">
       <div class="form-bar" style="gap:.8rem">
         <div class="form-group">
@@ -452,6 +546,20 @@
         </table>
       </div>
     </div>
+
+    <!-- Skills -->
+    <div class="tab-panel" id="panel-skills">
+      <div class="skill-stats-bar" id="skills-stats-bar">
+        Loading skills\u2026
+      </div>
+      <div class="form-bar" style="gap:.5rem">
+        <button class="btn btn-primary" onclick="showCreateSkillModal()">+ New Skill</button>
+        <button class="action-btn" onclick="loadSkills()">Refresh</button>
+      </div>
+      <div class="scroll-area" id="skills-area">
+        <div class="empty">Loading\u2026</div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -467,6 +575,7 @@ let ilMinId = null;
 let ilAllLoaded = false;
 let ilLoading = false;
 let ilObserver;
+const _expandedSkills = new Set();
 
 // ── Helpers ──
 function esc(s) {
@@ -523,6 +632,7 @@ async function loadTab(name) {
       case 'memory':       await loadMemory(); break;
       case 'interactions': await loadInteractionLog(); break;
       case 'outcomes':     await loadOutcomes(); break;
+      case 'skills':       await loadSkills(); break;
     }
   } catch (e) {
     console.error('loadTab error:', e);
@@ -531,7 +641,7 @@ async function loadTab(name) {
 
 // ── SSE stream ──
 function connectStream() {
-  const es = new EventSource('/api/debug/stream');
+  const es = new EventSource('/api/stream');
   const statusEl = document.getElementById('stream-status');
   es.onopen = () => {
     statusEl.textContent = '\u25cf live';
@@ -560,7 +670,7 @@ function renderSessions(sessions) {
 }
 
 async function loadSessions() {
-  const r = await fetch('/api/debug/sessions');
+  const r = await fetch('/api/sessions');
   const d = await r.json();
   renderSessions(d.sessions || []);
 }
@@ -577,7 +687,6 @@ function renderSessionList(sessions) {
     const type = sessionType(s.id);
     const isSelected = s.id === selectedSession;
     const shortId = s.id.length > 32 ? s.id.slice(0, 28) + '\u2026' : s.id;
-    // stacked bar: sp (gray) + tools (purple) + hist (colored)
     const spPct    = Math.min(s.sp_tokens    / s.total_limit * 100, 100);
     const toolsPct = Math.min((s.tools_tokens || 0) / s.total_limit * 100, 100 - spPct);
     const hiPct    = Math.min(s.hist_tokens   / s.total_limit * 100, 100 - spPct - toolsPct);
@@ -617,11 +726,10 @@ async function loadSessionMessages(threadId) {
   const view = document.getElementById('msg-view');
   const type = sessionType(threadId);
 
-  const r = await fetch('/api/debug/sessions/' + encodeURIComponent(threadId) + '/messages');
+  const r = await fetch('/api/sessions/' + encodeURIComponent(threadId) + '/messages');
   const data = await r.json();
   const msgs = data.messages || [];
 
-  // Context bar (stacked: sp + tools + hist)
   let ctxHtml = '';
   if (data.total_limit !== undefined) {
     const spPct    = Math.min(data.sp_tokens    / data.total_limit * 100, 100);
@@ -673,7 +781,7 @@ async function sendToSession() {
   input.value = '';
   input.disabled = true;
   try {
-    const r = await fetch('/api/debug/sessions/' + encodeURIComponent(selectedSession) + '/send', {
+    const r = await fetch('/api/sessions/' + encodeURIComponent(selectedSession) + '/send', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({text}),
@@ -690,7 +798,7 @@ async function sendToSession() {
 async function deleteSession() {
   if (!selectedSession) return;
   if (!confirm('Archive all messages for session ' + selectedSession + '? (Same as /new in chat)')) return;
-  const r = await fetch('/api/debug/sessions/' + encodeURIComponent(selectedSession) + '/delete', {method: 'POST'});
+  const r = await fetch('/api/sessions/' + encodeURIComponent(selectedSession) + '/delete', {method: 'POST'});
   const data = await r.json();
   if (data.ok) { selectedSession = null; await loadSessions(); }
   else alert('Error: ' + (data.error || JSON.stringify(data)));
@@ -702,7 +810,7 @@ async function compactSession() {
   btn.disabled = true;
   btn.textContent = 'Compacting\u2026';
   try {
-    const r = await fetch('/api/debug/sessions/' + encodeURIComponent(selectedSession) + '/compact', {method: 'POST'});
+    const r = await fetch('/api/sessions/' + encodeURIComponent(selectedSession) + '/compact', {method: 'POST'});
     const data = await r.json();
     if (data.ok) await loadSessionMessages(selectedSession);
     else alert('Error: ' + (data.error || JSON.stringify(data)));
@@ -714,18 +822,17 @@ async function compactSession() {
 
 // ── System prompt modal ──
 async function showSystemPrompt() {
-  // Always recreate so we get fresh data.
   const existing = document.getElementById('sp-modal');
   if (existing) existing.remove();
   const modal = document.createElement('div');
   modal.id = 'sp-modal';
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;display:flex;align-items:center;justify-content:center';
+  modal.className = 'modal-overlay';
   modal.innerHTML = `
-    <div style="background:#16213e;border:1px solid #0f3460;border-radius:.5rem;width:82vw;max-height:88vh;display:flex;flex-direction:column;overflow:hidden">
-      <div style="padding:.6rem 1rem;background:#0d1526;border-bottom:1px solid #0f3460;display:flex;align-items:center;gap:.7rem;flex-shrink:0;flex-wrap:wrap">
-        <span style="font-weight:600;color:#a8d8ea">System Prompt + Tool Schemas</span>
+    <div class="modal-content" style="width:82vw;max-height:88vh">
+      <div class="modal-header" style="flex-wrap:wrap">
+        <h2>System Prompt + Tool Schemas</h2>
         <span id="sp-stats" style="font-size:.75rem;color:#888">Loading\u2026</span>
-        <button class="btn btn-sm" style="margin-left:auto" onclick="document.getElementById('sp-modal').remove()">Close</button>
+        <button class="modal-close" onclick="document.getElementById('sp-modal').remove()">Close</button>
       </div>
       <div style="flex:1;overflow:auto;display:flex;flex-direction:column">
         <div style="padding:.4rem .7rem;background:#0a1020;border-bottom:1px solid #0f3460;font-size:.72rem;color:#888;display:flex;gap:1.5rem" id="sp-token-bar"></div>
@@ -738,7 +845,7 @@ async function showSystemPrompt() {
   modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
   document.body.appendChild(modal);
   try {
-    const r = await fetch('/api/debug/system-prompt');
+    const r = await fetch('/api/system-prompt');
     const data = await r.json();
     if (data.error) {
       document.getElementById('sp-section').textContent = 'Error: ' + data.error;
@@ -774,13 +881,13 @@ async function showThreadConfig() {
   if (existing) existing.remove();
   const modal = document.createElement('div');
   modal.id = 'tc-modal';
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;display:flex;align-items:center;justify-content:center';
+  modal.className = 'modal-overlay';
   modal.innerHTML = `
-    <div style="background:#16213e;border:1px solid #0f3460;border-radius:.5rem;width:50vw;max-width:600px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden">
-      <div style="padding:.6rem 1rem;background:#0d1526;border-bottom:1px solid #0f3460;display:flex;align-items:center;gap:.7rem;flex-shrink:0">
-        <span style="font-weight:600;color:#a8d8ea">Thread Config</span>
+    <div class="modal-content" style="width:50vw;max-width:600px;max-height:80vh">
+      <div class="modal-header">
+        <h2>Thread Config</h2>
         <span class="mono dim" style="font-size:.72rem">${esc(selectedSession)}</span>
-        <button class="btn btn-sm" style="margin-left:auto" onclick="document.getElementById('tc-modal').remove()">Close</button>
+        <button class="modal-close" onclick="document.getElementById('tc-modal').remove()">Close</button>
       </div>
       <div id="tc-body" style="padding:1rem;overflow:auto;font-size:.85rem;color:#ccc">Loading\u2026</div>
     </div>`;
@@ -788,8 +895,8 @@ async function showThreadConfig() {
   document.body.appendChild(modal);
   try {
     const [cfgR, metaR] = await Promise.all([
-      fetch('/api/debug/thread-config/' + encodeURIComponent(selectedSession)),
-      fetch('/api/debug/thread-config'),
+      fetch('/api/thread-config/' + encodeURIComponent(selectedSession)),
+      fetch('/api/thread-config'),
     ]);
     const cfg = await cfgR.json();
     const meta = await metaR.json();
@@ -858,7 +965,7 @@ async function saveThreadConfig() {
     body[key] = val;
   }
   try {
-    const r = await fetch('/api/debug/thread-config/' + encodeURIComponent(selectedSession), {
+    const r = await fetch('/api/thread-config/' + encodeURIComponent(selectedSession), {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
@@ -873,7 +980,7 @@ async function resetThreadConfig() {
   if (!selectedSession) return;
   if (!confirm('Remove all config overrides for this thread?')) return;
   try {
-    const r = await fetch('/api/debug/thread-config/' + encodeURIComponent(selectedSession), { method: 'DELETE' });
+    const r = await fetch('/api/thread-config/' + encodeURIComponent(selectedSession), { method: 'DELETE' });
     const data = await r.json();
     if (data.error) { alert('Error: ' + data.error); return; }
     document.getElementById('tc-modal').remove();
@@ -920,7 +1027,6 @@ function renderWorkers(sessions, workflows) {
   const area = document.getElementById('workers-area');
   const scrollTop = area.scrollTop;
 
-  // Save expanded detail content + inner scroll so SSE updates don't wipe them
   const savedDetails = {};
   for (const sid of _expandedWorkers) {
     const contentEl = document.getElementById('wkcontent-' + sid);
@@ -939,15 +1045,12 @@ function renderWorkers(sessions, workflows) {
     return;
   }
 
-  // Build a map of workflow_id -> workflow metadata, and session_id -> session
   const wfMap = {};
   for (const wf of (workflows || [])) wfMap[wf.workflow_id] = wf;
   const sessionMap = {};
   for (const s of sessions) sessionMap[s.session_id] = s;
 
-  // Group sessions: workflow groups first (ordered by workflow created_at desc),
-  // then standalone sessions (no workflow_id), also newest-first
-  const wfSessions = {};   // workflow_id -> [session, ...]
+  const wfSessions = {};
   const standalone = [];
   for (const s of sessions) {
     if (s.workflow_id) {
@@ -958,9 +1061,7 @@ function renderWorkers(sessions, workflows) {
     }
   }
 
-  // Collect workflow IDs present in sessions (some may not be in wfMap yet)
   const wfIds = Object.keys(wfSessions);
-  // Sort by earliest created_at of member sessions, newest first
   wfIds.sort((a, b) => {
     const ta = Math.max(...wfSessions[a].map(s => new Date(s.created_at)));
     const tb = Math.max(...wfSessions[b].map(s => new Date(s.created_at)));
@@ -968,8 +1069,6 @@ function renderWorkers(sessions, workflows) {
   });
 
   let html = '';
-
-  // Table header helper
   const tableHeader = `<table class="data-table" style="width:100%">
     <thead><tr>
       <th></th><th>ID</th><th>Deps</th><th>Status</th>
@@ -977,7 +1076,6 @@ function renderWorkers(sessions, workflows) {
     </tr></thead><tbody>`;
   const tableFooter = `</tbody></table>`;
 
-  // Render workflow groups
   for (const wfId of wfIds) {
     const wf = wfMap[wfId];
     const members = wfSessions[wfId];
@@ -1010,7 +1108,6 @@ function renderWorkers(sessions, workflows) {
       </div>`;
   }
 
-  // Render standalone sessions
   if (standalone.length) {
     html += tableHeader;
     html += standalone.map(s => _workerSessionRow(s, false)).join('');
@@ -1019,7 +1116,6 @@ function renderWorkers(sessions, workflows) {
 
   area.innerHTML = html;
 
-  // Restore expanded detail content + inner scroll; only fetch if not yet loaded
   for (const sid of _expandedWorkers) {
     const contentEl = document.getElementById('wkcontent-' + sid);
     if (!contentEl) continue;
@@ -1037,8 +1133,8 @@ function renderWorkers(sessions, workflows) {
 
 async function loadWorkers() {
   const [r1, r2] = await Promise.all([
-    fetch('/api/debug/subsessions'),
-    fetch('/api/debug/workflows'),
+    fetch('/api/subsessions'),
+    fetch('/api/workflows'),
   ]);
   const [d1, d2] = await Promise.all([r1.json(), r2.json()]);
   renderWorkers(d1.sessions || [], d2.workflows || []);
@@ -1055,7 +1151,6 @@ async function toggleWorker(sid) {
     detailRow.style.display = '';
     fetchWorkerDetail(sid);
   }
-  // Update arrow in the trigger row
   const triggerRow = detailRow.previousElementSibling;
   if (triggerRow) {
     const arrowCell = triggerRow.querySelector('td');
@@ -1067,7 +1162,7 @@ async function fetchWorkerDetail(sid) {
   const el = document.getElementById('wkcontent-' + sid);
   if (!el) return;
   try {
-    const r = await fetch('/api/debug/subsessions/' + encodeURIComponent(sid) + '/messages');
+    const r = await fetch('/api/subsessions/' + encodeURIComponent(sid) + '/messages');
     const data = await r.json();
     const msgs = data.messages || [];
     if (!msgs.length) {
@@ -1075,7 +1170,7 @@ async function fetchWorkerDetail(sid) {
       return;
     }
     let html = '<div style="margin-bottom:.5rem"><strong style="color:#a8d8ea">Messages (' + msgs.length + ')</strong></div>';
-    html += '<div style="max-height:400px;overflow-y:auto;border:1px solid #0f3460;border-radius:.3rem;padding:.4rem">';
+    html += '<div style="max-height:400px;overflow-y:auto;border:1px solid #0f3460;border-radius:.4rem;padding:.4rem">';
     msgs.forEach(m => {
       const roleColor = m.role === 'assistant' ? '#a8d8ea' : m.role === 'user' ? '#90ee90' : m.role === 'tool' ? '#c9b0ff' : '#888';
       const content = (m.content || '').slice(0, 500) + ((m.content || '').length > 500 ? '\u2026' : '');
@@ -1117,7 +1212,7 @@ async function fetchScratchpad(wfId) {
   if (!el) return;
   el.innerHTML = 'Loading\u2026';
   try {
-    const r = await fetch('/api/debug/workflows/' + encodeURIComponent(wfId) + '/scratchpad');
+    const r = await fetch('/api/workflows/' + encodeURIComponent(wfId) + '/scratchpad');
     const data = await r.json();
     if (data.error) {
       el.innerHTML = '<span style="color:#ff9090">' + esc(data.error) + '</span>';
@@ -1138,10 +1233,10 @@ async function fetchScratchpad(wfId) {
     let html = '<div style="margin-bottom:.4rem"><strong style="color:#a8d8ea">\u{1F4CB} Scratchpad Files (' + data.files.length + ')</strong>'
       + ' <button onclick="fetchScratchpad(\'' + esc(wfId) + '\')" style="font-size:.68rem;padding:.1rem .4rem;background:#0f3460;color:#a8d8ea;border:1px solid #1a4a7a;border-radius:.2rem;cursor:pointer;margin-left:.4rem" title="Refresh">\u21bb Refresh</button>'
       + '</div>';
-    html += '<div style="max-height:500px;overflow-y:auto;border:1px solid #0f3460;border-radius:.3rem;padding:.5rem">';
+    html += '<div style="max-height:500px;overflow-y:auto;border:1px solid #0f3460;border-radius:.4rem;padding:.5rem">';
     data.files.forEach(f => {
       const sizeStr = f.size < 1024 ? f.size + ' B' : (f.size / 1024).toFixed(1) + ' KB';
-      html += '<div style="margin-bottom:.6rem;padding:.4rem .6rem;background:#080e1c;border:1px solid #0f3460;border-radius:.3rem">';
+      html += '<div style="margin-bottom:.6rem;padding:.4rem .6rem;background:#080e1c;border:1px solid #0f3460;border-radius:.4rem">';
       html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem">';
       html += '<span class="mono" style="color:#e0a060;font-size:.76rem">\u{1F4C4} ' + esc(f.name) + '</span>';
       html += '<span class="dim" style="font-size:.68rem">' + sizeStr + '</span>';
@@ -1182,7 +1277,7 @@ function renderJobs(jobs) {
 }
 
 async function loadJobs() {
-  const r = await fetch('/api/debug/jobs');
+  const r = await fetch('/api/jobs');
   const d = await r.json();
   renderJobs(d.jobs || []);
 }
@@ -1213,7 +1308,7 @@ function renderTasks(items) {
 }
 
 async function loadTasks() {
-  const r = await fetch('/api/debug/tasks');
+  const r = await fetch('/api/tasks');
   const d = await r.json();
   renderTasks(d.items || []);
 }
@@ -1221,13 +1316,15 @@ async function loadTasks() {
 function toggleSection(hdr) {
   hdr.classList.toggle('open');
   const body = hdr.nextElementSibling;
-  body.style.display = hdr.classList.contains('open') ? '' : 'none';
+  // Skip scratchpad panel if present
+  const sectionBody = body.classList && body.classList.contains('scratchpad-panel')
+    ? body.nextElementSibling : body;
+  if (sectionBody) sectionBody.style.display = hdr.classList.contains('open') ? '' : 'none';
   const id   = hdr.dataset.sectionId;
-  const type = hdr.dataset.sectionType;
   if (!id) return;
-  const set = _closedWorkerGroups;
-  hdr.classList.contains('open') ? set.delete(id) : set.add(id);
+  hdr.classList.contains('open') ? _closedWorkerGroups.delete(id) : _closedWorkerGroups.add(id);
 }
+
 // ── Interaction Log ──
 function _makeILRow(e) {
   const ts = new Date(e.timestamp * 1000).toLocaleString();
@@ -1258,14 +1355,14 @@ function _fetchIL({limit = 200, before_id, after_id} = {}) {
   if (action)  params.set('action', action);
   if (before_id != null) params.set('before_id', before_id);
   if (after_id != null)  params.set('after_id', after_id);
-  return fetch('/api/debug/interaction-log?' + params)
+  return fetch('/api/interaction-log?' + params)
     .then(r => r.json()).then(d => d.entries || []);
 }
 
 async function _refreshILSessions() {
   const filterSel = document.getElementById('il-filter-session');
   const currentFilter = filterSel.value;
-  const r = await fetch('/api/debug/interaction-log?limit=1000&offset=0');
+  const r = await fetch('/api/interaction-log?limit=1000&offset=0');
   const d = await r.json();
   const sessions = [...new Set((d.entries || []).map(e => e.session).filter(Boolean))];
   const existing = new Set([...filterSel.options].map(o => o.value));
@@ -1289,7 +1386,6 @@ function renderILEntries(entries, append, prepend = false) {
   const sentinel = document.getElementById('il-sentinel');
   if (sentinel) sentinel.remove();
 
-  // after_id returns ASC order — reverse so newest renders at top when prepending
   const ordered = prepend ? [...entries].reverse() : entries;
   const html = ordered.map(e => _makeILRow(e)).join('');
 
@@ -1354,7 +1450,7 @@ async function toggleILDetail(row, id) {
     next.remove();
     return;
   }
-  const r = await fetch('/api/debug/interaction-log/' + id);
+  const r = await fetch('/api/interaction-log/' + id);
   const e = await r.json();
   const detail = document.createElement('tr');
   detail.className = 'il-detail';
@@ -1393,7 +1489,7 @@ async function toggleILDetail(row, id) {
 // ── Memory ──
 async function loadMemory() {
   try {
-    const r = await fetch('/api/debug/memory');
+    const r = await fetch('/api/memory');
     const d = await r.json();
     document.getElementById('cnt-memory').textContent = d.count || 0;
     const el = document.getElementById('memory-stats');
@@ -1423,7 +1519,7 @@ async function doMemorySearch() {
   const el = document.getElementById('memory-results');
   el.innerHTML = '<div class="empty">Searching\u2026</div>';
   try {
-    const r = await fetch('/api/debug/memory?q=' + encodeURIComponent(q) + '&k=' + k);
+    const r = await fetch('/api/memory?q=' + encodeURIComponent(q) + '&k=' + k);
     const d = await r.json();
     const results = d.results || [];
     if (!results.length) {
@@ -1453,7 +1549,7 @@ async function loadOutcomes() {
   if (status) params.set('status', status);
   if (source) params.set('source', source);
   try {
-    const r = await fetch('/api/debug/outcomes?' + params);
+    const r = await fetch('/api/outcomes?' + params);
     const d = await r.json();
     const entries = d.entries || [];
     document.getElementById('cnt-outcomes').textContent = d.total || 0;
@@ -1500,14 +1596,212 @@ async function loadOutcomes() {
   } catch(e) { console.error('loadOutcomes:', e); }
 }
 
+// ── Skills ──
+async function loadSkills() {
+  try {
+    const r = await fetch('/api/skills');
+    const d = await r.json();
+    const skills = d.skills || [];
+    document.getElementById('cnt-skills').textContent = skills.length;
+
+    // Stats bar
+    const statsBar = document.getElementById('skills-stats-bar');
+    const totalReads = skills.reduce((a, s) => a + (s.read_count || 0), 0);
+    const totalSessions = skills.reduce((a, s) => a + (s.sessions_loaded || 0), 0);
+    const totalSuccess = skills.reduce((a, s) => a + (s.success_count || 0), 0);
+    const avgRate = totalSessions > 0 ? Math.round(totalSuccess / totalSessions * 100) : 0;
+    statsBar.innerHTML = [
+      '<span>Skills: <strong>' + skills.length + '</strong></span>',
+      '<span>Total reads: <strong>' + totalReads + '</strong></span>',
+      '<span>Sessions loaded: <strong>' + totalSessions + '</strong></span>',
+      totalSessions > 0 ? '<span>Success rate: <strong>' + avgRate + '%</strong></span>' : '',
+    ].filter(Boolean).join(' \u2502 ');
+
+    // Skill cards
+    const area = document.getElementById('skills-area');
+    if (!skills.length) {
+      area.innerHTML = '<div class="empty">No skills yet. Click "+ New Skill" to create one.</div>';
+      return;
+    }
+    area.innerHTML = skills.map(s => {
+      const isExpanded = _expandedSkills.has(s.name);
+      const mtime = s.mtime ? new Date(s.mtime * 1000).toLocaleDateString() : '-';
+      const sizeStr = s.size < 1024 ? s.size + ' B' : (s.size / 1024).toFixed(1) + ' KB';
+      const successRate = s.sessions_loaded > 0
+        ? Math.round(s.success_count / s.sessions_loaded * 100) + '%' : '-';
+      return `<div class="skill-card">
+        <div class="skill-card-header" onclick="toggleSkillCard('${esc(s.name)}')">
+          <span class="skill-card-name">${esc(s.name)}</span>
+          <span class="skill-card-summary">${esc(s.summary)}</span>
+          <span class="dim" style="font-size:.72rem">${sizeStr} &middot; ${mtime}</span>
+        </div>
+        <div class="skill-card-stats">
+          <span>Reads: <strong>${s.read_count || 0}</strong></span>
+          <span>Sessions: <strong>${s.sessions_loaded || 0}</strong></span>
+          <span>Success: <strong>${successRate}</strong></span>
+          <span>Version: <strong>${s.version || 1}</strong></span>
+        </div>
+        <div class="skill-card-body${isExpanded ? ' open' : ''}" id="skill-body-${esc(s.name)}">
+          <pre id="skill-content-${esc(s.name)}" style="white-space:pre-wrap;word-break:break-word;font-size:.78rem;color:#bbb;margin:0;padding:.5rem;background:#060a14;border-radius:.3rem;max-height:400px;overflow-y:auto">${isExpanded ? 'Loading\u2026' : ''}</pre>
+          <div class="skill-card-actions">
+            <button class="btn btn-sm" onclick="showEditSkillModal('${esc(s.name)}')">Edit</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteSkill('${esc(s.name)}')">Archive</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+
+    // Re-load expanded skill contents
+    for (const name of _expandedSkills) {
+      fetchSkillContent(name);
+    }
+  } catch(e) { console.error('loadSkills:', e); }
+}
+
+async function toggleSkillCard(name) {
+  const body = document.getElementById('skill-body-' + name);
+  if (!body) return;
+  if (_expandedSkills.has(name)) {
+    _expandedSkills.delete(name);
+    body.classList.remove('open');
+  } else {
+    _expandedSkills.add(name);
+    body.classList.add('open');
+    await fetchSkillContent(name);
+  }
+}
+
+async function fetchSkillContent(name) {
+  const pre = document.getElementById('skill-content-' + name);
+  if (!pre) return;
+  try {
+    const r = await fetch('/api/skills/' + encodeURIComponent(name));
+    const d = await r.json();
+    pre.textContent = d.content || '';
+  } catch(e) {
+    pre.textContent = 'Failed to load: ' + e;
+  }
+}
+
+function showCreateSkillModal() {
+  const existing = document.getElementById('skill-modal');
+  if (existing) existing.remove();
+  const modal = document.createElement('div');
+  modal.id = 'skill-modal';
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal-content" style="width:50vw;max-width:600px;max-height:80vh">
+      <div class="modal-header">
+        <h2>Create Skill</h2>
+        <button class="modal-close" onclick="document.getElementById('skill-modal').remove()">Close</button>
+      </div>
+      <div style="padding:1rem;overflow:auto;display:flex;flex-direction:column;gap:.8rem">
+        <div class="form-group">
+          <label>Skill Name (filename without .md)</label>
+          <input type="text" id="new-skill-name" placeholder="e.g. web_scraping" maxlength="80">
+        </div>
+        <div class="form-group">
+          <label>Summary (first line, max 80 chars)</label>
+          <input type="text" id="new-skill-summary" placeholder="One-line description" maxlength="80">
+        </div>
+        <div class="form-group">
+          <label>Documentation</label>
+          <textarea id="new-skill-doc" rows="8" placeholder="Detailed instructions..." maxlength="5000" style="font-family:monospace;font-size:.82rem"></textarea>
+        </div>
+        <div style="display:flex;gap:.5rem">
+          <button class="btn btn-primary" onclick="createSkill()">Create</button>
+          <button class="btn" onclick="document.getElementById('skill-modal').remove()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  document.body.appendChild(modal);
+  document.getElementById('new-skill-name').focus();
+}
+
+async function createSkill() {
+  const name = document.getElementById('new-skill-name').value.trim();
+  const summary = document.getElementById('new-skill-summary').value.trim();
+  const doc = document.getElementById('new-skill-doc').value.trim();
+  if (!name || !doc) { alert('Name and documentation are required'); return; }
+  try {
+    const r = await fetch('/api/skills', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({skill_name: name, summary, documentation: doc}),
+    });
+    const d = await r.json();
+    if (d.error) { alert('Error: ' + d.error); return; }
+    document.getElementById('skill-modal').remove();
+    await loadSkills();
+  } catch(e) { alert('Create failed: ' + e); }
+}
+
+async function showEditSkillModal(name) {
+  const existing = document.getElementById('skill-modal');
+  if (existing) existing.remove();
+  const modal = document.createElement('div');
+  modal.id = 'skill-modal';
+  modal.className = 'modal-overlay';
+  modal.innerHTML = `
+    <div class="modal-content" style="width:60vw;max-width:700px;max-height:85vh">
+      <div class="modal-header">
+        <h2>Edit: ${esc(name)}</h2>
+        <button class="modal-close" onclick="document.getElementById('skill-modal').remove()">Close</button>
+      </div>
+      <div style="padding:1rem;overflow:auto;display:flex;flex-direction:column;gap:.8rem;flex:1">
+        <textarea id="edit-skill-content" rows="20" style="font-family:monospace;font-size:.82rem;flex:1;min-height:200px">Loading\u2026</textarea>
+        <div style="display:flex;gap:.5rem">
+          <button class="btn btn-primary" onclick="saveSkill('${esc(name)}')">Save</button>
+          <button class="btn" onclick="document.getElementById('skill-modal').remove()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  document.body.appendChild(modal);
+  try {
+    const r = await fetch('/api/skills/' + encodeURIComponent(name));
+    const d = await r.json();
+    document.getElementById('edit-skill-content').value = d.content || '';
+  } catch(e) {
+    document.getElementById('edit-skill-content').value = 'Failed to load: ' + e;
+  }
+}
+
+async function saveSkill(name) {
+  const content = document.getElementById('edit-skill-content').value;
+  if (!content.trim()) { alert('Content cannot be empty'); return; }
+  try {
+    const r = await fetch('/api/skills/' + encodeURIComponent(name), {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({content}),
+    });
+    const d = await r.json();
+    if (d.error) { alert('Error: ' + d.error); return; }
+    document.getElementById('skill-modal').remove();
+    await loadSkills();
+  } catch(e) { alert('Save failed: ' + e); }
+}
+
+async function deleteSkill(name) {
+  if (!confirm('Archive skill "' + name + '"? The file will be moved to data/skills/.archive/ and can be restored later.')) return;
+  try {
+    const r = await fetch('/api/skills/' + encodeURIComponent(name), { method: 'DELETE' });
+    const d = await r.json();
+    if (d.error) { alert('Error: ' + d.error); return; }
+    _expandedSkills.delete(name);
+    await loadSkills();
+  } catch(e) { alert('Delete failed: ' + e); }
+}
+
 // ── Config info ──
 async function loadConfig() {
   try {
-    const r = await fetch('/api/debug/config');
+    const r = await fetch('/api/config');
     const d = await r.json();
     const el = document.getElementById('cfg-info');
     const parts = [];
-    // Each role is a list of backends (ordered failover); show the primary (first)
     const first = arr => Array.isArray(arr) ? arr[0] : arr;
     const main  = first(d.main);
     const comp  = first(d.compaction);

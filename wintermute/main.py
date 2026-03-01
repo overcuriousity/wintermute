@@ -604,7 +604,7 @@ async def main() -> None:
         event_bus=event_bus,
     )
 
-    # Inject debug dependencies into web interface (after scheduler is built).
+    # Inject dependencies into web interface (after scheduler is built).
     if web_iface:
         web_iface._sub_sessions = sub_sessions
         web_iface._scheduler = scheduler

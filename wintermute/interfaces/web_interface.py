@@ -1,9 +1,9 @@
 """
 Web Interface
 
-Debug panel available at /debug.  Provides a read/write inspection view of all
-running sessions, sub-sessions, scheduled jobs, and tasks.
-REST API under /api/debug/* is consumed by the embedded SPA.
+Dashboard SPA served at webroot (/).  Provides a read/write inspection view of
+all running sessions, sub-sessions, scheduled jobs, tasks, and skills.
+REST API under /api/* is consumed by the embedded SPA.
 """
 
 import asyncio
@@ -27,9 +27,9 @@ _DEBUG_HTML_PATH = Path(__file__).parent / "static" / "debug.html"
 
 class WebInterface:
     """
-    Runs an aiohttp web server serving the debug panel at /debug.
+    Runs an aiohttp web server serving the dashboard SPA at /.
 
-    Optional debug dependencies (injected post-construction in main.py):
+    Optional dependencies (injected post-construction in main.py):
       _sub_sessions  – SubSessionManager
       _scheduler     – TaskScheduler
       _matrix        – MatrixThread
@@ -83,39 +83,45 @@ class WebInterface:
 
     async def run(self) -> None:
         app = web.Application()
-        # Debug panel
-        app.router.add_get("/debug", self._handle_debug)
-        # Debug REST API
-        app.router.add_get("/api/debug/sessions",                        self._api_sessions)
-        app.router.add_get("/api/debug/sessions/{thread_id}/messages",  self._api_session_messages)
-        app.router.add_post("/api/debug/sessions/{thread_id}/send",     self._api_session_send)
-        app.router.add_post("/api/debug/sessions/{thread_id}/delete",   self._api_session_delete)
-        app.router.add_post("/api/debug/sessions/{thread_id}/compact",  self._api_session_compact)
-        app.router.add_get("/api/debug/subsessions",                    self._api_subsessions)
-        app.router.add_get("/api/debug/subsessions/{id}/messages",      self._api_subsession_messages)
-        app.router.add_get("/api/debug/workflows",                     self._api_workflows)
-        app.router.add_get("/api/debug/workflows/{workflow_id}/scratchpad", self._api_workflow_scratchpad)
-        app.router.add_get("/api/debug/jobs",                           self._api_jobs)
-        app.router.add_get("/api/debug/config",                          self._api_config)
-        app.router.add_get("/api/debug/system-prompt",                  self._api_system_prompt)
-        app.router.add_get("/api/debug/tasks",                          self._api_tasks)
-        app.router.add_get("/api/debug/memory",                           self._api_memory)
-        app.router.add_get("/api/debug/interaction-log",                 self._api_interaction_log)
-        app.router.add_get("/api/debug/interaction-log/{id}",            self._api_interaction_log_entry)
-        app.router.add_get("/api/debug/outcomes",                        self._api_outcomes)
-        app.router.add_get("/api/debug/stream",                          self._api_stream)
+        # Dashboard SPA
+        app.router.add_get("/", self._handle_dashboard)
+        app.router.add_get("/debug", self._handle_debug_redirect)
+        # REST API
+        app.router.add_get("/api/sessions",                        self._api_sessions)
+        app.router.add_get("/api/sessions/{thread_id}/messages",  self._api_session_messages)
+        app.router.add_post("/api/sessions/{thread_id}/send",     self._api_session_send)
+        app.router.add_post("/api/sessions/{thread_id}/delete",   self._api_session_delete)
+        app.router.add_post("/api/sessions/{thread_id}/compact",  self._api_session_compact)
+        app.router.add_get("/api/subsessions",                    self._api_subsessions)
+        app.router.add_get("/api/subsessions/{id}/messages",      self._api_subsession_messages)
+        app.router.add_get("/api/workflows",                     self._api_workflows)
+        app.router.add_get("/api/workflows/{workflow_id}/scratchpad", self._api_workflow_scratchpad)
+        app.router.add_get("/api/jobs",                           self._api_jobs)
+        app.router.add_get("/api/config",                          self._api_config)
+        app.router.add_get("/api/system-prompt",                  self._api_system_prompt)
+        app.router.add_get("/api/tasks",                          self._api_tasks)
+        app.router.add_get("/api/memory",                           self._api_memory)
+        app.router.add_get("/api/interaction-log",                 self._api_interaction_log)
+        app.router.add_get("/api/interaction-log/{id}",            self._api_interaction_log_entry)
+        app.router.add_get("/api/outcomes",                        self._api_outcomes)
+        app.router.add_get("/api/stream",                          self._api_stream)
         # Per-thread config API
-        app.router.add_get("/api/debug/thread-config",                   self._api_thread_configs)
-        app.router.add_get("/api/debug/thread-config/{thread_id}",       self._api_thread_config_get)
-        app.router.add_post("/api/debug/thread-config/{thread_id}",      self._api_thread_config_set)
-        app.router.add_delete("/api/debug/thread-config/{thread_id}",    self._api_thread_config_reset)
+        app.router.add_get("/api/thread-config",                   self._api_thread_configs)
+        app.router.add_get("/api/thread-config/{thread_id}",       self._api_thread_config_get)
+        app.router.add_post("/api/thread-config/{thread_id}",      self._api_thread_config_set)
+        app.router.add_delete("/api/thread-config/{thread_id}",    self._api_thread_config_reset)
+        # Skills API
+        app.router.add_get("/api/skills",                          self._api_skills)
+        app.router.add_get("/api/skills/{name}",                   self._api_skill_get)
+        app.router.add_post("/api/skills",                         self._api_skill_create)
+        app.router.add_put("/api/skills/{name}",                   self._api_skill_update)
+        app.router.add_delete("/api/skills/{name}",                self._api_skill_delete)
 
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         site = web.TCPSite(runner, self._host, self._port)
         await site.start()
         logger.info("Web interface listening on http://%s:%d", self._host, self._port)
-        logger.info("Debug panel at http://%s:%d/debug", self._host, self._port)
 
         try:
             while True:
@@ -128,19 +134,22 @@ class WebInterface:
             await runner.cleanup()
 
     # ------------------------------------------------------------------
-    # Debug panel handler
+    # Dashboard handler
     # ------------------------------------------------------------------
 
-    async def _handle_debug(self, _request: web.Request) -> web.Response:
+    async def _handle_dashboard(self, _request: web.Request) -> web.Response:
         try:
             html = _DEBUG_HTML_PATH.read_text(encoding="utf-8")
         except OSError as exc:
-            logger.error("Could not read debug panel HTML from %s: %s", _DEBUG_HTML_PATH, exc)
-            return web.Response(status=500, text="Debug panel unavailable")
+            logger.error("Could not read dashboard HTML from %s: %s", _DEBUG_HTML_PATH, exc)
+            return web.Response(status=500, text="Dashboard unavailable")
         return web.Response(text=html, content_type="text/html")
 
+    async def _handle_debug_redirect(self, _request: web.Request) -> web.Response:
+        raise web.HTTPFound("/")
+
     # ------------------------------------------------------------------
-    # Debug REST API — helpers
+    # REST API — helpers
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -155,7 +164,7 @@ class WebInterface:
                 "hist_tokens": 0, "total_used": 0, "pct": 0.0, "msg_count": 0}
 
     # ------------------------------------------------------------------
-    # Debug REST API — sessions
+    # REST API — sessions
     # ------------------------------------------------------------------
 
     async def _api_sessions(self, _request: web.Request) -> web.Response:
@@ -346,7 +355,7 @@ class WebInterface:
         })
 
     # ------------------------------------------------------------------
-    # Debug REST API — sub-sessions
+    # REST API — sub-sessions
     # ------------------------------------------------------------------
 
     async def _api_subsessions(self, _request: web.Request) -> web.Response:
@@ -389,11 +398,11 @@ class WebInterface:
         return self._json({"workflows": self._sub_sessions.list_workflows()})
 
     # ------------------------------------------------------------------
-    # Debug REST API — workflow scratchpad
+    # REST API — workflow scratchpad
     # ------------------------------------------------------------------
 
     async def _api_workflow_scratchpad(self, request: web.Request) -> web.Response:
-        """GET /api/debug/workflows/{workflow_id}/scratchpad — list scratchpad files with contents."""
+        """GET /api/workflows/{workflow_id}/scratchpad — list scratchpad files with contents."""
         workflow_id = request.match_info["workflow_id"]
         # Sanitise: only allow alphanumeric, dash, underscore
         if not all(c.isalnum() or c in "-_" for c in workflow_id):
@@ -412,7 +421,7 @@ class WebInterface:
         return self._json({"workflow_id": workflow_id, "files": files, "exists": True})
 
     # ------------------------------------------------------------------
-    # Debug REST API — scheduler jobs
+    # REST API — scheduler jobs
     # ------------------------------------------------------------------
 
     async def _api_jobs(self, _request: web.Request) -> web.Response:
@@ -421,7 +430,7 @@ class WebInterface:
         return self._json({"jobs": self._scheduler.list_jobs()})
 
     # ------------------------------------------------------------------
-    # Debug REST API — tasks
+    # REST API — tasks
     # ------------------------------------------------------------------
 
     async def _api_tasks(self, _request: web.Request) -> web.Response:
@@ -434,7 +443,7 @@ class WebInterface:
     # ------------------------------------------------------------------
 
     async def _api_thread_configs(self, _request: web.Request) -> web.Response:
-        """GET /api/debug/thread-config — list all overrides + available backends."""
+        """GET /api/thread-config — list all overrides + available backends."""
         mgr = getattr(self, "_thread_config_manager", None)
         if mgr is None:
             return self._json({"error": "Thread config not available"})
@@ -447,7 +456,7 @@ class WebInterface:
         })
 
     async def _api_thread_config_get(self, request: web.Request) -> web.Response:
-        """GET /api/debug/thread-config/{thread_id} — resolved config with sources."""
+        """GET /api/thread-config/{thread_id} — resolved config with sources."""
         mgr = getattr(self, "_thread_config_manager", None)
         if mgr is None:
             return self._json({"error": "Thread config not available"})
@@ -462,7 +471,7 @@ class WebInterface:
         })
 
     async def _api_thread_config_set(self, request: web.Request) -> web.Response:
-        """POST /api/debug/thread-config/{thread_id} — set overrides (JSON body)."""
+        """POST /api/thread-config/{thread_id} — set overrides (JSON body)."""
         mgr = getattr(self, "_thread_config_manager", None)
         if mgr is None:
             return self._json({"error": "Thread config not available"})
@@ -480,7 +489,7 @@ class WebInterface:
         return self._json({"ok": True, "resolved": resolved_dict})
 
     async def _api_thread_config_reset(self, request: web.Request) -> web.Response:
-        """DELETE /api/debug/thread-config/{thread_id} — remove all overrides."""
+        """DELETE /api/thread-config/{thread_id} — remove all overrides."""
         mgr = getattr(self, "_thread_config_manager", None)
         if mgr is None:
             return self._json({"error": "Thread config not available"})
@@ -575,6 +584,118 @@ class WebInterface:
 
         result = await asyncio.get_running_loop().run_in_executor(None, _build_result)
         return self._json(result)
+
+    # ------------------------------------------------------------------
+    # Skills API
+    # ------------------------------------------------------------------
+
+    async def _api_skills(self, _request: web.Request) -> web.Response:
+        """GET /api/skills — list all skills with metadata and stats."""
+        from wintermute.infra.paths import SKILLS_DIR
+        from wintermute.workers import skill_stats
+
+        skills = []
+        stats = skill_stats.get_all()
+        if SKILLS_DIR.exists():
+            for md_file in sorted(SKILLS_DIR.glob("*.md")):
+                try:
+                    content = md_file.read_text(encoding="utf-8")
+                except OSError:
+                    continue
+                name = md_file.stem
+                summary = content.split("\n", 1)[0].strip() if content else ""
+                st = md_file.stat()
+                skill_stat = stats.get(name, {})
+                skills.append({
+                    "name": name,
+                    "summary": summary,
+                    "size": st.st_size,
+                    "mtime": st.st_mtime,
+                    "read_count": skill_stat.get("read_count", 0),
+                    "sessions_loaded": skill_stat.get("sessions_loaded", 0),
+                    "success_count": skill_stat.get("success_count", 0),
+                    "failure_count": skill_stat.get("failure_count", 0),
+                    "version": skill_stat.get("version", 1),
+                    "last_read": skill_stat.get("last_read"),
+                    "last_updated": skill_stat.get("last_updated"),
+                })
+        return self._json({"skills": skills, "count": len(skills)})
+
+    async def _api_skill_get(self, request: web.Request) -> web.Response:
+        """GET /api/skills/{name} — read full skill content."""
+        from wintermute.infra.paths import SKILLS_DIR
+
+        name = request.match_info["name"]
+        skill_file = SKILLS_DIR / f"{name}.md"
+        if not skill_file.exists():
+            return web.json_response({"error": "not found"}, status=404)
+        try:
+            content = skill_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            return self._json({"error": str(exc)})
+        return self._json({"name": name, "content": content})
+
+    async def _api_skill_create(self, request: web.Request) -> web.Response:
+        """POST /api/skills — create a new skill."""
+        from wintermute.infra import prompt_assembler
+        from wintermute.infra.paths import SKILLS_DIR
+
+        try:
+            data = await request.json()
+        except Exception:
+            return web.Response(status=400, text="Invalid JSON body")
+        name = (data.get("skill_name") or "").strip()
+        summary = (data.get("summary") or "").strip()
+        documentation = (data.get("documentation") or "").strip()
+        if not name or not documentation:
+            return self._json({"error": "skill_name and documentation are required"})
+        # Reject if already exists
+        if (SKILLS_DIR / f"{name}.md").exists():
+            return self._json({"error": f"Skill '{name}' already exists. Use PUT to update."})
+        prompt_assembler.add_skill(name, documentation, summary=summary or None)
+        return self._json({"ok": True, "name": name})
+
+    async def _api_skill_update(self, request: web.Request) -> web.Response:
+        """PUT /api/skills/{name} — update an existing skill."""
+        from wintermute.infra import prompt_assembler
+        from wintermute.infra.paths import SKILLS_DIR
+
+        name = request.match_info["name"]
+        if not (SKILLS_DIR / f"{name}.md").exists():
+            return web.json_response({"error": "not found"}, status=404)
+        try:
+            data = await request.json()
+        except Exception:
+            return web.Response(status=400, text="Invalid JSON body")
+        content = (data.get("content") or "").strip()
+        if not content:
+            return self._json({"error": "content is required"})
+        # Write full content directly (preserving user edits including changelog)
+        skill_file = SKILLS_DIR / f"{name}.md"
+        skill_file.write_text(content, encoding="utf-8")
+        from wintermute.infra import data_versioning
+        data_versioning.commit_async(f"skill: {name}")
+        return self._json({"ok": True, "name": name})
+
+    async def _api_skill_delete(self, request: web.Request) -> web.Response:
+        """DELETE /api/skills/{name} — archive a skill."""
+        from wintermute.infra.paths import SKILLS_DIR
+        from wintermute.infra import data_versioning
+        from wintermute.workers import skill_stats
+
+        name = request.match_info["name"]
+        skill_file = SKILLS_DIR / f"{name}.md"
+        if not skill_file.exists():
+            return web.json_response({"error": "not found"}, status=404)
+        archive_dir = SKILLS_DIR / ".archive"
+        archive_dir.mkdir(exist_ok=True)
+        dest = archive_dir / f"{name}.md"
+        skill_file.rename(dest)
+        skill_stats.remove_skill(name)
+        skill_stats.flush()
+        data_versioning.commit_async(f"skill: archive {name}")
+        logger.info("Skill '%s' archived to %s", name, dest)
+        return self._json({"ok": True, "name": name, "archived": True})
 
     # ------------------------------------------------------------------
     # SSE stream
