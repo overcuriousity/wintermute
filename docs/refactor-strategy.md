@@ -43,17 +43,17 @@ All Phase 1 and Phase 2 issues have been merged:
 
 These three issues all depend on #83 being resolved first, because clean separation requires the DI globals to be gone. They can be done **in parallel** with each other.
 
-#### Issue #80 — Split `tools.py` (778 lines)
+#### Issue #80 — Split `tools.py` (778 lines) ✅
 
-Schemas are already in `core/tool_schemas.py`. Remaining split:
-- `tools.py` → keep as thin dispatcher (`execute_tool()` + `_DISPATCH` dict)
-- `tools/task_tools.py` — `_tool_task` + all `_task_*` handlers
-- `tools/memory_tools.py` — `_tool_append_memory`, `_tool_add_skill`
-- `tools/io_tools.py` — `_tool_read_file`, `_tool_write_file`, `_tool_execute_shell`
-- `tools/web_tools.py` — `_tool_search_web`, `_tool_fetch_url`, `_HTMLTextExtractor`
-- `tools/session_tools.py` — `_tool_spawn_sub_session`, `_tool_query_telemetry`
+Completed. `tools.py` converted to `tools/` package:
+- `tools/__init__.py` — thin dispatcher (`execute_tool()` + `_DISPATCH` dict) + re-exports
+- `tools/task_tools.py` — `tool_task` + all task action handlers + `_describe_schedule`
+- `tools/memory_tools.py` — `tool_append_memory`, `tool_add_skill`
+- `tools/io_tools.py` — `tool_read_file`, `tool_write_file`, `tool_execute_shell`
+- `tools/web_tools.py` — `tool_search_web`, `tool_fetch_url`, `_HTMLTextExtractor`
+- `tools/session_tools.py` — `tool_spawn_sub_session`, `tool_query_telemetry`
 
-DI globals move into `ToolCallContext` (from #83), so tool functions receive deps as args.
+All external consumers (`from wintermute import tools as tool_module`) remain unchanged.
 
 #### Issue #81 — Split `prompt_assembler.py` (481 lines)
 
@@ -112,6 +112,6 @@ Phase 2A              Phase 2B           Phase 3              Phase 4       Phas
 | Order | Issue(s) | Phase | Parallel? | Status |
 |---|---|---|---|---|
 | 1 | **#104**, **#83** | 2A + 2B | Yes, parallel | ✅ Done |
-| 2 | **#80**, **#81**, **#82** | 3 | Yes, parallel (all need #83 done) | Next |
+| 2 | **#80**, **#81**, **#82** | 3 | Yes, parallel (all need #83 done) | #80 ✅ Done |
 | 3 | **#79** | 4 | No (needs #104 + #80 + #83) | |
 | 4 | **#85** | 5 | No (needs #79) | |
