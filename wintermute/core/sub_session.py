@@ -1553,6 +1553,7 @@ class SubSessionManager:
                 available_tools=_available_tool_names,
                 scratchpad_dir=_scratchpad_dir,
                 session_id=state.session_id,
+                tool_deps=self._tool_deps,
             )
             state.messages = [
                 {"role": "system", "content": system_prompt},
@@ -1835,6 +1836,7 @@ class SubSessionManager:
         available_tools: Optional[set[str]] = None,
         scratchpad_dir: Optional[str] = None,
         session_id: Optional[str] = None,
+        tool_deps: Optional[ToolDeps] = None,
     ) -> str:
         if mode == "none":
             base = ""
@@ -1847,11 +1849,14 @@ class SubSessionManager:
             base = prompt_assembler.assemble(
                 thread_id=thread_id, available_tools=available_tools,
                 query=objective,
-                tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
-                self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
+                tool_profiles=tool_deps.tool_profiles if tool_deps else None,
+                self_model_profiler=tool_deps.self_model_profiler if tool_deps else None,
             )
         else:  # "base_only"
-            base_text = prompt_assembler._assemble_base(available_tools)
+            base_text = prompt_assembler._assemble_base(
+                available_tools,
+                tool_profiles=tool_deps.tool_profiles if tool_deps else None,
+            )
             base = f"# Core Instructions\n\n{base_text}" if base_text else ""
 
         parts = [base] if base else []
