@@ -18,6 +18,9 @@ Supported patterns
 * ``<prefix:tool_call>…[/tool_name]`` (MiniMax hybrid style)
 * Fenced code blocks labelled ``tool_call`` / ``json`` that contain
   ``{"name": "…", …}``
+* ``[TOOL_CALL]{tool => "…", args => {--key value …}}[/TOOL_CALL]``
+  (bracket wrapper with hash-rocket notation and CLI-style ``--flag value``
+  arguments)
 """
 
 from __future__ import annotations
@@ -86,6 +89,13 @@ _RE_MINIMAX = re.compile(
     r"(\w+)\s+"                          # tool name
     r"(.*?)"                             # body (key="value" or JSON)
     r"\[/\1\]",                          # closing [/tool_name]
+    re.DOTALL | re.IGNORECASE,
+)
+
+# 5. Bracket-wrapped TOOL_CALL: [TOOL_CALL]…[/TOOL_CALL]
+#    Body may use hash-rocket notation: {tool => "name", args => {…}}
+_RE_BRACKET_TOOL_CALL = re.compile(
+    r"\[TOOL_CALL\](.*?)\[/TOOL_CALL\]",
     re.DOTALL | re.IGNORECASE,
 )
 
@@ -171,6 +181,100 @@ def _parse_minimax_kv(body: str) -> dict:
         elif m.group(3):
             result[m.group(3)] = m.group(4)
     return result
+
+
+def _parse_cli_args(body: str) -> dict:
+    """Parse CLI-style ``--key value`` argument strings.
+
+    Handles bodies like::
+
+        --operation "interaction_log"
+        --limit 10
+
+    Keys are normalised from ``kebab-case`` to ``snake_case``.
+    Numeric values are converted to ``int`` / ``float`` where possible.
+    """
+    result: dict = {}
+    for m in re.finditer(
+        r"--([\w][\w-]*)\s+"
+        r'(?:"((?:[^"\\]|\\.)*)"|'   # double-quoted
+        r"'((?:[^'\\]|\\.)*)'|"       # single-quoted
+        r"(\S+))",                     # bare word
+        body,
+    ):
+        key = m.group(1).replace("-", "_")
+        if m.group(2) is not None:
+            val: "str | int | float" = m.group(2)
+        elif m.group(3) is not None:
+            val = m.group(3)
+        else:
+            raw = m.group(4)
+            try:
+                val = int(raw)
+            except ValueError:
+                try:
+                    val = float(raw)
+                except ValueError:
+                    val = raw
+        result[key] = val
+    return result
+
+
+def _parse_arrow_style(
+    body: str, known_tools: set[str]
+) -> list["SyntheticToolCall"]:
+    """Parse hash-rocket style: ``{tool => "name", args => {…}}``.
+
+    The *args* block may contain JSON, key=value, YAML-like, or
+    ``--flag value`` CLI-style pairs.
+    """
+    # Extract tool name (tool => "name" or tool => name)
+    name_m = re.search(
+        r'\btool\s*=>\s*["\']?([\w]+)["\']?', body, re.IGNORECASE
+    )
+    if not name_m:
+        return []
+    name = name_m.group(1).strip()
+    if known_tools and name not in known_tools:
+        return []
+
+    # Extract args block: args => { … } (possibly multi-line, possibly nested)
+    # We scan for the opening brace after 'args =>' and match braces manually.
+    args_m = re.search(r"\bargs\s*=>\s*\{", body, re.IGNORECASE)
+    if not args_m:
+        return [SyntheticToolCall.make(name, "{}")]
+
+    brace_start = args_m.end() - 1  # position of '{'
+    depth = 0
+    brace_end = brace_start
+    for i, ch in enumerate(body[brace_start:], brace_start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                brace_end = i
+                break
+
+    args_body = body[brace_start + 1 : brace_end].strip()
+
+    # Attempt progressively simpler parses
+    args: dict = {}
+    try:
+        parsed = json.loads("{" + args_body + "}")
+        if isinstance(parsed, dict):
+            args = parsed
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    if not args:
+        args = _parse_cli_args(args_body)
+    if not args:
+        args = _parse_minimax_kv(args_body)
+    if not args:
+        args = _parse_yaml_like_kv(args_body)
+
+    return [SyntheticToolCall.make(name, json.dumps(args))]
 
 
 def _parse_yaml_like_kv(body: str) -> dict:
@@ -328,6 +432,17 @@ def rescue_tool_calls(
                 else:
                     continue
             _add(SyntheticToolCall.make(name, args_str))
+
+    # --- Pattern 5: Bracket-wrapped [TOOL_CALL] with hash-rocket body ---
+    for m in _RE_BRACKET_TOOL_CALL.finditer(content):
+        body = m.group(1).strip()
+        # Try arrow-style first ({tool => "…", args => {…}})
+        parsed = _parse_arrow_style(body, known)
+        if not parsed:
+            # Fall back to plain JSON inside the brackets
+            parsed = _try_parse_json_body(body, known) or []
+        for tc in parsed:
+            _add(tc)
 
     if results:
         logger.info(
