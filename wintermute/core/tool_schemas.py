@@ -25,7 +25,8 @@ TOOL_SCHEMAS = [
         (
             "Manage background workers: spawn autonomous tasks, "
             "check status of running workers, or cancel them. "
-            "Results arrive later as [SYSTEM EVENT]."
+            "Spawned task results arrive later via [SYSTEM EVENT]; "
+            "status and cancel return immediately."
         ),
         {
             "type": "object",

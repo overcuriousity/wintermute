@@ -136,10 +136,13 @@ def _tool_spawn_sub_session(inputs: dict, thread_id: Optional[str] = None,
                             nesting_depth: int = 0, **_kw) -> str:
     action = inputs.get("action", "spawn")
 
+    if action not in ("spawn", "status", "cancel"):
+        return json.dumps({"error": f"Unknown action: {action}. Use spawn, status, or cancel."})
+
     if action == "status":
         if _sub_session_status is None:
             return json.dumps({"error": "Sub-session manager not ready."})
-        sessions = _sub_session_status()
+        sessions = _sub_session_status(thread_id)
         if not sessions:
             return json.dumps({"status": "No active background workers."})
         return json.dumps({"active_workers": sessions})
