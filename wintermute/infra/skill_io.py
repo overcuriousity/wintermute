@@ -35,7 +35,7 @@ def add_skill(skill_name: str, documentation: str,
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
     skill_file = SKILLS_DIR / f"{skill_name}.md"
     # Ensure resolved path stays within SKILLS_DIR.
-    if not skill_file.resolve().parent == SKILLS_DIR.resolve():
+    if skill_file.resolve().parent != SKILLS_DIR.resolve():
         raise ValueError(f"Skill path escapes skills directory: {skill_name!r}")
     is_update = skill_file.exists()
     if summary:
