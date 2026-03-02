@@ -84,12 +84,10 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     result = {"status": "ok", "task_id": task_id}
     if schedule_desc:
         result["schedule"] = schedule_desc
-    # Warn when a scheduled task has no ai_prompt — only a passive reminder.
-    if schedule_type and not ai_prompt:
-        result["warning"] = (
-            "Scheduled task has no ai_prompt — only a passive \u23f0 reminder "
-            "will fire. Add ai_prompt for autonomous execution."
-        )
+    # Tell the LLM what execution mode was selected so it can self-correct
+    # without mistaking a legitimate passive reminder for an error.
+    if schedule_type:
+        result["mode"] = "autonomous" if ai_prompt else "reminder"
     return json.dumps(result)
 
 
