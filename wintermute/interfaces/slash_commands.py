@@ -152,7 +152,9 @@ class SlashCommandHandler:
         await send_fn(f"Tasks:\n```json\n{result}\n```")
 
     async def _cmd_status(self, thread_id: str, send_fn: SendFn) -> None:
-        from wintermute.infra import database as db, prompt_assembler
+        from wintermute.infra import database as db
+        from wintermute.infra.memory_io import read_text_safe
+        from wintermute.infra.paths import MEMORIES_FILE, SKILLS_DIR
 
         lines = ["**Wintermute Status**"]
 
@@ -195,8 +197,8 @@ class SlashCommandHandler:
         lines.append("\n**Memory & Knowledge**")
 
         def _read_memory_and_skills():
-            mem = prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or ""
-            skill_paths = sorted(prompt_assembler.SKILLS_DIR.glob("*.md")) if prompt_assembler.SKILLS_DIR.exists() else []
+            mem = read_text_safe(MEMORIES_FILE) or ""
+            skill_paths = sorted(SKILLS_DIR.glob("*.md")) if SKILLS_DIR.exists() else []
             return mem, skill_paths
 
         mem_text, skill_paths = await asyncio.to_thread(_read_memory_and_skills)
@@ -327,7 +329,8 @@ class SlashCommandHandler:
 
     async def _cmd_dream(self, thread_id: str, send_fn: SendFn) -> None:
         from wintermute.workers import dreaming
-        from wintermute.infra import prompt_assembler
+        from wintermute.infra.memory_io import read_text_safe
+        from wintermute.infra.paths import MEMORIES_FILE, SKILLS_DIR
 
         if not self._dreaming_loop:
             await send_fn("Dreaming loop not available.")
@@ -337,8 +340,8 @@ class SlashCommandHandler:
         from wintermute.infra import database as db
 
         def _snapshot_memory_skills():
-            mem_len = len(prompt_assembler._read(prompt_assembler.MEMORIES_FILE) or "")
-            skill_files = sorted(prompt_assembler.SKILLS_DIR.glob("*.md")) if prompt_assembler.SKILLS_DIR.exists() else []
+            mem_len = len(read_text_safe(MEMORIES_FILE) or "")
+            skill_files = sorted(SKILLS_DIR.glob("*.md")) if SKILLS_DIR.exists() else []
             skills_size = sum(f.stat().st_size for f in skill_files)
             return mem_len, len(skill_files), skills_size
 

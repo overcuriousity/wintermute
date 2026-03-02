@@ -39,9 +39,10 @@ import yaml
 from wintermute.infra import database
 from wintermute.infra import data_versioning
 from wintermute.infra import memory_store
-from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 from wintermute.infra.llm_utils import parse_json_from_llm
+from wintermute.infra.memory_io import merge_consolidated_memories, read_text_safe, write_memories_raw
+from wintermute.infra.paths import MEMORIES_FILE, SKILLS_DIR
 
 if TYPE_CHECKING:
     from wintermute.core.types import BackendPool
@@ -460,9 +461,7 @@ async def _phase_working_set_export(pool: "BackendPool", cfg: dict,
     )
     if top:
         working_set = "\n".join(e["text"] for e in top if e.get("text"))
-        prompt_assembler.DATA_DIR.mkdir(parents=True, exist_ok=True)
-        with prompt_assembler._memories_lock:
-            prompt_assembler.MEMORIES_FILE.write_text(working_set, encoding="utf-8")
+        write_memories_raw(working_set)
         data_versioning.commit_async("dreaming: working set export")
         result.items_processed = len(top)
         result.summary = f"exported {len(top)} entries to MEMORIES.txt"
@@ -476,7 +475,7 @@ async def _phase_flat_file_consolidation(pool: "BackendPool", cfg: dict,
                                          sim_data: SimilarityData) -> PhaseResult:
     """Phase: LLM consolidation for flat-file memory backends."""
     result = PhaseResult(phase_name="flat_file")
-    memories_snapshot = prompt_assembler._read(prompt_assembler.MEMORIES_FILE)
+    memories_snapshot = read_text_safe(MEMORIES_FILE)
     if not memories_snapshot:
         result.summary = "MEMORIES.txt empty or missing"
         return result
@@ -489,7 +488,7 @@ async def _phase_flat_file_consolidation(pool: "BackendPool", cfg: dict,
         entry_count=str(len(_snap_lines)),
     )
     if consolidated:
-        prompt_assembler.merge_consolidated_memories(
+        merge_consolidated_memories(
             memories_snapshot, consolidated,
         )
         result.items_processed = len(_snap_lines)
@@ -554,7 +553,7 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
                                      sim_data: SimilarityData) -> PhaseResult:
     """Phase: deduplicate and condense skill files."""
     result = PhaseResult(phase_name="skill_consolidation")
-    skills_dir = prompt_assembler.SKILLS_DIR
+    skills_dir = SKILLS_DIR
     if not skills_dir.exists():
         result.summary = "skills dir missing"
         return result

@@ -1044,7 +1044,7 @@ class LLMThread:
             nl_enabled=nl_enabled,
             nl_tools=nl_tools,
             nl_translation_pool=getattr(self, "_nl_translation_pool", None),
-            timezone_str=prompt_assembler._timezone,
+            timezone_str=prompt_assembler.get_timezone(),
             tp_enabled=tp_enabled,
             tp_check=_tp_check_main if tp_enabled else None,
             max_tool_output_chars=active_cfg.context_size * 4,  # tokens → approx chars

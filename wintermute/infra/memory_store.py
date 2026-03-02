@@ -61,7 +61,7 @@ class FlatFileBackend:
         logger.info("Memory backend: flat_file (no vector indexing)")
 
     def add(self, entry: str, entry_id: str | None = None, source: str = "unknown") -> str:
-        # File writes are handled by prompt_assembler; this is a no-op.
+        # File writes are handled by memory_io; this is a no-op.
         return entry_id or _make_id(entry)
 
     def search(self, query: str, top_k: int, threshold: float) -> list[dict]:
@@ -81,7 +81,7 @@ class FlatFileBackend:
         ]
 
     def replace_all(self, entries: list[str]) -> None:
-        pass  # File writes handled by prompt_assembler.
+        pass  # File writes handled by memory_io.
 
     def delete(self, entry_id: str) -> bool:
         return False

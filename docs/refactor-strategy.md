@@ -1,6 +1,6 @@
 # Refactor Strategy: Issues #79–#108
 
-**Status as of 2026-03-01** — Phase 2 complete (#104 + #83). This document covers the remaining 5 open issues and their implementation order.
+**Status as of 2026-03-02** — Phase 3 in progress (#80 + #81 done, #82 remaining). This document covers the remaining 3 open issues and their implementation order.
 
 ## Completed (Phase 1)
 
@@ -18,13 +18,13 @@ All Phase 1 and Phase 2 issues have been merged:
 | #108 | Magic numbers exposed in `config.yaml` | Merged |
 | #104 | `_process()` compaction retry extracted to `_run_inference_with_retry()` | Merged |
 | #83 | Module-level DI globals replaced with `ToolDeps` dataclass | Merged |
+| #80 | `tools.py` split into `tools/` package | Merged |
+| #81 | `prompt_assembler.py` split into `memory_io` + `skill_io` | [#156](https://github.com/overcuriousity/wintermute/pull/156) |
 
-## Remaining Open Issues (5)
+## Remaining Open Issues (3)
 
 | # | Type | File(s) | Current Size | Summary |
 |---|---|---|---|---|
-| **80** | arch | `tools.py` | 778 lines | Mixes 10 tool implementations, utility classes, dispatcher |
-| **81** | arch | `infra/prompt_assembler.py` | 481 lines | Mixes prompt assembly, file I/O (`append_memory`, `add_skill`), object registry |
 | **82** | arch | `main.py` | 826 lines | 4 post-construction injection blocks (~17 `obj._attr = ...` assignments) |
 | **79** | arch | `core/llm_thread.py` | 1199 lines | God object: queue, history, compaction, prompt assembly, inference, TP, sessions |
 | **85** | arch | `core/llm_thread.py` | — | Single asyncio queue serializes all threads |
@@ -55,12 +55,14 @@ Completed. `tools.py` converted to `tools/` package:
 
 All external consumers (`from wintermute import tools as tool_module`) remain unchanged.
 
-#### Issue #81 — Split `prompt_assembler.py` (481 lines)
+#### Issue #81 — Split `prompt_assembler.py` (481 lines) ✅
 
-- `infra/prompt_assembler.py` → keep prompt assembly logic only (`assemble()`, `_parse_sections`, `_assemble_base`)
-- `infra/memory_io.py` → `append_memory()`, `merge_consolidated_memories()`, `update_memories()`
-- `infra/skill_io.py` → `add_skill()`
-- Remove `set_tool_profiles()` / `set_self_model()` — pass as args (from #83)
+Completed. `prompt_assembler.py` reduced to ~350 lines (prompt assembly only):
+- `infra/memory_io.py` — `append_memory()`, `update_memories()`, `merge_consolidated_memories()`, `write_memories_raw()`, `read_text_safe()`
+- `infra/skill_io.py` — `add_skill()`
+- Added `get_timezone()` public accessor (replaces direct `_timezone` access)
+- `_memories_lock` encapsulated inside `memory_io` (no longer exposed)
+- Consumers rewired to import from `memory_io`, `skill_io`, and `paths` directly
 
 #### Issue #82 — Fix two-phase construction in `main.py`
 
@@ -112,6 +114,6 @@ Phase 2A              Phase 2B           Phase 3              Phase 4       Phas
 | Order | Issue(s) | Phase | Parallel? | Status |
 |---|---|---|---|---|
 | 1 | **#104**, **#83** | 2A + 2B | Yes, parallel | ✅ Done |
-| 2 | **#80**, **#81**, **#82** | 3 | Yes, parallel (all need #83 done) | #80 ✅ Done |
+| 2 | **#80**, **#81**, **#82** | 3 | Yes, parallel (all need #83 done) | #80 ✅ Done, #81 ✅ Done |
 | 3 | **#79** | 4 | No (needs #104 + #80 + #83) | |
 | 4 | **#85** | 5 | No (needs #79) | |
