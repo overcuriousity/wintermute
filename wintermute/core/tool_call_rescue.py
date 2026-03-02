@@ -16,6 +16,9 @@ Supported patterns
 * ``<function_call>…</function_call>``
 * ``<tool_name>…</tool_name>``  (where *tool_name* is a known tool name)
 * ``<prefix:tool_call>…[/tool_name]`` (MiniMax hybrid style)
+* ``<prefix:tool_call><invoke name="…"><parameter name="…">…</parameter></invoke></prefix:tool_call>``
+  (MiniMax with Anthropic-style ``<invoke>`` body)
+* Bare ``<invoke name="…"><parameter name="…">…</parameter></invoke>`` blocks
 * Fenced code blocks labelled ``tool_call`` / ``json`` that contain
   ``{"name": "…", …}``
 * ``[TOOL_CALL]{tool => "…", args => {--key value …}}[/TOOL_CALL]``
@@ -99,6 +102,16 @@ _RE_BRACKET_TOOL_CALL = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
+# 6. Anthropic-style <invoke> blocks (may be bare or nested inside another wrapper)
+_RE_INVOKE = re.compile(
+    r"<\s*invoke\s+name\s*=\s*['\"]([^'\"]+)['\"]\s*>(.*?)</\s*invoke\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+_RE_PARAMETER = re.compile(
+    r"<\s*parameter\s+name\s*=\s*['\"]([^'\"]+)['\"]\s*>(.*?)</\s*parameter\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+
 
 def _build_tool_name_pattern(tool_names: set[str]) -> re.Pattern[str]:
     """Build a regex that matches ``<known_tool>…</known_tool>`` or
@@ -168,6 +181,31 @@ def _try_parse_json_body(body: str, known_tools: set[str]) -> Optional[list[Synt
             # Scalar or array — wrap so downstream always receives a JSON object.
             args_str = json.dumps({"value": args})
         results.append(SyntheticToolCall.make(name, args_str))
+    return results or None
+
+
+def _try_parse_invoke_body(body: str, known_tools: set[str]) -> Optional[list[SyntheticToolCall]]:
+    """Parse Anthropic-style ``<invoke>`` XML tool calls from *body*.
+
+    Handles::
+
+        <invoke name="tool_name">
+          <parameter name="param1">value1</parameter>
+          <parameter name="param2">value2</parameter>
+        </invoke>
+
+    Multiple ``<invoke>`` blocks in one *body* are all extracted.
+    """
+    results: list[SyntheticToolCall] = []
+    for m in _RE_INVOKE.finditer(body):
+        name = m.group(1).strip()
+        if known_tools and name not in known_tools:
+            continue
+        params_body = m.group(2)
+        args: dict = {}
+        for pm in _RE_PARAMETER.finditer(params_body):
+            args[pm.group(1).strip()] = pm.group(2).strip()
+        results.append(SyntheticToolCall.make(name, json.dumps(args)))
     return results or None
 
 
@@ -367,7 +405,10 @@ def rescue_tool_calls(
 
     # --- Pattern 1: Generic XML wrappers ---
     for m in _RE_XML_GENERIC.finditer(content):
-        parsed = _try_parse_json_body(m.group(1), known)
+        body = m.group(1)
+        parsed = _try_parse_json_body(body, known)
+        if not parsed:
+            parsed = _try_parse_invoke_body(body, known)
         if parsed:
             for tc in parsed:
                 _add(tc)
@@ -385,7 +426,7 @@ def rescue_tool_calls(
         body = m.group(2).strip()
         if known and name not in known:
             continue
-        # Try JSON first, fall back to key=value
+        # Try JSON first, then <invoke> body, fall back to key=value
         try:
             args = json.loads(body)
             if isinstance(args, dict):
@@ -393,12 +434,17 @@ def rescue_tool_calls(
             else:
                 # Bare scalar or array — normalize to object.
                 args_str = json.dumps({"input": args})
+            _add(SyntheticToolCall.make(name, args_str))
         except (json.JSONDecodeError, ValueError):
-            args = _parse_minimax_kv(body)
-            if not args:
-                continue
-            args_str = json.dumps(args)
-        _add(SyntheticToolCall.make(name, args_str))
+            invoke_parsed = _try_parse_invoke_body(body, known)
+            if invoke_parsed:
+                for tc in invoke_parsed:
+                    _add(tc)
+            else:
+                kv_args = _parse_minimax_kv(body)
+                if not kv_args:
+                    continue
+                _add(SyntheticToolCall.make(name, json.dumps(kv_args)))
 
     # --- Pattern 4: Known tool-name tags ---
     if known:
@@ -442,6 +488,12 @@ def rescue_tool_calls(
             # Fall back to plain JSON inside the brackets
             parsed = _try_parse_json_body(body, known) or []
         for tc in parsed:
+            _add(tc)
+
+    # --- Pattern 6: Bare <invoke name="…"> blocks (Anthropic-style, no outer wrapper) ---
+    invoke_parsed = _try_parse_invoke_body(content, known)
+    if invoke_parsed:
+        for tc in invoke_parsed:
             _add(tc)
 
     if results:
