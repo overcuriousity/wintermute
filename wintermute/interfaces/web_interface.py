@@ -624,8 +624,13 @@ class WebInterface:
     async def _api_skill_get(self, request: web.Request) -> web.Response:
         """GET /api/skills/{name} — read full skill content."""
         from wintermute.infra.paths import SKILLS_DIR
+        from wintermute.infra.skill_io import _validate_skill_name
 
         name = request.match_info["name"]
+        try:
+            name = _validate_skill_name(name)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
         skill_file = SKILLS_DIR / f"{name}.md"
         if not skill_file.exists():
             return web.json_response({"error": "not found"}, status=404)
@@ -637,7 +642,7 @@ class WebInterface:
 
     async def _api_skill_create(self, request: web.Request) -> web.Response:
         """POST /api/skills — create a new skill."""
-        from wintermute.infra import prompt_assembler
+        from wintermute.infra.skill_io import add_skill, _validate_skill_name
         from wintermute.infra.paths import SKILLS_DIR
 
         try:
@@ -649,18 +654,29 @@ class WebInterface:
         documentation = (data.get("documentation") or "").strip()
         if not name or not documentation:
             return self._json({"error": "skill_name and documentation are required"})
+        try:
+            name = _validate_skill_name(name)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
         # Reject if already exists
         if (SKILLS_DIR / f"{name}.md").exists():
             return self._json({"error": f"Skill '{name}' already exists. Use PUT to update."})
-        prompt_assembler.add_skill(name, documentation, summary=summary or None)
+        try:
+            add_skill(name, documentation, summary=summary or None)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
         return self._json({"ok": True, "name": name})
 
     async def _api_skill_update(self, request: web.Request) -> web.Response:
         """PUT /api/skills/{name} — update an existing skill."""
-        from wintermute.infra import prompt_assembler
         from wintermute.infra.paths import SKILLS_DIR
+        from wintermute.infra.skill_io import _validate_skill_name
 
         name = request.match_info["name"]
+        try:
+            name = _validate_skill_name(name)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
         if not (SKILLS_DIR / f"{name}.md").exists():
             return web.json_response({"error": "not found"}, status=404)
         try:
