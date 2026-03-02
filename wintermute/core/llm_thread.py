@@ -502,10 +502,12 @@ class LLMThread:
             # messages AND correction responses (up to depth 2 to prevent
             # infinite loops).  If the model ignores a correction and
             # repeats the violation, the re-check catches it.
+            # System events (sub-session results) are also validated —
+            # the model may promise actions in response to them without
+            # actually calling any tools.
             if (
                 not item.thread_id.startswith("sub_")
                 and reply.text
-                and (not item.is_system_event or item.turing_depth > 0)
                 and item.turing_depth < 2
             ):
                 # Snapshot the current sequence number so the correction can
