@@ -795,7 +795,7 @@ def get_tool_usage_stats(since: float) -> list[tuple[str, int]]:
 
 
 def get_outcome_stats() -> dict:
-    """Return aggregate sub-session outcome statistics."""
+    """Return aggregate sub-session outcome statistics, including per-backend breakdown."""
     with _connect() as conn:
         total = conn.execute("SELECT COUNT(*) FROM sub_session_outcomes").fetchone()[0]
         by_status = conn.execute(
@@ -810,12 +810,132 @@ def get_outcome_stats() -> dict:
         timeout_rate_row = conn.execute(
             "SELECT COUNT(*) FROM sub_session_outcomes WHERE status='timeout'"
         ).fetchone()[0]
+
+        # Per-backend breakdown: count, success/fail/timeout, avg duration
+        backend_rows = conn.execute(
+            "SELECT backend_used, status, COUNT(*) as cnt, "
+            "AVG(duration_seconds) as avg_dur "
+            "FROM sub_session_outcomes "
+            "WHERE backend_used IS NOT NULL AND backend_used != '' "
+            "GROUP BY backend_used, status"
+        ).fetchall()
+
+    # Aggregate per-backend stats
+    by_backend: dict[str, dict] = {}
+    for row in backend_rows:
+        backend = row[0]
+        status = row[1]
+        cnt = row[2]
+        avg_dur = row[3]
+        if backend not in by_backend:
+            by_backend[backend] = {"total": 0, "completed": 0, "timeout": 0, "failed": 0, "avg_duration": None, "_dur_sum": 0.0, "_dur_cnt": 0}
+        by_backend[backend]["total"] += cnt
+        if status in ("completed", "timeout", "failed"):
+            by_backend[backend][status] += cnt
+        if avg_dur is not None:
+            by_backend[backend]["_dur_sum"] += avg_dur * cnt
+            by_backend[backend]["_dur_cnt"] += cnt
+    for b in by_backend.values():
+        if b["_dur_cnt"] > 0:
+            b["avg_duration"] = round(b["_dur_sum"] / b["_dur_cnt"], 1)
+        t = b["total"]
+        b["success_rate_pct"] = round(b["completed"] * 100 / t) if t else 0
+        del b["_dur_sum"]
+        del b["_dur_cnt"]
+
     return {
         "total": total,
         "by_status": {r[0]: r[1] for r in by_status},
         "avg_duration_seconds": round(avg_duration, 1) if avg_duration else None,
         "avg_tool_calls": round(avg_tool_calls, 1) if avg_tool_calls else None,
         "timeout_rate_pct": round(timeout_rate_row * 100 / total) if total else 0,
+        "by_backend": by_backend,
+    }
+
+
+def get_tp_violation_stats() -> dict:
+    """Return Turing Protocol violation statistics grouped by LLM backend.
+
+    Queries the interaction_log for confirmed TP violations (turing_validation
+    and turing_correction entries with status='violation_detected') and groups
+    them by the responsible LLM backend.
+    """
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        # Confirmed violations from Stage 2 (turing_validation with violation_detected)
+        rows = conn.execute(
+            "SELECT llm, COUNT(*) as cnt "
+            "FROM interaction_log "
+            "WHERE action = 'turing_validation' AND status = 'violation_detected' "
+            "GROUP BY llm"
+        ).fetchall()
+        confirmed_by_backend = {r["llm"]: r["cnt"] for r in rows}
+
+        # Corrections applied (Stage 3)
+        correction_rows = conn.execute(
+            "SELECT llm, COUNT(*) as cnt "
+            "FROM interaction_log "
+            "WHERE action = 'turing_correction' "
+            "GROUP BY llm"
+        ).fetchall()
+        corrections_by_backend = {r["llm"]: r["cnt"] for r in correction_rows}
+
+        # Total detections (Stage 1, including false positives)
+        detection_rows = conn.execute(
+            "SELECT llm, "
+            "SUM(CASE WHEN status = 'violation_detected' THEN 1 ELSE 0 END) as detected, "
+            "COUNT(*) as total_checks "
+            "FROM interaction_log "
+            "WHERE action = 'turing_detection' "
+            "GROUP BY llm"
+        ).fetchall()
+
+        # Violation type breakdown from turing_validation output JSON
+        type_rows = conn.execute(
+            "SELECT llm, output FROM interaction_log "
+            "WHERE action = 'turing_validation' AND status = 'violation_detected'"
+        ).fetchall()
+
+    # Parse violation types per backend
+    violation_types_by_backend: dict[str, dict[str, int]] = {}
+    for r in type_rows:
+        backend = r["llm"]
+        if backend not in violation_types_by_backend:
+            violation_types_by_backend[backend] = {}
+        try:
+            parsed = json.loads(r["output"])
+            for v in parsed.get("confirmed", []):
+                vtype = v.get("type", "unknown")
+                violation_types_by_backend[backend][vtype] = \
+                    violation_types_by_backend[backend].get(vtype, 0) + 1
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Build per-backend summary
+    all_backends = set(confirmed_by_backend) | set(r["llm"] for r in detection_rows)
+    per_backend: dict[str, dict] = {}
+    for backend in sorted(all_backends):
+        det_row = next((r for r in detection_rows if r["llm"] == backend), None)
+        per_backend[backend] = {
+            "confirmed_violations": confirmed_by_backend.get(backend, 0),
+            "corrections_applied": corrections_by_backend.get(backend, 0),
+            "total_checks": det_row["total_checks"] if det_row else 0,
+            "detections": det_row["detected"] if det_row else 0,
+            "false_positive_rate_pct": 0,
+            "violation_types": violation_types_by_backend.get(backend, {}),
+        }
+        det = per_backend[backend]["detections"]
+        conf = per_backend[backend]["confirmed_violations"]
+        if det > 0:
+            per_backend[backend]["false_positive_rate_pct"] = round((det - conf) * 100 / det)
+
+    total_confirmed = sum(confirmed_by_backend.values())
+    total_corrections = sum(corrections_by_backend.values())
+
+    return {
+        "total_confirmed_violations": total_confirmed,
+        "total_corrections_applied": total_corrections,
+        "per_backend": per_backend,
     }
 
 

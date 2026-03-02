@@ -552,17 +552,19 @@
           </select>
         </div>
       </div>
-      <div id="outcomes-stats" style="padding:.5rem 1rem;font-size:.8rem;color:#888;display:flex;gap:2rem;border-bottom:1px solid #0f3460"></div>
+      <div id="outcomes-stats" style="padding:.5rem 1rem;font-size:.8rem;color:#888;display:flex;gap:2rem;flex-wrap:wrap;border-bottom:1px solid #0f3460"></div>
+      <div id="outcomes-backend-stats" style="padding:.5rem 1rem;font-size:.8rem;color:#888;border-bottom:1px solid #0f3460;display:none"></div>
+      <div id="tp-violation-stats" style="padding:.5rem 1rem;font-size:.8rem;color:#888;border-bottom:1px solid #0f3460;display:none"></div>
       <div class="scroll-area">
         <table class="data-table">
           <thead>
             <tr>
-              <th>Time</th><th>Source</th><th>Status</th><th>Session</th><th>Mode</th>
+              <th>Time</th><th>Source</th><th>Status</th><th>Backend</th><th>Session</th><th>Mode</th>
               <th>Duration</th><th>Tools used</th><th>TP verdict</th><th>Objective</th>
             </tr>
           </thead>
           <tbody id="outcomes-body">
-            <tr><td colspan="9" class="empty">Loading\u2026</td></tr>
+            <tr><td colspan="10" class="empty">Loading\u2026</td></tr>
           </tbody>
         </table>
       </div>
@@ -1626,8 +1628,12 @@ async function loadOutcomes() {
   if (status) params.set('status', status);
   if (source) params.set('source', source);
   try {
-    const r = await fetch('/api/outcomes?' + params);
+    const [r, tpR] = await Promise.all([
+      fetch('/api/outcomes?' + params),
+      fetch('/api/tp-violations'),
+    ]);
     const d = await r.json();
+    const tpData = await tpR.json();
     const entries = d.entries || [];
     document.getElementById('cnt-outcomes').textContent = d.total || 0;
     const st = d.stats || {};
@@ -1640,9 +1646,62 @@ async function loadOutcomes() {
       st.avg_tool_calls != null ? '<span>Avg tool calls: <strong>' + st.avg_tool_calls + '</strong></span>' : '',
       st.timeout_rate_pct != null ? '<span>Timeout rate: <strong>' + st.timeout_rate_pct + '%</strong></span>' : '',
     ].flat().filter(Boolean).join(' \u2502 ');
+
+    // Per-backend outcome breakdown
+    const backendStatsEl = document.getElementById('outcomes-backend-stats');
+    const byBackend = st.by_backend || {};
+    if (Object.keys(byBackend).length > 0) {
+      backendStatsEl.style.display = '';
+      backendStatsEl.innerHTML = '<div style="margin-bottom:.3rem;color:#c4b5fd;font-weight:600">Per-backend outcomes:</div>' +
+        '<div style="display:flex;gap:1.5rem;flex-wrap:wrap">' +
+        Object.entries(byBackend).map(([name, b]) => {
+          const sr = b.success_rate_pct != null ? b.success_rate_pct : '-';
+          const srColor = sr >= 80 ? '#6fe06f' : sr >= 50 ? '#f0c040' : '#e06f6f';
+          return '<div style="background:rgba(15,52,96,.5);padding:.4rem .8rem;border-radius:6px;min-width:180px">' +
+            '<div style="color:#e9d5ff;font-weight:600">' + esc(name) + '</div>' +
+            '<div>Total: <strong>' + b.total + '</strong> · ' +
+            '<span style="color:#6fe06f">' + (b.completed || 0) + ' ok</span> · ' +
+            '<span style="color:#f0c040">' + (b.timeout || 0) + ' timeout</span> · ' +
+            '<span style="color:#e06f6f">' + (b.failed || 0) + ' fail</span></div>' +
+            '<div>Success rate: <strong style="color:' + srColor + '">' + sr + '%</strong>' +
+            (b.avg_duration != null ? ' · Avg: <strong>' + b.avg_duration + 's</strong>' : '') + '</div>' +
+            '</div>';
+        }).join('') +
+        '</div>';
+    } else {
+      backendStatsEl.style.display = 'none';
+    }
+
+    // TP violation stats
+    const tpEl = document.getElementById('tp-violation-stats');
+    const tpBackends = tpData.per_backend || {};
+    if (Object.keys(tpBackends).length > 0 || tpData.total_confirmed_violations > 0) {
+      tpEl.style.display = '';
+      tpEl.innerHTML = '<div style="margin-bottom:.3rem;color:#f87171;font-weight:600">Turing Protocol violations: ' +
+        '<strong>' + (tpData.total_confirmed_violations || 0) + '</strong> confirmed · ' +
+        '<strong>' + (tpData.total_corrections_applied || 0) + '</strong> corrections</div>' +
+        '<div style="display:flex;gap:1.5rem;flex-wrap:wrap">' +
+        Object.entries(tpBackends).map(([name, b]) => {
+          const fpColor = b.false_positive_rate_pct > 50 ? '#f0c040' : '#888';
+          const vTypes = Object.entries(b.violation_types || {});
+          return '<div style="background:rgba(96,15,32,.4);padding:.4rem .8rem;border-radius:6px;min-width:200px">' +
+            '<div style="color:#fca5a5;font-weight:600">' + esc(name) + '</div>' +
+            '<div>Confirmed: <strong style="color:#f87171">' + b.confirmed_violations + '</strong> · ' +
+            'Checks: ' + b.total_checks + ' · ' +
+            'FP rate: <span style="color:' + fpColor + '">' + b.false_positive_rate_pct + '%</span></div>' +
+            (vTypes.length ? '<div style="margin-top:.2rem;font-size:.75rem">Types: ' +
+              vTypes.map(([t,c]) => '<span style="color:#fca5a5">' + esc(t) + '</span>×' + c).join(', ') +
+              '</div>' : '') +
+            '</div>';
+        }).join('') +
+        '</div>';
+    } else {
+      tpEl.style.display = 'none';
+    }
+
     const tbody = document.getElementById('outcomes-body');
     if (!entries.length) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty">No outcomes recorded yet</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="empty">No outcomes recorded yet</td></tr>';
       return;
     }
     tbody.innerHTML = entries.map(o => {
@@ -1657,11 +1716,13 @@ async function loadOutcomes() {
       const verdict = o.turing_verdict || '-';
       const verdictColor = verdict === 'pass' ? '#6fe06f' : verdict === 'fail' ? '#e06f6f' : '#888';
       const statusColor = o.status === 'completed' ? '#6fe06f' : o.status === 'timeout' ? '#f0c040' : '#e06f6f';
+      const backend = o.backend_used || '-';
       const obj = (o.objective || '').slice(0, 80);
       return '<tr>' +
         '<td style="white-space:nowrap;color:#888">' + esc(ts) + '</td>' +
         '<td style="color:' + sourceColor + ';font-weight:600;font-size:.75rem">' + esc(sourceLabel) + '</td>' +
         '<td style="color:' + statusColor + '">' + esc(o.status || '') + '</td>' +
+        '<td style="font-family:monospace;font-size:.75rem;color:#c4b5fd">' + esc(backend) + '</td>' +
         '<td style="font-family:monospace;font-size:.75rem;color:#888">' + esc((o.session_id || '').slice(0,12)) + '</td>' +
         '<td>' + esc(o.system_prompt_mode || '') + '</td>' +
         '<td style="color:#a8d8ea">' + esc(dur) + '</td>' +

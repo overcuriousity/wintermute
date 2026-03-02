@@ -155,8 +155,16 @@ class SelfModelProfiler:
             metrics["avg_duration_seconds"] = stats.get("avg_duration_seconds")
             metrics["avg_tool_calls"] = stats.get("avg_tool_calls")
             metrics["timeout_rate_pct"] = stats.get("timeout_rate_pct", 0)
+            metrics["by_backend"] = stats.get("by_backend", {})
         except Exception:
             logger.debug("[self_model] Failed to collect outcome stats", exc_info=True)
+
+        # TP violation stats.
+        try:
+            tp_stats = await database.async_call(database.get_tp_violation_stats)
+            metrics["tp_violations"] = tp_stats
+        except Exception:
+            logger.debug("[self_model] Failed to collect TP violation stats", exc_info=True)
 
         # Top tools used.
         try:

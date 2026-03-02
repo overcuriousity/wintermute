@@ -104,6 +104,7 @@ class WebInterface:
         app.router.add_get("/api/interaction-log",                 self._api_interaction_log)
         app.router.add_get("/api/interaction-log/{id}",            self._api_interaction_log_entry)
         app.router.add_get("/api/outcomes",                        self._api_outcomes)
+        app.router.add_get("/api/tp-violations",                    self._api_tp_violations)
         app.router.add_get("/api/stream",                          self._api_stream)
         # Per-thread config API
         app.router.add_get("/api/thread-config",                   self._api_thread_configs)
@@ -543,6 +544,11 @@ class WebInterface:
             status_filter=status_filter, source_filter=source_filter,
         )
         return self._json({"entries": rows, "total": total, "stats": stats})
+
+    async def _api_tp_violations(self, _request: web.Request) -> web.Response:
+        from wintermute.infra import database
+        stats = await database.async_call(database.get_tp_violation_stats)
+        return self._json(stats)
 
     # ------------------------------------------------------------------
     # Memory debug API
