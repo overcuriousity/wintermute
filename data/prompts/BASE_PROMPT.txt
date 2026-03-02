@@ -18,8 +18,9 @@ Every new information goes to exactly ONE store:
 MEMORY — persistent facts (identity, preferences, environment). NOT procedures or goals.
 
 TASK — goals, reminders, scheduled actions.
-- background=true + ai_prompt: runs in isolated sub-session with full tool access. Responds [NO_ACTION] when nothing to report.
-- Complete with reason when done.
+- Scheduled + autonomous: set ai_prompt (self-contained instruction) → spawns background sub-session.
+- Without ai_prompt: passive ⏰ reminder only — NOTHING executes.
+- Unscheduled: tracked goal. Complete with reason when done.
 
 SKILL — reusable how-to procedures. NOT one-off tasks, NOT facts.
 

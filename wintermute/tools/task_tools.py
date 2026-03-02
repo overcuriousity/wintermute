@@ -41,6 +41,13 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     ai_prompt = inputs.get("ai_prompt")
     background = bool(inputs.get("background", False))
 
+    # Auto-promote: scheduled + ai_prompt always runs as background sub-session.
+    # The foreground path (enqueue into main LLM thread) is fragile — weak models
+    # chat about the prompt instead of executing it.
+    if schedule_type and ai_prompt and not background:
+        background = True
+        logger.info("Auto-promoted scheduled task to background (ai_prompt present)")
+
     schedule_config = None
     schedule_desc = None
     if schedule_type:
@@ -77,6 +84,12 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     result = {"status": "ok", "task_id": task_id}
     if schedule_desc:
         result["schedule"] = schedule_desc
+    # Warn when a scheduled task has no ai_prompt — only a passive reminder.
+    if schedule_type and not ai_prompt:
+        result["warning"] = (
+            "Scheduled task has no ai_prompt — only a passive \u23f0 reminder "
+            "will fire. Add ai_prompt for autonomous execution."
+        )
     return json.dumps(result)
 
 

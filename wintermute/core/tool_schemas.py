@@ -176,11 +176,19 @@ TOOL_SCHEMAS = [
                 },
                 "ai_prompt": {
                     "type": "string",
-                    "description": "AI action to run when schedule fires. Write as a complete task instruction.",
+                    "description": (
+                        "REQUIRED for autonomous execution. Without this, "
+                        "scheduled tasks only send a passive \u23f0 reminder — "
+                        "nothing executes. Write a complete, self-contained "
+                        "instruction the system can execute independently."
+                    ),
                 },
                 "background": {
                     "type": "boolean",
-                    "description": "Silent execution — no chat delivery. Only valid with ai_prompt.",
+                    "description": (
+                        "Run as background sub-session (auto-set when "
+                        "ai_prompt + schedule are both present). Default: false."
+                    ),
                 },
             },
             "required": ["action"],
