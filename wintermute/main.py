@@ -150,6 +150,7 @@ def _parse_inference_backends(raw_list: list[dict]) -> dict[str, ProviderConfig]
             model=entry["model"],
             context_size=entry.get("context_size", 32768),
             max_tokens=entry.get("max_tokens", 4096),
+            max_output_tokens=entry.get("max_output_tokens", 0),
             reasoning=entry.get("reasoning", False),
             provider=entry.get("provider", "openai"),
             api_key=entry.get("api_key", ""),

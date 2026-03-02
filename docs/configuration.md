@@ -41,7 +41,8 @@ combination that can be referenced by name in the `llm` role mapping.
 | `api_key` | openai/anthropic | — | API key (not needed for `gemini-cli` or `kimi-code`) |
 | `model` | yes | — | Model name the endpoint accepts |
 | `context_size` | no | `32768` | Total token window the model supports |
-| `max_tokens` | no | `4096` | Maximum tokens per response. Set to `0` to remove the limit (`context_size` is used as a generous ceiling — the API clamps it to the model's actual maximum). Sub-sessions always call with `0` internally to prevent large tool calls (`write_file`, `execute_shell` heredocs) from being truncated mid-JSON. |
+| `max_tokens` | no | `4096` | Maximum tokens per response. Set to `0` to remove the limit (`max_output_tokens` is used if configured, otherwise the parameter is omitted and the API/proxy applies its own default). Sub-sessions always call with `0` internally to prevent large tool calls (`write_file`, `execute_shell` heredocs) from being truncated mid-JSON. |
+| `max_output_tokens` | no | `0` (not set) | The model's hard output ceiling (e.g. `8192` for DeepSeek). Required when using proxies like LiteLLM that reject `max_tokens` values above the model's actual maximum. When `max_tokens` resolves to `0` (sub-sessions), this value is sent instead of omitting the parameter. |
 | `reasoning` | no | `false` | Enable reasoning/thinking token support |
 
 ### `llm`

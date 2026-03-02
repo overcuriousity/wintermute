@@ -110,11 +110,17 @@ search:
 #   context_size  Token window size. Default: 32768. Match your model's actual
 #                 context length — this controls when compaction triggers.
 #   max_tokens    Max tokens per response. Default: 4096.
-#                 Set to 0 to remove the limit (context_size is used as
-#                 a generous ceiling, which APIs clamp to the model max).
+#                 Set to 0 to remove the limit (max_output_tokens is used
+#                 if configured, otherwise the parameter is omitted and the
+#                 API/proxy applies its own default).
 #                 Sub-sessions always use 0 internally so that large tool
 #                 calls (write_file, execute_shell heredocs, etc.) are never
 #                 truncated mid-JSON regardless of this setting.
+#   max_output_tokens  The model's hard output ceiling. Default: 0 (not set).
+#                 Required when using proxies like LiteLLM that reject values
+#                 above the model's actual maximum (e.g. DeepSeek allows
+#                 at most 8192). When max_tokens is 0 (sub-sessions), this
+#                 value is sent instead of omitting the parameter.
 #   reasoning     Set true for reasoning models (o1, o3, DeepSeek R1, QwQ).
 #                 Uses max_completion_tokens instead of max_tokens.
 #

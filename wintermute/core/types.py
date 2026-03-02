@@ -134,6 +134,7 @@ class ProviderConfig:
     model: str
     context_size: int       # total token window the model supports (e.g. 65536)
     max_tokens: int = 4096  # maximum tokens in a single response
+    max_output_tokens: int = 0  # model's hard output ceiling (e.g. 8192 for DeepSeek); 0 = not set
     reasoning: bool = False  # enable reasoning/thinking token support (o1/o3, DeepSeek R1, etc.)
     provider: str = "openai"  # "openai", "anthropic", "gemini-cli", or "kimi-code"
     api_key: str = ""
@@ -190,8 +191,9 @@ class BackendPool:
         Each backend uses its own model, max_tokens, and reasoning setting.
         *max_tokens_override* replaces the backend's configured max_tokens
         (useful for compaction's hard-coded 2048).  Pass ``0`` to remove
-        the limit — ``context_size`` is used as a generous ceiling that
-        the API clamps to the model's actual maximum output (useful for
+        the limit — ``max_output_tokens`` is used if configured (the
+        model's hard output ceiling), otherwise the parameter is omitted
+        entirely so the API/proxy applies its own default (useful for
         sub-sessions that must emit large tool calls such as
         ``write_file`` / ``execute_shell`` with multi-hundred-line content).
 
@@ -206,18 +208,22 @@ class BackendPool:
                 call_kwargs["tool_choice"] = "auto"
             max_tok = max_tokens_override if max_tokens_override is not None else cfg.max_tokens
             if max_tok == 0:
-                # Sentinel: "no artificial limit".  Many APIs (DeepSeek,
-                # Anthropic, Gemini, …) impose a small default (often 4096)
-                # when max_tokens is omitted, which truncates large tool calls
-                # (write_file, execute_shell heredocs) mid-JSON.
-                # Use context_size as a generous ceiling — the API clamps it
-                # to the model's actual maximum output.
-                max_tok = cfg.context_size
+                # Sentinel: "no artificial limit".  Use the model's hard
+                # output ceiling if configured, otherwise omit the param
+                # entirely so the API/proxy applies its own safe default.
+                # Using context_size here is wrong — it's the total window
+                # (input+output), not the output ceiling, and proxies like
+                # LiteLLM reject values above the model's actual max.
+                if cfg.max_output_tokens > 0:
+                    max_tok = cfg.max_output_tokens
+                else:
+                    max_tok = None  # omit parameter
 
-            if cfg.reasoning:
-                call_kwargs["max_completion_tokens"] = max_tok
-            else:
-                call_kwargs["max_tokens"] = max_tok
+            if max_tok is not None:
+                if cfg.reasoning:
+                    call_kwargs["max_completion_tokens"] = max_tok
+                else:
+                    call_kwargs["max_tokens"] = max_tok
             call_kwargs.update(extra_kwargs)
 
             backoff = self.RATE_LIMIT_INITIAL_BACKOFF
