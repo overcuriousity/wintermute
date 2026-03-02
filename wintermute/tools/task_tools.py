@@ -87,7 +87,18 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     # Tell the LLM what execution mode was selected so it can self-correct
     # without mistaking a legitimate passive reminder for an error.
     if schedule_type:
-        result["mode"] = "autonomous" if ai_prompt else "reminder"
+        if ai_prompt:
+            result["mode"] = "autonomous"
+        else:
+            result["mode"] = "reminder"
+            result["warning"] = (
+                "NO ai_prompt was provided — this task will ONLY send a "
+                "passive ⏰ text reminder at the scheduled time. Nothing "
+                "will be executed autonomously. If the user asked for "
+                "autonomous work (e.g. 'make improvements', 'search for', "
+                "'check', 'do X'), you MUST re-create this task with an "
+                "ai_prompt field containing a self-contained instruction."
+            )
     return json.dumps(result)
 
 

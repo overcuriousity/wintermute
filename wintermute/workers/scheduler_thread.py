@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import re
+import time as _time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -205,7 +206,9 @@ class TaskScheduler:
     async def _fire_task(self, task_id: str, message: str, ai_prompt: Optional[str],
                           thread_id: Optional[str] = None,
                           background: bool = False) -> None:
-        logger.info("Firing task %s (thread=%s, background=%s)", task_id, thread_id, background)
+        mode = "autonomous" if ai_prompt else "reminder"
+        logger.info("Firing task %s (thread=%s, background=%s, mode=%s)",
+                    task_id, thread_id, background, mode)
         if self._event_bus:
             self._event_bus.emit("task.fired", task_id=task_id, thread_id=thread_id)
         try:
@@ -257,9 +260,24 @@ class TaskScheduler:
 
             # Record execution in the tasks table.
             try:
-                database.record_task_run(task_id, summary="executed")
+                database.record_task_run(task_id, summary=f"executed ({mode})")
             except Exception:  # noqa: BLE001
                 logger.debug("Failed to record task run for %s", task_id)
+
+            # Log to interaction_log so task firings appear in the web debug panel.
+            try:
+                await database.async_call(
+                    database.save_interaction_log,
+                    _time.time(),
+                    "task_fired",
+                    thread_id or "system:scheduler",
+                    "scheduler",
+                    f"task_id={task_id}, mode={mode}, content={message[:200]}",
+                    f"{'sub_session spawned' if ai_prompt and background else 'llm_enqueue' if ai_prompt else 'broadcast reminder'}",
+                    "ok",
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug("Failed to log task firing for %s", task_id)
 
             # If the job is no longer in APScheduler (one-time, now done), log it.
             if self._scheduler.get_job(task_id) is None:

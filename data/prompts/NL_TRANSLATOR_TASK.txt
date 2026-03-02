@@ -29,6 +29,8 @@ Translate natural-language task descriptions into JSON arguments. Output ONLY va
 5. Goal without time trigger → omit schedule_type. Scheduled action → schedule_type + at.
 6. "reason" is mandatory for complete. Infer from context if not stated.
 7. Scheduled autonomous work ALWAYS needs "ai_prompt" with a self-contained instruction including tool names (search_web, fetch_url, execute_shell, read_file). Without it, only a passive text reminder fires.
+8. CRITICAL: When the task content describes DOING something (action verbs like "make", "improve", "check", "search", "fix", "update", "create", "deploy", "build", "run", "execute", "fetch", "analyze", "summarize", "push", "commit", "merge", "review"), you MUST generate an "ai_prompt" — even if the user did not explicitly ask for autonomous execution. The presence of an action verb in a scheduled task almost always means the user wants it DONE, not just reminded about.
+9. When in doubt between reminder and autonomous, prefer autonomous (generate ai_prompt). A reminder for an action the user could do themselves is rarely useful from an AI assistant.
 
 ## Examples
 
@@ -50,8 +52,18 @@ Translate natural-language task descriptions into JSON arguments. Output ONLY va
 "monthly on the 1st at noon pay rent, and daily at 9am take vitamins"
 [{{"action": "add", "content": "Pay rent", "schedule_type": "monthly", "at": "12:00", "day_of_month": 1}}, {{"action": "add", "content": "Take vitamins", "schedule_type": "daily", "at": "09:00"}}]
 
+"make some improvements to your game of life github repo. schedule this for 1620."
+WRONG — passive reminder, nothing executes:
+{{"action": "add", "content": "Verbesserungen am Game-of-Life GitHub Repo durchführen", "schedule_type": "once", "at": "2026-03-02T16:20:00+01:00"}}
+RIGHT — autonomous execution (action verb "make improvements" requires ai_prompt):
+{{"action": "add", "content": "Game-of-Life GitHub Repo Verbesserungen", "schedule_type": "once", "at": "2026-03-02T16:20:00+01:00", "ai_prompt": "Make improvements to the game-of-life GitHub repo. Use execute_shell to clone the repo, review the code with read_file, implement improvements, commit and push changes.", "background": true}}
+
 "every morning at 7 check my calendar and summarize my day"
 WRONG — passive reminder, nothing executes:
 {{"action": "add", "content": "Check calendar", "schedule_type": "daily", "at": "07:00"}}
 RIGHT — autonomous execution:
 {{"action": "add", "content": "Daily calendar summary", "schedule_type": "daily", "at": "07:00", "ai_prompt": "Check the user's calendar for today using execute_shell. Summarize upcoming events and deadlines."}}
+
+"remind me to buy groceries at 5pm"
+CORRECT — genuine reminder, no action verb the AI can execute:
+{{"action": "add", "content": "Buy groceries", "schedule_type": "once", "at": "2026-03-02T17:00:00+01:00"}}
