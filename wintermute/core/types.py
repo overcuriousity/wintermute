@@ -97,6 +97,7 @@ _CONTEXT_TOO_LARGE_PHRASES = (
     "context length", "too many tokens", "maximum context",
     "token limit", "content too large", "payload too large",
     "context size", "exceeds the available context",
+    "max_tokens must be at least",  # LiteLLM negative-budget rejection
 )
 
 
@@ -220,6 +221,9 @@ class BackendPool:
                     max_tok = None  # omit parameter
 
             if max_tok is not None:
+                # Clamp to >= 1 — upstream proxies (LiteLLM) can compute
+                # negative remaining budgets and we should never send < 1.
+                max_tok = max(max_tok, 1)
                 if cfg.reasoning:
                     call_kwargs["max_completion_tokens"] = max_tok
                 else:
