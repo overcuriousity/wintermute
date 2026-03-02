@@ -716,9 +716,9 @@ class SubSessionManager:
             dt = dateutil_parser.parse(value)
             if dt.tzinfo is None:
                 # Assume the configured timezone from prompt_assembler.
-                from wintermute.infra.prompt_assembler import _timezone
+                from wintermute.infra.prompt_assembler import get_timezone
                 try:
-                    tz = ZoneInfo(_timezone)
+                    tz = ZoneInfo(get_timezone())
                 except Exception:
                     tz = timezone.utc
                 dt = dt.replace(tzinfo=tz)
@@ -1500,7 +1500,7 @@ class SubSessionManager:
                 objective=state.objective,
             )
 
-        from wintermute.infra.prompt_assembler import _timezone as _pa_tz
+        from wintermute.infra.prompt_assembler import get_timezone
         tc_ctx = make_tool_context(
             thread_id=state.session_id,
             nesting_depth=state.nesting_depth,
@@ -1511,7 +1511,7 @@ class SubSessionManager:
             nl_enabled=nl_enabled,
             nl_tools=nl_tools,
             nl_translation_pool=self._nl_translation_pool,
-            timezone_str=_pa_tz,
+            timezone_str=get_timezone(),
             tp_enabled=tp_enabled,
             tp_check=_tp_check_sub if tp_enabled else None,
             max_tool_output_chars=self._cfg.context_size * 4,  # tokens → approx chars
@@ -1862,7 +1862,6 @@ class SubSessionManager:
         else:  # "base_only"
             base_text = prompt_assembler._assemble_base(
                 available_tools,
-                tool_profiles=tool_deps.tool_profiles if tool_deps else None,
                 nl_tools=nl_tools,
             )
             base = f"# Core Instructions\n\n{base_text}" if base_text else ""

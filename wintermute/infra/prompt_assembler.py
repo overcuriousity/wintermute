@@ -19,9 +19,9 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from wintermute.infra import database
-from wintermute.infra import data_versioning
 from wintermute.infra import prompt_loader
-from wintermute.infra.paths import DATA_DIR, MEMORIES_FILE, SKILLS_DIR
+from wintermute.infra.memory_io import read_text_safe
+from wintermute.infra.paths import MEMORIES_FILE, SKILLS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +33,6 @@ SKILLS_LIMIT   = 2_000  # TOC-only; individual skills loaded on demand
 
 # Configured timezone — set by main.py at startup via set_timezone().
 _timezone: str = "UTC"
-
-# Lock guarding read-modify-write operations on MEMORIES.txt.
-_memories_lock = threading.Lock()
 
 # Cached parsed BASE_PROMPT sections — populated on first call to _get_sections().
 _cached_sections: list[tuple[str, set[str], str]] | None = None
@@ -59,6 +56,11 @@ def set_timezone(tz: str) -> None:
     global _timezone
     _timezone = tz
     logger.info("Prompt assembler timezone set to %s", tz)
+
+
+def get_timezone() -> str:
+    """Return the configured timezone string."""
+    return _timezone
 
 
 # ---------------------------------------------------------------------------
@@ -209,16 +211,6 @@ def _get_reflection_observations() -> str:
     return combined[:500]
 
 
-def _read(path: Path, default: str = "") -> str:
-    try:
-        return path.read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        return default
-    except OSError as exc:
-        logger.error("Cannot read %s: %s", path, exc)
-        return default
-
-
 def _read_skills_toc() -> str:
     """Build a TOC of skills with first-line summaries and exact file paths.
 
@@ -229,7 +221,7 @@ def _read_skills_toc() -> str:
     entries: list[str] = []
     if SKILLS_DIR.exists():
         for md_file in sorted(SKILLS_DIR.glob("*.md")):
-            content = _read(md_file)
+            content = read_text_safe(md_file)
             if content:
                 summary = content.split("\n", 1)[0].strip()
                 rel_path = f"data/skills/{md_file.name}"
@@ -302,7 +294,7 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
                 memories_text = "\n".join(r["text"] for r in results)
                 sections.append(f"# User Memories (relevance-ranked)\n\n{memories_text}")
         else:
-            memories = _read(MEMORIES_FILE)
+            memories = read_text_safe(MEMORIES_FILE)
             if memories:
                 sections.append(f"# User Memories\n\n{memories}")
 
@@ -345,7 +337,7 @@ def check_component_sizes() -> dict[str, bool]:
     if memory_store.is_vector_enabled():
         memories_oversized = False
     else:
-        memories_oversized = len(_read(MEMORIES_FILE)) > MEMORIES_LIMIT
+        memories_oversized = len(read_text_safe(MEMORIES_FILE)) > MEMORIES_LIMIT
     tasks_len     = len(database.get_active_tasks_text())
     skills_toc_len = len(_read_skills_toc())
     return {
@@ -353,119 +345,3 @@ def check_component_sizes() -> dict[str, bool]:
         "tasks":    tasks_len    > TASKS_LIMIT,
         "skills":   skills_toc_len > SKILLS_LIMIT,
     }
-
-
-def update_memories(content: str) -> None:
-    from wintermute.infra import memory_store
-
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with _memories_lock:
-        MEMORIES_FILE.write_text(content, encoding="utf-8")
-    logger.info("MEMORIES.txt updated (%d chars)", len(content))
-    if memory_store.is_vector_enabled():
-        try:
-            entries = [l.strip() for l in content.strip().splitlines() if l.strip()]
-            memory_store.replace_all(entries)
-        except Exception as exc:
-            logger.error("Failed to sync vector store on update_memories: %s", exc)
-    data_versioning.commit_async("memory: consolidation")
-
-
-def append_memory(entry: str, source: str = "unknown") -> int:
-    """Append a memory entry to MEMORIES.txt. Returns the new total length."""
-    from wintermute.infra import memory_store
-
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with _memories_lock:
-        existing = _read(MEMORIES_FILE)
-        if existing:
-            new_content = existing + "\n" + entry.strip()
-        else:
-            new_content = entry.strip()
-        MEMORIES_FILE.write_text(new_content, encoding="utf-8")
-    logger.info("MEMORIES.txt appended (%d chars total)", len(new_content))
-    if memory_store.is_vector_enabled():
-        try:
-            memory_store.add(entry.strip(), source=source)
-        except Exception as exc:
-            logger.error("Failed to add memory to vector store: %s", exc)
-    data_versioning.commit_async("memory: append")
-    return len(new_content)
-
-
-def add_skill(skill_name: str, documentation: str,
-              summary: Optional[str] = None) -> None:
-    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
-    skill_file = SKILLS_DIR / f"{skill_name}.md"
-    is_update = skill_file.exists()
-    if summary:
-        content = f"{summary.strip()}\n\n{documentation.strip()}"
-    else:
-        # Fallback: use first line of documentation as summary.
-        content = documentation.strip()
-    # Append changelog entry when overwriting an existing skill, preserving
-    # the existing changelog from the old file content.
-    if is_update:
-        from datetime import datetime, timezone
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        # Read old file to preserve its changelog section.
-        try:
-            existing = skill_file.read_text(encoding="utf-8")
-        except OSError:
-            existing = ""
-        existing_changelog = ""
-        if "## Changelog" in existing:
-            idx = existing.index("## Changelog")
-            existing_changelog = existing[idx:].rstrip()
-        # Strip any changelog the LLM may have included in the new content.
-        if "## Changelog" in content:
-            content = content[: content.index("## Changelog")].rstrip()
-        # Build the updated changelog section.
-        if existing_changelog:
-            changelog_section = f"{existing_changelog}\n- {date_str}: updated"
-        else:
-            changelog_section = f"## Changelog\n- {date_str}: updated"
-        content = f"{content}\n\n{changelog_section}"
-    skill_file.write_text(content, encoding="utf-8")
-    logger.info("Skill '%s' written to %s", skill_name, skill_file)
-    data_versioning.commit_async(f"skill: {skill_name}")
-
-
-def merge_consolidated_memories(snapshot: str, consolidated: str) -> None:
-    """Atomically write *consolidated* memories while preserving any lines
-    that were appended to MEMORIES.txt after *snapshot* was taken.
-
-    This solves the race condition where ``append_memory()`` is called while
-    the dreaming consolidation LLM call is in flight: the snapshot (taken
-    before the LLM call) is diffed against the current file content, and any
-    newly appended lines are tacked onto the consolidated result before
-    writing.
-
-    The entire read-diff-write cycle runs under ``_memories_lock`` so no
-    appends can slip through.
-    """
-    from wintermute.infra import memory_store
-
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    snapshot_lines = set(snapshot.strip().splitlines())
-    with _memories_lock:
-        current = _read(MEMORIES_FILE)
-        new_lines = [
-            line for line in current.strip().splitlines()
-            if line not in snapshot_lines
-        ]
-        merged = consolidated.strip()
-        if new_lines:
-            merged = merged + "\n" + "\n".join(new_lines)
-            logger.info(
-                "merge_consolidated_memories: preserved %d appended line(s)",
-                len(new_lines),
-            )
-        MEMORIES_FILE.write_text(merged, encoding="utf-8")
-    logger.info("MEMORIES.txt merged-write (%d chars)", len(merged))
-    if memory_store.is_vector_enabled():
-        try:
-            entries = [l.strip() for l in merged.splitlines() if l.strip()]
-            memory_store.replace_all(entries)
-        except Exception as exc:
-            logger.error("Failed to sync vector store on merge_consolidated: %s", exc)

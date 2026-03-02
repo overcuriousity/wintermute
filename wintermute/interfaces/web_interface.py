@@ -637,7 +637,7 @@ class WebInterface:
 
     async def _api_skill_create(self, request: web.Request) -> web.Response:
         """POST /api/skills — create a new skill."""
-        from wintermute.infra import prompt_assembler
+        from wintermute.infra.skill_io import add_skill
         from wintermute.infra.paths import SKILLS_DIR
 
         try:
@@ -652,12 +652,11 @@ class WebInterface:
         # Reject if already exists
         if (SKILLS_DIR / f"{name}.md").exists():
             return self._json({"error": f"Skill '{name}' already exists. Use PUT to update."})
-        prompt_assembler.add_skill(name, documentation, summary=summary or None)
+        add_skill(name, documentation, summary=summary or None)
         return self._json({"ok": True, "name": name})
 
     async def _api_skill_update(self, request: web.Request) -> web.Response:
         """PUT /api/skills/{name} — update an existing skill."""
-        from wintermute.infra import prompt_assembler
         from wintermute.infra.paths import SKILLS_DIR
 
         name = request.match_info["name"]

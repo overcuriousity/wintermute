@@ -5,7 +5,8 @@ import logging
 from typing import Optional
 
 from wintermute.core.tool_deps import ToolDeps
-from wintermute.infra import prompt_assembler
+from wintermute.infra.memory_io import append_memory
+from wintermute.infra.skill_io import add_skill
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,7 @@ def tool_append_memory(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw
     try:
         deps = tool_deps or ToolDeps()
         source = inputs.get("source", "user_explicit")
-        total_len = prompt_assembler.append_memory(inputs["entry"], source=source)
+        total_len = append_memory(inputs["entry"], source=source)
         if deps.event_bus:
             deps.event_bus.emit("memory.appended", entry=inputs["entry"][:200])
         return json.dumps({"status": "ok", "total_chars": total_len})
@@ -26,7 +27,7 @@ def tool_append_memory(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw
 def tool_add_skill(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -> str:
     try:
         deps = tool_deps or ToolDeps()
-        prompt_assembler.add_skill(
+        add_skill(
             inputs["skill_name"],
             inputs["documentation"],
             summary=inputs.get("summary"),
