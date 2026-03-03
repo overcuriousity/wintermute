@@ -533,12 +533,24 @@ def validate_workflow_spawn(context: dict, detection_result: dict) -> bool:
 
     Returns True if the violation is confirmed (worker_delegation NOT in
     tool_calls_made), False if it's a false positive.
+
+    Also checks ``prior_tool_calls_made``: if the prior turn already called
+    worker_delegation, the "spawn" claim in prior_assistant_message is
+    legitimate — not a hallucination in the current turn.
     """
     tool_calls_made = context.get("tool_calls_made", [])
     if "worker_delegation" in tool_calls_made:
         logger.info(
             "Stage 2: False positive — worker_delegation was actually called. "
             "LLM reason: %s", detection_result.get("reason", "?"),
+        )
+        return False
+    prior_tool_calls = context.get("prior_tool_calls_made", [])
+    if "worker_delegation" in prior_tool_calls:
+        logger.info(
+            "Stage 2: False positive — worker_delegation was called in the "
+            "prior turn (cross-turn context). LLM reason: %s",
+            detection_result.get("reason", "?"),
         )
         return False
     logger.warning("Stage 2: Confirmed hallucination — worker_delegation NOT in tool_calls_made")
@@ -582,6 +594,18 @@ def validate_phantom_tool_result(context: dict, detection_result: dict) -> bool:
         )
         return False
 
+    # Cross-turn check: if the claimed tool was called in the *prior* turn,
+    # Stage 1 likely confused prior_assistant_message context with the
+    # current turn's output.
+    prior_tool_calls = context.get("prior_tool_calls_made", [])
+    if claimed_tool and claimed_tool in prior_tool_calls:
+        logger.info(
+            "Stage 2: False positive — claimed tool %r was called in the "
+            "prior turn (cross-turn context). LLM reason: %s",
+            claimed_tool, detection_result.get("reason", "?"),
+        )
+        return False
+
     # Fallback: if no specific tool is claimed but ANY tool was called,
     # the data likely came from that tool — dismiss as false positive.
     if not claimed_tool and tool_calls_made:
@@ -616,6 +640,19 @@ def validate_empty_promise(context: dict, detection_result: dict) -> bool:
         logger.info(
             "Stage 2: False positive (empty_promise) — tools were called (%s). "
             "LLM reason: %s", tool_calls_made, detection_result.get("reason", "?"),
+        )
+        return False
+
+    # Cross-turn check: if the prior turn called tools, Stage 1 may have
+    # confused prior_assistant_message commitments (already fulfilled) with
+    # the current turn.  If the assistant's *current* response doesn't itself
+    # contain an action commitment, the detection is a false positive.
+    prior_tool_calls = context.get("prior_tool_calls_made", [])
+    if prior_tool_calls:
+        logger.info(
+            "Stage 2: False positive (empty_promise) — prior turn called "
+            "tools (%s), likely cross-turn context bleed. LLM reason: %s",
+            prior_tool_calls, detection_result.get("reason", "?"),
         )
         return False
 
@@ -1048,6 +1085,7 @@ async def run_turing_protocol(
     tool_result: Optional[str] = None,
     nl_tools: "set[str] | None" = None,
     prior_assistant_message: Optional[str] = None,
+    prior_tool_calls_made: Optional[list[str]] = None,
     recent_assistant_messages: Optional[list[str]] = None,
 ) -> TuringResult:
     """Run the three-stage Turing Protocol validation pipeline.
@@ -1085,6 +1123,11 @@ async def run_turing_protocol(
     prior_assistant_message : str or None
         Previous assistant message for conversational context (helps
         Stage 1 distinguish acknowledgements from phantom actions).
+    prior_tool_calls_made : list[str] or None
+        Tool names called during the *prior* turn.  Paired with
+        ``prior_assistant_message`` so Stage 2 validators can tell
+        which claims in the prior message were already actioned
+        (avoiding cross-turn false positives).
     recent_assistant_messages : list[str] or None
         Last N assistant messages for repetition loop detection.
     """
@@ -1133,6 +1176,8 @@ async def run_turing_protocol(
         context["prior_assistant_message"] = _truncate_middle(
             prior_assistant_message, keep_head=300, keep_tail=200
         )
+    if prior_tool_calls_made:
+        context["prior_tool_calls_made"] = prior_tool_calls_made
     if recent_assistant_messages:
         context["recent_assistant_messages"] = recent_assistant_messages
 

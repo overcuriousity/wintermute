@@ -1755,6 +1755,7 @@ class SubSessionManager:
                     nl_tools=nl_tools,
                     objective=state.objective,
                     prior_assistant_message=_prior_assistant,
+                    prior_tool_calls_made=tool_calls_made,
                     recent_assistant_messages=_recent_assistant,
                 )
                 if pi_result and pi_result.correction:

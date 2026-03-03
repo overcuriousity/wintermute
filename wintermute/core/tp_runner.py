@@ -67,6 +67,7 @@ class TuringProtocolRunner:
         active_sessions: Optional[list] = None,
         objective: Optional[str] = None,
         prior_assistant_message: Optional[str] = None,
+        prior_tool_calls_made: Optional[list[str]] = None,
         recent_assistant_messages: Optional[list[str]] = None,
     ) -> Optional[turing_protocol_module.TuringResult]:
         """Run TP hooks for *phase* in the bound scope.
@@ -98,6 +99,7 @@ class TuringProtocolRunner:
                 tool_result=tool_result,
                 nl_tools=nl_tools,
                 prior_assistant_message=prior_assistant_message,
+                prior_tool_calls_made=prior_tool_calls_made,
                 recent_assistant_messages=recent_assistant_messages,
             )
         except Exception:  # noqa: BLE001

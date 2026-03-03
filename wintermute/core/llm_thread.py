@@ -168,6 +168,10 @@ class LLMThread:
         self._last_system_prompt: dict[str, str] = {}
         # Per-thread last activity timestamp (for session timeout tracking).
         self._last_activity: dict[str, float] = {}
+        # Per-thread tool calls from the previous turn.  Passed to the Turing
+        # Protocol so Stage 2 validators can distinguish cross-turn context
+        # (prior_assistant_message) from the current turn's execution facts.
+        self._prior_tool_calls: dict[str, list[str]] = {}
         self._background_tasks: set[asyncio.Task] = set()
 
     def inject_sub_session_manager(self, manager: "SubSessionManager") -> None:
@@ -515,7 +519,10 @@ class LLMThread:
                 seq_at_fire = self._thread_seq.get(item.thread_id, 0)
                 # _prior_assistant and _recent_assistant were collected
                 # before _process() above, so they don't include the
-                # current reply.
+                # current reply.  _prior_tc pairs with _prior_assistant so
+                # Stage 2 validators can tell which tools the *prior* turn
+                # already called (avoiding cross-turn false positives).
+                _prior_tc = self._prior_tool_calls.get(item.thread_id, [])
                 _tp_task = asyncio.create_task(
                     self._run_turing_check(
                         user_message=item.text,
@@ -525,12 +532,16 @@ class LLMThread:
                         issued_for_seq=seq_at_fire,
                         turing_depth=item.turing_depth,
                         prior_assistant_message=_prior_assistant,
+                        prior_tool_calls_made=_prior_tc,
                         recent_assistant_messages=_recent_assistant,
                     ),
                     name=f"turing_{item.thread_id}",
                 )
                 self._background_tasks.add(_tp_task)
                 _tp_task.add_done_callback(self._background_tasks.discard)
+
+            # Update prior-turn tool calls for the next Turing check.
+            self._prior_tool_calls[item.thread_id] = reply.tool_calls_made or []
 
             # Emit main-thread turn event for reflection/synthesis.
             if (
@@ -608,6 +619,7 @@ class LLMThread:
         issued_for_seq: int = 0,
         turing_depth: int = 0,
         prior_assistant_message: Optional[str] = None,
+        prior_tool_calls_made: Optional[list[str]] = None,
         recent_assistant_messages: Optional[list[str]] = None,
     ) -> None:
         """Fire the Turing Protocol pipeline to detect violations.
@@ -642,6 +654,7 @@ class LLMThread:
             active_sessions=active_sessions,
             nl_tools=nl_tools,
             prior_assistant_message=prior_assistant_message,
+            prior_tool_calls_made=prior_tool_calls_made,
             recent_assistant_messages=recent_assistant_messages,
         )
         if result is None:
