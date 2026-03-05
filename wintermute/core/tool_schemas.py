@@ -213,25 +213,45 @@ TOOL_SCHEMAS = [
         },
     ),
     _fn(
-        "add_skill",
-        "Save a reusable procedure as a skill. Summary appears in your prompt; full content loaded on demand.",
+        "skill",
+        (
+            "Manage skills — reusable procedures stored in long-term memory. "
+            "Actions: add (create/update), read (retrieve by name), search (semantic query)."
+        ),
         {
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["add", "read", "search"],
+                    "description": (
+                        "'add': create or update a skill. "
+                        "'read': retrieve a skill by exact name. "
+                        "'search': find skills matching a query."
+                    ),
+                },
                 "skill_name": {
                     "type": "string",
-                    "description": "Filename stem without extension (e.g. 'calendar').",
+                    "description": "Skill identifier (alphanumeric, hyphens, underscores). Required for add/read.",
                 },
                 "summary": {
                     "type": "string",
-                    "description": "One-line summary for the skills index (max 80 chars).",
+                    "description": "One-line summary (max 80 chars). Required for add.",
                 },
                 "documentation": {
                     "type": "string",
-                    "description": "Markdown documentation for the skill. Be concise, max 500 chars.",
+                    "description": "Markdown body for the skill. Be concise, max 500 chars. Required for add.",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query (for action=search).",
+                },
+                "top_k": {
+                    "type": "integer",
+                    "description": "Max results for search (default: 5).",
                 },
             },
-            "required": ["skill_name", "summary", "documentation"],
+            "required": ["action"],
         },
     ),
     _fn(
@@ -315,7 +335,7 @@ TOOL_SCHEMAS = [
                     "description": (
                         "outcome_stats: aggregate success/failure counts. "
                         "recent_outcomes: latest sub-session results. "
-                        "skill_stats: read/write/failure counts per skill. "
+                        "skill_stats: per-skill access counts, versions, staleness (from skill store). "
                         "top_tools: most-used tools. "
                         "interaction_log: recent log entries. "
                         "self_model: cached self-assessment summary + raw metrics."
@@ -372,7 +392,7 @@ TOOL_CATEGORIES: dict[str, str] = {
     "worker_delegation":  "orchestration",
     "task":               "orchestration",
     "append_memory":      "orchestration",
-    "add_skill":          "orchestration",
+    "skill":              "orchestration",
     "query_telemetry":    "orchestration",
 }
 
@@ -427,10 +447,10 @@ NL_TOOL_SCHEMAS = [
         },
     ),
     _fn(
-        "add_skill",
+        "skill",
         (
-            "Save a reusable procedure as a skill. "
-            "Describe the skill name and steps in plain English."
+            "Manage skills — save, retrieve, or search reusable procedures. "
+            "Describe what you need in plain English."
         ),
         {
             "type": "object",
@@ -438,9 +458,11 @@ NL_TOOL_SCHEMAS = [
                 "description": {
                     "type": "string",
                     "description": (
-                        "What skill to save: a name and the full procedure. "
-                        "Example: 'save a skill called deploy-docker about "
-                        "deploying containers: run docker compose up -d ...'"
+                        "What skill operation to perform: add, read, or search. "
+                        "Examples: 'save a skill called deploy-docker about "
+                        "deploying containers: run docker compose up -d ...', "
+                        "'look up the deploy-docker skill', "
+                        "'search for skills about CI/CD pipelines'."
                     ),
                 },
             },

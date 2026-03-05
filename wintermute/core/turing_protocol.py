@@ -175,7 +175,7 @@ _BUILTIN_HOOKS: list[TuringHook] = [
             'being cancelled/deleted, memory being saved, a skill being created — '
             'as if **already done** during THIS exchange, AND the corresponding tool '
             '(`read_file`, `write_file`, `search_web`, `fetch_url`, `execute_shell`, '
-            '`task`, `append_memory`, `add_skill`) is NOT in tool_calls_made. '
+            '`task`, `append_memory`, `skill`) is NOT in tool_calls_made. '
             'Also flag short past-tense confirmation phrases that imply a tool was '
             'called without providing any real data — e.g. "Done. Task scheduled.", '
             '"Erledigt. Task erstellt.", "Ok, memory saved.", "Skill added." — when '
@@ -191,7 +191,7 @@ _BUILTIN_HOOKS: list[TuringHook] = [
             'its own previous errors or fabricated data — self-criticism about past '
             'turns is not a new phantom tool result. '
             'Include a "tool" field naming the specific tool that should have been '
-            'called (e.g. "task", "add_skill", "read_file").'
+            'called (e.g. "task", "skill", "read_file").'
         ),
         validator_type="programmatic",
         validator_fn_name="validate_phantom_tool_result",
@@ -996,7 +996,7 @@ def _get_phantom_tool_schemas(violation: dict, nl_tools: "set[str] | None" = Non
     """Extract tool names mentioned in a phantom_tool_result violation and return their schemas.
 
     Parses the violation reason for backtick-quoted tool names (e.g. `task`,
-    `add_skill`) and returns their schemas concatenated.  Falls back to a
+    `skill`) and returns their schemas concatenated.  Falls back to a
     generic message if no tools are identified.
     """
     reason = violation.get("reason", "")

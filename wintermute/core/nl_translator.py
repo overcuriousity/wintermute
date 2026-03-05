@@ -29,13 +29,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Tools that have NL translation variants.
-NL_TOOLS: frozenset[str] = frozenset({"task", "worker_delegation", "add_skill"})
+NL_TOOLS: frozenset[str] = frozenset({"task", "worker_delegation", "skill"})
 
 # Maps tool name -> prompt template filename.
 _PROMPT_MAP: dict[str, str] = {
     "task": "NL_TRANSLATOR_TASK.txt",
     "worker_delegation": "NL_TRANSLATOR_WORKER_DELEGATION.txt",
-    "add_skill": "NL_TRANSLATOR_ADD_SKILL.txt",
+    "skill": "NL_TRANSLATOR_SKILL.txt",
 }
 
 

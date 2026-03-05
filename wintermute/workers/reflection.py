@@ -234,12 +234,6 @@ class ReflectionLoop:
                 await self._run_synthesis()
         if self._self_model:
             await self._self_model.update(findings)
-        # Flush accumulated skill read counts to YAML.
-        try:
-            from wintermute.workers import skill_stats
-            skill_stats.flush()
-        except Exception:
-            logger.debug("[reflection] Failed to flush skill_stats", exc_info=True)
         self._checked_failures.clear()
 
     # ------------------------------------------------------------------
@@ -379,7 +373,7 @@ class ReflectionLoop:
         failed_session_ids = {o["session_id"] for o in failed_outcomes}
 
         if failed_session_ids:
-            # Query interaction_log for read_file calls in failed sessions.
+            # Query interaction_log for skill tool calls in failed sessions.
             skill_fail_counts: dict[str, int] = {}
             try:
                 log_entries = await database.async_call(
@@ -395,26 +389,31 @@ class ReflectionLoop:
                 if session not in failed_session_ids:
                     continue
                 raw = entry.get("input", "")
-                # Look for read_file calls on data/skills/ paths.
-                if "read_file" in raw and "data/skills/" in raw:
-                    # Extract skill filename from the input.
-                    # Capture stem only (no .md extension) for consistent key lookup.
+                # Detect skill reads via either the new "skill" tool or
+                # legacy read_file on data/skills/ paths.
+                if '"skill"' in raw or "'skill'" in raw:
+                    # New skill tool — extract skill_name from JSON args.
+                    matches = re.findall(r'"skill_name"\s*:\s*"([^"]+)"', raw)
+                    for skill_name in matches:
+                        skill_fail_counts[skill_name] = skill_fail_counts.get(skill_name, 0) + 1
+                elif "read_file" in raw and "data/skills/" in raw:
+                    # Legacy: read_file on data/skills/ paths.
                     matches = re.findall(r'data/skills/([^\s"\']+)\.md', raw)
                     for skill_name in matches:
                         skill_fail_counts[skill_name] = skill_fail_counts.get(skill_name, 0) + 1
 
-            # Enrich with lifetime stats from skill_stats.
+            # Enrich with lifetime stats from skill_store.
             try:
-                from wintermute.workers import skill_stats
-                all_stats = skill_stats.get_all()
+                from wintermute.infra import skill_store
+                all_store_stats = skill_store.stats()
             except Exception:
-                all_stats = {}
+                all_store_stats = {}
 
             for skill_name, fail_count in skill_fail_counts.items():
                 if fail_count >= 3:
-                    # Build enrichment suffix from lifetime stats.
+                    # Build enrichment suffix from store stats.
                     extra = ""
-                    sstat = all_stats.get(skill_name, {})
+                    sstat = all_store_stats.get(skill_name, {})
                     if sstat:
                         total = sstat.get("sessions_loaded", 0)
                         failures = sstat.get("failure_count", 0)
@@ -508,11 +507,11 @@ class ReflectionLoop:
         # Build skill stats summary for enrichment.
         skill_stats_text = "(unavailable)"
         try:
-            from wintermute.workers import skill_stats
-            all_stats = skill_stats.get_all()
-            if all_stats:
+            from wintermute.infra import skill_store
+            store_stats = skill_store.stats()
+            if store_stats:
                 lines = []
-                for sname, sdata in sorted(all_stats.items()):
+                for sname, sdata in sorted(store_stats.items()):
                     total = sdata.get("sessions_loaded", 0)
                     fails = sdata.get("failure_count", 0)
                     rate = round(fails / total * 100) if total else 0
@@ -607,19 +606,19 @@ class ReflectionLoop:
             return
         logger.info("[reflection] Spawning skill mutation sub-session")
 
-        # Enumerate existing skill files so the LLM doesn't waste rounds
-        # trying to discover them (it has read_file but no directory listing).
-        from pathlib import Path
-        skills_dir = Path("data/skills")
-        existing_files: list[str] = []
-        if skills_dir.exists():
-            existing_files = sorted(
-                f.name for f in skills_dir.glob("*.md")
-            )
-        if existing_files:
-            listing = "Existing skill files: " + ", ".join(existing_files)
+        # Enumerate existing skills so the LLM doesn't waste rounds
+        # discovering them.
+        try:
+            from wintermute.infra import skill_store
+            all_skills = skill_store.get_all()
+            skill_names = sorted(s["name"] for s in all_skills)
+        except Exception:
+            skill_names = []
+
+        if skill_names:
+            listing = "Existing skills: " + ", ".join(skill_names)
         else:
-            listing = "No skill files exist yet."
+            listing = "No skills exist yet."
 
         try:
             session_id = self._sub_sessions.spawn(
@@ -628,11 +627,12 @@ class ReflectionLoop:
                     "reflection cycle recommendation.\n\n"
                     + objective
                     + f"\n\n{listing}"
-                    + "\n\nUse read_file to examine any relevant skill files before "
-                    "making changes.  Use add_skill to create or update skills. "
+                    + "\n\nUse the skill tool with action 'read' to examine "
+                    "any relevant skills before making changes.  Use the skill "
+                    "tool with action 'add' to create or update skills. "
                     "Keep changes minimal and justified."
                 ),
-                tool_names=["read_file", "add_skill", "append_memory"],
+                tool_names=["read_file", "skill", "append_memory"],
                 system_prompt_mode="none",
                 pool=self._pool,
                 parent_thread_id=None,   # fire-and-forget
@@ -686,15 +686,15 @@ class ReflectionLoop:
             return
 
         # Deduplicate: skip clusters whose tool set is already covered by a skill.
-        from pathlib import Path
-        skills_dir = Path("data/skills")
-        existing_skill_texts: dict[str, str] = {}
-        if skills_dir.exists():
-            for sf in skills_dir.glob("*.md"):
-                try:
-                    existing_skill_texts[sf.stem] = sf.read_text(encoding="utf-8")
-                except Exception:
-                    pass
+        try:
+            from wintermute.infra import skill_store
+            all_skills = skill_store.get_all()
+            existing_skill_texts: dict[str, str] = {
+                s["name"]: f"{s.get('summary', '')} {s.get('documentation', '')}"
+                for s in all_skills
+            }
+        except Exception:
+            existing_skill_texts = {}
 
         novel_clusters: dict[frozenset[str], list[dict]] = {}
         for tool_set, sessions in viable.items():

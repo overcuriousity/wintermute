@@ -202,13 +202,14 @@ class SelfModelProfiler:
         except Exception:
             logger.debug("[self_model] Failed to collect inference count", exc_info=True)
 
-        # Skill stats.
+        # Skill stats (from skill_store).
         try:
-            from wintermute.workers import skill_stats
-            all_stats = skill_stats.get_all()
-            metrics["skill_count"] = len(all_stats)
-            metrics["skill_total_reads"] = sum(s.get("read_count", 0) for s in all_stats.values())
-            metrics["skills_unused_90d"] = len(skill_stats.get_unused_skills(days=90))
+            from wintermute.infra import skill_store
+            store_stats = skill_store.stats()
+            metrics["skill_count"] = len(store_stats)
+            metrics["skill_total_reads"] = sum(s.get("read_count", 0) for s in store_stats.values())
+            stale = skill_store.get_stale(max_age_days=90, min_access=2)
+            metrics["skills_unused_90d"] = len(stale)
         except Exception:
             logger.debug("[self_model] Failed to collect skill stats", exc_info=True)
 

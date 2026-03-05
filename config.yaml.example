@@ -304,6 +304,24 @@ nl_translation:
     - add_skill                           # Skill creation (summary + documentation formatting)
 
 
+# ── Skill Storage ────────────────────────────────────────────────────
+# Skills (learned reusable procedures) are stored in a vector-indexed
+# backend — the same architecture as memories.  The backend auto-detects
+# from the memory config unless overridden here.
+#
+# Supported backends: fts5, local_vector, qdrant
+# (flat_file is NOT supported for skills — fts5 is used as fallback.)
+#
+# Embedding config is inherited from memory.embeddings by default.
+#
+# skills:
+#   backend: "fts5"                       # "fts5" | "local_vector" | "qdrant"
+#   qdrant:
+#     collection: "wintermute_skills"     # Separate collection (default)
+#     url: "http://localhost:6333"        # Inherits from memory.qdrant if omitted
+#     api_key: null
+
+
 # ── Tool Profiles (Named Sub-session Presets) ────────────────────────
 # Named presets that map to specific tool sets and system prompt modes.
 # When spawning a sub-session, the LLM can use profile="researcher"
@@ -326,7 +344,7 @@ tool_profiles:
     tools: [execute_shell, read_file, write_file, search_web, fetch_url]
     prompt_mode: minimal
   orchestrator:
-    tools: [worker_delegation, task, append_memory, add_skill]
+    tools: [worker_delegation, task, append_memory, skill]
     prompt_mode: full
 
 
