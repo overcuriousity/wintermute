@@ -593,6 +593,7 @@ class LocalVectorSkillBackend:
     def update(self, name: str, summary: str | None = None,
                documentation: str | None = None,
                changelog: str | None = None) -> bool:
+        # Phase 1: Read current row under lock.
         with self._lock:
             conn = self._connect()
             try:
@@ -601,25 +602,32 @@ class LocalVectorSkillBackend:
                     "FROM skill_vectors WHERE name = ?",
                     (name,),
                 ).fetchone()
-                if not row:
-                    return False
-                new_summary = summary if summary is not None else row[0]
-                new_doc = documentation if documentation is not None else row[1]
-                new_version = row[2] + 1
-                if changelog is not None:
-                    new_changelog = changelog
-                else:
-                    old_cl = row[3] or ""
-                    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                    if old_cl:
-                        new_changelog = f"{old_cl}\n- {date_str}: updated"
-                    else:
-                        new_changelog = f"## Changelog\n- {date_str}: updated"
-                full_text = _build_full_text(new_summary, new_doc)
-                vectors = _embed([full_text], self._embed_cfg)
-                if not vectors:
-                    raise RuntimeError("Embedding call returned no vectors")
-                blob = self._vec_to_blob(vectors[0])
+            finally:
+                conn.close()
+        if not row:
+            return False
+        new_summary = summary if summary is not None else row[0]
+        new_doc = documentation if documentation is not None else row[1]
+        new_version = row[2] + 1
+        if changelog is not None:
+            new_changelog = changelog
+        else:
+            old_cl = row[3] or ""
+            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if old_cl:
+                new_changelog = f"{old_cl}\n- {date_str}: updated"
+            else:
+                new_changelog = f"## Changelog\n- {date_str}: updated"
+        full_text = _build_full_text(new_summary, new_doc)
+        # Phase 2: Embed outside the lock (potentially slow network call).
+        vectors = _embed([full_text], self._embed_cfg)
+        if not vectors:
+            raise RuntimeError("Embedding call returned no vectors")
+        blob = self._vec_to_blob(vectors[0])
+        # Phase 3: Write back under lock.
+        with self._lock:
+            conn = self._connect()
+            try:
                 conn.execute(
                     "UPDATE skill_vectors SET summary=?, documentation=?, "
                     "full_text=?, vector=?, version=?, changelog=?, "
@@ -799,7 +807,7 @@ class QdrantSkillBackend:
 
     def add(self, name: str, summary: str, documentation: str,
             changelog: str = "") -> str:
-        from qdrant_client.models import PointStruct, Filter, FieldCondition, MatchValue
+        from qdrant_client.models import PointStruct
 
         full_text = _build_full_text(summary, documentation)
         vectors = _embed([full_text], self._embed_cfg)
@@ -1110,6 +1118,21 @@ def _migrate_from_flat_files() -> None:
                 documentation = documentation[:idx].strip()
 
             _b().add(name, summary, documentation, changelog=changelog)
+
+            # Apply stats from skill_stats.yaml if available.
+            skill_stat = stats.get(name, {})
+            if skill_stat:
+                try:
+                    from wintermute.infra import database
+                    # Patch access_count / last_accessed from legacy stats.
+                    read_count = skill_stat.get("read_count", 0)
+                    last_read = skill_stat.get("last_read", 0)
+                    if read_count or last_read:
+                        _b().update(name)  # no-op content-wise, but bumps version
+                        logger.debug("Migrated stats for skill '%s': reads=%d", name, read_count)
+                except Exception:
+                    logger.debug("Could not apply stats for skill '%s'", name, exc_info=True)
+
             imported += 1
         except Exception:
             logger.warning("Failed to migrate skill file %s", f.name, exc_info=True)
@@ -1134,9 +1157,15 @@ def init(config: dict, embed_cfg: dict | None = None) -> None:
     global _backend, _config, _embed_cfg
     _config = dict(config)
     _embed_cfg = dict(embed_cfg or {})
-    backend_name = config.get("backend", "local_vector")
 
-    # If memory backend is flat_file, default skills to fts5.
+    # Derive default backend: use local_vector only when embeddings are
+    # configured; otherwise default to fts5 to avoid failures on installs
+    # without an embedding endpoint.
+    backend_name = config.get("backend")
+    if not backend_name:
+        backend_name = "local_vector" if _embed_cfg.get("endpoint") else "fts5"
+
+    # flat_file is not supported for skills — normalise to fts5.
     if backend_name == "flat_file":
         backend_name = "fts5"
 

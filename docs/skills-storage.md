@@ -10,7 +10,9 @@ Skills are learned, reusable procedures that the AI assistant can create, retrie
 | `local_vector` | SQLite + numpy cosine similarity | Local embeddings without external services |
 | `qdrant` | Qdrant vector database | Production / large skill libraries |
 
-The backend is **auto-detected** from your `memory` configuration unless explicitly overridden in the `skills` section:
+The backend is **auto-detected** from your `memory` configuration unless explicitly overridden in the `skills` section. When no `skills.backend` is set:
+- If embeddings are configured (`memory.embeddings.endpoint`), defaults to `local_vector`
+- Otherwise defaults to `fts5` (no embedding endpoint required)
 
 ```yaml
 # config.yaml
@@ -23,7 +25,7 @@ skills:
 memory:
   backend: "local_vector"      # skills will also use local_vector
   embeddings:
-    url: "http://localhost:11434/v1/embeddings"
+    endpoint: "http://localhost:11434/v1"
     model: "nomic-embed-text"
 ```
 
@@ -33,7 +35,7 @@ memory:
 
 Skills inherit embedding settings from `memory.embeddings`. No separate embedding config is needed. The shared settings include:
 
-- `url` — Embedding API endpoint
+- `endpoint` — Embedding API base URL (the code appends `/embeddings`)
 - `model` — Embedding model name
 - `dimensions` — Vector dimensions (auto-detected)
 - `api_key` — Optional API key

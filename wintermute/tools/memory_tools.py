@@ -31,10 +31,15 @@ def tool_skill(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -> str
         action = inputs.get("action", "add")
 
         if action == "add":
-            name = inputs["skill_name"]
+            name = inputs.get("skill_name")
+            if not name:
+                return json.dumps({"error": "skill_name is required for action 'add'"})
+            documentation = inputs.get("documentation")
+            if not documentation:
+                return json.dumps({"error": "documentation is required for action 'add'"})
             skill_io.add_skill(
                 name,
-                inputs["documentation"],
+                documentation,
                 summary=inputs.get("summary"),
             )
             if deps.event_bus:
@@ -42,7 +47,9 @@ def tool_skill(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -> str
             return json.dumps({"status": "ok", "skill": name})
 
         if action == "read":
-            name = inputs["skill_name"]
+            name = inputs.get("skill_name")
+            if not name:
+                return json.dumps({"error": "skill_name is required for action 'read'"})
             record = skill_io.read_skill(name)
             if record is None:
                 return json.dumps({"error": f"Skill '{name}' not found"})
@@ -50,7 +57,8 @@ def tool_skill(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -> str
 
         if action == "search":
             query = inputs.get("query", "")
-            top_k = inputs.get("top_k", 5)
+            top_k = int(inputs.get("top_k", 5))
+            top_k = max(1, min(top_k, 50))  # clamp to reasonable range
             results = skill_io.search_skills(query, top_k)
             return json.dumps({"status": "ok", "results": results,
                                "count": len(results)})

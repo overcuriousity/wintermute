@@ -349,12 +349,17 @@ async def main() -> None:
         logger.exception("Memory store init failed — falling back to flat_file")
         memory_store.init({"backend": "flat_file"})
 
-    # Initialize skill store (shares embedding config from memory section).
+    # Initialize skill store (shares embedding + backend config from memory section).
     from wintermute.infra import skill_store
     try:
+        memory_cfg = cfg.get("memory", {}) or {}
+        skills_cfg = (cfg.get("skills", {}) or {}).copy()
+        # Expose memory Qdrant config for inheritance by the skill Qdrant backend.
+        if memory_cfg.get("backend") == "qdrant" or memory_cfg.get("qdrant"):
+            skills_cfg.setdefault("_memory_qdrant", memory_cfg.get("qdrant", {}))
         skill_store.init(
-            cfg.get("skills", {}),
-            cfg.get("memory", {}).get("embeddings", {}),
+            skills_cfg,
+            memory_cfg.get("embeddings", {}),
         )
     except Exception:
         logger.exception("Skill store init failed — falling back to fts5")

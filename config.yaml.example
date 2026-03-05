@@ -301,7 +301,7 @@ nl_translation:
   tools:                                  # Which tools get NL-simplified schemas
     - task                                # Task management (add/complete/schedule/pause/resume)
     - worker_delegation                   # Background worker spawning (DAG dependencies)
-    - add_skill                           # Skill creation (summary + documentation formatting)
+    - skill                               # Skill management (add/read/search actions)
 
 
 # ── Skill Storage ────────────────────────────────────────────────────
