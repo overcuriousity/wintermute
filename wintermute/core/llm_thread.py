@@ -890,7 +890,6 @@ class LLMThread:
         system_prompt: str,
         messages: list[dict],
         pool: "BackendPool",
-        is_sub_session_result: bool,
         memory_query: "str | None",
         memory_results: "list | None",
         prompt_mode: str,
@@ -900,7 +899,6 @@ class LLMThread:
         try:
             return await self._inference_loop(
                 system_prompt, messages, thread_id,
-                disable_tools=is_sub_session_result,
                 pool=pool,
             )
         except ContextTooLargeError:
@@ -921,7 +919,6 @@ class LLMThread:
             )
             return await self._inference_loop(
                 system_prompt, messages, thread_id,
-                disable_tools=is_sub_session_result,
                 pool=pool,
             )
 
@@ -940,7 +937,7 @@ class LLMThread:
         _inference_start = _time.time()
         reply = await self._run_inference_with_retry(
             item, system_prompt, messages, pool,
-            is_sub_session_result, _memory_query, _memory_results, _prompt_mode,
+            _memory_query, _memory_results, _prompt_mode,
         )
         _inference_duration = _time.time() - _inference_start
 
