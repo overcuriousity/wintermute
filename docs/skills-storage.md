@@ -15,7 +15,7 @@ The backend is **auto-selected** based on the available embeddings configuration
 - If an embeddings endpoint is configured (`memory.embeddings.endpoint`), defaults to `local_vector`
 - Otherwise defaults to `fts5` (no embedding endpoint required)
 
-> **Note:** The skills backend does **not** automatically inherit `memory.backend`. It is configured independently via `skills.backend` or auto-selected based on whether `memory.embeddings.endpoint` is present. For example, setting `memory.backend: qdrant` does not make skills use Qdrant — you must set `skills.backend: qdrant` explicitly.
+> **Note:** The skills backend is configured independently via `skills.backend`. When `skills.backend` is not set, startup inherits `memory.backend` (normalising `flat_file` to `fts5`) and then auto-selects `local_vector` if `memory.embeddings.endpoint` is present, or `fts5` otherwise. Setting `memory.backend: qdrant` will therefore default skills to `qdrant` too — but you can override it with an explicit `skills.backend`.
 
 ```yaml
 # config.yaml
@@ -24,8 +24,10 @@ The backend is **auto-selected** based on the available embeddings configuration
 skills:
   backend: "local_vector"
 
-# Or rely on auto-detection from embeddings config:
-# (skills backend does NOT inherit memory.backend)
+# Or rely on auto-detection from embeddings + memory config:
+# When skills.backend is not set, startup inherits memory.backend
+# (with flat_file normalised to fts5) and then further defaults to
+# local_vector when memory.embeddings.endpoint is present, or fts5 otherwise.
 memory:
   backend: "local_vector"
   embeddings:

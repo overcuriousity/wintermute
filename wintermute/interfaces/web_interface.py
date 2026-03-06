@@ -612,8 +612,8 @@ class WebInterface:
             skills.append({
                 "name": name,
                 "summary": rec.get("summary", ""),
-                "size": len(rec.get("documentation", "")),
-                "mtime": rec.get("last_accessed", 0),
+                "doc_chars": len(rec.get("documentation", "")),
+                "last_accessed": rec.get("last_accessed", 0),
                 "read_count": sstat.get("read_count", 0),
                 "version": sstat.get("version", 1),
                 "last_read": sstat.get("last_read"),

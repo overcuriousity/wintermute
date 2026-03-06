@@ -1074,7 +1074,11 @@ class QdrantSkillBackend:
              "name": (p.payload or {}).get("name", ""),
              "summary": (p.payload or {}).get("summary", ""),
              "documentation": (p.payload or {}).get("documentation", ""),
-             "vector": list(p.vector) if p.vector else [],
+             "vector": (
+                 list(next(iter(p.vector.values())))
+                 if isinstance(p.vector, dict) and p.vector
+                 else (list(p.vector) if p.vector else [])
+             ),
              "created_at": (p.payload or {}).get("created_at", 0),
              "last_accessed": (p.payload or {}).get("last_accessed", 0),
              "access_count": (p.payload or {}).get("access_count", 0),
@@ -1206,8 +1210,16 @@ def init(config: dict, embed_cfg: dict | None = None) -> None:
         if backend_name == "fts5":
             _backend = FTS5SkillBackend()
         elif backend_name == "local_vector":
+            if not _embed_cfg.get("endpoint"):
+                raise RuntimeError(
+                    "skills.backend 'local_vector' requires embeddings.endpoint to be configured"
+                )
             _backend = LocalVectorSkillBackend(_embed_cfg)
         elif backend_name == "qdrant":
+            if not _embed_cfg.get("endpoint"):
+                raise RuntimeError(
+                    "skills.backend 'qdrant' requires embeddings.endpoint to be configured"
+                )
             _backend = QdrantSkillBackend(config, _embed_cfg)
         else:
             logger.warning("Unknown skill backend %r, falling back to fts5", backend_name)

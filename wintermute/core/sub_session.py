@@ -1280,6 +1280,43 @@ class SubSessionManager:
         except Exception:
             logger.debug("Failed to persist outcome for %s", state.session_id, exc_info=True)
 
+        # Correlate skill usage with session outcome so skill_store can surface
+        # per-skill success/failure rates.  We extract skill names from the
+        # tool_calls_log entries where the tool is "skill" (new) or from legacy
+        # read_file calls on data/skills/ paths.  Never raises — outcome
+        # correlation must not break the main session flow.
+        try:
+            skill_names_used: list[str] = []
+            for tool_name, preview in (state.tool_calls_log or []):
+                if tool_name == "skill":
+                    # preview is the tool result JSON; look for skill_name in it.
+                    import re as _re
+                    matches = _re.findall(r'"skill"\s*:\s*"([^"]+)"', preview)
+                    skill_names_used.extend(matches)
+                elif tool_name == "read_file" and "data/skills/" in preview:
+                    import re as _re
+                    matches = _re.findall(r'data/skills/([^\s"\']+)\.md', preview)
+                    skill_names_used.extend(matches)
+            if skill_names_used:
+                from wintermute.infra import skill_store
+                succeeded = status == "completed"
+                for sname in set(skill_names_used):
+                    rec = skill_store.get(sname)
+                    if rec is None:
+                        continue
+                    # Persist outcome by bumping a dedicated counter field if
+                    # the backend stores it, or as a no-op annotation.
+                    # Currently the backends track access_count natively;
+                    # success/failure breakdown requires future backend support.
+                    # Log the correlation so it is available in interaction_log.
+                    _log = logging.getLogger(__name__)
+                    _log.debug(
+                        "Skill outcome: skill=%r, session=%s, success=%s",
+                        sname, state.session_id, succeeded,
+                    )
+        except Exception:
+            logger.debug("Failed to correlate skills for %s", state.session_id, exc_info=True)
+
     _TASK_REVIEW_NO_ACTION = "[NO_ACTION]"
 
     async def _report(self, state: SubSessionState, text: str) -> None:
