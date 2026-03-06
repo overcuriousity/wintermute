@@ -54,6 +54,7 @@ class MemoryBackend(Protocol):
     def get_stale(self, max_age_days: int, min_access: int) -> list[dict]: ...
     def bulk_delete(self, entry_ids: list[str]) -> int: ...
     def get_top_accessed(self, limit: int) -> list[dict]: ...
+    def get_by_source(self, source: str, limit: int = 50) -> list[dict]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +117,9 @@ class FlatFileBackend:
 
     def get_top_accessed(self, limit: int) -> list[dict]:
         return self.get_all()
+
+    def get_by_source(self, source: str, limit: int = 50) -> list[dict]:
+        return []  # Flat-file has no source metadata.
 
 
 # ---------------------------------------------------------------------------
@@ -383,6 +387,25 @@ class FTS5Backend:
             finally:
                 conn.close()
         return [{"id": r[0], "text": r[1], "score": 1.0} for r in rows]
+
+    def get_by_source(self, source: str, limit: int = 50) -> list[dict]:
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT entry_id, text, created_at, last_accessed, access_count, source "
+                    "FROM memories_meta WHERE source = ? ORDER BY created_at DESC LIMIT ?",
+                    (source, limit),
+                ).fetchall()
+            finally:
+                conn.close()
+        hits = [
+            {"id": r[0], "text": r[1], "created_at": r[2],
+             "last_accessed": r[3], "access_count": r[4], "source": r[5]}
+            for r in rows
+        ]
+        self._track_access([h["id"] for h in hits])
+        return hits
 
 
 # ---------------------------------------------------------------------------
@@ -707,6 +730,25 @@ class LocalVectorBackend:
             finally:
                 conn.close()
         return [{"id": r[0], "text": r[1], "score": 1.0} for r in rows]
+
+    def get_by_source(self, source: str, limit: int = 50) -> list[dict]:
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT entry_id, text, created_at, last_accessed, access_count, source "
+                    "FROM local_vectors WHERE source = ? ORDER BY created_at DESC LIMIT ?",
+                    (source, limit),
+                ).fetchall()
+            finally:
+                conn.close()
+        hits = [
+            {"id": r[0], "text": r[1], "created_at": r[2],
+             "last_accessed": r[3], "access_count": r[4], "source": r[5]}
+            for r in rows
+        ]
+        self._track_access([h["id"] for h in hits])
+        return hits
 
 
 # ---------------------------------------------------------------------------
@@ -1218,6 +1260,39 @@ class QdrantBackend:
             for p in points[:limit]
         ]
 
+    def get_by_source(self, source: str, limit: int = 50) -> list[dict]:
+        from qdrant_client.models import Filter, FieldCondition, MatchValue
+        scroll_filter = Filter(must=[
+            FieldCondition(key="source", match=MatchValue(value=source)),
+        ])
+        points: list = []
+        offset = None
+        while len(points) < limit:
+            with self._lock:
+                result = self._client.scroll(
+                    collection_name=self._collection,
+                    scroll_filter=scroll_filter,
+                    limit=min(limit - len(points), 1000),
+                    offset=offset,
+                    with_payload=True,
+                )
+            if not result:
+                break
+            points.extend(result[0])
+            offset = result[1] if len(result) > 1 else None
+            if offset is None:
+                break
+        hits = [
+            {"id": str(p.id), "text": p.payload.get("text", ""),
+             "created_at": p.payload.get("created_at", 0),
+             "last_accessed": p.payload.get("last_accessed", 0),
+             "access_count": p.payload.get("access_count", 0),
+             "source": p.payload.get("source", "unknown")}
+            for p in points[:limit]
+        ]
+        self._track_access([h["id"] for h in hits])
+        return hits
+
 
 # ---------------------------------------------------------------------------
 # Helpers — thin wrappers around llm_utils shared functions
@@ -1338,6 +1413,15 @@ def bulk_delete(entry_ids: list[str]) -> int:
 
 def get_top_accessed(limit: int) -> list[dict]:
     return _backend.get_top_accessed(limit)
+
+
+def get_by_source(source: str, limit: int = 50) -> list[dict]:
+    """Return memories filtered by source tag (e.g. 'dreaming_prediction').
+
+    Access counts are bumped for returned entries to feed the promotion
+    pipeline (predictions accessed >= 5 times are promoted to schemas).
+    """
+    return _backend.get_by_source(source, limit)
 
 
 def recommend(

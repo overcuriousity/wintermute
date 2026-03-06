@@ -123,6 +123,8 @@ class WebInterface:
         app.router.add_post("/api/skills",                         self._api_skill_create)
         app.router.add_put("/api/skills/{name}",                   self._api_skill_update)
         app.router.add_delete("/api/skills/{name}",                self._api_skill_delete)
+        # Prediction accuracy API
+        app.router.add_get("/api/prediction-accuracy",             self._api_prediction_accuracy)
 
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
@@ -596,6 +598,16 @@ class WebInterface:
 
         result = await asyncio.get_running_loop().run_in_executor(None, _build_result)
         return self._json(result)
+
+    # ------------------------------------------------------------------
+    # Prediction accuracy API
+    # ------------------------------------------------------------------
+
+    async def _api_prediction_accuracy(self, _request: web.Request) -> web.Response:
+        """GET /api/prediction-accuracy — return active prediction accuracy data."""
+        from wintermute.infra import database
+        records = await database.async_call(database.get_active_predictions_accuracy)
+        return self._json(records)
 
     # ------------------------------------------------------------------
     # Skills API

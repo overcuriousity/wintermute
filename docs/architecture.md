@@ -20,8 +20,8 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
 | **NL Translator** | `nl_translator.py` | Expands natural-language tool descriptions into structured arguments via a translator LLM |
 | **MemoryStore** | `memory_store.py` | Vector-indexed memory retrieval (flat_file / FTS5 / local_vector / Qdrant backends) with access tracking and source tagging |
-| **PromptAssembler** | `prompt_assembler.py` | Builds system prompts from file components |
-| **Database** | `database.py` | SQLite message persistence (per-thread cached connections), thread management, task storage, and sub-session outcome tracking |
+| **PromptAssembler** | `prompt_assembler.py` | Builds system prompts from file components; injects predictions & patterns for main thread |
+| **Database** | `database.py` | SQLite message persistence (per-thread cached connections), thread management, task storage, sub-session outcome tracking, and prediction accuracy tracking |
 
 ## System Diagram
 
@@ -87,7 +87,7 @@ SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + s
 1. User sends a message via Matrix or WebSocket
 2. Message enters the LLMThread queue
 3. LLMThread builds the message list from the SQLite DB
-4. System prompt is assembled fresh (BASE + MEMORIES + TASKS + SKILLS TOC + compaction summary). When a vector memory backend is active, only the top-K relevant memories are retrieved (via embedding search) instead of the full MEMORIES.txt
+4. System prompt is assembled fresh (BASE + MEMORIES + TASKS + PREDICTIONS + SKILLS TOC + compaction summary). When a vector memory backend is active, only the top-K relevant memories are retrieved (via embedding search) instead of the full MEMORIES.txt
 5. If history tokens exceed the compaction threshold, context is compacted first
 6. Message is saved to the DB, then inference runs
 7. If the model returns tool calls:

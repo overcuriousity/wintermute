@@ -52,6 +52,55 @@ When the **flat-file backend** is active, only phases 5–6 (task + skill consol
 
 Configurable via `memory.dreaming` in `config.yaml` (16 config keys across housekeeping, association, schema, and prediction sections) and `dreaming` (schedule). Prompts are stored in `data/prompts/` and can be customised. See [system-prompts.md](system-prompts.md#customisable-prompt-templates).
 
+## Prediction Consumption
+
+**Modules:** `wintermute/infra/prompt_assembler.py`, `wintermute/workers/scheduler_thread.py`, `wintermute/workers/reflection.py`, `wintermute/infra/database.py`
+
+The dreaming loop generates predictions (phase 9) but their value depends on runtime consumption. This pipeline closes the loop:
+
+### Source-Filtered Retrieval
+
+`memory_store.get_by_source("dreaming_prediction")` fetches all entries tagged with a specific source. Access counts are bumped on retrieval, feeding the promotion pipeline (≥5 accesses → promoted to `dreaming_schema`).
+
+### Prompt Injection
+
+The `prompt_assembler` injects a `# Predictions & Patterns` section into the main-thread system prompt, after System Observations and before Conversation Summary. Includes both `dreaming_prediction` and `dreaming_schema` entries. Hard-capped at 800 characters. Gated by `memory.dreaming.prediction_inject_prompt` (default: `true`).
+
+### Proactive Scheduling
+
+The scheduler runs an hourly check against temporal predictions. When the current time falls within a predicted active window (parsed from prediction text), a full sub-session is spawned to check for pending tasks, reminders, or anything useful to surface proactively. Responses with `[NO_ACTION]` are suppressed.
+
+- **Cooldown:** `prediction_proactive_cooldown_hours` (default: 4) between fires per prediction
+- **Day matching:** If the prediction mentions specific weekdays, the current day must match
+- **Config gate:** `memory.dreaming.prediction_proactive_scheduling` (default: `true`)
+
+Behavioral and preference predictions are injected as context into task-triggered sub-sessions, enriching the worker's awareness of user patterns.
+
+### Reflection Validation
+
+The reflection loop's rule engine (Rule 5: `prediction_validation`) validates stored predictions against actual outcome data:
+
+- **Temporal predictions:** Compares predicted active-hour windows against actual outcome timestamps
+- **Behavioral predictions:** Matches predicted tool patterns against actual tool usage stats
+- Confirmed predictions get access-count bumps (feeding promotion to schemas)
+- Contradicted predictions accumulate misses in the `prediction_accuracy` table
+- Findings are emitted as events for the `/debug` SSE stream
+
+### Accuracy Tracking
+
+The `prediction_accuracy` table in `conversation.db` tracks each prediction's lifecycle:
+
+| Column | Description |
+|--------|-------------|
+| `prediction_id` | Memory store entry ID |
+| `source_text` | Full tagged prediction text |
+| `pred_type` | `temporal` / `behavioral` / `preference` |
+| `confirmed` | Times validated as correct by reflection |
+| `missed` | Times contradicted by reflection |
+| `retired_at` | Set when pruned or promoted (preserves historical data) |
+
+Predictions flow through a complete lifecycle: **generation** (dreaming) → **injection** (prompt assembler) → **proactive action** (scheduler) → **validation** (reflection) → **promotion or pruning** (dreaming).
+
 ## Memory Harvest
 
 **Module:** `wintermute/workers/memory_harvest.py`

@@ -403,6 +403,14 @@ Controls the vector-native dreaming pipeline. Only used when `backend` is `local
 | `prediction_cooldown_hours` | no | `168` | Minimum hours between runs (default: 7 days) |
 | `prediction_new_memory_threshold` | no | `10` | Minimum new memories since last dreaming cycle |
 
+**Prediction consumption settings:**
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `prediction_inject_prompt` | no | `true` | Inject predictions into the main-thread system prompt |
+| `prediction_proactive_scheduling` | no | `true` | Spawn proactive sub-sessions at predicted active times |
+| `prediction_proactive_cooldown_hours` | no | `4` | Minimum hours between proactive fires per prediction |
+
 **Cold boot:** When a vector backend is configured and the index is empty but `MEMORIES.txt` has content, all entries are automatically imported at startup.
 
 **Access tracking:** Every `search()` call updates `last_accessed` and `access_count` for returned entries. This metadata drives stale pruning (phase 3) and working set export (phase 4) during dreaming.

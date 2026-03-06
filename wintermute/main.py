@@ -443,6 +443,8 @@ async def main() -> None:
     )
     scheduler_cfg = SchedulerConfig(
         timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
+        prediction_proactive_scheduling=dreaming_raw.get("prediction_proactive_scheduling", True),
+        prediction_proactive_cooldown_hours=dreaming_raw.get("prediction_proactive_cooldown_hours", 4),
     )
     # --- Tuning constants (optional overrides from config) ---
     _tuning_raw = cfg.get("tuning")

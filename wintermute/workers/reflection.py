@@ -452,6 +452,15 @@ class ReflectionLoop:
                             failure_count=fail_count,
                         )
 
+        # Rule 5: Prediction validation.
+        # Compare stored predictions against actual outcome patterns.
+        # Confirmed predictions get access-count bumps (feeding the
+        # promotion pipeline); contradicted ones accumulate misses.
+        try:
+            await self._validate_predictions(outcomes, since, findings)
+        except Exception:
+            logger.debug("[reflection] Prediction validation failed", exc_info=True)
+
         # Log all findings to interaction_log.
         for finding in findings:
             try:
@@ -482,6 +491,144 @@ class ReflectionLoop:
             )
 
         return findings
+
+    # ------------------------------------------------------------------
+    # Prediction validation (part of Rule 5)
+    # ------------------------------------------------------------------
+
+    async def _validate_predictions(
+        self,
+        outcomes: list[dict],
+        since: float,
+        findings: list[ReflectionFinding],
+    ) -> None:
+        """Validate stored predictions against actual outcome patterns.
+
+        - Temporal predictions: compare predicted active-hour windows against
+          actual outcome timestamps.
+        - Behavioral predictions: compare predicted tool patterns against
+          actual tool usage stats.
+        - Preference predictions: informational only — no automated check.
+
+        Confirmed predictions get their access_count bumped (feeding the
+        dreaming promotion pipeline: ≥5 accesses → schema). Contradicted
+        predictions accumulate misses in the prediction_accuracy table.
+        """
+        from wintermute.infra import memory_store
+
+        predictions = await asyncio.to_thread(
+            memory_store.get_by_source, "dreaming_prediction", 50
+        )
+        if not predictions:
+            return
+
+        # Build activity profile from outcomes.
+        hours_active: set[int] = set()
+        days_active: set[str] = set()
+        tool_counts: dict[str, int] = {}
+        for o in outcomes:
+            ts = o.get("timestamp")
+            if ts:
+                try:
+                    from datetime import datetime, timezone as _tz
+                    dt = datetime.fromtimestamp(float(ts), tz=_tz.utc)
+                    hours_active.add(dt.hour)
+                    days_active.add(dt.strftime("%A").lower())
+                except (ValueError, TypeError, OSError):
+                    pass
+            tools_used = o.get("tools_used") or ""
+            if isinstance(tools_used, str):
+                try:
+                    tools_list = json.loads(tools_used) if tools_used.startswith("[") else []
+                except (json.JSONDecodeError, ValueError):
+                    tools_list = []
+            elif isinstance(tools_used, list):
+                tools_list = tools_used
+            else:
+                tools_list = []
+            for t in tools_list:
+                tool_counts[str(t)] = tool_counts.get(str(t), 0) + 1
+
+        # Also get tool usage stats from DB for broader coverage.
+        try:
+            db_tool_stats = await database.async_call(
+                database.get_tool_usage_stats, since
+            )
+            for tool_name, count in db_tool_stats:
+                tool_counts[tool_name] = tool_counts.get(tool_name, 0) + count
+        except Exception:
+            pass
+
+        for pred in predictions:
+            pred_id = pred.get("id", "")
+            text = pred.get("text", "").lower()
+            confirmed = False
+
+            if "[prediction:temporal]" in text or "active during" in text or "most active" in text:
+                # Check if predicted hours match actual activity.
+                # Look for hour patterns like "8-9 AM", "21:00-23:00", etc.
+                hour_matches = re.findall(r'(\d{1,2})(?::00)?\s*(?:-|to)\s*(\d{1,2})(?::00)?', text)
+                day_matches = re.findall(
+                    r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?',
+                    text,
+                )
+                if hour_matches:
+                    for start_h, end_h in hour_matches:
+                        try:
+                            sh, eh = int(start_h), int(end_h)
+                            # Handle AM/PM heuristic: if text says "pm" or hours < 12 with "evening"
+                            if "pm" in text or "evening" in text or "night" in text:
+                                if sh < 12:
+                                    sh += 12
+                                if eh < 12:
+                                    eh += 12
+                            predicted_hours = set(range(sh, eh + 1)) if sh <= eh else set(range(sh, 24)) | set(range(0, eh + 1))
+                            if predicted_hours & hours_active:
+                                confirmed = True
+                        except (ValueError, TypeError):
+                            pass
+                if day_matches:
+                    predicted_days = {d.lower() for d in day_matches}
+                    if predicted_days & days_active:
+                        confirmed = True
+
+            elif "[prediction:behavioral]" in text or "relies on" in text or "file operations" in text:
+                # Check if predicted tool patterns match actual usage.
+                tool_keywords = re.findall(
+                    r'(read_file|write_file|shell|web_search|task|skill|append_memory|worker_delegation)',
+                    text,
+                )
+                if tool_keywords:
+                    matched = sum(1 for tk in tool_keywords if tk in tool_counts)
+                    if matched >= len(tool_keywords) * 0.5:
+                        confirmed = True
+
+            # Record the check result.
+            try:
+                await database.async_call(
+                    database.record_prediction_check, pred_id, confirmed
+                )
+            except Exception:
+                logger.debug("[reflection] Failed to record prediction check", exc_info=True)
+
+            severity = "info" if confirmed else "suggestion"
+            findings.append(ReflectionFinding(
+                rule="prediction_validation",
+                severity=severity,
+                subject_type="prediction",
+                subject_id=pred_id,
+                detail=(
+                    f"Prediction {'confirmed' if confirmed else 'not confirmed'}: "
+                    f"{pred.get('text', '')[:120]}"
+                ),
+            ))
+
+            if self._event_bus:
+                self._event_bus.emit(
+                    "reflection.prediction_validated",
+                    prediction_id=pred_id,
+                    confirmed=confirmed,
+                )
 
     # ------------------------------------------------------------------
     # Tier 2: LLM analysis
