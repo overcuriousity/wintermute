@@ -120,6 +120,7 @@ class ReflectionLoop:
         sub_session_manager: "Optional[SubSessionManager]" = None,
         pool: "Optional[BackendPool]" = None,
         event_bus: "Optional[EventBus]" = None,
+        self_model: object | None = None,
     ) -> None:
         self._cfg = config
         self._sub_sessions = sub_session_manager
@@ -132,16 +133,12 @@ class ReflectionLoop:
         # Session IDs that have already triggered an immediate rule check so
         # we don't double-fire when the same failure is picked up by the batch.
         self._checked_failures: set[str] = set()
-        self._self_model: object | None = None
+        self._self_model: object | None = self_model
         self._main_turn_count: int = 0
         # Timestamp of last synthesis run (epoch seconds). 0.0 is a sentinel
         # meaning "never run", intentionally allowing the first synthesis after
         # construction (or after a loop restart) to bypass the cooldown check.
         self._last_synthesis_ts: float = 0.0
-
-    def inject_self_model(self, profiler) -> None:
-        """Set the SelfModelProfiler instance (called once at startup)."""
-        self._self_model = profiler
 
     # ------------------------------------------------------------------
     # Lifecycle

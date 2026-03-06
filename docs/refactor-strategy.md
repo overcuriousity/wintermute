@@ -1,6 +1,6 @@
 # Refactor Strategy: Issues #79–#108
 
-**Status as of 2026-03-02** — Phase 3 in progress (#80 + #81 done, #82 remaining). This document covers the remaining 3 open issues and their implementation order.
+**Status as of 2026-03-06** — Phase 3 complete (#80, #81, #82 all done). This document covers the remaining 2 open issues and their implementation order.
 
 ## Completed (Phase 1)
 
@@ -20,13 +20,13 @@ All Phase 1 and Phase 2 issues have been merged:
 | #83 | Module-level DI globals replaced with `ToolDeps` dataclass | Merged |
 | #80 | `tools.py` split into `tools/` package | Merged |
 | #81 | `prompt_assembler.py` split into `memory_io` + `skill_io` | [#156](https://github.com/overcuriousity/wintermute/pull/156) |
+| #82 | Two-phase construction eliminated in `main.py` | [#159](https://github.com/overcuriousity/wintermute/pull/159) |
 
-## Remaining Open Issues (3)
+## Remaining Open Issues (2)
 
 | # | Type | File(s) | Current Size | Summary |
 |---|---|---|---|---|
-| **82** | arch | `main.py` | 826 lines | 4 post-construction injection blocks (~17 `obj._attr = ...` assignments) |
-| **79** | arch | `core/llm_thread.py` | 1199 lines | God object: queue, history, compaction, prompt assembly, inference, TP, sessions |
+| **79** | arch | `core/llm_thread.py` | 1324 lines | God object: queue, history, compaction, prompt assembly, inference, TP, sessions |
 | **85** | arch | `core/llm_thread.py` | — | Single asyncio queue serializes all threads |
 
 ## Implementation Plan
@@ -64,12 +64,16 @@ Completed. `prompt_assembler.py` reduced to ~350 lines (prompt assembly only):
 - `_memories_lock` encapsulated inside `memory_io` (no longer exposed)
 - Consumers rewired to import from `memory_io`, `skill_io`, and `paths` directly
 
-#### Issue #82 — Fix two-phase construction in `main.py`
+#### Issue #82 — Fix two-phase construction in `main.py` ✅
 
-After #83 resolves the DI pattern, interfaces can receive all dependencies via constructor:
-1. Defer construction of `MatrixThread` and `WebInterface` until all deps are available
-2. Pass deps as constructor args (or a single config/deps object)
-3. Remove all `obj._private_attr = ...` post-construction blocks from `main.py`
+Completed. Eliminated all post-construction `obj._attr = ...` injection blocks:
+- **Lazy getter** breaks the LLMThread ↔ SubSessionManager circular dependency (replaces `inject_sub_session_manager()`)
+- **ToolDeps** refactored to hold typed object references (`sub_session_manager`, `task_scheduler`, `event_bus`, `self_model_profiler`) instead of 7+ individual callables
+- **MatrixThread** and **WebInterface** constructors now accept all dependencies — deferred construction until all deps exist
+- **ReflectionLoop** accepts `self_model` via constructor (removed `inject_self_model()`)
+- **Dead code cleanup**: 8 unused MatrixThread injections and 2 unused WebInterface injections removed (leftovers from #86 slash-command extraction)
+- `main.py` construction flow reordered with numbered steps and clear comments
+- Only 3 typed-object assignments remain on ToolDeps (down from 8+ callable assignments) — these are inherent to the construction order, not arbitrary injection
 
 **All three depend on:** #83
 **Can be parallelized:** Yes, #80 / #81 / #82 touch different files
@@ -114,6 +118,6 @@ Phase 2A              Phase 2B           Phase 3              Phase 4       Phas
 | Order | Issue(s) | Phase | Parallel? | Status |
 |---|---|---|---|---|
 | 1 | **#104**, **#83** | 2A + 2B | Yes, parallel | ✅ Done |
-| 2 | **#80**, **#81**, **#82** | 3 | Yes, parallel (all need #83 done) | #80 ✅ Done, #81 ✅ Done |
+| 2 | **#80**, **#81**, **#82** | 3 | Yes, parallel (all need #83 done) | ✅ All done |
 | 3 | **#79** | 4 | No (needs #104 + #80 + #83) | |
 | 4 | **#85** | 5 | No (needs #79) | |

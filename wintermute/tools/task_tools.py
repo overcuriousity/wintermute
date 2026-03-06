@@ -70,8 +70,8 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     )
 
     deps = tool_deps or ToolDeps()
-    if schedule_type and deps.task_scheduler_ensure is not None:
-        deps.task_scheduler_ensure(
+    if schedule_type and deps.task_scheduler is not None:
+        deps.task_scheduler.ensure_job(
             task_id, json.loads(schedule_config),
             ai_prompt, add_thread, background,
         )
@@ -112,8 +112,8 @@ def _task_complete(inputs: dict, effective_scope: Optional[str],
     if not reason:
         return json.dumps({"error": "reason is required for complete action — explain why this task is finished"})
     task = database.get_task(task_id)
-    if task and task.get("apscheduler_job_id") and deps.task_scheduler_remove:
-        deps.task_scheduler_remove(task_id)
+    if task and task.get("apscheduler_job_id") and deps.task_scheduler:
+        deps.task_scheduler.remove_job(task_id)
     ok = database.complete_task(task_id, reason=reason, thread_id=effective_scope)
     if ok and deps.event_bus:
         deps.event_bus.emit("task.completed", task_id=task_id, reason=reason[:200])
@@ -127,8 +127,8 @@ def _task_pause(inputs: dict, effective_scope: Optional[str],
     if not task_id:
         return json.dumps({"error": "task_id is required for pause action"})
     task = database.get_task(task_id)
-    if task and task.get("apscheduler_job_id") and deps.task_scheduler_remove:
-        deps.task_scheduler_remove(task_id)
+    if task and task.get("apscheduler_job_id") and deps.task_scheduler:
+        deps.task_scheduler.remove_job(task_id)
     ok = database.pause_task(task_id)
     return json.dumps({"status": "ok" if ok else "not_found"})
 
@@ -142,9 +142,9 @@ def _task_resume(inputs: dict, effective_scope: Optional[str],
     ok = database.resume_task(task_id)
     if ok:
         task = database.get_task(task_id)
-        if task and task.get("schedule_config") and deps.task_scheduler_ensure:
+        if task and task.get("schedule_config") and deps.task_scheduler:
             sched = json.loads(task["schedule_config"])
-            deps.task_scheduler_ensure(
+            deps.task_scheduler.ensure_job(
                 task_id, sched,
                 task.get("ai_prompt"), task.get("thread_id"),
                 bool(task.get("background")),
@@ -159,8 +159,8 @@ def _task_delete(inputs: dict, effective_scope: Optional[str],
     if not task_id:
         return json.dumps({"error": "task_id is required for delete action"})
     task = database.get_task(task_id)
-    if task and task.get("apscheduler_job_id") and deps.task_scheduler_remove:
-        deps.task_scheduler_remove(task_id)
+    if task and task.get("apscheduler_job_id") and deps.task_scheduler:
+        deps.task_scheduler.remove_job(task_id)
     ok = database.delete_task(task_id)
     return json.dumps({"status": "ok" if ok else "not_found"})
 
