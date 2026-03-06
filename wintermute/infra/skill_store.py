@@ -941,13 +941,13 @@ class QdrantSkillBackend:
         if not vectors:
             return self.get_all()[:top_k]
         try:
-            results = self._client.search(
+            results = self._client.query_points(
                 collection_name=self._collection,
-                query_vector=vectors[0],
+                query=vectors[0],
                 limit=top_k,
                 score_threshold=threshold,
                 with_payload=True,
-            )
+            ).points
         except Exception:
             logger.exception("Qdrant skill search failed")
             return self.get_all()[:top_k]

@@ -847,7 +847,7 @@ class QdrantBackend:
         of the O(n^2) full pairwise matrix.
         """
         try:
-            from qdrant_client.models import SearchRequest
+            from qdrant_client.models import QueryRequest
             # Fetch vectors for the requested entries.
             with self._lock:
                 points = self._client.retrieve(
@@ -867,8 +867,8 @@ class QdrantBackend:
                 vec = id_to_vec.get(eid)
                 if vec is None:
                     continue
-                requests.append(SearchRequest(
-                    vector=vec,
+                requests.append(QueryRequest(
+                    query=vec,
                     limit=limit + 1,  # +1 to exclude self.
                     score_threshold=score_threshold,
                     with_payload=True,
@@ -879,17 +879,17 @@ class QdrantBackend:
                 return {}
 
             with self._lock:
-                batch_results = self._client.search_batch(
+                batch_results = self._client.query_batch_points(
                     collection_name=self._collection,
                     requests=requests,
                 )
 
             result: dict[str, list[dict]] = {}
-            for eid, hits in zip(order, batch_results):
+            for eid, resp in zip(order, batch_results):
                 neighbors = [
                     {"id": str(h.id), "text": h.payload.get("text", ""),
                      "score": h.score, "source": h.payload.get("source", "unknown")}
-                    for h in hits
+                    for h in resp.points
                     if str(h.id) != eid  # Exclude self.
                 ][:limit]
                 result[eid] = neighbors
