@@ -17,7 +17,7 @@ dependency requires zero rewiring in ``main.py``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager

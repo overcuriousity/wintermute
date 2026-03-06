@@ -20,7 +20,7 @@ All Phase 1 and Phase 2 issues have been merged:
 | #83 | Module-level DI globals replaced with `ToolDeps` dataclass | Merged |
 | #80 | `tools.py` split into `tools/` package | Merged |
 | #81 | `prompt_assembler.py` split into `memory_io` + `skill_io` | [#156](https://github.com/overcuriousity/wintermute/pull/156) |
-| #82 | Two-phase construction eliminated in `main.py` | Merged |
+| #82 | Two-phase construction eliminated in `main.py` | [#159](https://github.com/overcuriousity/wintermute/pull/159) |
 
 ## Remaining Open Issues (2)
 

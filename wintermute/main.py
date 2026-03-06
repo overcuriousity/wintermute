@@ -523,8 +523,8 @@ async def main() -> None:
     _matrix_ref: list[Optional[MatrixThread]] = [None]
     _web_ref: list[Optional[WebInterface]] = [None]
 
-    async def broadcast(text: str, thread_id: str = None, *,
-                        reasoning: str = None) -> None:
+    async def broadcast(text: str, thread_id: Optional[str] = None, *,
+                        reasoning: Optional[str] = None) -> None:
         mx = _matrix_ref[0]
         wi = _web_ref[0]
         if mx and thread_id and not thread_id.startswith("web_") and thread_id != "default":
@@ -579,7 +579,7 @@ async def main() -> None:
     _ssm_holder.append(sub_sessions)
     tool_deps.sub_session_manager = sub_sessions
 
-    # 4. TaskScheduler
+    # 4. TaskScheduler (start() deferred until broadcast refs are filled — see step 14)
     scheduler = TaskScheduler(
         config=scheduler_cfg,
         broadcast_fn=broadcast,
@@ -587,7 +587,6 @@ async def main() -> None:
         sub_session_manager=sub_sessions,
         event_bus=event_bus,
     )
-    scheduler.start()
     tool_deps.task_scheduler = scheduler
 
     # 5. Memory harvest loop
@@ -756,6 +755,10 @@ async def main() -> None:
     # Fill the broadcast closure's forward references.
     _matrix_ref[0] = matrix
     _web_ref[0] = web_iface
+
+    # 14. Start the scheduler now that broadcast refs are filled, so
+    #     _recover_missed() reminder broadcasts reach the interfaces.
+    scheduler.start()
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
