@@ -339,7 +339,7 @@ class FTS5SkillBackend:
                 "created": r[1], "last_read": r[2], "read_count": r[3],
                 "sessions_loaded": r[3],  # alias for compat
                 "version": r[4],
-                "success_count": 0, "failure_count": 0,  # populated by reflection
+                "success_count": 0, "failure_count": 0,  # not currently persisted; always 0
             }
         return result
 
@@ -665,7 +665,7 @@ class LocalVectorSkillBackend:
                 "created": r[1], "last_read": r[2], "read_count": r[3],
                 "sessions_loaded": r[3],
                 "version": r[4],
-                "success_count": 0, "failure_count": 0,
+                "success_count": 0, "failure_count": 0,  # not currently persisted; always 0
             }
         return result
 
@@ -1121,8 +1121,9 @@ def _migrate_from_flat_files() -> None:
     """Import existing markdown skill files into the active backend.
 
     Only runs when the store is empty and data/skills/*.md files exist.
-    Legacy stats from data/skill_stats.yaml are noted in logs but not
-    applied to the backend state (to avoid mutating version history).
+    Legacy stats from data/skill_stats.yaml are **not** imported; migration
+    starts with fresh stats in the new backend.  The stats file is loaded
+    only to emit a debug log entry for each skill that had prior usage.
     """
     if not SKILLS_DIR.exists():
         return

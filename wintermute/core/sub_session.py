@@ -1286,14 +1286,29 @@ class SubSessionManager:
         # read_file calls on data/skills/ paths.  Never raises — outcome
         # correlation must not break the main session flow.
         try:
+            import json as _json
             skill_names_used: list[str] = []
             for tool_name, preview in (state.tool_calls_log or []):
                 if tool_name == "skill":
-                    # preview is the tool result JSON; look for skill_name in it.
-                    import re as _re
-                    matches = _re.findall(r'"skill"\s*:\s*"([^"]+)"', preview)
-                    skill_names_used.extend(matches)
-                elif tool_name == "read_file" and "data/skills/" in preview:
+                    # preview is the tool result JSON.
+                    # add returns {"skill": "name"} — skip (not a read, don't count).
+                    # read returns {"skill": {"name": ...}} — extract name.
+                    try:
+                        obj = _json.loads(preview)
+                        skill_val = obj.get("skill")
+                        if isinstance(skill_val, dict):
+                            # read action response
+                            sname = skill_val.get("name")
+                            if isinstance(sname, str) and sname:
+                                skill_names_used.append(sname)
+                        # isinstance str = add action, intentionally skipped
+                    except Exception:
+                        pass
+                elif tool_name == "read_file":
+                    # Legacy: detect read_file calls that had data/skills/ in their
+                    # *arguments* (stored alongside preview in some log formats).
+                    # tool_calls_log stores the result preview, not the arguments,
+                    # so this heuristic only fires if the path appears in the result.
                     import re as _re
                     matches = _re.findall(r'data/skills/([^\s"\']+)\.md', preview)
                     skill_names_used.extend(matches)

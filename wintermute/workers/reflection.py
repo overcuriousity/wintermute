@@ -410,14 +410,20 @@ class ReflectionLoop:
                     elif isinstance(args_raw, dict):
                         parsed_args = args_raw
                     if isinstance(parsed_args, dict):
-                        arg_skill_name = parsed_args.get("skill_name")
-                        if isinstance(arg_skill_name, str):
-                            skill_names_from_entry.append(arg_skill_name)
+                        # Only count read (and search) actions — not add/update,
+                        # which would incorrectly attribute failures to skill writes.
+                        action = parsed_args.get("action", "read")
+                        if action in ("read", "search"):
+                            arg_skill_name = parsed_args.get("skill_name")
+                            if isinstance(arg_skill_name, str):
+                                skill_names_from_entry.append(arg_skill_name)
 
                 # Fallback: heuristic regex on raw string content.
+                # Skip if it looks like an add action (not a read).
                 if not skill_names_from_entry and ('"skill"' in raw or "'skill'" in raw):
-                    matches = re.findall(r'[\\"]*skill_name[\\"]*\s*:\s*[\\"]*([^\\"\s,}]+)', raw)
-                    skill_names_from_entry.extend(matches)
+                    if '"action": "add"' not in raw and "'action': 'add'" not in raw:
+                        matches = re.findall(r'[\\"]*skill_name[\\"]*\s*:\s*[\\"]*([^\\"\s,}]+)', raw)
+                        skill_names_from_entry.extend(matches)
 
                 if skill_names_from_entry:
                     for skill_name in skill_names_from_entry:

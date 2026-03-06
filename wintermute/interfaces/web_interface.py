@@ -615,6 +615,10 @@ class WebInterface:
                 "doc_chars": len(rec.get("documentation", "")),
                 "last_accessed": rec.get("last_accessed", 0),
                 "read_count": sstat.get("read_count", 0),
+                # Backward-compat fields for debug UI (always 0 — not yet persisted).
+                "sessions_loaded": sstat.get("sessions_loaded", 0),
+                "success_count": sstat.get("success_count", 0),
+                "failure_count": sstat.get("failure_count", 0),
                 "version": sstat.get("version", 1),
                 "last_read": sstat.get("last_read"),
             })
@@ -718,7 +722,10 @@ class WebInterface:
             name = _validate_skill_name(name)
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
-        rec = skill_store.get(name)
+        # Fetch without access tracking: use get_all() filter to avoid
+        # incrementing access_count / last_accessed as a side-effect of deletion.
+        all_recs = skill_store.get_all()
+        rec = next((r for r in all_recs if r["name"] == name), None)
         if rec is None:
             return web.json_response({"error": "not found"}, status=404)
         # Archive: write a backup .md before removing from store.
@@ -726,8 +733,8 @@ class WebInterface:
             archive_dir = SKILLS_DIR / ".archive"
             archive_dir.mkdir(parents=True, exist_ok=True)
             archive_path = (archive_dir / f"{name}.md").resolve()
-            # Guard: ensure resolved path stays within the archive directory.
-            if not str(archive_path).startswith(str(archive_dir.resolve())):
+            # Guard: ensure resolved path stays strictly within the archive directory.
+            if not archive_path.is_relative_to(archive_dir.resolve()):
                 raise ValueError(f"Archive path escapes directory: {name!r}")
             content = f"{rec.get('summary', '')}\n\n{rec.get('documentation', '')}".strip()
             changelog = rec.get("changelog", "")
