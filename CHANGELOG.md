@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.7.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.6.0-alpha...v0.7.0-alpha) (2026-03-06)
+
+
+### Features
+
+* add inline_tool_limit Turing Protocol hook ([43656fd](https://github.com/overcuriousity/wintermute/commit/43656fda2e44d010901532e0cd046be7bab3e09a))
+* add scratchpad view to web interface ([ce00210](https://github.com/overcuriousity/wintermute/commit/ce00210005b76a297d8cd5a0af1ed3a4b2f418f4))
+* autonomy-first overhaul for scheduled tasks ([453a8cf](https://github.com/overcuriousity/wintermute/commit/453a8cff313003eb6c2847a8b0d85d8c6242c506))
+* migrate skills from flat files to vector-indexed storage ([a2d2ac0](https://github.com/overcuriousity/wintermute/commit/a2d2ac0f61cd3ddf955ba3f55d09c372ffe1bb05))
+* migrate skills from flat files to vector-indexed storage ([7d504d4](https://github.com/overcuriousity/wintermute/commit/7d504d4c0ac11b22c0ce2ea3754071b2f9e0fc70))
+* **rescue:** add [TOOL_CALL] bracket pattern with hash-rocket and CLI-arg parsing ([7b53cd6](https://github.com/overcuriousity/wintermute/commit/7b53cd66f73650a72698c154746f7815588b74f9))
+* track LLM backend in outcome stats and TP violation statistics ([d847de5](https://github.com/overcuriousity/wintermute/commit/d847de54e5f04cca795e48766793c852efc739c1))
+
+
+### Bug Fixes
+
+* abort delete on archive failure, fix merge upsert, align NL prompt ([5786a65](https://github.com/overcuriousity/wintermute/commit/5786a6523f83b775b4b98c93a70b4aacd5c29f3e))
+* address Copilot review comments on PR [#157](https://github.com/overcuriousity/wintermute/issues/157) ([eb8f250](https://github.com/overcuriousity/wintermute/commit/eb8f2509864af124efb9fa35e1da5b221bfea160))
+* address Copilot review comments on PR [#157](https://github.com/overcuriousity/wintermute/issues/157) ([081d7e6](https://github.com/overcuriousity/wintermute/commit/081d7e63c1b545a09e6815c174a088c78121cb63))
+* address remaining Copilot review comments on PR [#157](https://github.com/overcuriousity/wintermute/issues/157) ([bddf9b4](https://github.com/overcuriousity/wintermute/commit/bddf9b4fa08dc10d201d50c7cc55ca1d0c969e35))
+* address review findings — bugs, stale docs, missing exists() ([981c399](https://github.com/overcuriousity/wintermute/commit/981c3997e03397b46e3783c56b6df85169e75783))
+* address second round of Copilot review comments ([0f6fc17](https://github.com/overcuriousity/wintermute/commit/0f6fc172e862d287bc02a791ca005f267fe05a3b))
+* pass explicit max_tokens=context_size when limit is 0 to prevent server-side truncation ([8a985f4](https://github.com/overcuriousity/wintermute/commit/8a985f4c48f6bab906e7a71a5638dd59ec4a1159))
+* remove oneOf from skill schema, upgrade dreaming log level ([f431dc6](https://github.com/overcuriousity/wintermute/commit/f431dc6d106df4eda717f69d2957c4dc0772f5ec))
+* replace warning with neutral mode field in task response ([cecd7ac](https://github.com/overcuriousity/wintermute/commit/cecd7acf6713d91963a7feec8356ffab874cdb16))
+* resolve Copilot review comments on PR [#157](https://github.com/overcuriousity/wintermute/issues/157) ([960f74a](https://github.com/overcuriousity/wintermute/commit/960f74a60cc90b3ba63a9adbd6aae66f31ee81a6))
+* run Turing Protocol on system event responses ([9b59e4a](https://github.com/overcuriousity/wintermute/commit/9b59e4a3b7249bebc95876d491c26f8783bc04d2))
+* skill name validation in web endpoints + SIM201 in skill_io ([6fd13c9](https://github.com/overcuriousity/wintermute/commit/6fd13c9c8335ce70976b0d7e5d504c10c243d816))
+* suppress cross-turn false positives in Turing Protocol Stage 2 validators ([74a47dc](https://github.com/overcuriousity/wintermute/commit/74a47dc69432b5e2906aff988aa44ad82472683b))
+
+
+### Documentation
+
+* update stale add_skill references to unified skill tool ([74ed30c](https://github.com/overcuriousity/wintermute/commit/74ed30c98cc8995983b0357ee6c8274031fe911a))
+
 ## [0.6.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.5.1-alpha...v0.6.0-alpha) (2026-03-01)
 
 
