@@ -72,6 +72,16 @@ async def _fire_routine_job(job_id: str, message: str, ai_prompt: Optional[str],
 _fire_reminder_job = _fire_routine_job
 
 
+async def _check_predictions_job(**_extra) -> None:
+    """Module-level coroutine for the hourly prediction check.
+
+    Must be at module level so APScheduler's SQLAlchemy pickle can
+    serialize it by reference.
+    """
+    if _instance is not None:
+        await _instance._check_predictions()
+
+
 from dataclasses import dataclass
 
 
@@ -135,7 +145,7 @@ class TaskScheduler:
         # Schedule periodic prediction-based proactive checks.
         if self._cfg.prediction_proactive_scheduling:
             self._scheduler.add_job(
-                self._check_predictions,
+                _check_predictions_job,
                 trigger=IntervalTrigger(hours=1),
                 id="_prediction_check",
                 replace_existing=True,
