@@ -434,23 +434,8 @@ class ReflectionLoop:
                     for skill_name in matches:
                         skill_fail_counts[skill_name] = skill_fail_counts.get(skill_name, 0) + 1
 
-            # Enrich with lifetime stats from skill_store.
-            try:
-                from wintermute.infra import skill_store
-                all_store_stats = skill_store.stats()
-            except Exception:
-                all_store_stats = {}
-
             for skill_name, fail_count in skill_fail_counts.items():
                 if fail_count >= 3:
-                    # Build enrichment suffix from store stats.
-                    extra = ""
-                    sstat = all_store_stats.get(skill_name, {})
-                    if sstat:
-                        total = sstat.get("sessions_loaded", 0)
-                        failures = sstat.get("failure_count", 0)
-                        rate = round(failures / total * 100) if total else 0
-                        extra = f" Lifetime: {total} sessions, {rate}% failure rate."
                     finding = ReflectionFinding(
                         rule="skill_failure_correlation",
                         severity="warning",
@@ -459,7 +444,7 @@ class ReflectionLoop:
                         detail=(
                             f"Skill '{skill_name}' was loaded in {fail_count} failed "
                             f"sub-sessions within the lookback window."
-                            f"{extra} Consider reviewing or updating this skill."
+                            f" Consider reviewing or updating this skill."
                         ),
                     )
                     findings.append(finding)
@@ -544,12 +529,8 @@ class ReflectionLoop:
             if store_stats:
                 lines = []
                 for sname, sdata in sorted(store_stats.items()):
-                    total = sdata.get("sessions_loaded", 0)
-                    fails = sdata.get("failure_count", 0)
-                    rate = round(fails / total * 100) if total else 0
                     lines.append(
                         f"- {sname}: reads={sdata.get('read_count', 0)}, "
-                        f"sessions={total}, fail_rate={rate}%, "
                         f"version={sdata.get('version', 1)}"
                     )
                 skill_stats_text = "\n".join(lines)

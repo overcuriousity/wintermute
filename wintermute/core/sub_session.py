@@ -1280,11 +1280,10 @@ class SubSessionManager:
         except Exception:
             logger.debug("Failed to persist outcome for %s", state.session_id, exc_info=True)
 
-        # Correlate skill usage with session outcome so skill_store can surface
-        # per-skill success/failure rates.  We extract skill names from the
-        # tool_calls_log entries where the tool is "skill" (new) or from legacy
-        # read_file calls on data/skills/ paths.  Never raises — outcome
-        # correlation must not break the main session flow.
+        # Detect skill reads in this session for future outcome-correlation work.
+        # Currently only emits a debug log — success/failure counts are not yet
+        # persisted to skill_store.  When per-skill tracking is implemented, this
+        # is where the store update should happen.  Never raises.
         try:
             import json as _json
             skill_names_used: list[str] = []
