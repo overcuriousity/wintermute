@@ -559,7 +559,7 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
     try:
         all_skills = skill_store.get_all()
     except Exception:
-        logger.debug("Dreaming: skill_store.get_all() failed", exc_info=True)
+        logger.warning("Dreaming: skill_store.get_all() failed", exc_info=True)
         result.summary = "skill_store unavailable"
         return result
 
