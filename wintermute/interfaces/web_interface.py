@@ -615,9 +615,6 @@ class WebInterface:
                 "size": len(rec.get("documentation", "")),
                 "mtime": rec.get("last_accessed", 0),
                 "read_count": sstat.get("read_count", 0),
-                "sessions_loaded": sstat.get("sessions_loaded", 0),
-                "success_count": sstat.get("success_count", 0),
-                "failure_count": sstat.get("failure_count", 0),
                 "version": sstat.get("version", 1),
                 "last_read": sstat.get("last_read"),
             })
@@ -728,11 +725,15 @@ class WebInterface:
         try:
             archive_dir = SKILLS_DIR / ".archive"
             archive_dir.mkdir(parents=True, exist_ok=True)
+            archive_path = (archive_dir / f"{name}.md").resolve()
+            # Guard: ensure resolved path stays within the archive directory.
+            if not str(archive_path).startswith(str(archive_dir.resolve())):
+                raise ValueError(f"Archive path escapes directory: {name!r}")
             content = f"{rec.get('summary', '')}\n\n{rec.get('documentation', '')}".strip()
             changelog = rec.get("changelog", "")
             if changelog:
                 content = f"{content}\n\n{changelog}"
-            (archive_dir / f"{name}.md").write_text(content, encoding="utf-8")
+            archive_path.write_text(content, encoding="utf-8")
         except Exception:
             logger.debug("Failed to archive skill '%s' to .archive/", name, exc_info=True)
         skill_store.delete(name)

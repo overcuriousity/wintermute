@@ -15,7 +15,7 @@ The backend is **auto-selected** based on the available embeddings configuration
 - If an embeddings endpoint is configured (`memory.embeddings.endpoint`), defaults to `local_vector`
 - Otherwise defaults to `fts5` (no embedding endpoint required)
 
-> **Note:** The skills backend does not automatically inherit `memory.backend`. It is configured independently via `skills.backend` or auto-selected from the embeddings config.
+> **Note:** The skills backend does **not** automatically inherit `memory.backend`. It is configured independently via `skills.backend` or auto-selected based on whether `memory.embeddings.endpoint` is present. For example, setting `memory.backend: qdrant` does not make skills use Qdrant — you must set `skills.backend: qdrant` explicitly.
 
 ```yaml
 # config.yaml
@@ -24,11 +24,12 @@ The backend is **auto-selected** based on the available embeddings configuration
 skills:
   backend: "local_vector"
 
-# Or rely on auto-detection from memory config:
+# Or rely on auto-detection from embeddings config:
+# (skills backend does NOT inherit memory.backend)
 memory:
-  backend: "local_vector"      # skills will also use local_vector
+  backend: "local_vector"
   embeddings:
-    endpoint: "http://localhost:11434/v1"
+    endpoint: "http://localhost:11434/v1"   # presence triggers local_vector default for skills
     model: "nomic-embed-text"
 ```
 
@@ -114,7 +115,7 @@ On first startup after upgrading, `skill_store` automatically migrates existing 
 4. A log entry is written for each migrated skill
 5. The `skill_stats.py` module and `skill_stats.yaml` file are no longer used after migration — historical stats are not carried over; new stats are tracked natively by the skill store backends
 
-The migration runs only when the skill store is empty (i.e., on first startup after upgrading). It does not re-import individual missing skills into a partially populated store.
+The migration runs **only when the skill store is empty** (i.e., `count() == 0` on first startup after upgrading). It is not per-skill idempotent: if migration is interrupted, you may need to clear the skill store and restart to re-trigger it. It does not re-import individual missing skills into a partially populated store.
 
 ## Dreaming (Skill Consolidation)
 

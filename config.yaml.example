@@ -306,9 +306,11 @@ nl_translation:
 
 # ── Skill Storage ────────────────────────────────────────────────────
 # Skills (learned reusable procedures) are stored in a vector-indexed
-# backend — the same architecture as memories.  If omitted, the skills
-# backend is auto-selected based on the embeddings config: local_vector
-# when memory.embeddings.endpoint is set, otherwise fts5.
+# backend — the same architecture as memories.  The skills backend is
+# configured separately from the memory backend.  If omitted, startup
+# logic auto-selects based on the embeddings endpoint: local_vector
+# when memory.embeddings.endpoint is set, otherwise fts5.  It does NOT
+# inherit memory.backend automatically.
 #
 # Supported backends: fts5, local_vector, qdrant
 # (flat_file is NOT supported for skills — fts5 is used as fallback.)

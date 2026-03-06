@@ -246,7 +246,7 @@ def _read_skills_toc(query: Optional[str] = None) -> str:
     except Exception as exc:
         logger.warning("skill_store skills TOC failed: %s", exc)
     if entries:
-        label = "relevance-ranked" if ranked and entries else "all"
+        label = "relevance-ranked" if ranked else "all"
         return f"{header} ({label})\n" + "\n".join(entries)
     return header
 

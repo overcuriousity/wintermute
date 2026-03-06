@@ -214,8 +214,8 @@ def embed(texts: list[str], embed_cfg: dict, task: str = "document") -> list[lis
     Prefix is auto-detected for known models (e.g. EmbeddingGemma) or
     can be overridden via ``query_prefix`` / ``document_prefix`` in config.
 
-    Texts are sent in sub-batches of ``batch_size`` in the embeddings
-    config (default 32) to avoid hitting server-side physical batch
+    Texts are sent in sub-batches of ``batch_size`` (in the embeddings
+    config, default 32) to avoid hitting server-side physical batch
     token limits (e.g. LiteLLM's per-request token cap).
     """
     endpoint = embed_cfg.get("endpoint", "").rstrip("/")
