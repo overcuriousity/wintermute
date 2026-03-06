@@ -10,9 +10,12 @@ Skills are learned, reusable procedures that the AI assistant can create, retrie
 | `local_vector` | SQLite + numpy cosine similarity | Local embeddings without external services |
 | `qdrant` | Qdrant vector database | Production / large skill libraries |
 
-The backend is **auto-detected** from your `memory` configuration unless explicitly overridden in the `skills` section. When no `skills.backend` is set:
-- If embeddings are configured (`memory.embeddings.endpoint`), defaults to `local_vector`
+The backend is **auto-selected** based on the available embeddings configuration unless explicitly overridden in the `skills` section. When no `skills.backend` is set:
+
+- If an embeddings endpoint is configured (`memory.embeddings.endpoint`), defaults to `local_vector`
 - Otherwise defaults to `fts5` (no embedding endpoint required)
+
+> **Note:** The skills backend does not automatically inherit `memory.backend`. It is configured independently via `skills.backend` or auto-selected from the embeddings config.
 
 ```yaml
 # config.yaml
@@ -106,12 +109,12 @@ On first startup after upgrading, `skill_store` automatically migrates existing 
    - **First line** → `summary`
    - **Remaining content** → `documentation`
    - **`## Changelog` section** → extracted and preserved in metadata
-2. Stats from `data/skill_stats.yaml` (if present) are merged during migration
+2. Stats from `data/skill_stats.yaml` (if present) are **not** imported; migration starts with fresh stats in the new backend
 3. Original `.md` files are **not deleted** — they remain as a backup
 4. A log entry is written for each migrated skill
-5. The `skill_stats.py` module and `skill_stats.yaml` file are no longer used after migration — all stats are tracked natively by the skill store backends
+5. The `skill_stats.py` module and `skill_stats.yaml` file are no longer used after migration — historical stats are not carried over; new stats are tracked natively by the skill store backends
 
-The migration is idempotent: skills that already exist in the store are skipped.
+The migration runs only when the skill store is empty (i.e., on first startup after upgrading). It does not re-import individual missing skills into a partially populated store.
 
 ## Dreaming (Skill Consolidation)
 

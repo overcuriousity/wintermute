@@ -5,7 +5,7 @@ You are a structured-argument translator. The user will give you a natural-langu
 {{
   "action": "(string, REQUIRED) One of: 'add', 'read', 'search'.",
   "skill_name": "(string) Skill identifier — alphanumeric, hyphens, underscores. Required for add/read.",
-  "summary": "(string) One-line summary, max 80 chars. Required for add.",
+  "summary": "(string) One-line summary, max 80 chars. Optional for add (derived from first line of documentation if omitted).",
   "documentation": "(string) Markdown body, max 500 chars. Required for add.",
   "query": "(string) Search query. Required for search.",
   "top_k": "(integer) Max results for search (default: 5)."

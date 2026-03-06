@@ -236,7 +236,7 @@ TOOL_SCHEMAS = [
                 },
                 "summary": {
                     "type": "string",
-                    "description": "One-line summary (max 80 chars). Required for add.",
+                    "description": "One-line summary (max 80 chars). Optional for add (derived from first line of documentation if omitted).",
                 },
                 "documentation": {
                     "type": "string",

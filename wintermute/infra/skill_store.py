@@ -839,6 +839,9 @@ class QdrantSkillBackend:
         except Exception:
             pass
 
+        # Normalize old payload once for safe attribute access.
+        old_payload = (existing[0].payload or {}) if existing else {}
+
         point = PointStruct(
             id=pid,
             vector=vectors[0],
@@ -847,15 +850,9 @@ class QdrantSkillBackend:
                 "summary": summary,
                 "documentation": documentation,
                 "full_text": full_text,
-                "created_at": now if version == 1 else (
-                    existing[0].payload.get("created_at", now)
-                    if existing else now
-                ),
+                "created_at": now if version == 1 else old_payload.get("created_at", now),
                 "last_accessed": now,
-                "access_count": (
-                    existing[0].payload.get("access_count", 0)
-                    if existing else 0
-                ),
+                "access_count": old_payload.get("access_count", 0),
                 "version": version,
                 "changelog": new_changelog,
             },
@@ -941,14 +938,22 @@ class QdrantSkillBackend:
 
     def get_all(self) -> list[dict]:
         try:
-            result = self._client.scroll(
-                collection_name=self._collection,
-                limit=10000,
-                with_payload=True,
-            )
+            all_points = []
+            offset = None
+            while True:
+                points_page, offset = self._client.scroll(
+                    collection_name=self._collection,
+                    limit=10000,
+                    with_payload=True,
+                    offset=offset,
+                )
+                if not points_page:
+                    break
+                all_points.extend(points_page)
+                if offset is None:
+                    break
         except Exception:
             return []
-        points = result[0] if result else []
         return [
             {"id": str(p.id),
              "name": (p.payload or {}).get("name", ""),
@@ -960,7 +965,7 @@ class QdrantSkillBackend:
              "version": (p.payload or {}).get("version", 1),
              "changelog": (p.payload or {}).get("changelog", ""),
              "score": 1.0}
-            for p in sorted(points,
+            for p in sorted(all_points,
                             key=lambda x: (x.payload or {}).get("name", ""))
         ]
 
@@ -1015,18 +1020,26 @@ class QdrantSkillBackend:
         from qdrant_client.models import Filter, FieldCondition, Range
         cutoff = time.time() - (max_age_days * 86400)
         try:
-            results = self._client.scroll(
-                collection_name=self._collection,
-                scroll_filter=Filter(must=[
-                    FieldCondition(key="last_accessed",
-                                   range=Range(lt=cutoff)),
-                    FieldCondition(key="access_count",
-                                   range=Range(lt=min_access)),
-                ]),
-                limit=10000,
-                with_payload=True,
-            )
-            points = results[0] if results else []
+            all_points = []
+            offset = None
+            while True:
+                points_page, offset = self._client.scroll(
+                    collection_name=self._collection,
+                    scroll_filter=Filter(must=[
+                        FieldCondition(key="last_accessed",
+                                       range=Range(lt=cutoff)),
+                        FieldCondition(key="access_count",
+                                       range=Range(lt=min_access)),
+                    ]),
+                    limit=10000,
+                    with_payload=True,
+                    offset=offset,
+                )
+                if not points_page:
+                    break
+                all_points.extend(points_page)
+                if offset is None:
+                    break
         except Exception:
             return []
         return [
@@ -1034,20 +1047,28 @@ class QdrantSkillBackend:
              "summary": (p.payload or {}).get("summary", ""),
              "last_accessed": (p.payload or {}).get("last_accessed", 0),
              "access_count": (p.payload or {}).get("access_count", 0)}
-            for p in points
+            for p in all_points
         ]
 
     def get_all_with_vectors(self) -> list[dict]:
         try:
-            result = self._client.scroll(
-                collection_name=self._collection,
-                limit=10000,
-                with_payload=True,
-                with_vectors=True,
-            )
+            all_points = []
+            offset = None
+            while True:
+                points_page, offset = self._client.scroll(
+                    collection_name=self._collection,
+                    limit=10000,
+                    with_payload=True,
+                    with_vectors=True,
+                    offset=offset,
+                )
+                if not points_page:
+                    break
+                all_points.extend(points_page)
+                if offset is None:
+                    break
         except Exception:
             return []
-        points = result[0] if result else []
         return [
             {"id": str(p.id),
              "name": (p.payload or {}).get("name", ""),
@@ -1059,7 +1080,7 @@ class QdrantSkillBackend:
              "access_count": (p.payload or {}).get("access_count", 0),
              "version": (p.payload or {}).get("version", 1),
              "changelog": (p.payload or {}).get("changelog", "")}
-            for p in points
+            for p in all_points
         ]
 
     def bulk_delete(self, names: list[str]) -> int:
