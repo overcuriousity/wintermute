@@ -1,6 +1,6 @@
 # Tools
 
-Wintermute exposes 13 tools as OpenAI-compatible function-calling schemas, compatible with any OpenAI-compatible endpoint (llama-server, vLLM, LM Studio, OpenAI, etc.).
+Wintermute exposes 10 tools as OpenAI-compatible function-calling schemas, compatible with any OpenAI-compatible endpoint (llama-server, vLLM, LM Studio, OpenAI, etc.).
 
 ## Tool Categories
 
@@ -195,7 +195,7 @@ Query the system's own operational telemetry — success rates, recent outcomes,
 |------|---------|
 | `outcome_stats` | Aggregate sub-session success/failure/timeout counts |
 | `recent_outcomes` | Latest sub-session results with objective, status, duration |
-| `skill_stats` | Per-skill read counts, session outcomes, failure rates, versions |
+| `skill_stats` | Per-skill access counts, versions, and staleness/recency (from skill store) |
 | `top_tools` | Most-used tools in the lookback window |
 | `interaction_log` | Recent interaction log entries (inference, tool calls, reflections) |
 | `self_model` | Cached self-assessment summary + raw metrics from YAML |

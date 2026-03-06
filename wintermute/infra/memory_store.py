@@ -21,7 +21,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from wintermute.infra.llm_utils import (
     embed as _embed,
-    embed_batch as _embed_batch,
+
     log_store_interaction as _log_interaction_impl,
     make_content_id as _make_id,
 )

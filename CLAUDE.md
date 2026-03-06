@@ -58,7 +58,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 - `data/prompts/*.txt` — All prompt templates (externalized, not hardcoded); seed prompts are per-language (`SEED_en.txt`, `SEED_de.txt`, ...)
 - `data/MEMORIES.txt` — Long-term memory (append-based, consolidated nightly)
 - `data/conversation.db` — SQLite: messages, summaries, tasks, interaction_log
-- `data/skills/*.md` — Learned procedures (first line = summary for TOC; full content loaded on demand)
+- `data/skills/` — Learned procedures (vector-indexed via skill store; legacy `*.md` files migrated at first startup)
 - `data/scratchpad/{workflow_id}/` — Ephemeral per-workflow directories for parallel worker communication (auto-cleaned on workflow completion)
 - `data/TURING_PROTOCOL_HOOKS.txt` — Hook definitions (JSON)
 - `config.yaml` — Runtime config (gitignored)

@@ -15,7 +15,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **SchedulerThread** | `scheduler_thread.py` | APScheduler-based scheduled task execution |
 | **DreamingLoop** | `dreaming.py` | Biologically-inspired multi-phase memory consolidation (housekeeping + creative phases) |
 | **ReflectionLoop** | `reflection.py` | Event-driven feedback loop: rule engine + LLM analysis + skill mutations |
-| **SkillStats** | `skill_stats.py` | YAML-backed skill usage tracking: read counts, session outcome correlation, staleness detection |
+| **SkillStore** | `skill_store.py` | Vector-indexed skill storage with three backends (FTS5 / local_vector / Qdrant), access tracking, and staleness detection |
 | **SelfModelProfiler** | `self_model.py` | Operational metrics aggregator, parameter auto-tuner, and system-prompt self-assessment injector (runs inside reflection cycle) |
 | **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
 | **NL Translator** | `nl_translator.py` | Expands natural-language tool descriptions into structured arguments via a translator LLM |
@@ -68,7 +68,7 @@ SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + s
 2. Configure logging (console + rotating file)
 3. Initialise SQLite databases
 4. Initialise memory store (vector backend or flat-file fallback; cold-boot import if needed)
-5. Initialise skill stats (load `data/skill_stats.yaml`)
+5. Initialise skill store (vector backend with one-time migration from flat files)
 6. Bootstrap `data/` directories (skills/, scripts/, archive/)
 7. Restore APScheduler jobs (and execute missed scheduled tasks)
 8. Build shared broadcast function (routes to Matrix rooms or web clients)
@@ -160,7 +160,7 @@ These are some architectural choices, which should make it better for local LLMs
 
 **NL Translation (optional).** For models that struggle with multi-field structured JSON schemas, complex tool calls (`task`, `worker_delegation`, `skill`) can be exposed as a single plain-English `description` field. A dedicated small translator LLM expands the description into structured arguments. See [tools.md — NL Translation Mode](tools.md#nl-translation-mode).
 
-**Lean system prompt.** The system prompt is assembled from independent file-based components (`BASE_PROMPT.txt`, `MEMORIES.txt`, tasks, skills TOC). Skills inject only a one-line-per-skill table of contents; full procedures are loaded on demand via `read_file`. Components have configurable character caps with auto-summarisation when exceeded. No framework boilerplate is injected — the prompt contains only what you wrote and what the model genuinely needs.
+**Lean system prompt.** The system prompt is assembled from independent file-based components (`BASE_PROMPT.txt`, `MEMORIES.txt`, tasks, skills TOC). Skills inject only a one-line-per-skill table of contents; full procedures are loaded on demand via the `skill` tool (action `read`). Components have configurable character caps with auto-summarisation when exceeded. No framework boilerplate is injected — the prompt contains only what you wrote and what the model genuinely needs.
 
 **Sectioned system prompt.** BASE_PROMPT sections are conditionally included based on available tools. Sub-sessions with only execution tools don't receive instructions about delegation, tasks, or knowledge routing — saving ~800 tokens per worker invocation.
 
@@ -191,7 +191,8 @@ data/
   DREAM_PREDICTION_PROMPT.txt -- Predictive pattern extraction prompt (creative phase)
   DREAM_TASKS_PROMPT.txt      -- Customisable dreaming prompt for task consolidation
   COMPACTION_PROMPT.txt      -- Customisable prompt for context compaction summarisation
-  skill_stats.yaml           -- Skill usage stats: read counts, session outcomes, failure rates (YAML, auto-committed)
+  skill_index.db             -- FTS5 keyword index for skills (only when skills backend=fts5)
+  skill_vectors.db           -- SQLite vector store for skills (only when skills backend=local_vector)
   self_model.yaml            -- Persisted self-model state: metrics, summary, last tuning changes
   SELF_MODEL_SUMMARY.txt     -- Prompt template for generating the self-assessment prose summary
   SKILL_SYNTHESIS.txt        -- Prompt template for pattern-to-skill synthesis proposals

@@ -38,7 +38,7 @@ A biologically-inspired multi-phase memory consolidation system that runs nightl
 **Shared phases** (all backends):
 
 5. **Task consolidation:** LLM returns JSON actions (complete, update, keep) applied via DB; completed tasks older than 30 days are purged.
-6. **Skill consolidation:** Auto-retires skills unused for 90+ days (moved to `data/skills/.archive/`), then deduplicates overlapping skills, then condenses each to ~150 tokens while preserving the first-line summary.
+6. **Skill consolidation:** Auto-retires skills unused for 90+ days (deleted from the skill store), then deduplicates overlapping skills, then condenses skills with >600 chars documentation while preserving the first-line summary.
 
 **Creative phases** (vector backends only, gated):
 
@@ -113,7 +113,7 @@ An event-driven feedback loop that closes the observe→reflect→adapt cycle. T
 | `consecutive_failures` | Task with N+ consecutive failed sub-sessions | Auto-pauses the task |
 | `timeout_pattern` | Task with 3+ consecutive timeouts | Warning (suggests longer timeout or simpler prompt) |
 | `stale_task` | Scheduled task producing very short output | Warning (may need better `ai_prompt`) |
-| `skill_correlation` | Skill loaded in 3+ failed sub-sessions | Warning + event (flags skill for review, enriched with lifetime stats from skill_stats) |
+| `skill_correlation` | Skill loaded in 3+ failed sub-sessions | Warning + event (flags skill for review, enriched with lifetime stats from skill_store) |
 
 ### Visibility
 
@@ -136,7 +136,7 @@ Runs inside the reflection cycle (no separate asyncio task) and builds an operat
 - Sub-session success / timeout / failure rates and average duration (from `sub_session_outcomes`)
 - Top 5 most-used tools in the last 24h (from `tools_used` JSON in outcomes)
 - Compaction, harvest, and inference counts (from `interaction_log`)
-- Skill metrics: total count, total reads, skills unused for 90+ days (from `skill_stats`)
+- Skill metrics: total count, total reads, skills unused for 90+ days (from `skill_store`)
 
 **Auto-tuning** adjusts two live parameters within configured safe bounds each cycle:
 
@@ -159,7 +159,7 @@ Changes are applied immediately to the live `SubSessionManager` and `MemoryHarve
 
 ## Skill Evolution
 
-**Module:** `wintermute/workers/skill_stats.py`
+**Module:** `wintermute/infra/skill_store.py`
 
 Skills are stored in a vector-indexed backend (`skill_store`) — tracked, correlated with outcomes, auto-retired when stale, and flagged when problematic. Stats are tracked natively by each backend.
 
@@ -186,7 +186,7 @@ skills:
 
 ### Auto-Retirement
 
-During nightly dreaming (before deduplication), skills not read in the last 90 days are automatically moved to `data/skills/.archive/`. The archive directory is inside `data/` so it is auto-committed to the data git repo. Archived skills vanish from the skills TOC automatically (the assembler only globs top-level `*.md` files). No LLM call is involved — this is a pure bookkeeping operation.
+During nightly dreaming (before deduplication), skills not accessed in the last 90 days are automatically deleted from the skill store. No LLM call is involved — this is a pure bookkeeping operation based on `last_accessed` and `access_count` tracked by the backend.
 
 ### Reflection Integration
 

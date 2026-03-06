@@ -56,7 +56,7 @@ Active goals, ongoing projects, scheduled actions, and reminders. Managed via th
 
 Key rule: if it only matters because something is in progress right now, or needs to happen at a specific time, it belongs as a Task.
 
-### 4. skills/*.md — Learned Procedures
+### 4. Skills (Vector-Indexed)
 
 Skills are reusable procedures stored in a vector-indexed backend. Managed via the `skill` tool (add/read/search actions). Legacy `data/skills/*.md` files are migrated automatically on first startup.
 
@@ -102,9 +102,9 @@ The `prompt_assembler.assemble()` function builds the final system prompt. It ac
 ---
 
 # Skills
-Load a skill with read_file when relevant to the current task.
-- data/skills/calendar.md — Google Calendar event management
-- data/skills/deploy-docker.md — Docker container deployment workflow
+Use the skill tool (action "read" or "search") to retrieve details. (all)
+- calendar — Google Calendar event management
+- deploy-docker — Docker container deployment workflow
 ```
 
 Sections are separated by `---` dividers. Empty sections are omitted (except Skills, which always appears with at least the load instruction).

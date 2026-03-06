@@ -19,6 +19,7 @@ into the active backend.
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 import threading
 import time
@@ -68,6 +69,7 @@ class SkillBackend(Protocol):
     def update(self, name: str, summary: str | None = None,
                documentation: str | None = None,
                changelog: str | None = None) -> bool: ...
+    def exists(self, name: str) -> bool: ...
     def count(self) -> int: ...
     def stats(self) -> dict: ...
     def get_stale(self, max_age_days: int, min_access: int) -> list[dict]: ...
@@ -184,6 +186,17 @@ class FTS5SkillBackend:
         logger.info("Skill '%s' saved (v%d) via fts5", name, version)
         return sid
 
+    def exists(self, name: str) -> bool:
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT 1 FROM skills_meta WHERE name = ?", (name,),
+                ).fetchone()
+            finally:
+                conn.close()
+        return row is not None
+
     def get(self, name: str) -> dict | None:
         with self._lock:
             conn = self._connect()
@@ -235,12 +248,12 @@ class FTS5SkillBackend:
                     (fts_query, top_k),
                 ).fetchall()
             except sqlite3.OperationalError:
-                logger.debug("FTS5 skill query failed, returning all skills")
+                logger.debug("FTS5 skill query failed, returning empty results")
                 rows = []
             finally:
                 conn.close()
         if not rows:
-            return self.get_all()[:top_k]
+            return []
         return [
             {"id": r[0], "name": r[1], "summary": r[2], "documentation": r[3],
              "created_at": r[4], "last_accessed": r[5], "access_count": r[6],
@@ -481,6 +494,17 @@ class LocalVectorSkillBackend:
                          f"v{version}", llm="local_vector")
         logger.info("Skill '%s' saved (v%d) via local_vector", name, version)
         return sid
+
+    def exists(self, name: str) -> bool:
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT 1 FROM skill_vectors WHERE name = ?", (name,),
+                ).fetchone()
+            finally:
+                conn.close()
+        return row is not None
 
     def get(self, name: str) -> dict | None:
         with self._lock:
@@ -866,6 +890,17 @@ class QdrantSkillBackend:
         logger.info("Skill '%s' saved (v%d) via qdrant", name, version)
         return pid
 
+    def exists(self, name: str) -> bool:
+        pid = self._name_to_id(name)
+        try:
+            results = self._client.retrieve(
+                collection_name=self._collection,
+                ids=[pid], with_payload=False,
+            )
+            return bool(results)
+        except Exception:
+            return False
+
     def get(self, name: str) -> dict | None:
         pid = self._name_to_id(name)
         try:
@@ -972,6 +1007,16 @@ class QdrantSkillBackend:
     def delete(self, name: str) -> bool:
         from qdrant_client.models import PointIdsList
         pid = self._name_to_id(name)
+        # Check existence first — Qdrant delete is a no-op for missing IDs.
+        try:
+            existing = self._client.retrieve(
+                collection_name=self._collection,
+                ids=[pid], with_payload=False,
+            )
+            if not existing:
+                return False
+        except Exception:
+            return False
         try:
             self._client.delete(
                 collection_name=self._collection,
@@ -1001,11 +1046,42 @@ class QdrantSkillBackend:
         existing_doc = payload.get("documentation", "")
         new_summary = summary if summary is not None else existing_summary
         new_doc = documentation if documentation is not None else existing_doc
+        new_version = payload.get("version", 0) + 1
         if changelog is not None:
             new_changelog = changelog
         else:
-            new_changelog = ""  # let add() handle auto-changelog
-        self.add(name, new_summary, new_doc, changelog=new_changelog)
+            old_cl = payload.get("changelog", "")
+            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if old_cl:
+                new_changelog = f"{old_cl}\n- {date_str}: updated"
+            else:
+                new_changelog = f"## Changelog\n- {date_str}: updated"
+        full_text = _build_full_text(new_summary, new_doc)
+        vectors = _embed([full_text], self._embed_cfg)
+        if not vectors:
+            raise RuntimeError("Embedding call returned no vectors")
+        from qdrant_client.models import PointStruct
+        now = time.time()
+        point = PointStruct(
+            id=pid,
+            vector=vectors[0],
+            payload={
+                "name": name,
+                "summary": new_summary,
+                "documentation": new_doc,
+                "full_text": full_text,
+                "created_at": payload.get("created_at", now),
+                "last_accessed": now,
+                "access_count": payload.get("access_count", 0),
+                "version": new_version,
+                "changelog": new_changelog,
+            },
+        )
+        self._client.upsert(
+            collection_name=self._collection,
+            points=[point],
+        )
+        logger.info("Skill '%s' updated (v%d) via qdrant", name, new_version)
         return True
 
     def count(self) -> int:
@@ -1149,6 +1225,10 @@ def _migrate_from_flat_files() -> None:
             if not content:
                 continue
             name = f.stem
+            # Validate name against the same rules as skill_io.
+            if not re.match(r'^[A-Za-z0-9][A-Za-z0-9_-]*$', name):
+                logger.warning("Skipping migration of '%s': invalid skill name", name)
+                continue
             # Parse: first line = summary, rest = documentation.
             lines = content.split("\n", 1)
             summary = lines[0].strip()
@@ -1262,6 +1342,11 @@ def _b() -> "SkillBackend":
 def add(name: str, summary: str, documentation: str,
         changelog: str = "") -> str:
     return _b().add(name, summary, documentation, changelog)
+
+
+def exists(name: str) -> bool:
+    """Check if a skill exists without updating access stats."""
+    return _b().exists(name)
 
 
 def get(name: str) -> dict | None:

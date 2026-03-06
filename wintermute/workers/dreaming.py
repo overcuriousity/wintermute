@@ -629,7 +629,16 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
 
     # Condense each surviving skill (less aggressive — only if doc > 600 chars).
     condensed = 0
-    condense_template = prompt_loader.load("DREAM_SKILLS_CONDENSATION_PROMPT.txt")
+    try:
+        condense_template = prompt_loader.load("DREAM_SKILLS_CONDENSATION_PROMPT.txt")
+    except FileNotFoundError:
+        logger.warning("Dreaming: DREAM_SKILLS_CONDENSATION_PROMPT.txt not found, skipping condensation")
+        condense_template = None
+    if condense_template is None:
+        result.items_processed = merged_skills
+        result.summary = f"merged {merged_skills}, condensed 0 skills (template missing)"
+        logger.info("Dreaming phase skill_consolidation: %s", result.summary)
+        return result
     for name, rec in list(skills.items()):
         doc = rec.get("documentation", "")
         if len(doc) < 600:

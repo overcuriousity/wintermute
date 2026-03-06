@@ -412,7 +412,7 @@ class ReflectionLoop:
                     if isinstance(parsed_args, dict):
                         # Only count read (and search) actions — not add/update,
                         # which would incorrectly attribute failures to skill writes.
-                        action = parsed_args.get("action", "read")
+                        action = parsed_args.get("action", "add")
                         if action in ("read", "search"):
                             arg_skill_name = parsed_args.get("skill_name")
                             if isinstance(arg_skill_name, str):

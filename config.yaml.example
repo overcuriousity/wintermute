@@ -408,7 +408,7 @@ context:
   component_size_limits:
     memories: 10000                       # MEMORIES.txt — long-term personal facts
     tasks: 5000                           # Active tasks from database
-    skills_total: 20000                   # Total across all data/skills/*.md files
+    skills_total: 20000                   # Skills TOC generated from skill store
 
 
 # ── Dreaming (Nightly Consolidation) ────────────────────────────────

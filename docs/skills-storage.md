@@ -132,7 +132,7 @@ During dreaming cycles, skills are automatically maintained:
 The reflection cycle monitors skill health:
 
 - **Failure correlation**: Skills loaded in 3+ failed sessions are flagged
-- **LLM analysis**: Enriched with per-skill stats from `skill_store.stats()` (access counts, versions, failure rate)
+- **LLM analysis**: Enriched with per-skill stats from `skill_store.stats()` (access counts, versions, staleness/recency)
 - **Mutation sub-sessions**: The `skill` tool (with actions `add` and `read`) replaces the former `add_skill` + `read_file` pattern
 - **Synthesis**: Recurring successful patterns are proposed as new skills
 

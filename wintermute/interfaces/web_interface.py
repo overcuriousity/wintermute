@@ -615,7 +615,7 @@ class WebInterface:
                 "doc_chars": len(rec.get("documentation", "")),
                 "last_accessed": rec.get("last_accessed", 0),
                 "read_count": sstat.get("read_count", 0),
-                # Backward-compat fields for debug UI (always 0 — not yet persisted).
+                # sessions_loaded mirrors read_count; success/failure not yet persisted.
                 "sessions_loaded": sstat.get("sessions_loaded", 0),
                 "success_count": sstat.get("success_count", 0),
                 "failure_count": sstat.get("failure_count", 0),
@@ -657,14 +657,16 @@ class WebInterface:
         summary = (data.get("summary") or "").strip()
         documentation = (data.get("documentation") or "").strip()
         if not name or not documentation:
-            return self._json({"error": "skill_name and documentation are required"})
+            return web.json_response(
+                {"error": "skill_name and documentation are required"}, status=400)
         try:
             name = _validate_skill_name(name)
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
-        # Reject if already exists.
-        if skill_store.get(name) is not None:
-            return self._json({"error": f"Skill '{name}' already exists. Use PUT to update."})
+        # Reject if already exists (non-tracking check).
+        if skill_store.exists(name):
+            return web.json_response(
+                {"error": f"Skill '{name}' already exists. Use PUT to update."}, status=409)
         try:
             add_skill(name, documentation, summary=summary or None)
         except ValueError as exc:
@@ -681,7 +683,7 @@ class WebInterface:
             name = _validate_skill_name(name)
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
-        if skill_store.get(name) is None:
+        if not skill_store.exists(name):
             return web.json_response({"error": "not found"}, status=404)
         try:
             data = await request.json()
@@ -700,7 +702,8 @@ class WebInterface:
                     summary = lines[0].strip()
                 documentation = "\n".join(lines[1:]).strip()
         if not documentation:
-            return self._json({"error": "content or documentation is required"})
+            return web.json_response(
+                {"error": "content or documentation is required"}, status=400)
         skill_store.update(name, summary=summary or None, documentation=documentation)
         from wintermute.infra import data_versioning
         data_versioning.commit_async(f"skill: {name}")
@@ -722,13 +725,11 @@ class WebInterface:
             name = _validate_skill_name(name)
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
-        # Fetch without access tracking: use get_all() filter to avoid
-        # incrementing access_count / last_accessed as a side-effect of deletion.
-        all_recs = skill_store.get_all()
-        rec = next((r for r in all_recs if r["name"] == name), None)
-        if rec is None:
+        if not skill_store.exists(name):
             return web.json_response({"error": "not found"}, status=404)
         # Archive: write a backup .md before removing from store.
+        # Use get() here to fetch full content (stat bump is irrelevant before delete).
+        rec = skill_store.get(name) or {}
         try:
             archive_dir = SKILLS_DIR / ".archive"
             archive_dir.mkdir(parents=True, exist_ok=True)
