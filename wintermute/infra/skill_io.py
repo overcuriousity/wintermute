@@ -1,7 +1,7 @@
 """
 Read / write operations for skills via ``skill_store``.
 
-Thin wrapper providing input validation and event emission.
+Thin wrapper providing input validation around ``skill_store`` operations.
 Replaces the former file-based ``add_skill`` logic (#81).
 """
 
