@@ -1735,9 +1735,19 @@ async function loadOutcomes() {
 }
 
 // ── Skills ──
+let _skillBackend = 'unknown';
+
+async function loadSkillInfo() {
+  try {
+    const r = await fetch('/api/skills/info');
+    const d = await r.json();
+    _skillBackend = d.backend || 'unknown';
+  } catch(e) { console.error('loadSkillInfo:', e); }
+}
+
 async function loadSkills() {
   try {
-    const r = await fetch('/api/skills');
+    const [r, _] = await Promise.all([fetch('/api/skills'), loadSkillInfo()]);
     const d = await r.json();
     const skills = d.skills || [];
     document.getElementById('cnt-skills').textContent = skills.length;
@@ -1748,7 +1758,11 @@ async function loadSkills() {
     const totalSessions = skills.reduce((a, s) => a + (s.sessions_loaded || 0), 0);
     const totalSuccess = skills.reduce((a, s) => a + (s.success_count || 0), 0);
     const avgRate = totalSessions > 0 ? Math.round(totalSuccess / totalSessions * 100) : 0;
+    const backendLabel = _skillBackend === 'local_vector' ? '🧠 local_vector'
+      : _skillBackend === 'qdrant' ? '🧠 qdrant'
+      : _skillBackend === 'fts5' ? '🔍 fts5' : _skillBackend;
     statsBar.innerHTML = [
+      '<span>Backend: <strong>' + backendLabel + '</strong></span>',
       '<span>Skills: <strong>' + skills.length + '</strong></span>',
       '<span>Total reads: <strong>' + totalReads + '</strong></span>',
       '<span>Sessions loaded: <strong>' + totalSessions + '</strong></span>',
@@ -1763,15 +1777,15 @@ async function loadSkills() {
     }
     area.innerHTML = skills.map(s => {
       const isExpanded = _expandedSkills.has(s.name);
-      const mtime = s.mtime ? new Date(s.mtime * 1000).toLocaleDateString() : '-';
-      const sizeStr = s.size < 1024 ? s.size + ' B' : (s.size / 1024).toFixed(1) + ' KB';
+      const lastAccessed = s.last_accessed ? new Date(s.last_accessed * 1000).toLocaleDateString() : 'never';
+      const docChars = s.doc_chars != null ? (s.doc_chars < 1024 ? s.doc_chars + ' chars' : (s.doc_chars / 1024).toFixed(1) + 'k chars') : '-';
       const successRate = s.sessions_loaded > 0
         ? Math.round(s.success_count / s.sessions_loaded * 100) + '%' : '-';
       return `<div class="skill-card">
         <div class="skill-card-header" onclick="toggleSkillCard('${esc(s.name)}')">
           <span class="skill-card-name">${esc(s.name)}</span>
           <span class="skill-card-summary">${esc(s.summary)}</span>
-          <span class="dim" style="font-size:.72rem">${sizeStr} &middot; ${mtime}</span>
+          <span class="dim" style="font-size:.72rem">${docChars} &middot; last: ${lastAccessed}</span>
         </div>
         <div class="skill-card-stats">
           <span>Reads: <strong>${s.read_count || 0}</strong></span>
@@ -1781,6 +1795,7 @@ async function loadSkills() {
         </div>
         <div class="skill-card-body${isExpanded ? ' open' : ''}" id="skill-body-${esc(s.name)}">
           <pre id="skill-content-${esc(s.name)}" style="white-space:pre-wrap;word-break:break-word;font-size:.78rem;color:#bbb;margin:0;padding:.5rem;background:#060a14;border-radius:.3rem;max-height:400px;overflow-y:auto">${isExpanded ? 'Loading\u2026' : ''}</pre>
+          <div id="skill-changelog-${esc(s.name)}" style="display:none;margin-top:.4rem;padding:.4rem .6rem;background:#0a0f1e;border-radius:.3rem;font-size:.72rem;color:#888;white-space:pre-wrap"></div>
           <div class="skill-card-actions">
             <button class="btn btn-sm" onclick="showEditSkillModal('${esc(s.name)}')">Edit</button>
             <button class="btn btn-danger btn-sm" onclick="deleteSkill('${esc(s.name)}')">Archive</button>
@@ -1815,9 +1830,48 @@ async function fetchSkillContent(name) {
   try {
     const r = await fetch('/api/skills/' + encodeURIComponent(name));
     const d = await r.json();
-    pre.textContent = d.content || '';
+    pre.textContent = d.documentation || d.content || '';
+    // Show changelog if present
+    const clEl = document.getElementById('skill-changelog-' + name);
+    if (clEl && d.changelog) {
+      clEl.style.display = 'block';
+      clEl.textContent = '\ud83d\udcdd Changelog (v' + (d.version || 1) + '):\n' + d.changelog;
+    } else if (clEl) {
+      clEl.style.display = 'none';
+    }
   } catch(e) {
     pre.textContent = 'Failed to load: ' + e;
+  }
+}
+
+async function doSkillSearch() {
+  const q = document.getElementById('skill-search-q').value.trim();
+  if (!q) return;
+  const k = document.getElementById('skill-search-k').value || 5;
+  const el = document.getElementById('skill-search-results');
+  el.style.display = 'block';
+  el.innerHTML = '<div class="empty" style="padding:.6rem 1rem">Searching\u2026</div>';
+  try {
+    const r = await fetch('/api/skills/search?q=' + encodeURIComponent(q) + '&k=' + k);
+    const d = await r.json();
+    if (d.error) { el.innerHTML = '<div class="empty" style="padding:.6rem 1rem">Error: ' + esc(d.error) + '</div>'; return; }
+    const results = d.results || [];
+    if (!results.length) {
+      el.innerHTML = '<div class="empty" style="padding:.6rem 1rem">No results for "' + esc(q) + '"</div>';
+      return;
+    }
+    el.innerHTML = '<div style="padding:.5rem 1rem;font-size:.78rem">' +
+      '<div style="display:flex;justify-content:space-between;margin-bottom:.4rem">' +
+      '<strong style="color:var(--accent-bright)">' + results.length + ' result(s) for "' + esc(q) + '"</strong>' +
+      '<button class="action-btn" style="font-size:.7rem;padding:.15rem .5rem" onclick="document.getElementById(\'skill-search-results\').style.display=\'none\'">Close</button></div>' +
+      '<table class="data-table" style="font-size:.75rem"><thead><tr><th>#</th><th>Score</th><th>Name</th><th>Summary</th></tr></thead><tbody>' +
+      results.map((r, i) =>
+        '<tr><td>' + (i+1) + '</td><td style="color:#6fe06f">' + (r.score != null ? r.score.toFixed(4) : '-') + '</td>' +
+        '<td style="color:var(--accent-bright);cursor:pointer" onclick="toggleSkillCard(\'' + esc(r.name) + '\')"><strong>' + esc(r.name) + '</strong></td>' +
+        '<td style="color:var(--text-dim)">' + esc(r.summary || '') + '</td></tr>'
+      ).join('') + '</tbody></table></div>';
+  } catch(e) {
+    el.innerHTML = '<div class="empty" style="padding:.6rem 1rem">Error: ' + esc(e.message) + '</div>';
   }
 }
 
@@ -1888,7 +1942,15 @@ async function showEditSkillModal(name) {
         <button class="modal-close" onclick="document.getElementById('skill-modal').remove()">Close</button>
       </div>
       <div style="padding:1rem;overflow:auto;display:flex;flex-direction:column;gap:.8rem;flex:1">
-        <textarea id="edit-skill-content" rows="20" style="font-family:monospace;font-size:.82rem;flex:1;min-height:200px">Loading\u2026</textarea>
+        <div class="form-group">
+          <label>Summary</label>
+          <input type="text" id="edit-skill-summary" placeholder="One-line description" maxlength="200" style="width:100%">
+        </div>
+        <div class="form-group" style="flex:1;display:flex;flex-direction:column">
+          <label>Documentation</label>
+          <textarea id="edit-skill-doc" rows="16" style="font-family:monospace;font-size:.82rem;flex:1;min-height:200px">Loading\u2026</textarea>
+        </div>
+        <div id="edit-skill-changelog-info" style="font-size:.72rem;color:#888"></div>
         <div style="display:flex;gap:.5rem">
           <button class="btn btn-primary" onclick="saveSkill('${esc(name)}')">Save</button>
           <button class="btn" onclick="document.getElementById('skill-modal').remove()">Cancel</button>
@@ -1900,20 +1962,26 @@ async function showEditSkillModal(name) {
   try {
     const r = await fetch('/api/skills/' + encodeURIComponent(name));
     const d = await r.json();
-    document.getElementById('edit-skill-content').value = d.content || '';
+    document.getElementById('edit-skill-summary').value = d.summary || '';
+    document.getElementById('edit-skill-doc').value = d.documentation || d.content || '';
+    const infoEl = document.getElementById('edit-skill-changelog-info');
+    if (d.version > 1 || d.changelog) {
+      infoEl.textContent = 'Version ' + (d.version || 1) + (d.changelog ? ' \u2022 ' + d.changelog.split('\n')[0] : '');
+    }
   } catch(e) {
-    document.getElementById('edit-skill-content').value = 'Failed to load: ' + e;
+    document.getElementById('edit-skill-doc').value = 'Failed to load: ' + e;
   }
 }
 
 async function saveSkill(name) {
-  const content = document.getElementById('edit-skill-content').value;
-  if (!content.trim()) { alert('Content cannot be empty'); return; }
+  const summary = document.getElementById('edit-skill-summary').value.trim();
+  const documentation = document.getElementById('edit-skill-doc').value.trim();
+  if (!documentation) { alert('Documentation cannot be empty'); return; }
   try {
     const r = await fetch('/api/skills/' + encodeURIComponent(name), {
       method: 'PUT',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({content}),
+      body: JSON.stringify({summary, documentation}),
     });
     const d = await r.json();
     if (d.error) { alert('Error: ' + d.error); return; }

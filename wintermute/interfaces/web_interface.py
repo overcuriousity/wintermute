@@ -113,6 +113,8 @@ class WebInterface:
         app.router.add_delete("/api/thread-config/{thread_id}",    self._api_thread_config_reset)
         # Skills API
         app.router.add_get("/api/skills",                          self._api_skills)
+        app.router.add_get("/api/skills/info",                     self._api_skill_info)
+        app.router.add_get("/api/skills/search",                   self._api_skill_search)
         app.router.add_get("/api/skills/{name}",                   self._api_skill_get)
         app.router.add_post("/api/skills",                         self._api_skill_create)
         app.router.add_put("/api/skills/{name}",                   self._api_skill_update)
@@ -624,6 +626,42 @@ class WebInterface:
             })
         return self._json({"skills": skills, "count": len(skills)})
 
+    async def _api_skill_info(self, _request: web.Request) -> web.Response:
+        """GET /api/skills/info — skill store backend metadata."""
+        from wintermute.infra import skill_store
+
+        backend = "unknown"
+        if skill_store.is_qdrant_backend():
+            backend = "qdrant"
+        elif skill_store.is_vector_enabled():
+            backend = "local_vector"
+        else:
+            backend = "fts5"
+        return self._json({
+            "backend": backend,
+            "vector_enabled": skill_store.is_vector_enabled(),
+            "count": skill_store.count(),
+            "top_k": skill_store.get_top_k(),
+            "threshold": skill_store.get_threshold(),
+        })
+
+    async def _api_skill_search(self, request: web.Request) -> web.Response:
+        """GET /api/skills/search?q=...&k=5 — semantic/keyword skill search."""
+        from wintermute.infra import skill_store
+
+        query = request.query.get("q", "").strip()
+        if not query:
+            return web.json_response(
+                {"error": "query parameter 'q' is required"}, status=400)
+        top_k = int(request.query.get("k", str(skill_store.get_top_k())))
+        threshold = float(request.query.get("t", str(skill_store.get_threshold())))
+
+        def _search() -> list:
+            return skill_store.search(query, top_k=top_k, threshold=threshold)
+
+        results = await asyncio.get_running_loop().run_in_executor(None, _search)
+        return self._json({"query": query, "results": results, "count": len(results)})
+
     async def _api_skill_get(self, request: web.Request) -> web.Response:
         """GET /api/skills/{name} — read full skill content."""
         from wintermute.infra import skill_store
@@ -642,6 +680,11 @@ class WebInterface:
             "summary": rec.get("summary", ""),
             "documentation": rec.get("documentation", ""),
             "content": f"{rec.get('summary', '')}\n\n{rec.get('documentation', '')}".strip(),
+            "version": rec.get("version", 1),
+            "changelog": rec.get("changelog", ""),
+            "access_count": rec.get("access_count", 0),
+            "last_accessed": rec.get("last_accessed", 0),
+            "created_at": rec.get("created_at", 0),
         })
 
     async def _api_skill_create(self, request: web.Request) -> web.Response:
