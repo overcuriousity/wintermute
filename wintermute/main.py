@@ -355,10 +355,11 @@ async def main() -> None:
         memory_cfg = cfg.get("memory", {}) or {}
         skills_cfg = (cfg.get("skills", {}) or {}).copy()
         # Inherit memory.backend as skill backend default when not explicitly set,
-        # normalising flat_file -> fts5 (skills do not support flat_file).
+        # but only for vector backends. For other memory backends, let
+        # skill_store.init() auto-select based on embeddings config.
         if not skills_cfg.get("backend"):
             mem_backend = memory_cfg.get("backend", "")
-            if mem_backend and mem_backend != "flat_file":
+            if mem_backend in ("local_vector", "qdrant"):
                 skills_cfg["backend"] = mem_backend
         # Expose memory Qdrant config for inheritance by the skill Qdrant backend.
         if memory_cfg.get("backend") == "qdrant" or memory_cfg.get("qdrant"):
