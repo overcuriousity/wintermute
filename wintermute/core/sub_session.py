@@ -1298,17 +1298,11 @@ class SubSessionManager:
                     matches = _re.findall(r'data/skills/([^\s"\']+)\.md', preview)
                     skill_names_used.extend(matches)
             if skill_names_used:
-                from wintermute.infra import skill_store
                 succeeded = status == "completed"
                 for sname in set(skill_names_used):
-                    rec = skill_store.get(sname)
-                    if rec is None:
-                        continue
-                    # Persist outcome by bumping a dedicated counter field if
-                    # the backend stores it, or as a no-op annotation.
-                    # Currently the backends track access_count natively;
-                    # success/failure breakdown requires future backend support.
                     # Log the correlation so it is available in interaction_log.
+                    # Avoid touching skill_store here to prevent mutating skill stats
+                    # (e.g., access_count/last_accessed) during outcome correlation.
                     _log = logging.getLogger(__name__)
                     _log.debug(
                         "Skill outcome: skill=%r, session=%s, success=%s",
