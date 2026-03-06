@@ -984,11 +984,23 @@ class QdrantSkillBackend:
     def update(self, name: str, summary: str | None = None,
                documentation: str | None = None,
                changelog: str | None = None) -> bool:
-        existing = self.get(name)
-        if not existing:
+        # Fetch existing payload directly from Qdrant without updating access stats
+        pid = self._name_to_id(name)
+        try:
+            points = self._client.retrieve(
+                collection_name=self._collection,
+                ids=[pid],
+                with_payload=True,
+            )
+        except Exception:
             return False
-        new_summary = summary if summary is not None else existing["summary"]
-        new_doc = documentation if documentation is not None else existing["documentation"]
+        if not points:
+            return False
+        payload = points[0].payload or {}
+        existing_summary = payload.get("summary", "")
+        existing_doc = payload.get("documentation", "")
+        new_summary = summary if summary is not None else existing_summary
+        new_doc = documentation if documentation is not None else existing_doc
         if changelog is not None:
             new_changelog = changelog
         else:
