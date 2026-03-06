@@ -225,6 +225,7 @@ def _read_skills_toc(query: Optional[str] = None) -> str:
 
     header = 'Use the skill tool (action "read" or "search") to retrieve details.'
     entries: list[str] = []
+    ranked = False
     try:
         if query and skill_store.is_vector_enabled():
             results = skill_store.search(query)
@@ -245,7 +246,7 @@ def _read_skills_toc(query: Optional[str] = None) -> str:
     except Exception as exc:
         logger.warning("skill_store skills TOC failed: %s", exc)
     if entries:
-        label = "relevance-ranked" if ranked else "all"
+        label = "relevance-ranked" if ranked and entries else "all"
         return f"{header} ({label})\n" + "\n".join(entries)
     return header
 

@@ -391,10 +391,36 @@ class ReflectionLoop:
                 raw = entry.get("input", "")
                 # Detect skill reads via either the new "skill" tool or
                 # legacy read_file on data/skills/ paths.
-                if '"skill"' in raw or "'skill'" in raw:
-                    # New skill tool — extract skill_name from JSON args.
-                    matches = re.findall(r'"skill_name"\s*:\s*"([^"]+)"', raw)
-                    for skill_name in matches:
+                skill_names_from_entry: list[str] = []
+
+                # Preferred path: parse structured JSON input and nested arguments.
+                try:
+                    parsed_input = json.loads(raw)
+                except Exception:
+                    parsed_input = None
+
+                if isinstance(parsed_input, dict) and parsed_input.get("tool") == "skill":
+                    args_raw = parsed_input.get("arguments")
+                    parsed_args = None
+                    if isinstance(args_raw, str):
+                        try:
+                            parsed_args = json.loads(args_raw)
+                        except Exception:
+                            parsed_args = None
+                    elif isinstance(args_raw, dict):
+                        parsed_args = args_raw
+                    if isinstance(parsed_args, dict):
+                        arg_skill_name = parsed_args.get("skill_name")
+                        if isinstance(arg_skill_name, str):
+                            skill_names_from_entry.append(arg_skill_name)
+
+                # Fallback: heuristic regex on raw string content.
+                if not skill_names_from_entry and ('"skill"' in raw or "'skill'" in raw):
+                    matches = re.findall(r'[\\"]*skill_name[\\"]*\s*:\s*[\\"]*([^\\"\s,}]+)', raw)
+                    skill_names_from_entry.extend(matches)
+
+                if skill_names_from_entry:
+                    for skill_name in skill_names_from_entry:
                         skill_fail_counts[skill_name] = skill_fail_counts.get(skill_name, 0) + 1
                 elif "read_file" in raw and "data/skills/" in raw:
                     # Legacy: read_file on data/skills/ paths.

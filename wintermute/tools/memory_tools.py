@@ -57,7 +57,10 @@ def tool_skill(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -> str
 
         if action == "search":
             query = inputs.get("query", "")
-            top_k = int(inputs.get("top_k", 5))
+            try:
+                top_k = int(inputs.get("top_k", 5))
+            except (TypeError, ValueError):
+                top_k = 5
             top_k = max(1, min(top_k, 50))  # clamp to reasonable range
             results = skill_io.search_skills(query, top_k)
             return json.dumps({"status": "ok", "results": results,

@@ -613,14 +613,13 @@ class WebInterface:
                 "name": name,
                 "summary": rec.get("summary", ""),
                 "size": len(rec.get("documentation", "")),
-                "mtime": rec.get("updated_at", 0),
+                "mtime": rec.get("last_accessed", 0),
                 "read_count": sstat.get("read_count", 0),
                 "sessions_loaded": sstat.get("sessions_loaded", 0),
                 "success_count": sstat.get("success_count", 0),
                 "failure_count": sstat.get("failure_count", 0),
                 "version": sstat.get("version", 1),
                 "last_read": sstat.get("last_read"),
-                "last_updated": sstat.get("last_updated"),
             })
         return self._json({"skills": skills, "count": len(skills)})
 
@@ -689,7 +688,16 @@ class WebInterface:
             return web.Response(status=400, text="Invalid JSON body")
         content = (data.get("content") or "").strip()
         summary = (data.get("summary") or "").strip()
-        documentation = (data.get("documentation") or content).strip()
+        documentation = (data.get("documentation") or "").strip()
+        # Backward compatibility for legacy debug UI:
+        # If only "content" is provided, treat first line as summary and the
+        # remainder as documentation (matching migration logic).
+        if not documentation and content:
+            lines = content.splitlines()
+            if lines:
+                if not summary:
+                    summary = lines[0].strip()
+                documentation = "\n".join(lines[1:]).strip()
         if not documentation:
             return self._json({"error": "content or documentation is required"})
         skill_store.update(name, summary=summary or None, documentation=documentation)
@@ -698,22 +706,39 @@ class WebInterface:
         return self._json({"ok": True, "name": name})
 
     async def _api_skill_delete(self, request: web.Request) -> web.Response:
-        """DELETE /api/skills/{name} — delete a skill."""
+        """DELETE /api/skills/{name} — soft-delete (archive) a skill.
+
+        Writes a backup of the skill to data/skills/.archive/ before
+        removing it from the store, preserving the ability to restore.
+        """
         from wintermute.infra import skill_store
         from wintermute.infra import data_versioning
         from wintermute.infra.skill_io import _validate_skill_name
+        from wintermute.infra.paths import SKILLS_DIR
 
         name = request.match_info["name"]
         try:
             name = _validate_skill_name(name)
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
-        if skill_store.get(name) is None:
+        rec = skill_store.get(name)
+        if rec is None:
             return web.json_response({"error": "not found"}, status=404)
+        # Archive: write a backup .md before removing from store.
+        try:
+            archive_dir = SKILLS_DIR / ".archive"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            content = f"{rec.get('summary', '')}\n\n{rec.get('documentation', '')}".strip()
+            changelog = rec.get("changelog", "")
+            if changelog:
+                content = f"{content}\n\n{changelog}"
+            (archive_dir / f"{name}.md").write_text(content, encoding="utf-8")
+        except Exception:
+            logger.debug("Failed to archive skill '%s' to .archive/", name, exc_info=True)
         skill_store.delete(name)
-        data_versioning.commit_async(f"skill: delete {name}")
-        logger.info("Skill '%s' deleted via web API", name)
-        return self._json({"ok": True, "name": name, "deleted": True})
+        data_versioning.commit_async(f"skill: archive {name}")
+        logger.info("Skill '%s' archived and deleted via web API", name)
+        return self._json({"ok": True, "name": name, "archived": True})
 
     # ------------------------------------------------------------------
     # SSE stream

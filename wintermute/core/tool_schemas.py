@@ -252,6 +252,20 @@ TOOL_SCHEMAS = [
                 },
             },
             "required": ["action"],
+            "oneOf": [
+                {
+                    "properties": {"action": {"const": "add"}},
+                    "required": ["action", "skill_name", "documentation"],
+                },
+                {
+                    "properties": {"action": {"const": "read"}},
+                    "required": ["action", "skill_name"],
+                },
+                {
+                    "properties": {"action": {"const": "search"}},
+                    "required": ["action", "query"],
+                },
+            ],
         },
     ),
     _fn(

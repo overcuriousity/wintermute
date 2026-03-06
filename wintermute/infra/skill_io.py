@@ -32,7 +32,17 @@ def add_skill(skill_name: str, documentation: str,
               summary: Optional[str] = None) -> None:
     """Create or update a skill in the active skill store."""
     skill_name = _validate_skill_name(skill_name)
-    skill_store.add(skill_name, summary or "", documentation)
+    # Derive summary from documentation first line when not provided,
+    # preserving the TOC/search UX that depends on non-empty summaries.
+    if summary is not None and summary.strip():
+        final_summary = summary.strip()
+    else:
+        doc_stripped = documentation.strip()
+        if doc_stripped:
+            final_summary = doc_stripped.splitlines()[0]
+        else:
+            final_summary = ""
+    skill_store.add(skill_name, final_summary, documentation)
     logger.info("Skill '%s' written via skill_store", skill_name)
     data_versioning.commit_async(f"skill: {skill_name}")
 

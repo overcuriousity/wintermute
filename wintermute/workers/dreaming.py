@@ -610,10 +610,14 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
                     content = act.get("content", "").strip()
                     if not target or not content:
                         continue
-                    # Update the target skill with merged content.
-                    skill_store.update(target, documentation=content)
+                    # Split merged content into summary (first line) and documentation (rest).
+                    summary_line, _, rest = content.partition("\n")
+                    merge_summary = summary_line.strip()
+                    merge_doc = rest.lstrip("\n").strip()
+                    skill_store.update(target, summary=merge_summary, documentation=merge_doc)
                     if target in skills:
-                        skills[target]["documentation"] = content
+                        skills[target]["summary"] = merge_summary
+                        skills[target]["documentation"] = merge_doc
                     if name != target and name in skills:
                         skill_store.delete(name)
                         del skills[name]
@@ -631,7 +635,11 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
         if len(doc) < 600:
             continue  # skip short skills — no need to condense
         try:
-            prompt = condense_template.format(skill_name=name, content=doc)
+            # Pass full skill text (summary + doc) to the condense prompt
+            # so the model can produce a complete condensed version.
+            summary = rec.get("summary", "")
+            full_content = f"{summary}\n\n{doc}".strip() if summary else doc
+            prompt = condense_template.format(skill_name=name, content=full_content)
             response = await pool.call(
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens_override=600,
@@ -640,7 +648,11 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
                 continue
             condensed_text = (response.content or "").strip()
             if condensed_text:
-                skill_store.update(name, documentation=condensed_text)
+                # Split output back into summary (first line) and documentation.
+                cond_first, _, cond_rest = condensed_text.partition("\n")
+                cond_summary = cond_first.strip()
+                cond_doc = cond_rest.lstrip("\n").strip()
+                skill_store.update(name, summary=cond_summary, documentation=cond_doc)
                 condensed += 1
                 try:
                     await database.async_call(

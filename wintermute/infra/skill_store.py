@@ -820,6 +820,7 @@ class QdrantSkillBackend:
         # Check existing for version tracking.
         version = 1
         new_changelog = changelog
+        existing = []  # safe default if retrieve() raises
         try:
             existing = self._client.retrieve(
                 collection_name=self._collection,
@@ -964,11 +965,12 @@ class QdrantSkillBackend:
         ]
 
     def delete(self, name: str) -> bool:
+        from qdrant_client.models import PointIdsList
         pid = self._name_to_id(name)
         try:
             self._client.delete(
                 collection_name=self._collection,
-                points_selector=[pid],
+                points_selector=PointIdsList(points=[pid]),
             )
             return True
         except Exception:
@@ -1061,12 +1063,14 @@ class QdrantSkillBackend:
         ]
 
     def bulk_delete(self, names: list[str]) -> int:
+        from qdrant_client.models import PointIdsList
         pids = [self._name_to_id(n) for n in names]
         try:
-            self._client.delete(
-                collection_name=self._collection,
-                points_selector=pids,
-            )
+            with self._lock:
+                self._client.delete(
+                    collection_name=self._collection,
+                    points_selector=PointIdsList(points=pids),  # type: ignore[arg-type]
+                )
             return len(pids)
         except Exception:
             return 0
@@ -1080,7 +1084,8 @@ def _migrate_from_flat_files() -> None:
     """Import existing markdown skill files into the active backend.
 
     Only runs when the store is empty and data/skills/*.md files exist.
-    Merges metadata from data/skill_stats.yaml if available.
+    Legacy stats from data/skill_stats.yaml are noted in logs but not
+    applied to the backend state (to avoid mutating version history).
     """
     if not SKILLS_DIR.exists():
         return
@@ -1119,19 +1124,26 @@ def _migrate_from_flat_files() -> None:
 
             _b().add(name, summary, documentation, changelog=changelog)
 
-            # Apply stats from skill_stats.yaml if available.
+            # Legacy stats from skill_stats.yaml (noted but not merged
+            # into backend state to avoid mutating version history during
+            # migration without proper support for setting access_count /
+            # last_accessed directly).
             skill_stat = stats.get(name, {})
             if skill_stat:
                 try:
-                    from wintermute.infra import database
-                    # Patch access_count / last_accessed from legacy stats.
                     read_count = skill_stat.get("read_count", 0)
                     last_read = skill_stat.get("last_read", 0)
                     if read_count or last_read:
-                        _b().update(name)  # no-op content-wise, but bumps version
-                        logger.debug("Migrated stats for skill '%s': reads=%d", name, read_count)
+                        logger.debug(
+                            "Found legacy stats for skill '%s' (reads=%d, last_read=%s); "
+                            "not applied by migration",
+                            name, read_count, last_read,
+                        )
                 except Exception:
-                    logger.debug("Could not apply stats for skill '%s'", name, exc_info=True)
+                    logger.debug(
+                        "Error while inspecting legacy stats for skill '%s'",
+                        name, exc_info=True,
+                    )
 
             imported += 1
         except Exception:
