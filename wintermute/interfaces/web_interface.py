@@ -732,10 +732,11 @@ class WebInterface:
         rec = skill_store.get(name) or {}
         try:
             archive_dir = SKILLS_DIR / ".archive"
-            archive_dir.mkdir(parents=True, exist_ok=True)
-            archive_path = (archive_dir / f"{name}.md").resolve()
+            archive_dir_resolved = archive_dir.resolve()
+            archive_dir_resolved.mkdir(parents=True, exist_ok=True)
+            archive_path = (archive_dir_resolved / f"{name}.md").resolve()
             # Guard: ensure resolved path stays strictly within the archive directory.
-            if not archive_path.is_relative_to(archive_dir.resolve()):
+            if not archive_path.is_relative_to(archive_dir_resolved):
                 raise ValueError(f"Archive path escapes directory: {name!r}")
             content = f"{rec.get('summary', '')}\n\n{rec.get('documentation', '')}".strip()
             changelog = rec.get("changelog", "")
