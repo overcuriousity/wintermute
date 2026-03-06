@@ -21,4 +21,4 @@ After your observations, end your response with this JSON block on its own line:
 {{"skill_actions": []}}
 
 If you recommend a skill change, add a brief English instruction per action:
-{{"skill_actions": ["Review and update data/skills/example.md - correlates with 3 failures"]}}
+{{"skill_actions": ["Review and update skill 'example' — correlates with 3 failures"]}}

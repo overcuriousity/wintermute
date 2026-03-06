@@ -597,39 +597,36 @@ class WebInterface:
 
     async def _api_skills(self, _request: web.Request) -> web.Response:
         """GET /api/skills — list all skills with metadata and stats."""
-        from wintermute.infra.paths import SKILLS_DIR
-        from wintermute.workers import skill_stats
+        from wintermute.infra import skill_store
 
         skills = []
-        stats = skill_stats.get_all()
-        if SKILLS_DIR.exists():
-            for md_file in sorted(SKILLS_DIR.glob("*.md")):
-                try:
-                    content = md_file.read_text(encoding="utf-8")
-                except OSError:
-                    continue
-                name = md_file.stem
-                summary = content.split("\n", 1)[0].strip() if content else ""
-                st = md_file.stat()
-                skill_stat = stats.get(name, {})
-                skills.append({
-                    "name": name,
-                    "summary": summary,
-                    "size": st.st_size,
-                    "mtime": st.st_mtime,
-                    "read_count": skill_stat.get("read_count", 0),
-                    "sessions_loaded": skill_stat.get("sessions_loaded", 0),
-                    "success_count": skill_stat.get("success_count", 0),
-                    "failure_count": skill_stat.get("failure_count", 0),
-                    "version": skill_stat.get("version", 1),
-                    "last_read": skill_stat.get("last_read"),
-                    "last_updated": skill_stat.get("last_updated"),
-                })
+        try:
+            all_skills = skill_store.get_all()
+            store_stats = skill_store.stats()
+        except Exception as exc:
+            return self._json({"error": str(exc), "skills": [], "count": 0})
+
+        for rec in all_skills:
+            name = rec["name"]
+            sstat = store_stats.get(name, {})
+            skills.append({
+                "name": name,
+                "summary": rec.get("summary", ""),
+                "doc_chars": len(rec.get("documentation", "")),
+                "last_accessed": rec.get("last_accessed", 0),
+                "read_count": sstat.get("read_count", 0),
+                # sessions_loaded mirrors read_count; success/failure not yet persisted.
+                "sessions_loaded": sstat.get("sessions_loaded", 0),
+                "success_count": sstat.get("success_count", 0),
+                "failure_count": sstat.get("failure_count", 0),
+                "version": sstat.get("version", 1),
+                "last_read": sstat.get("last_read"),
+            })
         return self._json({"skills": skills, "count": len(skills)})
 
     async def _api_skill_get(self, request: web.Request) -> web.Response:
         """GET /api/skills/{name} — read full skill content."""
-        from wintermute.infra.paths import SKILLS_DIR
+        from wintermute.infra import skill_store
         from wintermute.infra.skill_io import _validate_skill_name
 
         name = request.match_info["name"]
@@ -637,19 +634,20 @@ class WebInterface:
             name = _validate_skill_name(name)
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
-        skill_file = SKILLS_DIR / f"{name}.md"
-        if not skill_file.exists():
+        rec = skill_store.get(name)
+        if rec is None:
             return web.json_response({"error": "not found"}, status=404)
-        try:
-            content = skill_file.read_text(encoding="utf-8")
-        except OSError as exc:
-            return self._json({"error": str(exc)})
-        return self._json({"name": name, "content": content})
+        return self._json({
+            "name": name,
+            "summary": rec.get("summary", ""),
+            "documentation": rec.get("documentation", ""),
+            "content": f"{rec.get('summary', '')}\n\n{rec.get('documentation', '')}".strip(),
+        })
 
     async def _api_skill_create(self, request: web.Request) -> web.Response:
         """POST /api/skills — create a new skill."""
         from wintermute.infra.skill_io import add_skill, _validate_skill_name
-        from wintermute.infra.paths import SKILLS_DIR
+        from wintermute.infra import skill_store
 
         try:
             data = await request.json()
@@ -659,14 +657,16 @@ class WebInterface:
         summary = (data.get("summary") or "").strip()
         documentation = (data.get("documentation") or "").strip()
         if not name or not documentation:
-            return self._json({"error": "skill_name and documentation are required"})
+            return web.json_response(
+                {"error": "skill_name and documentation are required"}, status=400)
         try:
             name = _validate_skill_name(name)
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
-        # Reject if already exists
-        if (SKILLS_DIR / f"{name}.md").exists():
-            return self._json({"error": f"Skill '{name}' already exists. Use PUT to update."})
+        # Reject if already exists (non-tracking check).
+        if skill_store.exists(name):
+            return web.json_response(
+                {"error": f"Skill '{name}' already exists. Use PUT to update."}, status=409)
         try:
             add_skill(name, documentation, summary=summary or None)
         except ValueError as exc:
@@ -675,7 +675,7 @@ class WebInterface:
 
     async def _api_skill_update(self, request: web.Request) -> web.Response:
         """PUT /api/skills/{name} — update an existing skill."""
-        from wintermute.infra.paths import SKILLS_DIR
+        from wintermute.infra import skill_store
         from wintermute.infra.skill_io import _validate_skill_name
 
         name = request.match_info["name"]
@@ -683,40 +683,75 @@ class WebInterface:
             name = _validate_skill_name(name)
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
-        if not (SKILLS_DIR / f"{name}.md").exists():
+        if not skill_store.exists(name):
             return web.json_response({"error": "not found"}, status=404)
         try:
             data = await request.json()
         except Exception:
             return web.Response(status=400, text="Invalid JSON body")
         content = (data.get("content") or "").strip()
-        if not content:
-            return self._json({"error": "content is required"})
-        # Write full content directly (preserving user edits including changelog)
-        skill_file = SKILLS_DIR / f"{name}.md"
-        skill_file.write_text(content, encoding="utf-8")
+        summary = (data.get("summary") or "").strip()
+        documentation = (data.get("documentation") or "").strip()
+        # Backward compatibility for legacy debug UI:
+        # If only "content" is provided, treat first line as summary and the
+        # remainder as documentation (matching migration logic).
+        if not documentation and content:
+            lines = content.splitlines()
+            if lines:
+                if not summary:
+                    summary = lines[0].strip()
+                documentation = "\n".join(lines[1:]).strip()
+        if not documentation:
+            return web.json_response(
+                {"error": "content or documentation is required"}, status=400)
+        skill_store.update(name, summary=summary or None, documentation=documentation)
         from wintermute.infra import data_versioning
         data_versioning.commit_async(f"skill: {name}")
         return self._json({"ok": True, "name": name})
 
     async def _api_skill_delete(self, request: web.Request) -> web.Response:
-        """DELETE /api/skills/{name} — archive a skill."""
-        from wintermute.infra.paths import SKILLS_DIR
+        """DELETE /api/skills/{name} — soft-delete (archive) a skill.
+
+        Writes a backup of the skill to data/skills/.archive/ before
+        removing it from the store, preserving the ability to restore.
+        """
+        from wintermute.infra import skill_store
         from wintermute.infra import data_versioning
-        from wintermute.workers import skill_stats
+        from wintermute.infra.skill_io import _validate_skill_name
+        from wintermute.infra.paths import SKILLS_DIR
 
         name = request.match_info["name"]
-        skill_file = SKILLS_DIR / f"{name}.md"
-        if not skill_file.exists():
+        try:
+            name = _validate_skill_name(name)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        if not skill_store.exists(name):
             return web.json_response({"error": "not found"}, status=404)
-        archive_dir = SKILLS_DIR / ".archive"
-        archive_dir.mkdir(exist_ok=True)
-        dest = archive_dir / f"{name}.md"
-        skill_file.rename(dest)
-        skill_stats.remove_skill(name)
-        skill_stats.flush()
+        # Archive: write a backup .md before removing from store.
+        # Use get() here to fetch full content (stat bump is irrelevant before delete).
+        rec = skill_store.get(name) or {}
+        try:
+            archive_dir = SKILLS_DIR / ".archive"
+            archive_dir_resolved = archive_dir.resolve()
+            archive_dir_resolved.mkdir(parents=True, exist_ok=True)
+            archive_path = (archive_dir_resolved / f"{name}.md").resolve()
+            # Guard: ensure resolved path stays strictly within the archive directory.
+            if not archive_path.is_relative_to(archive_dir_resolved):
+                raise ValueError(f"Archive path escapes directory: {name!r}")
+            content = f"{rec.get('summary', '')}\n\n{rec.get('documentation', '')}".strip()
+            changelog = rec.get("changelog", "")
+            if changelog:
+                content = f"{content}\n\n{changelog}"
+            archive_path.write_text(content, encoding="utf-8")
+        except Exception:
+            logger.error("Failed to archive skill '%s' to .archive/; aborting delete", name, exc_info=True)
+            return web.json_response(
+                {"error": "failed to archive skill before deletion"},
+                status=500,
+            )
+        skill_store.delete(name)
         data_versioning.commit_async(f"skill: archive {name}")
-        logger.info("Skill '%s' archived to %s", name, dest)
+        logger.info("Skill '%s' archived and deleted via web API", name)
         return self._json({"ok": True, "name": name, "archived": True})
 
     # ------------------------------------------------------------------

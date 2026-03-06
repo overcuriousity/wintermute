@@ -42,7 +42,7 @@ from wintermute.infra import memory_store
 from wintermute.infra import prompt_loader
 from wintermute.infra.llm_utils import parse_json_from_llm
 from wintermute.infra.memory_io import merge_consolidated_memories, read_text_safe, write_memories_raw
-from wintermute.infra.paths import MEMORIES_FILE, SKILLS_DIR
+from wintermute.infra.paths import MEMORIES_FILE
 
 if TYPE_CHECKING:
     from wintermute.core.types import BackendPool
@@ -551,44 +551,33 @@ async def _phase_task_consolidation(pool: "BackendPool", cfg: dict,
 
 async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
                                      sim_data: SimilarityData) -> PhaseResult:
-    """Phase: deduplicate and condense skill files."""
+    """Phase: deduplicate and condense skills via skill_store."""
+    from wintermute.infra import skill_store
+
     result = PhaseResult(phase_name="skill_consolidation")
-    skills_dir = SKILLS_DIR
-    if not skills_dir.exists():
-        result.summary = "skills dir missing"
-        return result
 
-    skill_files = sorted(skills_dir.glob("*.md"))
-    if not skill_files:
-        result.summary = "no skill files"
-        return result
-
-    # stem -> (path, content)
-    skills: dict[str, tuple[Path, str]] = {}
-    for f in skill_files:
-        content = f.read_text(encoding="utf-8").strip()
-        if content:
-            skills[f.stem] = (f, content)
-
-    if not skills:
-        result.summary = "all skill files empty"
-        return result
-
-    # Auto-retire unused skills.
     try:
-        from wintermute.workers import skill_stats
-        unused = skill_stats.get_unused_skills(days=90)
-        if unused:
-            archive_dir = skills_dir / ".archive"
-            archive_dir.mkdir(exist_ok=True)
-            for name in unused:
-                src = skills_dir / f"{name}.md"
-                if src.exists():
-                    src.rename(archive_dir / f"{name}.md")
-                    skills.pop(name, None)
-                    skill_stats.remove_skill(name)
-                    logger.info("Dreaming: retired unused skill '%s'", name)
-            skill_stats.flush()
+        all_skills = skill_store.get_all()
+    except Exception:
+        logger.warning("Dreaming: skill_store.get_all() failed", exc_info=True)
+        result.summary = "skill_store unavailable"
+        return result
+
+    if not all_skills:
+        result.summary = "no skills"
+        return result
+
+    # Build name -> record map.
+    skills: dict[str, dict] = {s["name"]: s for s in all_skills}
+
+    # Auto-retire unused skills (>90 days without reads, <2 accesses).
+    try:
+        stale = skill_store.get_stale(max_age_days=90, min_access=2)
+        for rec in stale:
+            name = rec["name"]
+            skill_store.delete(name)
+            skills.pop(name, None)
+            logger.info("Dreaming: retired unused skill '%s'", name)
     except Exception:
         logger.debug("Dreaming: skill retirement failed", exc_info=True)
 
@@ -602,8 +591,8 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
         try:
             dedup_prompt = prompt_loader.load("DREAM_SKILLS_DEDUP_PROMPT.txt")
             formatted = "\n\n".join(
-                f"=== {name} ===\n{content}"
-                for name, (_, content) in skills.items()
+                f"=== {name} ===\n{rec.get('summary', '')}\n{rec.get('documentation', '')}"
+                for name, rec in skills.items()
             )
             raw = await _consolidate(pool, "skills_dedup", dedup_prompt, formatted)
             actions = parse_json_from_llm(raw, list)
@@ -612,20 +601,28 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
                 name = act.get("file", "")
                 if action == "delete":
                     if name in skills:
-                        skills[name][0].unlink()
-                        logger.info("Dreaming: deleted duplicate skill '%s'", name)
+                        skill_store.delete(name)
                         del skills[name]
                         merged_skills += 1
+                        logger.info("Dreaming: deleted duplicate skill '%s'", name)
                 elif action == "merge":
                     target = act.get("into", "")
                     content = act.get("content", "").strip()
                     if not target or not content:
                         continue
-                    target_path = skills_dir / f"{target}.md"
-                    target_path.write_text(content, encoding="utf-8")
-                    skills[target] = (target_path, content)
+                    # Split merged content into summary (first line) and documentation (rest).
+                    summary_line, _, rest = content.partition("\n")
+                    merge_summary = summary_line.strip()
+                    merge_doc = rest.lstrip("\n").strip()
+                    if skill_store.exists(target):
+                        skill_store.update(target, summary=merge_summary, documentation=merge_doc)
+                    else:
+                        skill_store.add(target, merge_summary, merge_doc)
+                    if target in skills:
+                        skills[target]["summary"] = merge_summary
+                        skills[target]["documentation"] = merge_doc
                     if name != target and name in skills:
-                        skills[name][0].unlink()
+                        skill_store.delete(name)
                         del skills[name]
                     merged_skills += 1
         except ValueError as exc:
@@ -633,12 +630,28 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
         except Exception:  # noqa: BLE001
             logger.exception("Dreaming: skill dedup failed")
 
-    # Condense each surviving skill.
+    # Condense each surviving skill (less aggressive — only if doc > 600 chars).
     condensed = 0
-    condense_template = prompt_loader.load("DREAM_SKILLS_CONDENSATION_PROMPT.txt")
-    for name, (fpath, content) in list(skills.items()):
+    try:
+        condense_template = prompt_loader.load("DREAM_SKILLS_CONDENSATION_PROMPT.txt")
+    except FileNotFoundError:
+        logger.warning("Dreaming: DREAM_SKILLS_CONDENSATION_PROMPT.txt not found, skipping condensation")
+        condense_template = None
+    if condense_template is None:
+        result.items_processed = merged_skills
+        result.summary = f"merged {merged_skills}, condensed 0 skills (template missing)"
+        logger.info("Dreaming phase skill_consolidation: %s", result.summary)
+        return result
+    for name, rec in list(skills.items()):
+        doc = rec.get("documentation", "")
+        if len(doc) < 600:
+            continue  # skip short skills — no need to condense
         try:
-            prompt = condense_template.format(skill_name=name, content=content)
+            # Pass full skill text (summary + doc) to the condense prompt
+            # so the model can produce a complete condensed version.
+            summary = rec.get("summary", "")
+            full_content = f"{summary}\n\n{doc}".strip() if summary else doc
+            prompt = condense_template.format(skill_name=name, content=full_content)
             response = await pool.call(
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens_override=600,
@@ -647,7 +660,11 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
                 continue
             condensed_text = (response.content or "").strip()
             if condensed_text:
-                fpath.write_text(condensed_text, encoding="utf-8")
+                # Split output back into summary (first line) and documentation.
+                cond_first, _, cond_rest = condensed_text.partition("\n")
+                cond_summary = cond_first.strip()
+                cond_doc = cond_rest.lstrip("\n").strip()
+                skill_store.update(name, summary=cond_summary, documentation=cond_doc)
                 condensed += 1
                 try:
                     await database.async_call(

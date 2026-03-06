@@ -154,7 +154,7 @@ class SlashCommandHandler:
     async def _cmd_status(self, thread_id: str, send_fn: SendFn) -> None:
         from wintermute.infra import database as db
         from wintermute.infra.memory_io import read_text_safe
-        from wintermute.infra.paths import MEMORIES_FILE, SKILLS_DIR
+        from wintermute.infra.paths import MEMORIES_FILE
 
         lines = ["**Wintermute Status**"]
 
@@ -198,16 +198,20 @@ class SlashCommandHandler:
 
         def _read_memory_and_skills():
             mem = read_text_safe(MEMORIES_FILE) or ""
-            skill_paths = sorted(SKILLS_DIR.glob("*.md")) if SKILLS_DIR.exists() else []
-            return mem, skill_paths
+            try:
+                from wintermute.infra import skill_store
+                all_skills = skill_store.get_all()
+            except Exception:
+                all_skills = []
+            return mem, all_skills
 
-        mem_text, skill_paths = await asyncio.to_thread(_read_memory_and_skills)
+        mem_text, all_skills = await asyncio.to_thread(_read_memory_and_skills)
         mem_lines = mem_text.count("\n") + (1 if mem_text.strip() else 0)
         lines.append(f"MEMORIES.txt: {mem_lines} lines ({len(mem_text):,} chars)")
-        if skill_paths:
-            lines.append(f"Skills ({len(skill_paths)}):")
-            for p in skill_paths:
-                lines.append(f"- {p.stem}")
+        if all_skills:
+            lines.append(f"Skills ({len(all_skills)}):")
+            for s in all_skills:
+                lines.append(f"- {s['name']}")
         else:
             lines.append("Skills: none")
 
@@ -330,7 +334,7 @@ class SlashCommandHandler:
     async def _cmd_dream(self, thread_id: str, send_fn: SendFn) -> None:
         from wintermute.workers import dreaming
         from wintermute.infra.memory_io import read_text_safe
-        from wintermute.infra.paths import MEMORIES_FILE, SKILLS_DIR
+        from wintermute.infra.paths import MEMORIES_FILE
 
         if not self._dreaming_loop:
             await send_fn("Dreaming loop not available.")
@@ -341,11 +345,14 @@ class SlashCommandHandler:
 
         def _snapshot_memory_skills():
             mem_len = len(read_text_safe(MEMORIES_FILE) or "")
-            skill_files = sorted(SKILLS_DIR.glob("*.md")) if SKILLS_DIR.exists() else []
-            skills_size = sum(f.stat().st_size for f in skill_files)
-            return mem_len, len(skill_files), skills_size
+            try:
+                from wintermute.infra import skill_store
+                skills_count = skill_store.count()
+            except Exception:
+                skills_count = 0
+            return mem_len, skills_count
 
-        mem_before, skills_count_before, skills_size_before = await asyncio.to_thread(_snapshot_memory_skills)
+        mem_before, skills_count_before = await asyncio.to_thread(_snapshot_memory_skills)
         tasks_before = len(await db.async_call(db.list_tasks, "active"))
 
         await send_fn("Starting dream cycle...")
@@ -355,7 +362,7 @@ class SlashCommandHandler:
             await send_fn(f"Dream cycle failed: {exc}")
             return
 
-        mem_after, skills_count_after, skills_size_after = await asyncio.to_thread(_snapshot_memory_skills)
+        mem_after, skills_count_after = await asyncio.to_thread(_snapshot_memory_skills)
         tasks_after = len(await db.async_call(db.list_tasks, "active"))
 
         # Build phase summary from DreamReport.
@@ -370,8 +377,7 @@ class SlashCommandHandler:
             f"Dream cycle complete ({len(report.phases_run)} phases).\n"
             f"MEMORIES.txt: {mem_before} -> {mem_after} chars\n"
             f"Tasks: {tasks_before} -> {tasks_after} active\n"
-            f"Skills: {skills_count_before} -> {skills_count_after} files, "
-            f"{skills_size_before} -> {skills_size_after} bytes\n"
+            f"Skills: {skills_count_before} -> {skills_count_after}\n"
             f"Phases:\n{phases_text}{errors_text}"
         )
 

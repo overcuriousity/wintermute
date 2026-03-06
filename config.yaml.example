@@ -301,7 +301,30 @@ nl_translation:
   tools:                                  # Which tools get NL-simplified schemas
     - task                                # Task management (add/complete/schedule/pause/resume)
     - worker_delegation                   # Background worker spawning (DAG dependencies)
-    - add_skill                           # Skill creation (summary + documentation formatting)
+    - skill                               # Skill management (add/read/search actions)
+
+
+# ── Skill Storage ────────────────────────────────────────────────────
+# Skills (learned reusable procedures) are stored in a vector-indexed
+# backend — the same architecture as memories.  The skills backend is
+# configured separately from the memory backend.  If omitted, startup
+# logic auto-selects as follows:
+#   1. Inherit memory.backend (flat_file is normalised to fts5).
+#   2. If still unset, use local_vector when memory.embeddings.endpoint
+#      is configured, otherwise fts5.
+# Set skills.backend explicitly to override this auto-detection.
+#
+# Supported backends: fts5, local_vector, qdrant
+# (flat_file is NOT supported for skills — fts5 is used as fallback.)
+#
+# Embedding config is inherited from memory.embeddings by default.
+#
+# skills:
+#   backend: "fts5"                       # "fts5" | "local_vector" | "qdrant"
+#   qdrant:
+#     collection: "wintermute_skills"     # Separate collection (default)
+#     url: "http://localhost:6333"        # Inherits from memory.qdrant if omitted
+#     api_key: null
 
 
 # ── Tool Profiles (Named Sub-session Presets) ────────────────────────
@@ -326,7 +349,7 @@ tool_profiles:
     tools: [execute_shell, read_file, write_file, search_web, fetch_url]
     prompt_mode: minimal
   orchestrator:
-    tools: [worker_delegation, task, append_memory, add_skill]
+    tools: [worker_delegation, task, append_memory, skill]
     prompt_mode: full
 
 
@@ -385,7 +408,7 @@ context:
   component_size_limits:
     memories: 10000                       # MEMORIES.txt — long-term personal facts
     tasks: 5000                           # Active tasks from database
-    skills_total: 20000                   # Total across all data/skills/*.md files
+    skills_total: 20000                   # Skills TOC generated from skill store
 
 
 # ── Dreaming (Nightly Consolidation) ────────────────────────────────

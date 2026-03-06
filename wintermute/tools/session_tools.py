@@ -174,8 +174,8 @@ def tool_query_telemetry(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_
             return json.dumps({"outcomes": rows, "count": len(rows)})
 
         elif query_type == "skill_stats":
-            from wintermute.workers import skill_stats
-            return json.dumps(skill_stats.get_all())
+            from wintermute.infra import skill_store
+            return json.dumps(skill_store.stats())
 
         elif query_type == "top_tools":
             tool_stats = database.get_tool_usage_stats(since_ts)

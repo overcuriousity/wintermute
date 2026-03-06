@@ -6,7 +6,7 @@ Order:
   2. Current datetime   – local time + timezone
   3. MEMORIES.txt      – long-term user facts
   4. Tasks (from DB)    – active goals, reminders, scheduled actions
-  5. skills/*.md       – capability documentation
+  5. Skills TOC        – query-ranked when vector backend is active
 """
 
 import json
@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 from wintermute.infra import database
 from wintermute.infra import prompt_loader
 from wintermute.infra.memory_io import read_text_safe
-from wintermute.infra.paths import MEMORIES_FILE, SKILLS_DIR
+from wintermute.infra.paths import MEMORIES_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -211,23 +211,43 @@ def _get_reflection_observations() -> str:
     return combined[:500]
 
 
-def _read_skills_toc() -> str:
-    """Build a TOC of skills with first-line summaries and exact file paths.
+def _read_skills_toc(query: Optional[str] = None) -> str:
+    """Build a TOC of skills from the skill store.
 
-    Always returns a non-empty string (includes instructions even when no
-    skills exist) so the LLM knows the skill system is available.
+    When *query* is provided and the skill backend supports vector search,
+    skills are ranked by relevance (mirroring the memory query-ranking
+    pattern).  Otherwise falls back to listing all skills alphabetically.
+
+    Always returns a non-empty string so the LLM knows the skill system
+    is available.
     """
-    header = 'Load a skill with read_file when relevant to the current task.'
+    from wintermute.infra import skill_store
+
+    header = 'Use the skill tool (action "read" or "search") to retrieve details.'
     entries: list[str] = []
-    if SKILLS_DIR.exists():
-        for md_file in sorted(SKILLS_DIR.glob("*.md")):
-            content = read_text_safe(md_file)
-            if content:
-                summary = content.split("\n", 1)[0].strip()
-                rel_path = f"data/skills/{md_file.name}"
-                entries.append(f"- {rel_path} — {summary}")
+    ranked = False
+    try:
+        if query and skill_store.is_vector_enabled():
+            results = skill_store.search(query)
+            ranked = True
+        else:
+            results = skill_store.get_all()
+            ranked = False
+        for rec in results:
+            name = rec.get("name", "unknown")
+            summary = rec.get("summary", "").strip()
+            score = rec.get("score", 0)
+            if ranked and summary:
+                entries.append(f"- {name} ({score:.2f}) — {summary}")
+            elif summary:
+                entries.append(f"- {name} — {summary}")
+            else:
+                entries.append(f"- {name}")
+    except Exception as exc:
+        logger.warning("skill_store skills TOC failed: %s", exc)
     if entries:
-        return header + "\n" + "\n".join(entries)
+        label = "relevance-ranked" if ranked else "all"
+        return f"{header} ({label})\n" + "\n".join(entries)
     return header
 
 
@@ -317,7 +337,7 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
         sections.append(f"# Conversation Summary\n\n{extra_summary}")
 
     if not minimal:
-        skills_toc = _read_skills_toc()
+        skills_toc = _read_skills_toc(query=query)
         sections.append(f"# Skills\n\n{skills_toc}")
 
     return "\n\n---\n\n".join(sections)

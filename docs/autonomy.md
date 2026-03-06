@@ -38,7 +38,7 @@ A biologically-inspired multi-phase memory consolidation system that runs nightl
 **Shared phases** (all backends):
 
 5. **Task consolidation:** LLM returns JSON actions (complete, update, keep) applied via DB; completed tasks older than 30 days are purged.
-6. **Skill consolidation:** Auto-retires skills unused for 90+ days (moved to `data/skills/.archive/`), then deduplicates overlapping skills, then condenses each to ~150 tokens while preserving the first-line summary.
+6. **Skill consolidation:** Auto-retires skills unused for 90+ days (deleted from the skill store), then deduplicates overlapping skills, then condenses skills with >600 chars documentation while preserving the first-line summary.
 
 **Creative phases** (vector backends only, gated):
 
@@ -96,7 +96,7 @@ An event-driven feedback loop that closes the observe→reflect→adapt cycle. T
 
 1. **Rule engine (zero LLM cost):** Programmatic pattern detection on DB and event data. Auto-applies simple actions (pause failing tasks, flag stale skills). Runs on every trigger event.
 2. **LLM analysis (cheap, one-shot):** A direct `pool.call()` with a prose prompt summarizing recent findings. Only runs when the rule engine finds something interesting.
-3. **Sub-session mutations (expensive, rare):** A constrained sub-session is spawned only when the LLM analysis recommends a creative change (e.g. rewriting a skill). Limited to `read_file`, `add_skill`, and `append_memory` tools with a 5-round cap.
+3. **Sub-session mutations (expensive, rare):** A constrained sub-session is spawned only when the LLM analysis recommends a creative change (e.g. rewriting a skill). Limited to `read_file`, `skill`, and `append_memory` tools with a 5-round cap.
 4. **Pattern-to-skill synthesis (periodic):** Clusters completed sub-session outcomes by tool usage patterns, identifies recurring workflows not yet captured as skills, and proposes new skills via a one-shot LLM call. Gates: ≥20 completed outcomes in the lookback window and 24h cooldown. Proposals are executed as mutation sub-sessions (max 2 per cycle).
 
 ### Trigger Conditions (event-driven, no polling)
@@ -113,7 +113,7 @@ An event-driven feedback loop that closes the observe→reflect→adapt cycle. T
 | `consecutive_failures` | Task with N+ consecutive failed sub-sessions | Auto-pauses the task |
 | `timeout_pattern` | Task with 3+ consecutive timeouts | Warning (suggests longer timeout or simpler prompt) |
 | `stale_task` | Scheduled task producing very short output | Warning (may need better `ai_prompt`) |
-| `skill_correlation` | Skill loaded in 3+ failed sub-sessions | Warning + event (flags skill for review, enriched with lifetime stats from skill_stats) |
+| `skill_correlation` | Skill loaded in 3+ failed sub-sessions | Warning + event (flags skill for review, enriched with lifetime stats from skill_store) |
 
 ### Visibility
 
@@ -136,7 +136,7 @@ Runs inside the reflection cycle (no separate asyncio task) and builds an operat
 - Sub-session success / timeout / failure rates and average duration (from `sub_session_outcomes`)
 - Top 5 most-used tools in the last 24h (from `tools_used` JSON in outcomes)
 - Compaction, harvest, and inference counts (from `interaction_log`)
-- Skill metrics: total count, total reads, skills unused for 90+ days (from `skill_stats`)
+- Skill metrics: total count, total reads, skills unused for 90+ days (from `skill_store`)
 
 **Auto-tuning** adjusts two live parameters within configured safe bounds each cycle:
 
@@ -159,13 +159,13 @@ Changes are applied immediately to the live `SubSessionManager` and `MemoryHarve
 
 ## Skill Evolution
 
-**Module:** `wintermute/workers/skill_stats.py`
+**Module:** `wintermute/infra/skill_store.py`
 
-Skills are no longer static files — they are tracked, correlated with outcomes, auto-retired when stale, and flagged when problematic. Skill stats are persisted to `data/skill_stats.yaml` (versioned in the data git repo alongside the skills themselves).
+Skills are stored in a vector-indexed backend (`skill_store`) — tracked, correlated with outcomes, auto-retired when stale, and flagged when problematic. Stats are tracked natively by each backend.
 
 ### Usage Tracking
 
-Every `read_file` call on a `data/skills/*.md` path increments the skill's read counter and updates its `last_read` timestamp. Every `add_skill` call increments the skill's version counter. This is transparent to the LLM — no tool schemas are changed.
+Every `skill` tool `read` action increments the skill's access counter and updates its `last_accessed` timestamp. Every `add` action increments the skill's version counter. This is transparent to the LLM — no tool schemas are changed.
 
 ### Outcome Correlation
 
@@ -186,7 +186,7 @@ skills:
 
 ### Auto-Retirement
 
-During nightly dreaming (before deduplication), skills not read in the last 90 days are automatically moved to `data/skills/.archive/`. The archive directory is inside `data/` so it is auto-committed to the data git repo. Archived skills vanish from the skills TOC automatically (the assembler only globs top-level `*.md` files). No LLM call is involved — this is a pure bookkeeping operation.
+During nightly dreaming (before deduplication), skills not accessed in the last 90 days are automatically deleted from the skill store. No LLM call is involved — this is a pure bookkeeping operation based on `last_accessed` and `access_count` tracked by the backend.
 
 ### Reflection Integration
 
@@ -201,11 +201,11 @@ The self-model profiler collects three skill metrics each cycle: total skill cou
 
 ### Changelog
 
-When an existing skill is overwritten via `add_skill`, a `## Changelog` section is appended with the date. Dreaming condensation naturally folds old changelog entries. Git history in the data repo remains the authoritative audit trail.
+When an existing skill is updated via the `skill` tool, a `## Changelog` section is appended with the date. Dreaming condensation naturally folds old changelog entries. Git history in the data repo remains the authoritative audit trail.
 
 ### Persistence
 
-Stats are flushed to YAML at the end of each reflection cycle and auto-committed to the data git repo. The file survives DB resets and is human-readable and editable.
+Stats are tracked natively by each skill store backend (SQLite or Qdrant). Mutations are auto-committed to the data git repo via `data_versioning`.
 
 ## Sub-sessions and Workflow DAG
 

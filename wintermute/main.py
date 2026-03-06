@@ -41,7 +41,6 @@ from wintermute.workers.dreaming import DreamingConfig, DreamingLoop
 from wintermute.workers.memory_harvest import MemoryHarvestConfig, MemoryHarvestLoop
 from wintermute.workers.reflection import ReflectionConfig, ReflectionLoop
 from wintermute.workers.self_model import SelfModelConfig, SelfModelProfiler
-from wintermute.workers import skill_stats
 from wintermute.workers.scheduler_thread import TaskScheduler, SchedulerConfig
 from wintermute.core.sub_session import SubSessionManager
 from wintermute.update_checker import UpdateCheckerConfig, UpdateCheckerLoop
@@ -342,9 +341,6 @@ async def main() -> None:
     prompt_loader.validate_all()
     database.init_db()
 
-    # Initialize skill stats (YAML-backed, no LLM).
-    skill_stats.init()
-
     # Initialize vector memory store (before pool construction).
     from wintermute.infra import memory_store
     try:
@@ -352,6 +348,29 @@ async def main() -> None:
     except Exception:
         logger.exception("Memory store init failed — falling back to flat_file")
         memory_store.init({"backend": "flat_file"})
+
+    # Initialize skill store (shares embedding + backend config from memory section).
+    from wintermute.infra import skill_store
+    try:
+        memory_cfg = cfg.get("memory", {}) or {}
+        skills_cfg = (cfg.get("skills", {}) or {}).copy()
+        # Inherit memory.backend as skill backend default when not explicitly set,
+        # but only for vector backends. For other memory backends, let
+        # skill_store.init() auto-select based on embeddings config.
+        if not skills_cfg.get("backend"):
+            mem_backend = memory_cfg.get("backend", "")
+            if mem_backend in ("local_vector", "qdrant"):
+                skills_cfg["backend"] = mem_backend
+        # Expose memory Qdrant config for inheritance by the skill Qdrant backend.
+        if memory_cfg.get("backend") == "qdrant" or memory_cfg.get("qdrant"):
+            skills_cfg.setdefault("_memory_qdrant", memory_cfg.get("qdrant", {}))
+        skill_store.init(
+            skills_cfg,
+            memory_cfg.get("embeddings", {}),
+        )
+    except Exception:
+        logger.exception("Skill store init failed — falling back to fts5")
+        skill_store.init({"backend": "fts5"}, {})
 
     # Set timezone for prompt assembler (used to inject current datetime).
     configured_tz = cfg.get("scheduler", {}).get("timezone", "UTC")
@@ -409,7 +428,7 @@ async def main() -> None:
     nl_raw = cfg.get("nl_translation", {}) or {}
     nl_translation_config = {
         "enabled": nl_raw.get("enabled", False) and nl_translation_pool.enabled,
-        "tools": set(nl_raw.get("tools", ["task", "worker_delegation", "add_skill"])),
+        "tools": set(nl_raw.get("tools", ["task", "worker_delegation", "skill"])),
     }
     if nl_translation_config["enabled"]:
         prompt_loader.validate_nl_translation()

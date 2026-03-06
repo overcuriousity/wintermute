@@ -1280,26 +1280,48 @@ class SubSessionManager:
         except Exception:
             logger.debug("Failed to persist outcome for %s", state.session_id, exc_info=True)
 
-        # Correlate skill usage with session outcome for skill_stats.
+        # Detect skill reads in this session for future outcome-correlation work.
+        # Currently only emits a debug log — success/failure counts are not yet
+        # persisted to skill_store.  When per-skill tracking is implemented, this
+        # is where the store update should happen.  Never raises.
         try:
-            log_entries = await database.async_call(
-                database.get_interaction_log,
-                limit=200,
-                session_filter=state.session_id,
-                action_filter="tool_call",
-            )
-            skill_names: list[str] = []
-            for entry in log_entries:
-                raw = entry.get("input", "")
-                if "read_file" in raw and "data/skills/" in raw:
-                    matches = re.findall(r'data/skills/([^\s"\']+)\.md', raw)
-                    skill_names.extend(matches)
-            if skill_names:
-                from wintermute.workers import skill_stats
-                skill_stats.record_session_outcome(
-                    list(set(skill_names)),
-                    status == "completed",
-                )
+            import json as _json
+            skill_names_used: list[str] = []
+            for tool_name, preview in (state.tool_calls_log or []):
+                if tool_name == "skill":
+                    # preview is the tool result JSON.
+                    # add returns {"skill": "name"} — skip (not a read, don't count).
+                    # read returns {"skill": {"name": ...}} — extract name.
+                    try:
+                        obj = _json.loads(preview)
+                        skill_val = obj.get("skill")
+                        if isinstance(skill_val, dict):
+                            # read action response
+                            sname = skill_val.get("name")
+                            if isinstance(sname, str) and sname:
+                                skill_names_used.append(sname)
+                        # isinstance str = add action, intentionally skipped
+                    except Exception:
+                        pass
+                elif tool_name == "read_file":
+                    # Legacy: detect read_file calls that had data/skills/ in their
+                    # *arguments* (stored alongside preview in some log formats).
+                    # tool_calls_log stores the result preview, not the arguments,
+                    # so this heuristic only fires if the path appears in the result.
+                    import re as _re
+                    matches = _re.findall(r'data/skills/([^\s"\']+)\.md', preview)
+                    skill_names_used.extend(matches)
+            if skill_names_used:
+                succeeded = status == "completed"
+                for sname in set(skill_names_used):
+                    # Log the correlation so it is available in interaction_log.
+                    # Avoid touching skill_store here to prevent mutating skill stats
+                    # (e.g., access_count/last_accessed) during outcome correlation.
+                    _log = logging.getLogger(__name__)
+                    _log.debug(
+                        "Skill outcome: skill=%r, session=%s, success=%s",
+                        sname, state.session_id, succeeded,
+                    )
         except Exception:
             logger.debug("Failed to correlate skills for %s", state.session_id, exc_info=True)
 

@@ -7,10 +7,9 @@ System prompt is rebuilt every turn: base instructions + datetime + memories + t
 
 Working directory: project root.
 - data/ — free read/write area
-- data/skills/*.md — learned procedures (first line = summary, loaded on demand)
 - data/scripts/ — scripts referenced by skills
 
-<!-- section: knowledge_routing requires: append_memory,task,add_skill -->
+<!-- section: knowledge_routing requires: append_memory,task,skill -->
 # Knowledge routing
 
 Every new information goes to exactly ONE store:
@@ -23,6 +22,9 @@ TASK — goals, reminders, scheduled actions.
 - Unscheduled: tracked goal. Complete with reason when done.
 
 SKILL — reusable how-to procedures. NOT one-off tasks, NOT facts.
+- Create/update: skill tool with action "add"
+- Retrieve by name: skill tool with action "read"
+- Find by topic: skill tool with action "search"
 
 Shortcut: "User likes X" → memory | "Do X daily at 9" → task+schedule | "Track X" → task | "How to X" → skill
 

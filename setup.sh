@@ -1141,7 +1141,7 @@ nl_translation:
   tools:
     - task
     - worker_delegation
-    - add_skill
+    - skill
 YAML
     else
       cat <<YAML
@@ -1152,7 +1152,7 @@ YAML
 #   tools:
 #     - task
 #     - worker_delegation
-#     - add_skill
+#     - skill
 YAML
     fi
 

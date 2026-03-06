@@ -6,8 +6,6 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from wintermute.infra.paths import SKILLS_DIR
-
 logger = logging.getLogger(__name__)
 
 
@@ -43,14 +41,6 @@ def tool_read_file(inputs: dict, **_kw) -> str:
         return json.dumps({"error": f"File not found: {path}"})
     except (OSError, UnicodeDecodeError) as exc:
         return json.dumps({"error": str(exc)})
-    # Track skill reads for skill_stats (only canonical data/skills/*.md).
-    try:
-        skills_dir = SKILLS_DIR.resolve()
-        if path.suffix == ".md" and path.resolve().parent == skills_dir:
-            from wintermute.workers import skill_stats
-            skill_stats.record_read(path.stem)
-    except Exception:
-        pass
     return result
 
 
