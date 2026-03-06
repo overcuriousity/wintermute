@@ -25,7 +25,7 @@ Content covers:
 BASE_PROMPT.txt is divided into named sections using HTML comment markers:
 
 ```
-<!-- section: knowledge_routing requires: append_memory,task,add_skill -->
+<!-- section: knowledge_routing requires: append_memory,task,skill -->
 ```
 
 Each section declares which tool(s) it requires. When a sub-session is spawned with a limited tool set, only sections whose required tools are available are included. Sections marked `always` are always included.
@@ -33,7 +33,7 @@ Each section declares which tool(s) it requires. When a sub-session is spawned w
 | Section | Required Tools | Content |
 |---------|---------------|---------|
 | `core` | always | Personality, environment, prompt note |
-| `knowledge_routing` | `append_memory`, `task`, `add_skill` (any) | Memory/task/skill routing |
+| `knowledge_routing` | `append_memory`, `task`, `skill` (any) | Memory/task/skill routing |
 | `delegation` | `worker_delegation` | Task delegation patterns |
 | `scheduled_tasks` | `task` | Scheduled task instructions |
 | `system_events` | `worker_delegation` | System event handling |
@@ -58,9 +58,9 @@ Key rule: if it only matters because something is in progress right now, or need
 
 ### 4. skills/*.md — Learned Procedures
 
-Each file in `data/skills/` is a Markdown document describing a reusable procedure the AI has learned. Created via the `add_skill` tool. The first line of each file serves as a one-line summary.
+Skills are reusable procedures stored in a vector-indexed backend. Managed via the `skill` tool (add/read/search actions). Legacy `data/skills/*.md` files are migrated automatically on first startup.
 
-Only a table of contents (skill name + summary) is injected into the system prompt. The full skill content is loaded on demand by the LLM via `read_file` when relevant to the current task. This keeps the prompt lightweight even with many skills.
+Only a table of contents (skill name + summary) is injected into the system prompt. When a vector backend is active and a user query is available, skills are ranked by relevance. Full skill content is loaded on demand via the `skill` tool's `read` action.
 
 ### 5. SEED_{language}.txt — Conversation Seed
 

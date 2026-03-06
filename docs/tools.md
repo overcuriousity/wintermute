@@ -10,7 +10,7 @@ Tools are grouped into three categories that control which tools are available i
 |----------|-------------|-------|
 | **execution** | All agents | `execute_shell`, `read_file`, `write_file` |
 | **research** | All agents | `search_web`, `fetch_url` |
-| **orchestration** | Main agent + `full`-mode sub-sessions | `worker_delegation`, `task`, `append_memory`, `add_skill`, `query_telemetry` |
+| **orchestration** | Main agent + `full`-mode sub-sessions | `worker_delegation`, `task`, `append_memory`, `skill`, `query_telemetry` |
 
 ## Tool Filtering by Sub-session Mode
 
@@ -32,7 +32,7 @@ Named tool profiles provide config-driven presets for common sub-session worker 
 | `researcher` | `search_web`, `fetch_url` | `minimal` |
 | `file_worker` | `execute_shell`, `read_file`, `write_file` | `minimal` |
 | `full_worker` | `execute_shell`, `read_file`, `write_file`, `search_web`, `fetch_url` | `minimal` |
-| `orchestrator` | `worker_delegation`, `task`, `append_memory`, `add_skill` | `full` |
+| `orchestrator` | `worker_delegation`, `task`, `append_memory`, `skill` | `full` |
 
 ### Custom Profiles
 
@@ -165,15 +165,18 @@ Append a new fact to MEMORIES.txt (and the vector store, if active). Preferred f
 
 Returns: `status`, `total_chars`
 
-#### `add_skill`
+#### `skill`
 
-Create or overwrite a skill documentation file in `data/skills/`. A summary appears in the system prompt's skills TOC; the full content is loaded on demand via `read_file`.
+Unified skill management tool with three actions: `add`, `read`, and `search`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `skill_name` | string | yes | Filename stem (no extension), e.g. `"calendar"` |
-| `summary` | string | yes | One-line summary for the skills index (max 80 chars) |
-| `documentation` | string | yes | Markdown documentation for the skill |
+| `action` | enum | yes | `"add"`, `"read"`, or `"search"` |
+| `skill_name` | string | add/read | Skill identifier (alphanumeric, hyphens, underscores) |
+| `summary` | string | no | One-line summary (derived from first line of documentation if omitted) |
+| `documentation` | string | add | Markdown documentation for the skill |
+| `query` | string | search | Search query for relevance-ranked results |
+| `top_k` | integer | no | Max results for search (default: 5, max: 50) |
 
 #### `query_telemetry`
 
@@ -200,7 +203,7 @@ Query the system's own operational telemetry — success rates, recent outcomes,
 ## NL Translation Mode
 
 When `nl_translation.enabled: true` in config, `task`,
-`worker_delegation`, and `add_skill` are presented to the main LLM with
+`worker_delegation`, and `skill` are presented to the main LLM with
 simplified single-field schemas. Instead of filling in all structured
 parameters, the LLM writes a plain-English description:
 

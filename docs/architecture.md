@@ -35,7 +35,7 @@ User (Matrix / Browser)
         |
         |-- tool calls --> execute_shell / read_file / write_file
         |                  search_web / fetch_url
-        |                  append_memory / task / add_skill / query_telemetry
+        |                  append_memory / task / skill / query_telemetry
         |
         +-- worker_delegation --> SubSessionManager
                                         |
@@ -158,7 +158,7 @@ These are some architectural choices, which should make it better for local LLMs
 
 **Turing Protocol.** A three-stage (detect → validate → correct) post-inference validation pipeline that catches the hallucination patterns small models are most prone to — claiming to have done things they didn't, fabricating tool output, or making promises without acting. Rather than requiring a stronger model, corrections are injected automatically so the model can self-correct. See [turing-protocol.md](turing-protocol.md) for the full reference.
 
-**NL Translation (optional).** For models that struggle with multi-field structured JSON schemas, complex tool calls (`task`, `worker_delegation`, `add_skill`) can be exposed as a single plain-English `description` field. A dedicated small translator LLM expands the description into structured arguments. See [tools.md — NL Translation Mode](tools.md#nl-translation-mode).
+**NL Translation (optional).** For models that struggle with multi-field structured JSON schemas, complex tool calls (`task`, `worker_delegation`, `skill`) can be exposed as a single plain-English `description` field. A dedicated small translator LLM expands the description into structured arguments. See [tools.md — NL Translation Mode](tools.md#nl-translation-mode).
 
 **Lean system prompt.** The system prompt is assembled from independent file-based components (`BASE_PROMPT.txt`, `MEMORIES.txt`, tasks, skills TOC). Skills inject only a one-line-per-skill table of contents; full procedures are loaded on demand via `read_file`. Components have configurable character caps with auto-summarisation when exceeded. No framework boilerplate is injected — the prompt contains only what you wrote and what the model genuinely needs.
 
@@ -182,7 +182,7 @@ data/
   conversation.db (tasks)     -- Active goals / working memory (managed via task tool, stored in SQLite)
   conversation.db (outcomes)  -- Sub-session outcome tracking (duration, status, TP verdict; used for historical feedback)
   scratchpad/                -- Ephemeral per-workflow directories for parallel worker communication (auto-cleaned)
-  skills/                    -- Learned procedures as *.md files (updated via add_skill tool)
+  skills/                    -- Learned procedures (vector-indexed via skill tool; legacy *.md files migrated at first startup)
   DREAM_MEMORIES_PROMPT.txt  -- Customisable dreaming prompt for MEMORIES consolidation (flat-file path)
   DREAM_DEDUP_PROMPT.txt     -- Dreaming deduplication merge prompt (vector-native path)
   DREAM_CONTRADICTION_PROMPT.txt -- Dreaming contradiction resolution prompt (vector-native path)

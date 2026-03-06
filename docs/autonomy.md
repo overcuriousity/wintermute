@@ -96,7 +96,7 @@ An event-driven feedback loop that closes the observe→reflect→adapt cycle. T
 
 1. **Rule engine (zero LLM cost):** Programmatic pattern detection on DB and event data. Auto-applies simple actions (pause failing tasks, flag stale skills). Runs on every trigger event.
 2. **LLM analysis (cheap, one-shot):** A direct `pool.call()` with a prose prompt summarizing recent findings. Only runs when the rule engine finds something interesting.
-3. **Sub-session mutations (expensive, rare):** A constrained sub-session is spawned only when the LLM analysis recommends a creative change (e.g. rewriting a skill). Limited to `read_file`, `add_skill`, and `append_memory` tools with a 5-round cap.
+3. **Sub-session mutations (expensive, rare):** A constrained sub-session is spawned only when the LLM analysis recommends a creative change (e.g. rewriting a skill). Limited to `read_file`, `skill`, and `append_memory` tools with a 5-round cap.
 4. **Pattern-to-skill synthesis (periodic):** Clusters completed sub-session outcomes by tool usage patterns, identifies recurring workflows not yet captured as skills, and proposes new skills via a one-shot LLM call. Gates: ≥20 completed outcomes in the lookback window and 24h cooldown. Proposals are executed as mutation sub-sessions (max 2 per cycle).
 
 ### Trigger Conditions (event-driven, no polling)
@@ -161,11 +161,11 @@ Changes are applied immediately to the live `SubSessionManager` and `MemoryHarve
 
 **Module:** `wintermute/workers/skill_stats.py`
 
-Skills are no longer static files — they are tracked, correlated with outcomes, auto-retired when stale, and flagged when problematic. Skill stats are persisted to `data/skill_stats.yaml` (versioned in the data git repo alongside the skills themselves).
+Skills are stored in a vector-indexed backend (`skill_store`) — tracked, correlated with outcomes, auto-retired when stale, and flagged when problematic. Stats are tracked natively by each backend.
 
 ### Usage Tracking
 
-Every `read_file` call on a `data/skills/*.md` path increments the skill's read counter and updates its `last_read` timestamp. Every `add_skill` call increments the skill's version counter. This is transparent to the LLM — no tool schemas are changed.
+Every `skill` tool `read` action increments the skill's access counter and updates its `last_accessed` timestamp. Every `add` action increments the skill's version counter. This is transparent to the LLM — no tool schemas are changed.
 
 ### Outcome Correlation
 
@@ -201,11 +201,11 @@ The self-model profiler collects three skill metrics each cycle: total skill cou
 
 ### Changelog
 
-When an existing skill is overwritten via `add_skill`, a `## Changelog` section is appended with the date. Dreaming condensation naturally folds old changelog entries. Git history in the data repo remains the authoritative audit trail.
+When an existing skill is updated via the `skill` tool, a `## Changelog` section is appended with the date. Dreaming condensation naturally folds old changelog entries. Git history in the data repo remains the authoritative audit trail.
 
 ### Persistence
 
-Stats are flushed to YAML at the end of each reflection cycle and auto-committed to the data git repo. The file survives DB resets and is human-readable and editable.
+Stats are tracked natively by each skill store backend (SQLite or Qdrant). Mutations are auto-committed to the data git repo via `data_versioning`.
 
 ## Sub-sessions and Workflow DAG
 

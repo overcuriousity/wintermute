@@ -249,7 +249,7 @@ turing_protocol:
 ### `nl_translation`
 
 Natural-language tool call translation for weak/small LLMs. When enabled,
-complex tools (`task`, `worker_delegation`, `add_skill`) are
+complex tools (`task`, `worker_delegation`, `skill`) are
 presented to the main LLM as a single "describe in English" field. A
 dedicated translator LLM expands the description into structured arguments.
 
@@ -257,7 +257,7 @@ dedicated translator LLM expands the description into structured arguments.
 |-----|----------|---------|-------------|
 | `enabled` | no | `false` | Enable NL translation (opt-in) |
 | `backends` | no | turing_protocol backends | Ordered list of backend names for the translator LLM |
-| `tools` | no | `[task, worker_delegation, add_skill]` | Which tools use simplified NL schemas |
+| `tools` | no | `[task, worker_delegation, skill]` | Which tools use simplified NL schemas |
 
 The translator can return JSON arrays to add multiple tasks or
 spawn multiple sub-sessions from a single description. Ambiguous input
@@ -495,7 +495,7 @@ tool_profiles:
     tools: [execute_shell, read_file, write_file, search_web, fetch_url]
     prompt_mode: minimal
   orchestrator:
-    tools: [worker_delegation, task, append_memory, add_skill]
+    tools: [worker_delegation, task, append_memory, skill]
     prompt_mode: full
 ```
 
