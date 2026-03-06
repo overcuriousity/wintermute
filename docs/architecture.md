@@ -70,14 +70,17 @@ SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + s
 4. Initialise memory store (vector backend or flat-file fallback; cold-boot import if needed)
 5. Initialise skill store (vector backend with one-time migration from flat files)
 6. Bootstrap `data/` directories (skills/, scripts/, archive/)
-7. Restore APScheduler jobs (and execute missed scheduled tasks)
-8. Build shared broadcast function (routes to Matrix rooms or web clients)
-9. Start LLM inference task
-10. Start web interface task (if enabled)
-11. Start Matrix task (if configured)
-12. Start dreaming loop
-13. Start reflection loop (and attach self-model profiler if enabled)
-14. Await shutdown signals (SIGTERM / SIGINT)
+7. Build BackendPools and per-thread config manager
+8. Build broadcast closure (with forward references filled after interfaces are constructed)
+9. Build LLMThread (lazy getter breaks the LLM↔SSM circular dependency)
+10. Build SubSessionManager → wire into ToolDeps
+11. Build TaskScheduler → start → wire into ToolDeps
+12. Build worker loops (memory harvest, self-model, reflection, dreaming, update checker)
+13. Build SlashCommandHandler (receives all workers)
+14. Build MatrixThread with all deps via constructor (if configured)
+15. Build WebInterface with all deps via constructor (if enabled)
+16. Fill broadcast closure forward references
+17. Start asyncio tasks, await shutdown signals (SIGTERM / SIGINT)
 
 ## Data Flow: User Message
 

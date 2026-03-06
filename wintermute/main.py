@@ -490,14 +490,6 @@ async def main() -> None:
     # SearXNG URL from config.
     searxng_url = (cfg.get("search") or {}).get("searxng_url", "")
 
-    # Build the shared ToolDeps container.  Sub-session and scheduler callables
-    # are injected after their owners are constructed (see below).
-    tool_deps = ToolDeps(
-        max_nesting_depth=max_nesting_depth,
-        searxng_url=searxng_url,
-        tool_profiles=_tool_profiles,
-    )
-
     # --- Optional interfaces ---
     matrix_cfg_raw: Optional[dict] = cfg.get("matrix")
     web_cfg: dict = cfg.get("web", {"enabled": True, "host": "127.0.0.1", "port": 8080})
@@ -518,46 +510,48 @@ async def main() -> None:
     # Event bus — shared infrastructure for all components.
     event_bus = EventBus()
 
-    # Build Matrix (may be a no-op stub if not configured).
-    if matrix_enabled:
-        matrix_cfg = MatrixConfig(
-            homeserver=matrix_cfg_raw["homeserver"],
-            user_id=matrix_cfg_raw["user_id"],
-            access_token=matrix_cfg_raw.get("access_token", ""),
-            device_id=matrix_cfg_raw.get("device_id", ""),
-            password=matrix_cfg_raw.get("password", ""),
-            allowed_users=matrix_cfg_raw.get("allowed_users", []),
-            allowed_rooms=matrix_cfg_raw.get("allowed_rooms", []),
-        )
-        matrix: Optional[MatrixThread] = MatrixThread(matrix_cfg, llm_thread=None)
-    else:
-        logger.info("Matrix not configured - skipping Matrix interface")
-        matrix = None
+    # ------------------------------------------------------------------
+    # Component construction — ordered so every dependency exists before
+    # its consumer, eliminating post-construction injection.  The one
+    # genuine LLMThread ↔ SubSessionManager cycle is broken with a lazy
+    # getter instead of a post-construction inject method.
+    # ------------------------------------------------------------------
 
-    # Build web interface.
-    web_iface: Optional[WebInterface] = None
-    if web_enabled:
-        web_iface = WebInterface(
-            host=web_cfg.get("host", "127.0.0.1"),
-            port=web_cfg.get("port", 8080),
-            llm_thread=None,  # injected below
-        )
+    # 1. Broadcast closure — needs forward references to matrix / web_iface
+    #    which are filled in below (the closure is only _called_ after
+    #    asyncio tasks start, by which point everything is wired).
+    _matrix_ref: list[Optional[MatrixThread]] = [None]
+    _web_ref: list[Optional[WebInterface]] = [None]
 
-    # Thread-aware broadcast: routes to the correct Matrix room or web client.
-    # Reasoning tokens are only forwarded to the web interface, not Matrix.
     async def broadcast(text: str, thread_id: str = None, *,
                         reasoning: str = None) -> None:
-        if matrix and thread_id and not thread_id.startswith("web_") and thread_id != "default":
-            # thread_id is a Matrix room_id — no reasoning (too noisy)
-            await matrix.send_message(text, thread_id)
-        if web_iface and thread_id:
-            await web_iface.broadcast(text, thread_id, reasoning=reasoning)
+        mx = _matrix_ref[0]
+        wi = _web_ref[0]
+        if mx and thread_id and not thread_id.startswith("web_") and thread_id != "default":
+            await mx.send_message(text, thread_id)
+        if wi and thread_id:
+            await wi.broadcast(text, thread_id, reasoning=reasoning)
 
-    # Build LLM thread with the shared broadcast function.
+    # 2. LLMThread — uses a lazy getter for SubSessionManager (breaks cycle).
     seed_language = cfg.get("seed", {}).get("language", "en") if cfg.get("seed") else "en"
     tp_validators = (cfg.get("turing_protocol", {}) or {}).get("validators")
+
+    # Lazy holder: SubSessionManager is appended after construction.
+    _ssm_holder: list[SubSessionManager] = []
+
+    # ToolDeps is constructed early with config-only fields; typed object
+    # references (sub_session_manager, task_scheduler, self_model_profiler)
+    # are set once after each owner is built.
+    tool_deps = ToolDeps(
+        max_nesting_depth=max_nesting_depth,
+        searxng_url=searxng_url,
+        tool_profiles=_tool_profiles,
+        event_bus=event_bus,
+    )
+
     llm = LLMThread(main_pool=main_pool, compaction_pool=compaction_pool,
                     turing_protocol_pool=turing_protocol_pool, broadcast_fn=broadcast,
+                    sub_session_getter=lambda: _ssm_holder[0] if _ssm_holder else None,
                     turing_protocol_validators=tp_validators,
                     nl_translation_pool=nl_translation_pool,
                     nl_translation_config=nl_translation_config,
@@ -568,10 +562,8 @@ async def main() -> None:
                     compaction_keep_recent=compaction_keep_recent,
                     tool_deps=tool_deps)
 
-    # Build SubSessionManager — shares the LLM backend pool, reports back via
-    # enqueue_system_event so results enter the parent thread's queue.
-    # Turing Protocol pool + validators are forwarded so sub-sessions can run
-    # phase-aware validation hooks (objective_completion, pre/post execution).
+    # 3. SubSessionManager — needs llm.enqueue_system_event (no cycle: LLM
+    #    already exists).  Fills the lazy holder so LLM can reach it later.
     sub_sessions = SubSessionManager(
         pool=sub_sessions_pool,
         enqueue_system_event=llm.enqueue_system_event,
@@ -584,43 +576,10 @@ async def main() -> None:
         max_completed_workflows=max_completed_workflows,
         tool_deps=tool_deps,
     )
-    llm.inject_sub_session_manager(sub_sessions)
-    # Wire sub-session lifecycle into ToolDeps.
-    tool_deps.sub_session_spawn = sub_sessions.spawn
-    tool_deps.sub_session_cancel = sub_sessions.cancel
-    tool_deps.sub_session_status = sub_sessions.list_active_threadsafe
-    tool_deps.event_bus = event_bus
+    _ssm_holder.append(sub_sessions)
+    tool_deps.sub_session_manager = sub_sessions
 
-    # Inject LLM into interfaces.
-    if matrix:
-        matrix._llm = llm
-        matrix._sub_sessions = sub_sessions
-        matrix._kimi_client = client_cache.get(("kimi-code",))
-        matrix._thread_config_manager = thread_config_mgr
-        # Whisper voice transcription.
-        whisper_raw = cfg.get("whisper", {}) or {}
-        if whisper_raw.get("enabled"):
-            from openai import AsyncOpenAI
-            matrix._whisper_client = AsyncOpenAI(
-                api_key=whisper_raw.get("api_key", ""),
-                base_url=whisper_raw.get("base_url", ""),
-                timeout=60.0,
-            )
-            matrix._whisper_model = whisper_raw.get("model", "whisper-1")
-            matrix._whisper_language = whisper_raw.get("language", "") or ""
-            logger.info("Whisper transcription enabled (model=%s)", matrix._whisper_model)
-            import shutil as _shutil
-            if not _shutil.which("ffmpeg"):
-                logger.warning(
-                    "Whisper transcription is enabled but ffmpeg is not in PATH. "
-                    "Voice messages from Matrix (OGG/Opus) cannot be transcribed without ffmpeg. "
-                    "Install it with: sudo apt install ffmpeg  OR  sudo dnf install ffmpeg"
-                )
-    if web_iface:
-        web_iface._llm = llm
-        web_iface._kimi_client = client_cache.get(("kimi-code",))
-        web_iface._thread_config_manager = thread_config_mgr
-
+    # 4. TaskScheduler
     scheduler = TaskScheduler(
         config=scheduler_cfg,
         broadcast_fn=broadcast,
@@ -628,15 +587,10 @@ async def main() -> None:
         sub_session_manager=sub_sessions,
         event_bus=event_bus,
     )
+    scheduler.start()
+    tool_deps.task_scheduler = scheduler
 
-    # Inject dependencies into web interface (after scheduler is built).
-    if web_iface:
-        web_iface._sub_sessions = sub_sessions
-        web_iface._scheduler = scheduler
-        web_iface._matrix = matrix
-        web_iface._main_pool = main_pool
-        web_iface._multi_cfg = multi_cfg
-
+    # 5. Memory harvest loop
     harvest_loop: Optional[MemoryHarvestLoop] = None
     if harvest_config.enabled:
         harvest_loop = MemoryHarvestLoop(
@@ -648,25 +602,7 @@ async def main() -> None:
     else:
         logger.info("Memory harvest disabled by config")
 
-    reflection_raw = cfg.get("reflection", {}) or {}
-    reflection_cfg = ReflectionConfig(
-        enabled=reflection_raw.get("enabled", True),
-        batch_threshold=reflection_raw.get("batch_threshold", 10),
-        consecutive_failure_limit=reflection_raw.get("consecutive_failure_limit", 3),
-        lookback_seconds=reflection_raw.get("lookback_seconds", 86400),
-        min_result_length=reflection_raw.get("min_result_length", 50),
-        main_turn_batch_threshold=reflection_raw.get("main_turn_batch_threshold", 15),
-        synthesis_min_cluster_size=reflection_raw.get("synthesis_min_cluster_size", 3),
-        synthesis_min_outcomes=reflection_raw.get("synthesis_min_outcomes", 20),
-    )
-    reflection_loop = ReflectionLoop(
-        config=reflection_cfg,
-        sub_session_manager=sub_sessions,
-        pool=reflection_pool,
-        event_bus=event_bus,
-    )
-
-    # Self-model profiler — runs inside the reflection cycle.
+    # 6. Self-model profiler
     sm_raw = cfg.get("self_model", {}) or {}
     sm_cfg = SelfModelConfig(
         enabled=sm_raw.get("enabled", True),
@@ -685,7 +621,6 @@ async def main() -> None:
                 sub_session_manager=sub_sessions,
                 memory_harvest_loop=harvest_loop,
             )
-            reflection_loop.inject_self_model(self_model)
             tool_deps.self_model_profiler = self_model
             logger.info("Self-model profiler enabled")
         except Exception:
@@ -694,13 +629,34 @@ async def main() -> None:
     else:
         logger.info("Self-model profiler disabled by config")
 
+    # 7. Reflection loop (receives self_model via constructor now)
+    reflection_raw = cfg.get("reflection", {}) or {}
+    reflection_cfg = ReflectionConfig(
+        enabled=reflection_raw.get("enabled", True),
+        batch_threshold=reflection_raw.get("batch_threshold", 10),
+        consecutive_failure_limit=reflection_raw.get("consecutive_failure_limit", 3),
+        lookback_seconds=reflection_raw.get("lookback_seconds", 86400),
+        min_result_length=reflection_raw.get("min_result_length", 50),
+        main_turn_batch_threshold=reflection_raw.get("main_turn_batch_threshold", 15),
+        synthesis_min_cluster_size=reflection_raw.get("synthesis_min_cluster_size", 3),
+        synthesis_min_outcomes=reflection_raw.get("synthesis_min_outcomes", 20),
+    )
+    reflection_loop = ReflectionLoop(
+        config=reflection_cfg,
+        sub_session_manager=sub_sessions,
+        pool=reflection_pool,
+        event_bus=event_bus,
+        self_model=self_model,
+    )
+
+    # 8. Dreaming loop
     dreaming_loop = DreamingLoop(
         config=dreaming_cfg,
         pool=dreaming_pool,
         event_bus=event_bus,
     )
 
-    # Update checker
+    # 9. Update checker
     uc_raw = cfg.get("update_checker", {})
     uc_config = UpdateCheckerConfig(
         enabled=uc_raw.get("enabled", True),
@@ -710,7 +666,6 @@ async def main() -> None:
     )
     update_checker: Optional[UpdateCheckerLoop] = None
     if uc_config.enabled:
-        # Collect Matrix rooms for notifications.
         uc_rooms: list[str] = []
         if matrix_enabled and matrix_cfg_raw:
             uc_rooms = matrix_cfg_raw.get("allowed_rooms", []) or []
@@ -722,7 +677,7 @@ async def main() -> None:
     else:
         logger.info("Update checker disabled by config")
 
-    # Build shared slash-command handler for all interfaces.
+    # 10. Slash command handler (needs almost everything above)
     from wintermute.interfaces.slash_commands import SlashCommandHandler
     slash_handler = SlashCommandHandler(
         llm=llm,
@@ -736,24 +691,71 @@ async def main() -> None:
         update_checker=update_checker,
     )
 
-    # Inject remaining references for interface-specific commands.
-    if matrix:
-        matrix._slash_handler = slash_handler
-        matrix._scheduler = scheduler
-        matrix._dreaming_loop = dreaming_loop
-        matrix._update_checker = update_checker
-        matrix._memory_harvest = harvest_loop
-        matrix._reflection_loop = reflection_loop
-        matrix._self_model = self_model
-    if web_iface:
-        web_iface._slash_handler = slash_handler
-        web_iface._dreaming_loop = dreaming_loop
+    # 11. Whisper client (built once, passed to MatrixThread constructor)
+    whisper_client = None
+    whisper_model = ""
+    whisper_language = ""
+    whisper_raw = cfg.get("whisper", {}) or {}
+    if whisper_raw.get("enabled") and matrix_enabled:
+        from openai import AsyncOpenAI
+        whisper_client = AsyncOpenAI(
+            api_key=whisper_raw.get("api_key", ""),
+            base_url=whisper_raw.get("base_url", ""),
+            timeout=60.0,
+        )
+        whisper_model = whisper_raw.get("model", "whisper-1")
+        whisper_language = whisper_raw.get("language", "") or ""
+        logger.info("Whisper transcription enabled (model=%s)", whisper_model)
+        import shutil as _shutil
+        if not _shutil.which("ffmpeg"):
+            logger.warning(
+                "Whisper transcription is enabled but ffmpeg is not in PATH. "
+                "Voice messages from Matrix (OGG/Opus) cannot be transcribed without ffmpeg. "
+                "Install it with: sudo apt install ffmpeg  OR  sudo dnf install ffmpeg"
+            )
 
-    scheduler.start()
-    # Wire scheduler callables into ToolDeps (after scheduler.start() creates the APScheduler).
-    tool_deps.task_scheduler_ensure = scheduler.ensure_job
-    tool_deps.task_scheduler_remove = scheduler.remove_job
-    tool_deps.task_scheduler_list = scheduler.list_jobs
+    # 12. MatrixThread — all deps passed via constructor (no post-injection)
+    matrix: Optional[MatrixThread] = None
+    if matrix_enabled:
+        matrix_cfg = MatrixConfig(
+            homeserver=matrix_cfg_raw["homeserver"],
+            user_id=matrix_cfg_raw["user_id"],
+            access_token=matrix_cfg_raw.get("access_token", ""),
+            device_id=matrix_cfg_raw.get("device_id", ""),
+            password=matrix_cfg_raw.get("password", ""),
+            allowed_users=matrix_cfg_raw.get("allowed_users", []),
+            allowed_rooms=matrix_cfg_raw.get("allowed_rooms", []),
+        )
+        matrix = MatrixThread(
+            matrix_cfg, llm,
+            kimi_client=client_cache.get(("kimi-code",)),
+            whisper_client=whisper_client,
+            whisper_model=whisper_model,
+            whisper_language=whisper_language,
+            slash_handler=slash_handler,
+        )
+    else:
+        logger.info("Matrix not configured - skipping Matrix interface")
+
+    # 13. WebInterface — all deps passed via constructor (no post-injection)
+    web_iface: Optional[WebInterface] = None
+    if web_enabled:
+        web_iface = WebInterface(
+            host=web_cfg.get("host", "127.0.0.1"),
+            port=web_cfg.get("port", 8080),
+            llm_thread=llm,
+            sub_sessions=sub_sessions,
+            scheduler=scheduler,
+            matrix=matrix,
+            main_pool=main_pool,
+            multi_cfg=multi_cfg,
+            thread_config_manager=thread_config_mgr,
+            slash_handler=slash_handler,
+        )
+
+    # Fill the broadcast closure's forward references.
+    _matrix_ref[0] = matrix
+    _web_ref[0] = web_iface
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

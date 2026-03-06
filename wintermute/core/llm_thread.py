@@ -22,7 +22,7 @@ import re
 import time as _time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from wintermute.infra import database
 from wintermute.infra import prompt_assembler
@@ -114,7 +114,7 @@ class LLMThread:
 
     def __init__(self, main_pool: BackendPool, compaction_pool: BackendPool,
                  turing_protocol_pool: BackendPool, broadcast_fn,
-                 sub_session_manager: "Optional[SubSessionManager]" = None,
+                 sub_session_getter: "Optional[Callable[[], Optional[SubSessionManager]]]" = None,
                  turing_protocol_validators: "Optional[dict[str, bool]]" = None,
                  nl_translation_pool: "Optional[BackendPool]" = None,
                  nl_translation_config: "Optional[dict]" = None,
@@ -154,7 +154,7 @@ class LLMThread:
         # Convenience: primary config for context_size / model name lookups.
         self._cfg = main_pool.primary
         self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)
-        self._sub_sessions = sub_session_manager  # set post-init via inject_sub_session_manager
+        self._get_sub_sessions = sub_session_getter  # lazy getter breaks LLMThread↔SSM cycle
         self._tool_deps = tool_deps
         self._queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         self._running = False
@@ -173,10 +173,6 @@ class LLMThread:
         # (prior_assistant_message) from the current turn's execution facts.
         self._prior_tool_calls: dict[str, list[str]] = {}
         self._background_tasks: set[asyncio.Task] = set()
-
-    def inject_sub_session_manager(self, manager: "SubSessionManager") -> None:
-        """Called after construction once SubSessionManager is built."""
-        self._sub_sessions = manager
 
     # ------------------------------------------------------------------
     # Read-only accessors for external consumers (interfaces, /status)
@@ -284,8 +280,9 @@ class LLMThread:
     async def reset_session(self, thread_id: str = "default") -> None:
         await database.async_call(database.clear_active_messages, thread_id)
         self._compaction_summaries.pop(thread_id, None)
-        if self._sub_sessions:
-            n = await self._sub_sessions.cancel_for_thread(thread_id)
+        ssm = self._get_sub_sessions() if self._get_sub_sessions else None
+        if ssm:
+            n = await ssm.cancel_for_thread(thread_id)
             if n:
                 logger.info("Cancelled %d sub-session(s) for reset thread %s", n, thread_id)
         logger.info("Session reset for thread %s", thread_id)
@@ -640,7 +637,8 @@ class LLMThread:
         if not self._tp_runner.enabled:
             return
 
-        active_sessions = self._sub_sessions.list_active() if self._sub_sessions else []
+        ssm = self._get_sub_sessions() if self._get_sub_sessions else None
+        active_sessions = ssm.list_active() if ssm else []
 
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None

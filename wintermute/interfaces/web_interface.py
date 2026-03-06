@@ -29,28 +29,32 @@ class WebInterface:
     """
     Runs an aiohttp web server serving the dashboard SPA at /.
 
-    Optional dependencies (injected post-construction in main.py):
-      _sub_sessions  – SubSessionManager
-      _scheduler     – TaskScheduler
-      _matrix        – MatrixThread
-      _main_pool     – BackendPool (for context_size / max_tokens)
+    All dependencies are passed via the constructor.
     """
 
-    def __init__(self, host: str, port: int, llm_thread) -> None:
+    def __init__(self, host: str, port: int, llm_thread,
+                 *,
+                 sub_sessions=None,
+                 scheduler=None,
+                 matrix=None,
+                 main_pool=None,
+                 multi_cfg=None,
+                 thread_config_manager=None,
+                 slash_handler=None) -> None:
         self._host = host
         self._port = port
         self._llm = llm_thread
         # Map thread_id -> set of WebSocket connections
         self._threads: dict[str, set[web.WebSocketResponse]] = {}
-        # Optional debug dependencies (set after construction)
-        self._sub_sessions = None
-        self._scheduler = None
-        self._matrix = None
-        self._main_pool = None   # BackendPool for main role
-        self._multi_cfg = None
+        self._sub_sessions = sub_sessions
+        self._scheduler = scheduler
+        self._matrix = matrix
+        self._main_pool = main_pool   # BackendPool for main role
+        self._multi_cfg = multi_cfg
+        self._thread_config_manager = thread_config_manager
         self._background_tasks: set[asyncio.Task] = set()
-        # Shared slash-command handler (injected from main.py).
-        self._slash_handler = None
+        # Shared slash-command handler.
+        self._slash_handler = slash_handler
 
     # ------------------------------------------------------------------
     # Public

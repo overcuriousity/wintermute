@@ -21,9 +21,9 @@ def tool_worker_delegation(inputs: dict, thread_id: Optional[str] = None,
         return json.dumps({"error": f"Unknown action: {action}. Use spawn, status, or cancel."})
 
     if action == "status":
-        if deps.sub_session_status is None:
+        if deps.sub_session_manager is None:
             return json.dumps({"error": "Sub-session manager not ready."})
-        sessions = deps.sub_session_status(thread_id)
+        sessions = deps.sub_session_manager.list_active_threadsafe(thread_id)
         if not sessions:
             return json.dumps({"status": "No active background workers."})
         return json.dumps({"active_workers": sessions})
@@ -32,9 +32,9 @@ def tool_worker_delegation(inputs: dict, thread_id: Optional[str] = None,
         target = inputs.get("target_id")
         if not target:
             return json.dumps({"error": "target_id required for cancel."})
-        if deps.sub_session_cancel is None:
+        if deps.sub_session_manager is None:
             return json.dumps({"error": "Sub-session manager not ready."})
-        result = deps.sub_session_cancel(target, thread_id)
+        result = deps.sub_session_manager.cancel(target, thread_id)
         return json.dumps({"result": result})
 
     # action == "spawn" — existing logic below
@@ -47,7 +47,7 @@ def tool_worker_delegation(inputs: dict, thread_id: Optional[str] = None,
                 "Cannot spawn further sub-sessions."
             )
         })
-    if deps.sub_session_spawn is None:
+    if deps.sub_session_manager is None:
         return json.dumps({"error": "Sub-session manager not ready yet."})
     try:
         context_blobs = list(inputs.get("context_blobs") or [])
@@ -115,7 +115,7 @@ def tool_worker_delegation(inputs: dict, thread_id: Optional[str] = None,
             kwargs["not_before"] = inputs["not_before"]
         if "profile" in inputs:
             kwargs["profile"] = inputs["profile"]
-        session_id = deps.sub_session_spawn(**kwargs)
+        session_id = deps.sub_session_manager.spawn(**kwargs)
         has_deps = bool(inputs.get("depends_on")) or bool(inputs.get("depends_on_previous"))
         has_gate = bool(inputs.get("not_before"))
         if has_deps or has_gate:

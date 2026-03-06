@@ -247,7 +247,13 @@ class MatrixThread:
     ``send_message`` may be called from any task in the same event loop.
     """
 
-    def __init__(self, config: MatrixConfig, llm_thread) -> None:
+    def __init__(self, config: MatrixConfig, llm_thread,
+                 *,
+                 kimi_client=None,
+                 whisper_client=None,
+                 whisper_model: str = "",
+                 whisper_language: str = "",
+                 slash_handler=None) -> None:
         self._cfg = config
         self._llm = llm_thread
         self._client: Optional[Client] = None
@@ -256,13 +262,15 @@ class MatrixThread:
         self._send_lock = asyncio.Lock()
         self._verifications: dict[str, _SasState] = {}
         self._requested_sessions: dict[str, None] = {}  # ordered dict as LRU set for session IDs
-        # Whisper transcription (injected from main.py if enabled).
-        self._whisper_client = None
-        self._whisper_model: str = ""
-        self._whisper_language: str = ""
+        # Whisper transcription (passed from main.py if enabled).
+        self._whisper_client = whisper_client
+        self._whisper_model: str = whisper_model
+        self._whisper_language: str = whisper_language
         self._background_tasks: set[asyncio.Task] = set()
-        # Shared slash-command handler (injected from main.py).
-        self._slash_handler = None
+        # Shared slash-command handler.
+        self._slash_handler = slash_handler
+        # Kimi-Code client for interactive auth flow.
+        self._kimi_client = kimi_client
 
     # ------------------------------------------------------------------
     # Public interface

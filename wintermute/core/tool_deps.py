@@ -6,31 +6,50 @@ that previously lived in ``tools.py`` and ``prompt_assembler.py``.
 A single ``ToolDeps`` instance is created in ``main.py`` and threaded
 through ``ToolCallContext`` → ``execute_tool()`` → individual tool
 functions.
+
+Object references (``sub_session_manager``, ``task_scheduler``,
+``self_model_profiler``) are set once after the target objects are
+constructed.  Tool code accesses callables through these typed
+references instead of storing individual callables — extending a
+dependency requires zero rewiring in ``main.py``.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from wintermute.core.sub_session import SubSessionManager
+    from wintermute.infra.event_bus import EventBus
+    from wintermute.workers.scheduler_thread import TaskScheduler
+    from wintermute.workers.self_model import SelfModelProfiler
 
 
 @dataclass
 class ToolDeps:
-    """Runtime dependencies injected into tool functions."""
+    """Runtime dependencies injected into tool functions.
 
-    # Task scheduler callables (from scheduler_thread.py).
-    task_scheduler_ensure: Optional[Callable] = None
-    task_scheduler_remove: Optional[Callable] = None
-    task_scheduler_list: Optional[Callable] = None
+    Holds typed object references rather than individual callables so that
+    adding new functionality from an existing dependency requires no extra
+    wiring in ``main.py``.
+    """
 
-    # Sub-session lifecycle callables (from SubSessionManager).
-    sub_session_spawn: Optional[Callable] = None
-    sub_session_cancel: Optional[Callable] = None
-    sub_session_status: Optional[Callable] = None
+    # --- Typed object references (set once after construction) ---
+
+    # Sub-session manager (spawn / cancel / status).
+    sub_session_manager: Optional["SubSessionManager"] = None
+
+    # Task scheduler (ensure_job / remove_job / list_jobs).
+    task_scheduler: Optional["TaskScheduler"] = None
 
     # Event bus instance.
-    event_bus: Optional[Any] = None
+    event_bus: Optional["EventBus"] = None
 
     # Self-model profiler instance.
-    self_model_profiler: Optional[Any] = None
+    self_model_profiler: Optional["SelfModelProfiler"] = None
+
+    # --- Simple config values (set at construction) ---
 
     # SearXNG search URL.
     searxng_url: str = ""
