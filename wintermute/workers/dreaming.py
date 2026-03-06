@@ -614,7 +614,10 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
                     summary_line, _, rest = content.partition("\n")
                     merge_summary = summary_line.strip()
                     merge_doc = rest.lstrip("\n").strip()
-                    skill_store.update(target, summary=merge_summary, documentation=merge_doc)
+                    if skill_store.exists(target):
+                        skill_store.update(target, summary=merge_summary, documentation=merge_doc)
+                    else:
+                        skill_store.add(target, merge_summary, merge_doc)
                     if target in skills:
                         skills[target]["summary"] = merge_summary
                         skills[target]["documentation"] = merge_doc

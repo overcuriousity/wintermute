@@ -743,7 +743,11 @@ class WebInterface:
                 content = f"{content}\n\n{changelog}"
             archive_path.write_text(content, encoding="utf-8")
         except Exception:
-            logger.debug("Failed to archive skill '%s' to .archive/", name, exc_info=True)
+            logger.error("Failed to archive skill '%s' to .archive/; aborting delete", name, exc_info=True)
+            return web.json_response(
+                {"error": "failed to archive skill before deletion"},
+                status=500,
+            )
         skill_store.delete(name)
         data_versioning.commit_async(f"skill: archive {name}")
         logger.info("Skill '%s' archived and deleted via web API", name)
