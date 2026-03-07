@@ -387,7 +387,7 @@ class TaskScheduler:
 
             # Parse time windows from prediction text.
             hour_matches = re.findall(
-                r'(\d{1,2})(?::\d{2})?\s*(?:am|pm)?\s*(?:-|to)\s*(\d{1,2})(?::\d{2})?\s*(am|pm)?',
+                r'(\d{1,2})(?::\d{2})?\s*(am|pm)?\s*(?:-|to)\s*(\d{1,2})(?::\d{2})?\s*(am|pm)?',
                 text_lower,
             )
             day_matches = re.findall(
@@ -397,20 +397,21 @@ class TaskScheduler:
 
             in_time_window = False
             if hour_matches:
-                for start_h, end_h, ampm in hour_matches:
+                for start_h, start_ampm, end_h, end_ampm in hour_matches:
                     try:
                         sh, eh = int(start_h), int(end_h)
-                        # Apply AM/PM modifier to both endpoints.
-                        if ampm == "pm":
-                            if sh < 12:
-                                sh += 12
-                            if eh < 12:
-                                eh += 12
-                        elif ampm == "am":
-                            if sh == 12:
-                                sh = 0
-                            if eh == 12:
-                                eh = 0
+                        # Apply AM/PM independently; fall back to end's
+                        # suffix when start has none (e.g. "8-10 PM").
+                        s_ap = start_ampm or end_ampm
+                        e_ap = end_ampm or start_ampm
+                        if s_ap == "pm" and sh < 12:
+                            sh += 12
+                        elif s_ap == "am" and sh == 12:
+                            sh = 0
+                        if e_ap == "pm" and eh < 12:
+                            eh += 12
+                        elif e_ap == "am" and eh == 12:
+                            eh = 0
                         # Only treat as hours if both values are in 0-23 range.
                         if sh > 23 or eh > 23:
                             continue
