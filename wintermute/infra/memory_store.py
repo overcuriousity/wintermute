@@ -1429,6 +1429,11 @@ def bulk_delete(entry_ids: list[str]) -> int:
     return _backend.bulk_delete(entry_ids)
 
 
+def get_dreaming_config() -> dict:
+    """Return the dreaming sub-config (public accessor for cross-module use)."""
+    return _config.get("dreaming", {})
+
+
 def get_top_accessed(limit: int) -> list[dict]:
     return _backend.get_top_accessed(limit)
 

@@ -60,7 +60,7 @@ The dreaming loop generates predictions (phase 9) but their value depends on run
 
 ### Source-Filtered Retrieval
 
-`memory_store.get_by_source("dreaming_prediction")` fetches all entries tagged with a specific source. Access counts are bumped on retrieval, feeding the promotion pipeline (≥5 accesses → promoted to `dreaming_schema`).
+`memory_store.get_by_source("dreaming_prediction")` fetches all entries tagged with a specific source. Access counts are bumped on retrieval, feeding the promotion pipeline (≥5 accesses → promoted to `dreaming_schema`). This source-filtered retrieval (and thus prediction consumption) requires a backend that stores metadata (FTS5/local_vector/Qdrant); with the flat-file backend, `get_by_source()` returns an empty list and predictions will not be consumed.
 
 ### Prompt Injection
 

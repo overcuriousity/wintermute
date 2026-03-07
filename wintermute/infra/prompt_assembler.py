@@ -226,7 +226,7 @@ def fetch_predictions() -> list[str]:
     """
     from wintermute.infra import memory_store
 
-    dreaming_cfg = memory_store._config.get("dreaming", {})
+    dreaming_cfg = memory_store.get_dreaming_config()
     if not dreaming_cfg.get("prediction_inject_prompt", True):
         return []
 

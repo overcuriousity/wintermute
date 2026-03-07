@@ -600,10 +600,19 @@ class ReflectionLoop:
 
             elif "[prediction:behavioral]" in text or "relies on" in text or "file operations" in text:
                 # Check if predicted tool patterns match actual usage.
-                tool_keywords = re.findall(
-                    r'(read_file|write_file|shell|web_search|task|skill|append_memory|worker_delegation)',
+                _tool_synonyms = {
+                    "shell": "execute_shell", "execute_shell": "execute_shell",
+                    "web_search": "search_web", "search_web": "search_web",
+                    "read_file": "read_file", "write_file": "write_file",
+                    "fetch_url": "fetch_url", "task": "task", "skill": "skill",
+                    "append_memory": "append_memory", "worker_delegation": "worker_delegation",
+                }
+                raw_keywords = re.findall(
+                    r'(read_file|write_file|shell|execute_shell|web_search|search_web|'
+                    r'fetch_url|task|skill|append_memory|worker_delegation)',
                     text,
                 )
+                tool_keywords = [_tool_synonyms.get(tk, tk) for tk in raw_keywords]
                 if tool_keywords:
                     matched = sum(1 for tk in tool_keywords if tk in tool_counts)
                     if matched >= len(tool_keywords) * 0.5:
