@@ -1153,11 +1153,13 @@ def upsert_prediction(prediction_id: str, source_text: str,
         conn.commit()
 
 
-def record_prediction_check(prediction_id: str, confirmed: bool) -> None:
+def record_prediction_check(prediction_id: str, confirmed: bool,
+                            source_text: str = "", pred_type: str = "") -> None:
     """Increment confirmed or missed counter for a prediction.
 
     Uses UPSERT so checks against previously-untracked predictions
-    still create a row in prediction_accuracy.
+    still create a row in prediction_accuracy.  Optional *source_text*
+    and *pred_type* populate metadata on first insert.
     """
     inc_confirmed = 1 if confirmed else 0
     inc_missed = 0 if confirmed else 1
@@ -1165,13 +1167,15 @@ def record_prediction_check(prediction_id: str, confirmed: bool) -> None:
     with _connect() as conn:
         conn.execute(
             "INSERT INTO prediction_accuracy "
-            "(prediction_id, confirmed, missed, last_checked_at, created_at) "
-            "VALUES (?, ?, ?, ?, ?) "
+            "(prediction_id, confirmed, missed, last_checked_at, created_at, "
+            "source_text, pred_type) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(prediction_id) DO UPDATE SET "
             "confirmed = prediction_accuracy.confirmed + excluded.confirmed, "
             "missed = prediction_accuracy.missed + excluded.missed, "
             "last_checked_at = excluded.last_checked_at",
-            (prediction_id, inc_confirmed, inc_missed, now, now),
+            (prediction_id, inc_confirmed, inc_missed, now, now,
+             source_text, pred_type),
         )
         conn.commit()
 

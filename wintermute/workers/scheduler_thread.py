@@ -250,9 +250,11 @@ class TaskScheduler:
                             f"(Task: {message})\n\n"
                         )
                         if pred_ctx:
+                            # Cap prediction context to avoid inflating sub-session prompts.
+                            capped = pred_ctx[:800]
                             objective += (
                                 f"## Relevant predictions about the user\n"
-                                f"{pred_ctx}\n\n"
+                                f"{capped}\n\n"
                             )
                         objective += (
                             "If you have nothing actionable to report, "
@@ -459,12 +461,21 @@ class TaskScheduler:
         lines: list[str] = []
         try:
             predictions = await asyncio.to_thread(
-                memory_store.get_by_source, "dreaming_prediction", 50
+                memory_store.get_by_source, "dreaming_prediction", 50, bump_access=False
             )
+            used_ids: list[str] = []
             for pred in predictions:
                 text = pred.get("text", "")
                 if "[prediction:behavioral]" in text.lower() or "[prediction:preference]" in text.lower():
                     lines.append(text.strip())
+                    pred_id = pred.get("id")
+                    if pred_id is not None:
+                        used_ids.append(str(pred_id))
+            if used_ids:
+                try:
+                    memory_store.track_access(used_ids)
+                except Exception:
+                    pass  # Best-effort access bumping.
         except Exception:
             pass
         return "\n".join(lines) if lines else ""

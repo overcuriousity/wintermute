@@ -797,7 +797,8 @@ class LLMThread:
 
         is_sub_session_result = item.is_system_event and "[SUB-SESSION " in item.text
         return (messages, system_prompt, _memory_query, pool, pool_cfg,
-                is_sub_session_result, prompt_mode, _memory_results)
+                is_sub_session_result, prompt_mode, _memory_results,
+                _prediction_results)
 
     async def _save_user_message(
         self, item: _QueueItem, pool_cfg: "ProviderConfig", is_sub_session_result: bool,
@@ -906,6 +907,7 @@ class LLMThread:
         memory_query: "str | None",
         memory_results: "list | None",
         prompt_mode: str,
+        prediction_results: "list | None" = None,
     ) -> "LLMReply":
         """Run the inference loop, retrying once after compaction on context overflow."""
         thread_id = item.thread_id
@@ -928,6 +930,7 @@ class LLMThread:
                 memory_results=memory_results, prompt_mode=prompt_mode,
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
                 nl_tools=nl_tools,
+                prediction_results=prediction_results,
             )
             return await self._inference_loop(
                 system_prompt, messages, thread_id,
@@ -940,7 +943,7 @@ class LLMThread:
         # 1. Prepare context: config, messages, memory, system prompt, pre-compaction.
         (messages, system_prompt, _memory_query, pool, pool_cfg,
          is_sub_session_result, _prompt_mode,
-         _memory_results) = await self._prepare_inference_context(item)
+         _memory_results, _prediction_results) = await self._prepare_inference_context(item)
 
         # 2. Save the incoming message to DB.
         await self._save_user_message(item, pool_cfg, is_sub_session_result)
@@ -950,6 +953,7 @@ class LLMThread:
         reply = await self._run_inference_with_retry(
             item, system_prompt, messages, pool,
             _memory_query, _memory_results, _prompt_mode,
+            prediction_results=_prediction_results,
         )
         _inference_duration = _time.time() - _inference_start
 

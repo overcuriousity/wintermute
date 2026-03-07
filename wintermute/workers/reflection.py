@@ -611,7 +611,8 @@ class ReflectionLoop:
             # Record the check result.
             try:
                 await database.async_call(
-                    database.record_prediction_check, pred_id, confirmed
+                    database.record_prediction_check, pred_id, confirmed,
+                    source_text=text[:500], pred_type=pred.get("source", "")
                 )
             except Exception:
                 logger.debug("[reflection] Failed to record prediction check", exc_info=True)
