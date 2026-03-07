@@ -16,7 +16,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **DreamingLoop** | `dreaming.py` | Biologically-inspired multi-phase memory consolidation (housekeeping + creative phases) |
 | **ReflectionLoop** | `reflection.py` | Event-driven feedback loop: rule engine + LLM analysis + skill mutations |
 | **SkillStore** | `skill_store.py` | Vector-indexed skill storage with three backends (FTS5 / local_vector / Qdrant), access tracking, and staleness detection |
-| **SelfModelProfiler** | `self_model.py` | Operational metrics aggregator, parameter auto-tuner, and system-prompt self-assessment injector (runs inside reflection cycle) |
+| **SelfModelProfiler** | `self_model.py` | Operational metrics aggregator and parameter auto-tuner (runs inside reflection cycle) |
 | **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
 | **NL Translator** | `nl_translator.py` | Expands natural-language tool descriptions into structured arguments via a translator LLM |
 | **MemoryStore** | `memory_store.py` | Vector-indexed memory retrieval (flat_file / FTS5 / local_vector / Qdrant backends) with access tracking and source tagging |

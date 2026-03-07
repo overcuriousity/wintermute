@@ -314,7 +314,6 @@ class LLMThread:
                 sp_text = prompt_assembler.assemble(
                     extra_summary=summary,
                     tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
-                    self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
                     nl_tools=nl_tools,
                 )
             except Exception:  # noqa: BLE001
@@ -758,7 +757,6 @@ class LLMThread:
             extra_summary=summary, query=_memory_query,
             memory_results=_memory_results, prompt_mode=prompt_mode,
             tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
-            self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
             nl_tools=nl_tools,
             prediction_results=_prediction_results,
         )
@@ -791,7 +789,6 @@ class LLMThread:
                 extra_summary=summary, query=_memory_query,
                 memory_results=_memory_results, prompt_mode=prompt_mode,
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
-                self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
                 nl_tools=nl_tools,
                 prediction_results=_prediction_results,
             )
@@ -930,7 +927,6 @@ class LLMThread:
                 extra_summary=summary, query=memory_query,
                 memory_results=memory_results, prompt_mode=prompt_mode,
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
-                self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
                 nl_tools=nl_tools,
             )
             return await self._inference_loop(

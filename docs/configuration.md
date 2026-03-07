@@ -448,7 +448,7 @@ Event-driven feedback loop that observes sub-session outcomes, detects patterns 
 
 ### `self_model`
 
-Operational self-awareness profiler that runs inside the reflection cycle. Aggregates metrics from sub-session outcomes, interaction log, and event bus, then auto-tunes internal parameters and injects a cached prose summary into the system prompt. See [autonomy.md — Self-Model](autonomy.md#self-model) for details.
+Operational self-awareness profiler that runs inside the reflection cycle. Aggregates metrics from sub-session outcomes, interaction log, and event bus, then auto-tunes internal parameters. A cached prose summary is available via `query_telemetry` and `/status` but is not injected into the system prompt. See [autonomy.md — Self-Model](autonomy.md#self-model) for details.
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|

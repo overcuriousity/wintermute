@@ -287,7 +287,6 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
              memory_results: Optional[list[dict]] = None,
              prompt_mode: str = "full",
              tool_profiles: Optional[dict[str, dict]] = None,  # deprecated — profiles now in tool schemas
-             self_model_profiler: Optional[object] = None,
              nl_tools: Optional[set[str]] = None,
              prediction_results: Optional[list[str]] = None) -> str:
     """
@@ -358,11 +357,6 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
             reflection = _get_reflection_observations()
             if reflection:
                 sections.append(f"# System Observations\n\n{reflection}")
-
-            if self_model_profiler:
-                sm = self_model_profiler.get_summary()
-                if sm:
-                    sections.append(f"# Self-Assessment\n\n{sm}")
 
         # Predictions & Patterns — main thread only
         if available_tools is None and prediction_results:

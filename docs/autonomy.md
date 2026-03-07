@@ -198,11 +198,11 @@ Runs inside the reflection cycle (no separate asyncio task) and builds an operat
 
 Changes are applied immediately to the live `SubSessionManager` and `MemoryHarvestLoop` objects — no restart required.
 
-**Summary injection:** After each cycle a one-shot LLM call generates a 2–3 sentence prose summary (prompt: `data/prompts/SELF_MODEL_SUMMARY.txt`). This summary is injected into the main-thread system prompt as a `# Self-Assessment` section so the assistant has passive awareness of its own performance. The summary is cached and served without LLM cost on subsequent turns.
+**Summary generation:** After each cycle a one-shot LLM call generates a 2–3 sentence prose summary (prompt: `data/prompts/SELF_MODEL_SUMMARY.txt`). The summary is cached and available via `query_telemetry(query_type="self_model")` and the `/status` command, but is **not** injected into the system prompt (the per-turn token cost was not justified by measurable benefit).
 
 **Persistence:** State is written to `data/self_model.yaml` after every update and auto-committed to the data git repo. The summary survives restarts.
 
-**Visibility:** `/status` shows the self-model summary, last-updated timestamp, and any tuning changes from the last cycle. `/reflect` triggers an immediate cycle and prints the updated self-assessment inline.
+**Visibility:** `/status` shows the self-model summary, last-updated timestamp, and any tuning changes from the last cycle. `/reflect` triggers an immediate cycle and prints the updated self-assessment inline. The LLM can query its own metrics on demand via `query_telemetry`.
 
 **Configuration:** See `self_model:` section in `config.yaml`.
 
@@ -246,7 +246,7 @@ The reflection cycle uses skill stats in two ways:
 
 ### Self-Model Integration
 
-The self-model profiler collects three skill metrics each cycle: total skill count, total reads across all skills, and number of skills unused for 90+ days. These flow into the self-assessment summary automatically.
+The self-model profiler collects three skill metrics each cycle: total skill count, total reads across all skills, and number of skills unused for 90+ days. These are persisted in `data/self_model.yaml` and available via `query_telemetry`.
 
 ### Changelog
 
