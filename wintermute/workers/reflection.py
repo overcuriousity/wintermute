@@ -510,14 +510,15 @@ class ReflectionLoop:
           actual tool usage stats.
         - Preference predictions: informational only — no automated check.
 
-        Confirmed predictions get their access_count bumped (feeding the
-        dreaming promotion pipeline: ≥5 accesses → schema). Contradicted
-        predictions accumulate misses in the prediction_accuracy table.
+        Confirmed predictions get their access_count bumped explicitly
+        (feeding the dreaming promotion pipeline: ≥5 accesses → schema).
+        Contradicted predictions accumulate misses in the prediction_accuracy
+        table.
         """
         from wintermute.infra import memory_store
 
         predictions = await asyncio.to_thread(
-            memory_store.get_by_source, "dreaming_prediction", 50
+            memory_store.get_by_source, "dreaming_prediction", 50, bump_access=False
         )
         if not predictions:
             return
@@ -614,6 +615,13 @@ class ReflectionLoop:
                 )
             except Exception:
                 logger.debug("[reflection] Failed to record prediction check", exc_info=True)
+
+            # Bump access count only for confirmed predictions (feeds promotion).
+            if confirmed and pred_id:
+                try:
+                    await asyncio.to_thread(memory_store.track_access, [pred_id])
+                except Exception:
+                    pass
 
             severity = "info" if confirmed else "suggestion"
             findings.append(ReflectionFinding(

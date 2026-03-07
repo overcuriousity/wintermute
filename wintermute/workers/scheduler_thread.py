@@ -31,6 +31,8 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from dateutil import parser as dateutil_parser
 
+from dataclasses import dataclass
+
 from wintermute.infra import database
 from wintermute.infra.paths import DATA_DIR, SCHEDULER_DB
 from wintermute import tools as tool_module
@@ -80,9 +82,6 @@ async def _check_predictions_job(**_extra) -> None:
     """
     if _instance is not None:
         await _instance._check_predictions()
-
-
-from dataclasses import dataclass
 
 
 @dataclass
@@ -349,7 +348,7 @@ class TaskScheduler:
 
         try:
             predictions = await asyncio.to_thread(
-                memory_store.get_by_source, "dreaming_prediction", 50
+                memory_store.get_by_source, "dreaming_prediction", 50, bump_access=False
             )
         except Exception:
             logger.debug("[scheduler] Failed to fetch predictions", exc_info=True)

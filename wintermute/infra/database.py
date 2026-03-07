@@ -1163,13 +1163,13 @@ def record_prediction_check(prediction_id: str, confirmed: bool) -> None:
     with _connect() as conn:
         conn.execute(
             "INSERT INTO prediction_accuracy "
-            "(prediction_id, confirmed, missed, last_checked_at) "
-            "VALUES (?, ?, ?, ?) "
+            "(prediction_id, confirmed, missed, last_checked_at, created_at) "
+            "VALUES (?, ?, ?, ?, ?) "
             "ON CONFLICT(prediction_id) DO UPDATE SET "
             "confirmed = prediction_accuracy.confirmed + excluded.confirmed, "
             "missed = prediction_accuracy.missed + excluded.missed, "
             "last_checked_at = excluded.last_checked_at",
-            (prediction_id, inc_confirmed, inc_missed, now),
+            (prediction_id, inc_confirmed, inc_missed, now, now),
         )
         conn.commit()
 

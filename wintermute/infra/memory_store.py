@@ -54,7 +54,7 @@ class MemoryBackend(Protocol):
     def get_stale(self, max_age_days: int, min_access: int) -> list[dict]: ...
     def bulk_delete(self, entry_ids: list[str]) -> int: ...
     def get_top_accessed(self, limit: int) -> list[dict]: ...
-    def get_by_source(self, source: str, limit: int = 50) -> list[dict]: ...
+    def get_by_source(self, source: str, limit: int = 50, bump_access: bool = True) -> list[dict]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ class FlatFileBackend:
     def get_top_accessed(self, limit: int) -> list[dict]:
         return self.get_all()
 
-    def get_by_source(self, source: str, limit: int = 50) -> list[dict]:
+    def get_by_source(self, source: str, limit: int = 50, bump_access: bool = True) -> list[dict]:
         return []  # Flat-file has no source metadata.
 
 
@@ -388,7 +388,7 @@ class FTS5Backend:
                 conn.close()
         return [{"id": r[0], "text": r[1], "score": 1.0} for r in rows]
 
-    def get_by_source(self, source: str, limit: int = 50) -> list[dict]:
+    def get_by_source(self, source: str, limit: int = 50, bump_access: bool = True) -> list[dict]:
         with self._lock:
             conn = self._connect()
             try:
@@ -404,7 +404,8 @@ class FTS5Backend:
              "last_accessed": r[3], "access_count": r[4], "source": r[5]}
             for r in rows
         ]
-        self._track_access([h["id"] for h in hits])
+        if bump_access:
+            self._track_access([h["id"] for h in hits])
         return hits
 
 
@@ -731,7 +732,7 @@ class LocalVectorBackend:
                 conn.close()
         return [{"id": r[0], "text": r[1], "score": 1.0} for r in rows]
 
-    def get_by_source(self, source: str, limit: int = 50) -> list[dict]:
+    def get_by_source(self, source: str, limit: int = 50, bump_access: bool = True) -> list[dict]:
         with self._lock:
             conn = self._connect()
             try:
@@ -747,7 +748,8 @@ class LocalVectorBackend:
              "last_accessed": r[3], "access_count": r[4], "source": r[5]}
             for r in rows
         ]
-        self._track_access([h["id"] for h in hits])
+        if bump_access:
+            self._track_access([h["id"] for h in hits])
         return hits
 
 
@@ -1011,9 +1013,16 @@ class QdrantBackend:
         for eid in entry_ids:
             try:
                 with self._lock:
+                    # Fetch current access_count to increment it.
+                    pts = self._client.retrieve(
+                        collection_name=self._collection,
+                        ids=[eid],
+                        with_payload=["access_count"],
+                    )
+                    current_count = pts[0].payload.get("access_count", 0) if pts else 0
                     self._client.set_payload(
                         collection_name=self._collection,
-                        payload={"last_accessed": now},
+                        payload={"last_accessed": now, "access_count": current_count + 1},
                         points=[eid],
                     )
             except Exception:  # noqa: BLE001
@@ -1260,7 +1269,7 @@ class QdrantBackend:
             for p in points[:limit]
         ]
 
-    def get_by_source(self, source: str, limit: int = 50) -> list[dict]:
+    def get_by_source(self, source: str, limit: int = 50, bump_access: bool = True) -> list[dict]:
         from qdrant_client.models import Filter, FieldCondition, MatchValue
         scroll_filter = Filter(must=[
             FieldCondition(key="source", match=MatchValue(value=source)),
@@ -1294,7 +1303,8 @@ class QdrantBackend:
             key=lambda h: h["created_at"],
             reverse=True,
         )[:limit]
-        self._track_access([h["id"] for h in hits])
+        if bump_access:
+            self._track_access([h["id"] for h in hits])
         return hits
 
 
@@ -1419,13 +1429,19 @@ def get_top_accessed(limit: int) -> list[dict]:
     return _backend.get_top_accessed(limit)
 
 
-def get_by_source(source: str, limit: int = 50) -> list[dict]:
+def track_access(entry_ids: list[str]) -> None:
+    """Bump access counts for specific entries."""
+    _backend._track_access(entry_ids)
+
+
+def get_by_source(source: str, limit: int = 50, bump_access: bool = True) -> list[dict]:
     """Return memories filtered by source tag (e.g. 'dreaming_prediction').
 
-    Access counts are bumped for returned entries to feed the promotion
-    pipeline (predictions accessed >= 5 times are promoted to schemas).
+    When *bump_access* is True (default), access counts are bumped for
+    returned entries to feed the promotion pipeline.  Pass False for
+    background checks that should not inflate access counts.
     """
-    return _backend.get_by_source(source, limit)
+    return _backend.get_by_source(source, limit, bump_access=bump_access)
 
 
 def recommend(

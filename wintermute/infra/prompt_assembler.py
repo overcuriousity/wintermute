@@ -240,38 +240,6 @@ def fetch_predictions() -> list[str]:
     return lines
 
 
-def _get_predictions() -> str:
-    """Return active predictions and schemas for the main thread prompt.
-
-    Fetches entries with source ``dreaming_prediction`` and
-    ``dreaming_schema`` from the memory store.  Access counts are bumped
-    automatically by ``get_by_source`` to feed the promotion pipeline.
-
-    Returns empty string when no predictions are available or the dreaming
-    config disables injection (``prediction_inject_prompt: false``).
-    """
-    from wintermute.infra import memory_store
-
-    # Check config gate.
-    dreaming_cfg = memory_store._config.get("dreaming", {})
-    if not dreaming_cfg.get("prediction_inject_prompt", True):
-        return ""
-
-    lines: list[str] = []
-    try:
-        for source in ("dreaming_prediction", "dreaming_schema"):
-            entries = memory_store.get_by_source(source, limit=20)
-            for e in entries:
-                text = e.get("text", "").strip()
-                if text:
-                    lines.append(f"- {text}")
-    except Exception as exc:
-        logger.debug("Prediction retrieval for prompt failed: %s", exc)
-        return ""
-    if not lines:
-        return ""
-    return "\n".join(lines)[:_PREDICTIONS_CAP]
-
 
 def _read_skills_toc(query: Optional[str] = None) -> str:
     """Build a TOC of skills from the skill store.
@@ -397,15 +365,9 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
                     sections.append(f"# Self-Assessment\n\n{sm}")
 
         # Predictions & Patterns — main thread only
-        if available_tools is None:
-            if prediction_results is not None:
-                if prediction_results:
-                    predictions_text = "\n".join(prediction_results)[:_PREDICTIONS_CAP]
-                    sections.append(f"# Predictions & Patterns\n\n{predictions_text}")
-            else:
-                predictions_text = _get_predictions()
-                if predictions_text:
-                    sections.append(f"# Predictions & Patterns\n\n{predictions_text}")
+        if available_tools is None and prediction_results:
+            predictions_text = "\n".join(prediction_results)[:_PREDICTIONS_CAP]
+            sections.append(f"# Predictions & Patterns\n\n{predictions_text}")
 
     if extra_summary:
         sections.append(f"# Conversation Summary\n\n{extra_summary}")

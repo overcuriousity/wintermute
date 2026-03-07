@@ -742,9 +742,13 @@ class LLMThread:
                 logger.debug("Prediction pre-fetch failed", exc_info=True)
                 return None
 
-        _memory_results, _prediction_results = await asyncio.gather(
-            _fetch_memories(), _fetch_predictions(),
-        )
+        if prompt_mode == "minimal":
+            _memory_results = await _fetch_memories()
+            _prediction_results = None
+        else:
+            _memory_results, _prediction_results = await asyncio.gather(
+                _fetch_memories(), _fetch_predictions(),
+            )
 
         # Assemble system prompt first so we can measure its real token cost.
         nl_enabled = self._nl_translation_config.get("enabled", False)
