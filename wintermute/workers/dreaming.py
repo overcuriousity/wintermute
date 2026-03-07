@@ -1119,11 +1119,23 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
                 memory_store.bulk_delete, pred_to_prune
             )
             # Mark pruned predictions as retired in accuracy tracking.
-            for pid in pred_to_prune:
-                try:
-                    await database.async_call(database.retire_prediction, pid)
-                except Exception:  # noqa: BLE001
-                    pass
+            if pruned == len(pred_to_prune):
+                for pid in pred_to_prune:
+                    try:
+                        await database.async_call(database.retire_prediction, pid)
+                    except Exception:  # noqa: BLE001
+                        logger.debug(
+                            "Dreaming: failed to retire prediction %s after pruning",
+                            pid,
+                            exc_info=True,
+                        )
+            else:
+                logger.warning(
+                    "Dreaming prediction: bulk_delete deleted %d of %d requested; "
+                    "skipping retirement to avoid inconsistent accuracy tracking",
+                    pruned,
+                    len(pred_to_prune),
+                )
             result.summary += f", pruned {pruned} stale predictions"
             logger.info("Dreaming prediction: pruned %d stale predictions",
                         pruned)
