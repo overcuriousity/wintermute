@@ -307,6 +307,11 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     contexts should fetch memories via ``asyncio.to_thread`` and pass them here
     to avoid blocking the event loop.
 
+    ``prediction_results``, when provided, is a pre-fetched list of prediction
+    entries to inject into the Predictions & Patterns section.  Callers should
+    fetch this off-thread (e.g. via ``asyncio.to_thread``) to avoid blocking
+    the event loop.  When None, predictions are not included.
+
     ``prompt_mode`` controls how much context is injected:
       - ``"full"`` (default): all sections (memories, tasks, skills, etc.)
       - ``"minimal"``: only Core Instructions + Current Time + Conversation Summary

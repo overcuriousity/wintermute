@@ -694,11 +694,11 @@ class LLMThread:
 
     async def _prepare_inference_context(
         self, item: _QueueItem,
-    ) -> tuple[list[dict], str, str | None, "BackendPool", "ProviderConfig", bool, str, list | None]:
+    ) -> tuple[list[dict], str, str | None, "BackendPool", "ProviderConfig", bool, str, list | None, list | None]:
         """Resolve config, build messages, fetch memories, assemble system prompt.
 
         Returns (messages, system_prompt, memory_query, pool, pool_cfg,
-        is_sub_session_result, prompt_mode, memory_results).
+        is_sub_session_result, prompt_mode, memory_results, prediction_results).
         Also handles pre-compaction if the history exceeds the token budget.
         """
         thread_id = item.thread_id

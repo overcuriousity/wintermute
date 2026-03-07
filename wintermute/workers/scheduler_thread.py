@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import time as _time
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -30,8 +31,6 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from dateutil import parser as dateutil_parser
-
-from dataclasses import dataclass
 
 from wintermute.infra import database
 from wintermute.infra.paths import DATA_DIR, SCHEDULER_DB
