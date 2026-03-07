@@ -561,8 +561,12 @@ class ReflectionLoop:
             pass
 
         for pred in predictions:
-            pred_id = pred.get("id", "")
-            text = pred.get("text", "").lower()
+            raw_pred_id = pred.get("id")
+            pred_id = str(raw_pred_id).strip() if raw_pred_id is not None else ""
+            if not pred_id:
+                continue
+            original_text = pred.get("text", "")
+            text = original_text.lower()
             confirmed = False
 
             if "[prediction:temporal]" in text or "active during" in text or "most active" in text:
@@ -577,12 +581,9 @@ class ReflectionLoop:
                     for start_h, end_h in hour_matches:
                         try:
                             sh, eh = int(start_h), int(end_h)
-                            # Handle AM/PM heuristic: if text says "pm" or hours < 12 with "evening"
-                            if "pm" in text or "evening" in text or "night" in text:
-                                if sh < 12:
-                                    sh += 12
-                                if eh < 12:
-                                    eh += 12
+                            # Only treat as hours if both values are in 0-23 range.
+                            if sh > 23 or eh > 23:
+                                continue
                             predicted_hours = set(range(sh, eh + 1)) if sh <= eh else set(range(sh, 24)) | set(range(0, eh + 1))
                             if predicted_hours & hours_active:
                                 confirmed = True
@@ -612,7 +613,11 @@ class ReflectionLoop:
             try:
                 await database.async_call(
                     database.record_prediction_check, pred_id, confirmed,
-                    source_text=text[:500], pred_type=pred.get("source", "")
+                    source_text=original_text[:500],
+                    pred_type=("temporal" if "[prediction:temporal]" in text
+                               else "behavioral" if "[prediction:behavioral]" in text
+                               else "preference" if "[prediction:preference]" in text
+                               else "")
                 )
             except Exception:
                 logger.debug("[reflection] Failed to record prediction check", exc_info=True)

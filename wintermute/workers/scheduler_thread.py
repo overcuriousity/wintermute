@@ -400,12 +400,9 @@ class TaskScheduler:
                 for start_h, end_h in hour_matches:
                     try:
                         sh, eh = int(start_h), int(end_h)
-                        # AM/PM heuristic.
-                        if "pm" in text_lower or "evening" in text_lower or "night" in text_lower:
-                            if sh < 12:
-                                sh += 12
-                            if eh < 12:
-                                eh += 12
+                        # Only treat as hours if both values are in 0-23 range.
+                        if sh > 23 or eh > 23:
+                            continue
                         if sh <= eh:
                             in_time_window = sh <= current_hour <= eh
                         else:
@@ -473,7 +470,7 @@ class TaskScheduler:
                         used_ids.append(str(pred_id))
             if used_ids:
                 try:
-                    memory_store.track_access(used_ids)
+                    await asyncio.to_thread(memory_store.track_access, used_ids)
                 except Exception:
                     pass  # Best-effort access bumping.
         except Exception:
