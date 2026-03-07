@@ -427,6 +427,12 @@ class TaskScheduler:
                 "[scheduler] Proactive prediction trigger: %s", text[:120]
             )
             self._prediction_last_fired[pred_id] = now
+            # Bump access count — this prediction was actually used.
+            try:
+                from wintermute.infra import memory_store
+                await asyncio.to_thread(memory_store.track_access, [pred_id])
+            except Exception:
+                pass  # Best-effort.
             self._sub_sessions.spawn(
                 objective=(
                     f"[PROACTIVE] User is predicted to be active now based on:\n"

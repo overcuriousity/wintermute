@@ -2,11 +2,14 @@
 Assembles the complete system prompt from individual file components.
 
 Order:
-  1. BASE_PROMPT.txt   – immutable core
-  2. Current datetime   – local time + timezone
-  3. MEMORIES.txt      – long-term user facts
-  4. Tasks (from DB)    – active goals, reminders, scheduled actions
-  5. Skills TOC        – query-ranked when vector backend is active
+  1. BASE_PROMPT.txt          – immutable core
+  2. Current datetime          – local time + timezone
+  3. MEMORIES.txt             – long-term user facts
+  4. System Observations      – runtime diagnostics (config-gated)
+  5. Tasks (from DB)           – active goals, reminders, scheduled actions
+  6. Skills TOC               – query-ranked when vector backend is active
+  7. Predictions & Patterns   – dreaming predictions + promoted schemas (main thread only)
+  8. Conversation Summary     – compaction summary (when context has been compacted)
 """
 
 import json

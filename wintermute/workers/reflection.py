@@ -609,6 +609,14 @@ class ReflectionLoop:
                     if matched >= len(tool_keywords) * 0.5:
                         confirmed = True
 
+            elif "[prediction:preference]" in text:
+                # Preference predictions are informational — skip validation.
+                continue
+
+            else:
+                # No parseable prediction type — skip to avoid false misses.
+                continue
+
             # Record the check result.
             try:
                 await database.async_call(
