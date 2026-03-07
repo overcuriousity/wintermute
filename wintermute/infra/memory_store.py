@@ -1282,14 +1282,18 @@ class QdrantBackend:
             offset = result[1] if len(result) > 1 else None
             if offset is None:
                 break
-        hits = [
-            {"id": str(p.id), "text": p.payload.get("text", ""),
-             "created_at": p.payload.get("created_at", 0),
-             "last_accessed": p.payload.get("last_accessed", 0),
-             "access_count": p.payload.get("access_count", 0),
-             "source": p.payload.get("source", "unknown")}
-            for p in points[:limit]
-        ]
+        hits = sorted(
+            [
+                {"id": str(p.id), "text": p.payload.get("text", ""),
+                 "created_at": p.payload.get("created_at", 0),
+                 "last_accessed": p.payload.get("last_accessed", 0),
+                 "access_count": p.payload.get("access_count", 0),
+                 "source": p.payload.get("source", "unknown")}
+                for p in points
+            ],
+            key=lambda h: h["created_at"],
+            reverse=True,
+        )[:limit]
         self._track_access([h["id"] for h in hits])
         return hits
 

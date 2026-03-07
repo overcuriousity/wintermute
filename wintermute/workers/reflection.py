@@ -589,8 +589,12 @@ class ReflectionLoop:
                             pass
                 if day_matches:
                     predicted_days = {d.lower() for d in day_matches}
-                    if predicted_days & days_active:
-                        confirmed = True
+                    day_match = bool(predicted_days & days_active)
+                    if hour_matches:
+                        # Both constraints present — require both to match.
+                        confirmed = confirmed and day_match
+                    else:
+                        confirmed = day_match
 
             elif "[prediction:behavioral]" in text or "relies on" in text or "file operations" in text:
                 # Check if predicted tool patterns match actual usage.

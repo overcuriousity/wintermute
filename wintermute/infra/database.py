@@ -1152,13 +1152,24 @@ def upsert_prediction(prediction_id: str, source_text: str,
 
 
 def record_prediction_check(prediction_id: str, confirmed: bool) -> None:
-    """Increment confirmed or missed counter for a prediction."""
-    col = "confirmed" if confirmed else "missed"
+    """Increment confirmed or missed counter for a prediction.
+
+    Uses UPSERT so checks against previously-untracked predictions
+    still create a row in prediction_accuracy.
+    """
+    inc_confirmed = 1 if confirmed else 0
+    inc_missed = 0 if confirmed else 1
+    now = time.time()
     with _connect() as conn:
         conn.execute(
-            f"UPDATE prediction_accuracy SET {col} = {col} + 1, "  # noqa: S608
-            "last_checked_at = ? WHERE prediction_id = ?",
-            (time.time(), prediction_id),
+            "INSERT INTO prediction_accuracy "
+            "(prediction_id, confirmed, missed, last_checked_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(prediction_id) DO UPDATE SET "
+            "confirmed = prediction_accuracy.confirmed + excluded.confirmed, "
+            "missed = prediction_accuracy.missed + excluded.missed, "
+            "last_checked_at = excluded.last_checked_at",
+            (prediction_id, inc_confirmed, inc_missed, now),
         )
         conn.commit()
 

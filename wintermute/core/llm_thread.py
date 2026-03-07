@@ -723,16 +723,28 @@ class LLMThread:
                 break
         _memory_query = " ".join(_query_parts) if _query_parts else None
 
-        # Pre-fetch memories off the event loop to avoid blocking I/O.
+        # Pre-fetch memories and predictions off the event loop to avoid blocking I/O.
         from wintermute.infra import memory_store
-        if memory_store.is_vector_enabled() and _memory_query:
+
+        async def _fetch_memories():
+            if memory_store.is_vector_enabled() and _memory_query:
+                try:
+                    return await asyncio.to_thread(memory_store.search, _memory_query)
+                except Exception as e:
+                    logger.warning("Vector memory search failed, continuing without memory context: %s", e)
+                    return []  # empty list (not None) so assembler won't retry
+            return None
+
+        async def _fetch_predictions():
             try:
-                _memory_results = await asyncio.to_thread(memory_store.search, _memory_query)
-            except Exception as e:
-                logger.warning("Vector memory search failed, continuing without memory context: %s", e)
-                _memory_results = []  # empty list (not None) so assembler won't retry
-        else:
-            _memory_results = None
+                return await asyncio.to_thread(prompt_assembler.fetch_predictions)
+            except Exception:
+                logger.debug("Prediction pre-fetch failed", exc_info=True)
+                return None
+
+        _memory_results, _prediction_results = await asyncio.gather(
+            _fetch_memories(), _fetch_predictions(),
+        )
 
         # Assemble system prompt first so we can measure its real token cost.
         nl_enabled = self._nl_translation_config.get("enabled", False)
@@ -744,6 +756,7 @@ class LLMThread:
             tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
             self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
             nl_tools=nl_tools,
+            prediction_results=_prediction_results,
         )
         active_schemas = tool_module.get_tool_schemas(
             nl_tools=nl_tools,
@@ -776,6 +789,7 @@ class LLMThread:
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
                 self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
                 nl_tools=nl_tools,
+                prediction_results=_prediction_results,
             )
 
         self._last_system_prompt[thread_id] = system_prompt

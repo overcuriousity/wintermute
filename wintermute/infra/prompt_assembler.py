@@ -215,6 +215,31 @@ def _get_reflection_observations() -> str:
 _PREDICTIONS_CAP = 800
 
 
+def fetch_predictions() -> list[str]:
+    """Fetch prediction lines from memory store (blocking I/O).
+
+    Intended to be called via ``asyncio.to_thread`` from async callers,
+    then passed to ``assemble(prediction_results=...)``.
+    """
+    from wintermute.infra import memory_store
+
+    dreaming_cfg = memory_store._config.get("dreaming", {})
+    if not dreaming_cfg.get("prediction_inject_prompt", True):
+        return []
+
+    lines: list[str] = []
+    try:
+        for source in ("dreaming_prediction", "dreaming_schema"):
+            entries = memory_store.get_by_source(source, limit=20)
+            for e in entries:
+                text = e.get("text", "").strip()
+                if text:
+                    lines.append(f"- {text}")
+    except Exception as exc:
+        logger.debug("Prediction retrieval failed: %s", exc)
+    return lines
+
+
 def _get_predictions() -> str:
     """Return active predictions and schemas for the main thread prompt.
 
@@ -295,7 +320,8 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
              prompt_mode: str = "full",
              tool_profiles: Optional[dict[str, dict]] = None,  # deprecated — profiles now in tool schemas
              self_model_profiler: Optional[object] = None,
-             nl_tools: Optional[set[str]] = None) -> str:
+             nl_tools: Optional[set[str]] = None,
+             prediction_results: Optional[list[str]] = None) -> str:
     """
     Build and return the full system prompt string.
 
@@ -372,9 +398,14 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
 
         # Predictions & Patterns — main thread only
         if available_tools is None:
-            predictions_text = _get_predictions()
-            if predictions_text:
-                sections.append(f"# Predictions & Patterns\n\n{predictions_text}")
+            if prediction_results is not None:
+                if prediction_results:
+                    predictions_text = "\n".join(prediction_results)[:_PREDICTIONS_CAP]
+                    sections.append(f"# Predictions & Patterns\n\n{predictions_text}")
+            else:
+                predictions_text = _get_predictions()
+                if predictions_text:
+                    sections.append(f"# Predictions & Patterns\n\n{predictions_text}")
 
     if extra_summary:
         sections.append(f"# Conversation Summary\n\n{extra_summary}")

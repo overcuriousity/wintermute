@@ -370,7 +370,12 @@ class TaskScheduler:
         current_day = current.strftime("%A").lower()
 
         for pred in predictions:
-            pred_id = pred.get("id", "")
+            raw_pred_id = pred.get("id")
+            pred_id = str(raw_pred_id).strip() if raw_pred_id is not None else ""
+            if not pred_id:
+                # Skip predictions without a stable ID to avoid
+                # collapsing cooldown tracking under an empty key.
+                continue
             text = pred.get("text", "")
             text_lower = text.lower()
 
