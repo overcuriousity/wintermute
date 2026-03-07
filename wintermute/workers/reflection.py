@@ -572,15 +572,29 @@ class ReflectionLoop:
             if "[prediction:temporal]" in text or "active during" in text or "most active" in text:
                 # Check if predicted hours match actual activity.
                 # Look for hour patterns like "8-9 AM", "21:00-23:00", etc.
-                hour_matches = re.findall(r'(\d{1,2})(?::00)?\s*(?:-|to)\s*(\d{1,2})(?::00)?', text)
+                hour_matches = re.findall(
+                    r'(\d{1,2})(?::\d{2})?\s*(?:am|pm)?\s*(?:-|to)\s*(\d{1,2})(?::\d{2})?\s*(am|pm)?',
+                    text,
+                )
                 day_matches = re.findall(
                     r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?',
                     text,
                 )
                 if hour_matches:
-                    for start_h, end_h in hour_matches:
+                    for start_h, end_h, ampm in hour_matches:
                         try:
                             sh, eh = int(start_h), int(end_h)
+                            # Apply AM/PM modifier to both endpoints.
+                            if ampm == "pm":
+                                if sh < 12:
+                                    sh += 12
+                                if eh < 12:
+                                    eh += 12
+                            elif ampm == "am":
+                                if sh == 12:
+                                    sh = 0
+                                if eh == 12:
+                                    eh = 0
                             # Only treat as hours if both values are in 0-23 range.
                             if sh > 23 or eh > 23:
                                 continue

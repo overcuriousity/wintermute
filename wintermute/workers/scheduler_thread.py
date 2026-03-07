@@ -21,7 +21,7 @@ import re
 import time as _time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from zoneinfo import ZoneInfo
 
 from apscheduler.executors.asyncio import AsyncIOExecutor
@@ -35,7 +35,7 @@ from dateutil import parser as dateutil_parser
 from wintermute.infra import database
 from wintermute.infra.paths import DATA_DIR, SCHEDULER_DB
 from wintermute import tools as tool_module
-from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager
     from wintermute.infra.event_bus import EventBus
@@ -387,7 +387,8 @@ class TaskScheduler:
 
             # Parse time windows from prediction text.
             hour_matches = re.findall(
-                r'(\d{1,2})(?::00)?\s*(?:-|to)\s*(\d{1,2})(?::00)?', text_lower
+                r'(\d{1,2})(?::\d{2})?\s*(?:am|pm)?\s*(?:-|to)\s*(\d{1,2})(?::\d{2})?\s*(am|pm)?',
+                text_lower,
             )
             day_matches = re.findall(
                 r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?',
@@ -396,9 +397,20 @@ class TaskScheduler:
 
             in_time_window = False
             if hour_matches:
-                for start_h, end_h in hour_matches:
+                for start_h, end_h, ampm in hour_matches:
                     try:
                         sh, eh = int(start_h), int(end_h)
+                        # Apply AM/PM modifier to both endpoints.
+                        if ampm == "pm":
+                            if sh < 12:
+                                sh += 12
+                            if eh < 12:
+                                eh += 12
+                        elif ampm == "am":
+                            if sh == 12:
+                                sh = 0
+                            if eh == 12:
+                                eh = 0
                         # Only treat as hours if both values are in 0-23 range.
                         if sh > 23 or eh > 23:
                             continue

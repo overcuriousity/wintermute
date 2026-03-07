@@ -309,10 +309,15 @@ class LLMThread:
 
         sp_text = self._last_system_prompt.get(thread_id)
         if sp_text is None:
+            # Fallback assembly — predictions are omitted because fetching
+            # them requires async I/O.  The cached prompt (preferred path)
+            # already includes predictions, so this only affects the first
+            # call before any LLM turn has run.
             summary = self._compaction_summaries.get(thread_id)
             try:
                 sp_text = prompt_assembler.assemble(
                     extra_summary=summary,
+                    prompt_mode="minimal",
                     tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
                     nl_tools=nl_tools,
                 )
