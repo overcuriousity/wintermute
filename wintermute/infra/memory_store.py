@@ -1010,23 +1010,27 @@ class QdrantBackend:
         if not entry_ids:
             return
         now = time.time()
-        for eid in entry_ids:
-            try:
-                with self._lock:
-                    # Fetch current access_count to increment it.
-                    pts = self._client.retrieve(
-                        collection_name=self._collection,
-                        ids=[eid],
-                        with_payload=["access_count"],
-                    )
-                    current_count = pts[0].payload.get("access_count", 0) if pts else 0
+        try:
+            with self._lock:
+                # Batch-retrieve current access counts in one call.
+                pts = self._client.retrieve(
+                    collection_name=self._collection,
+                    ids=entry_ids,
+                    with_payload=["access_count"],
+                )
+                count_map = {
+                    str(p.id): p.payload.get("access_count", 0)
+                    for p in pts
+                }
+                for eid in entry_ids:
+                    current_count = count_map.get(eid, 0)
                     self._client.set_payload(
                         collection_name=self._collection,
                         payload={"last_accessed": now, "access_count": current_count + 1},
                         points=[eid],
                     )
-            except Exception:  # noqa: BLE001
-                pass  # Best-effort access tracking.
+        except Exception:  # noqa: BLE001
+            pass  # Best-effort access tracking.
 
     def get_all(self) -> list[dict]:
         points = []
@@ -1431,7 +1435,8 @@ def get_top_accessed(limit: int) -> list[dict]:
 
 def track_access(entry_ids: list[str]) -> None:
     """Bump access counts for specific entries."""
-    _backend._track_access(entry_ids)
+    if hasattr(_backend, "_track_access"):
+        _backend._track_access(entry_ids)
 
 
 def get_by_source(source: str, limit: int = 50, bump_access: bool = True) -> list[dict]:

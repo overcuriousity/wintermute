@@ -1145,7 +1145,9 @@ def upsert_prediction(prediction_id: str, source_text: str,
             "(prediction_id, source_text, pred_type, created_at) "
             "VALUES (?, ?, ?, ?) "
             "ON CONFLICT(prediction_id) DO UPDATE SET "
-            "source_text = excluded.source_text",
+            "source_text = excluded.source_text, "
+            "pred_type = excluded.pred_type, "
+            "created_at = COALESCE(prediction_accuracy.created_at, excluded.created_at)",
             (prediction_id, source_text, pred_type, time.time()),
         )
         conn.commit()

@@ -360,11 +360,8 @@ class TaskScheduler:
         now = _time.time()
         cooldown_seconds = self._cfg.prediction_proactive_cooldown_hours * 3600
 
-        try:
-            tz = ZoneInfo(self._cfg.timezone)
-        except Exception:
-            tz = timezone.utc
-        current = datetime.now(tz)
+        # Use UTC to match dreaming phase which generates predictions in UTC.
+        current = datetime.now(timezone.utc)
         current_hour = current.hour
         current_day = current.strftime("%A").lower()
 

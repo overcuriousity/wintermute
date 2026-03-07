@@ -623,7 +623,7 @@ class ReflectionLoop:
                 except Exception:
                     pass
 
-            severity = "info" if confirmed else "suggestion"
+            severity = "action_taken" if confirmed else "warning"
             findings.append(ReflectionFinding(
                 rule="prediction_validation",
                 severity=severity,
