@@ -7,8 +7,8 @@ Order:
   3. MEMORIES.txt             – long-term user facts
   4. System Observations      – runtime diagnostics (config-gated)
   5. Tasks (from DB)           – active goals, reminders, scheduled actions
-  6. Skills TOC               – query-ranked when vector backend is active
-  7. Predictions & Patterns   – dreaming predictions + promoted schemas (main thread only)
+  6. Predictions & Patterns   – dreaming predictions + promoted schemas (main thread only)
+  7. Skills TOC               – query-ranked when vector backend is active
   8. Conversation Summary     – compaction summary (when context has been compacted)
 """
 
