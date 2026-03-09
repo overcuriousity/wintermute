@@ -86,8 +86,8 @@ TOOL_SCHEMAS = [
                     "type": "string",
                     "description": (
                         "Worker capability profile. Determines which tools and "
-                        "context the worker receives. Must be one of the available "
-                        "profile names. Required for spawn."
+                        "context the worker receives. Should be one of the "
+                        "available profile names when spawning a worker."
                     ),
                 },
             },
