@@ -55,6 +55,7 @@ class MemoryBackend(Protocol):
     def bulk_delete(self, entry_ids: list[str]) -> int: ...
     def get_top_accessed(self, limit: int) -> list[dict]: ...
     def get_by_source(self, source: str, limit: int = 50, bump_access: bool = True) -> list[dict]: ...
+    def track_access(self, entry_ids: list[str]) -> None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +121,9 @@ class FlatFileBackend:
 
     def get_by_source(self, source: str, limit: int = 50, bump_access: bool = True) -> list[dict]:
         return []  # Flat-file has no source metadata.
+
+    def track_access(self, entry_ids: list[str]) -> None:
+        pass  # Flat-file backend has no access tracking.
 
 
 # ---------------------------------------------------------------------------
@@ -407,6 +411,9 @@ class FTS5Backend:
         if bump_access:
             self._track_access([h["id"] for h in hits])
         return hits
+
+    def track_access(self, entry_ids: list[str]) -> None:
+        self._track_access(entry_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -751,6 +758,9 @@ class LocalVectorBackend:
         if bump_access:
             self._track_access([h["id"] for h in hits])
         return hits
+
+    def track_access(self, entry_ids: list[str]) -> None:
+        self._track_access(entry_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -1311,6 +1321,9 @@ class QdrantBackend:
             self._track_access([h["id"] for h in hits])
         return hits
 
+    def track_access(self, entry_ids: list[str]) -> None:
+        self._track_access(entry_ids)
+
 
 # ---------------------------------------------------------------------------
 # Helpers — thin wrappers around llm_utils shared functions
@@ -1440,8 +1453,8 @@ def get_top_accessed(limit: int) -> list[dict]:
 
 def track_access(entry_ids: list[str]) -> None:
     """Bump access counts for specific entries."""
-    if hasattr(_backend, "_track_access"):
-        _backend._track_access(entry_ids)
+    if _backend is not None:
+        _backend.track_access(entry_ids)
 
 
 def get_by_source(source: str, limit: int = 50, bump_access: bool = True) -> list[dict]:
