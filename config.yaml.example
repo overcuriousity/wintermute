@@ -408,7 +408,7 @@ context:
   component_size_limits:
     memories: 10000                       # MEMORIES.txt — long-term personal facts
     tasks: 5000                           # Active tasks from database
-    skills_total: 20000                   # Skills TOC generated from skill store
+    skills_total: 3000                   # Skills TOC generated from skill store
 
 
 # ── Dreaming (Nightly Consolidation) ────────────────────────────────
@@ -575,6 +575,13 @@ memory:
     prediction_days_interval: 7        # Min days between runs
     prediction_lookback_days: 30       # How far back to look for patterns
     prediction_max_predictions: 3      # Max predictions to store per cycle
+
+    # ── Prediction Consumption ──
+    # Controls how generated predictions are used at runtime.
+    prediction_inject_prompt: true       # Inject predictions into the system prompt
+    prediction_proactive_scheduling: true # Spawn proactive sessions at predicted active times
+    prediction_proactive_cooldown_hours: 4 # Min hours between proactive fires per prediction
+    # proactive_target_thread_id: "default"  # Thread to deliver proactive results to (default: main thread)
 
   # Qdrant connection (required for qdrant backend only).
   # api_key is optional — only needed for Qdrant Cloud or instances

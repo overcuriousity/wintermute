@@ -19,8 +19,9 @@ import json
 import logging
 import re
 import time as _time
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from zoneinfo import ZoneInfo
 
 from apscheduler.executors.asyncio import AsyncIOExecutor
@@ -34,7 +35,7 @@ from dateutil import parser as dateutil_parser
 from wintermute.infra import database
 from wintermute.infra.paths import DATA_DIR, SCHEDULER_DB
 from wintermute import tools as tool_module
-from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager
     from wintermute.infra.event_bus import EventBus
@@ -72,12 +73,22 @@ async def _fire_routine_job(job_id: str, message: str, ai_prompt: Optional[str],
 _fire_reminder_job = _fire_routine_job
 
 
-from dataclasses import dataclass
+async def _check_predictions_job(**_extra) -> None:
+    """Module-level coroutine for the hourly prediction check.
+
+    Must be at module level so APScheduler's SQLAlchemy pickle can
+    serialize it by reference.
+    """
+    if _instance is not None:
+        await _instance._check_predictions()
 
 
 @dataclass
 class SchedulerConfig:
     timezone: str = "UTC"
+    prediction_proactive_scheduling: bool = True
+    prediction_proactive_cooldown_hours: int = 4
+    proactive_target_thread_id: str = "default"
 
 
 class TaskScheduler:
@@ -98,6 +109,8 @@ class TaskScheduler:
         self._event_bus = event_bus
         self._event_bus_subs: list[str] = []
         self._scheduler: Optional[AsyncIOScheduler] = None
+        # Track last proactive fire time per prediction ID to enforce cooldowns.
+        self._prediction_last_fired: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -127,6 +140,17 @@ class TaskScheduler:
             self._event_bus_subs.append(sub_id)
 
         logger.info("[scheduler] started (timezone=%s)", self._cfg.timezone)
+
+        # Schedule periodic prediction-based proactive checks.
+        if self._cfg.prediction_proactive_scheduling:
+            self._scheduler.add_job(
+                _check_predictions_job,
+                trigger=IntervalTrigger(hours=1),
+                id="_prediction_check",
+                replace_existing=True,
+                misfire_grace_time=3600,
+            )
+            logger.info("[scheduler] Prediction proactive check scheduled (hourly)")
 
     async def _on_task_created(self, event) -> None:
         """React to task.created events — log for visibility."""
@@ -219,13 +243,25 @@ class TaskScheduler:
                     # originating thread; [NO_ACTION] suppression prevents
                     # noise when there's nothing to report.
                     if self._sub_sessions is not None:
+                        # Enrich objective with behavioral/preference predictions.
+                        pred_ctx = await self._get_prediction_context()
+                        objective = (
+                            f"[TASK {task_id}] {ai_prompt}\n\n"
+                            f"(Task: {message})\n\n"
+                        )
+                        if pred_ctx:
+                            # Cap prediction context to avoid inflating sub-session prompts.
+                            capped = pred_ctx[:800]
+                            objective += (
+                                f"## Relevant predictions about the user\n"
+                                f"{capped}\n\n"
+                            )
+                        objective += (
+                            "If you have nothing actionable to report, "
+                            "respond with exactly: [NO_ACTION]"
+                        )
                         self._sub_sessions.spawn(
-                            objective=(
-                                f"[TASK {task_id}] {ai_prompt}\n\n"
-                                f"(Task: {message})\n\n"
-                                f"If you have nothing actionable to report, "
-                                f"respond with exactly: [NO_ACTION]"
-                            ),
+                            objective=objective,
                             parent_thread_id=thread_id,
                             system_prompt_mode="full",
                             task_id=task_id,
@@ -294,6 +330,172 @@ class TaskScheduler:
                     await self._broadcast(f"\u274c Task {task_id} failed: {exc}", thread_id)
             except Exception:  # noqa: BLE001
                 pass
+
+    # ------------------------------------------------------------------
+    # Prediction-based proactive scheduling
+    # ------------------------------------------------------------------
+
+    async def _check_predictions(self) -> None:
+        """Check temporal predictions and spawn proactive sub-sessions.
+
+        Runs hourly.  For each ``[prediction:temporal]`` entry, parses the
+        predicted active time window.  If the current time falls within a
+        predicted window and the cooldown has elapsed, spawns a full
+        sub-session to check for anything proactive to surface.
+        """
+        if self._sub_sessions is None:
+            return
+
+        from wintermute.infra import memory_store
+
+        try:
+            predictions = await asyncio.to_thread(
+                memory_store.get_by_source, "dreaming_prediction", 50, bump_access=False
+            )
+        except Exception:
+            logger.debug("[scheduler] Failed to fetch predictions", exc_info=True)
+            return
+
+        if not predictions:
+            return
+
+        now = _time.time()
+        cooldown_seconds = self._cfg.prediction_proactive_cooldown_hours * 3600
+
+        # Use UTC to match dreaming phase which generates predictions in UTC.
+        current = datetime.now(timezone.utc)
+        current_hour = current.hour
+        current_day = current.strftime("%A").lower()
+
+        for pred in predictions:
+            raw_pred_id = pred.get("id")
+            pred_id = str(raw_pred_id).strip() if raw_pred_id is not None else ""
+            if not pred_id:
+                # Skip predictions without a stable ID to avoid
+                # collapsing cooldown tracking under an empty key.
+                continue
+            text = pred.get("text", "")
+            text_lower = text.lower()
+
+            # Only process temporal predictions.
+            if "[prediction:temporal]" not in text_lower and "most active" not in text_lower:
+                continue
+
+            # Enforce cooldown per prediction.
+            last_fired = self._prediction_last_fired.get(pred_id, 0)
+            if now - last_fired < cooldown_seconds:
+                continue
+
+            # Parse time windows from prediction text.
+            hour_matches = re.findall(
+                r'(\d{1,2})(?::\d{2})?\s*(am|pm)?\s*(?:-|to)\s*(\d{1,2})(?::\d{2})?\s*(am|pm)?',
+                text_lower,
+            )
+            day_matches = re.findall(
+                r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?',
+                text_lower,
+            )
+
+            in_time_window = False
+            if hour_matches:
+                for start_h, start_ampm, end_h, end_ampm in hour_matches:
+                    try:
+                        sh, eh = int(start_h), int(end_h)
+                        # Apply AM/PM independently; fall back to end's
+                        # suffix when start has none (e.g. "8-10 PM").
+                        s_ap = start_ampm or end_ampm
+                        e_ap = end_ampm or start_ampm
+                        if s_ap == "pm" and sh < 12:
+                            sh += 12
+                        elif s_ap == "am" and sh == 12:
+                            sh = 0
+                        if e_ap == "pm" and eh < 12:
+                            eh += 12
+                        elif e_ap == "am" and eh == 12:
+                            eh = 0
+                        # Only treat as hours if both values are in 0-23 range.
+                        if sh > 23 or eh > 23:
+                            continue
+                        if sh <= eh:
+                            in_time_window = sh <= current_hour <= eh
+                        else:
+                            in_time_window = current_hour >= sh or current_hour <= eh
+                    except (ValueError, TypeError):
+                        pass
+                    if in_time_window:
+                        break
+
+            # Also check weekday match.
+            if day_matches:
+                if current_day not in {d.lower() for d in day_matches}:
+                    in_time_window = False
+            elif not hour_matches:
+                # No parseable time info — skip.
+                continue
+
+            if not in_time_window:
+                continue
+
+            # Spawn a proactive sub-session.
+            logger.info(
+                "[scheduler] Proactive prediction trigger: %s", text[:120]
+            )
+            self._prediction_last_fired[pred_id] = now
+            # Bump access count — this prediction was actually used.
+            try:
+                from wintermute.infra import memory_store
+                await asyncio.to_thread(memory_store.track_access, [pred_id])
+            except Exception:
+                pass  # Best-effort.
+            self._sub_sessions.spawn(
+                objective=(
+                    f"[PROACTIVE] User is predicted to be active now based on:\n"
+                    f"{text}\n\n"
+                    f"Check for pending tasks, recent reminders, upcoming "
+                    f"deadlines, or anything useful to surface proactively.\n\n"
+                    f"If you have nothing actionable to report, respond with "
+                    f"exactly: [NO_ACTION]"
+                ),
+                system_prompt_mode="full",
+                parent_thread_id=self._cfg.proactive_target_thread_id,
+            )
+
+            if self._event_bus:
+                self._event_bus.emit(
+                    "scheduler.proactive_fired",
+                    prediction_id=pred_id,
+                    prediction_text=text[:200],
+                )
+
+    # ------------------------------------------------------------------
+    # Prediction context injection for task sub-sessions
+    # ------------------------------------------------------------------
+
+    async def _get_prediction_context(self) -> str:
+        """Return behavioral/preference prediction text for task context."""
+        from wintermute.infra import memory_store
+
+        lines: list[str] = []
+        try:
+            predictions = await asyncio.to_thread(
+                memory_store.get_by_source, "dreaming_prediction", 50, bump_access=False
+            )
+            used_ids: list[str] = []
+            for pred in predictions:
+                text = pred.get("text", "")
+                if "[prediction:behavioral]" in text.lower() or "[prediction:preference]" in text.lower():
+                    lines.append(text.strip())
+                    pred_id = pred.get("id")
+                    if pred_id is not None:
+                        used_ids.append(str(pred_id))
+            if used_ids:
+                try:
+                    await asyncio.to_thread(memory_store.track_access, used_ids)
+                except Exception:
+                    pass  # Best-effort access bumping.
+        except Exception:
+            pass
+        return "\n".join(lines) if lines else ""
 
     # ------------------------------------------------------------------
     # Crash recovery

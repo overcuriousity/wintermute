@@ -1085,9 +1085,16 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
             pred_type = pred.get("type", "behavioral")
             if text:
                 tagged = f"[prediction:{pred_type}] {text}"
-                await asyncio.to_thread(
+                entry_id = await asyncio.to_thread(
                     memory_store.add, tagged, None, "dreaming_prediction"
                 )
+                # Track accuracy for the new prediction.
+                try:
+                    await database.async_call(
+                        database.upsert_prediction, entry_id, tagged, pred_type
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug("Dreaming: prediction accuracy upsert failed", exc_info=True)
                 predictions_added += 1
                 logger.info("Dreaming prediction: %s", text[:100])
         result.items_processed = predictions_added
@@ -1111,6 +1118,24 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
             pruned = await asyncio.to_thread(
                 memory_store.bulk_delete, pred_to_prune
             )
+            # Mark pruned predictions as retired in accuracy tracking.
+            if pruned == len(pred_to_prune):
+                for pid in pred_to_prune:
+                    try:
+                        await database.async_call(database.retire_prediction, pid)
+                    except Exception:  # noqa: BLE001
+                        logger.debug(
+                            "Dreaming: failed to retire prediction %s after pruning",
+                            pid,
+                            exc_info=True,
+                        )
+            else:
+                logger.warning(
+                    "Dreaming prediction: bulk_delete deleted %d of %d requested; "
+                    "skipping retirement to avoid inconsistent accuracy tracking",
+                    pruned,
+                    len(pred_to_prune),
+                )
             result.summary += f", pruned {pruned} stale predictions"
             logger.info("Dreaming prediction: pruned %d stale predictions",
                         pruned)
@@ -1138,6 +1163,11 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
                 await asyncio.to_thread(
                     memory_store.delete, entry["id"]
                 )
+                # Retire the prediction in accuracy tracking (promoted, not pruned).
+                try:
+                    await database.async_call(database.retire_prediction, entry["id"])
+                except Exception:  # noqa: BLE001
+                    pass
                 promoted += 1
                 logger.info("Dreaming: promoted prediction to schema: %s",
                             text[:100])

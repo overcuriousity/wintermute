@@ -309,12 +309,16 @@ class LLMThread:
 
         sp_text = self._last_system_prompt.get(thread_id)
         if sp_text is None:
+            # Fallback assembly — predictions are omitted because fetching
+            # them requires async I/O.  The cached prompt (preferred path)
+            # already includes predictions, so this only affects the first
+            # call before any LLM turn has run.
             summary = self._compaction_summaries.get(thread_id)
             try:
                 sp_text = prompt_assembler.assemble(
                     extra_summary=summary,
+                    prompt_mode="minimal",
                     tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
-                    self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
                     nl_tools=nl_tools,
                 )
             except Exception:  # noqa: BLE001
@@ -695,11 +699,11 @@ class LLMThread:
 
     async def _prepare_inference_context(
         self, item: _QueueItem,
-    ) -> tuple[list[dict], str, str | None, "BackendPool", "ProviderConfig", bool, str, list | None]:
+    ) -> tuple[list[dict], str, str | None, "BackendPool", "ProviderConfig", bool, str, list | None, list | None]:
         """Resolve config, build messages, fetch memories, assemble system prompt.
 
         Returns (messages, system_prompt, memory_query, pool, pool_cfg,
-        is_sub_session_result, prompt_mode, memory_results).
+        is_sub_session_result, prompt_mode, memory_results, prediction_results).
         Also handles pre-compaction if the history exceeds the token budget.
         """
         thread_id = item.thread_id
@@ -723,16 +727,32 @@ class LLMThread:
                 break
         _memory_query = " ".join(_query_parts) if _query_parts else None
 
-        # Pre-fetch memories off the event loop to avoid blocking I/O.
+        # Pre-fetch memories and predictions off the event loop to avoid blocking I/O.
         from wintermute.infra import memory_store
-        if memory_store.is_vector_enabled() and _memory_query:
+
+        async def _fetch_memories():
+            if memory_store.is_vector_enabled() and _memory_query:
+                try:
+                    return await asyncio.to_thread(memory_store.search, _memory_query)
+                except Exception as e:
+                    logger.warning("Vector memory search failed, continuing without memory context: %s", e)
+                    return []  # empty list (not None) so assembler won't retry
+            return None
+
+        async def _fetch_predictions():
             try:
-                _memory_results = await asyncio.to_thread(memory_store.search, _memory_query)
-            except Exception as e:
-                logger.warning("Vector memory search failed, continuing without memory context: %s", e)
-                _memory_results = []  # empty list (not None) so assembler won't retry
+                return await asyncio.to_thread(prompt_assembler.fetch_predictions)
+            except Exception:
+                logger.debug("Prediction pre-fetch failed", exc_info=True)
+                return None
+
+        if prompt_mode == "minimal":
+            _memory_results = await _fetch_memories()
+            _prediction_results = None
         else:
-            _memory_results = None
+            _memory_results, _prediction_results = await asyncio.gather(
+                _fetch_memories(), _fetch_predictions(),
+            )
 
         # Assemble system prompt first so we can measure its real token cost.
         nl_enabled = self._nl_translation_config.get("enabled", False)
@@ -742,8 +762,8 @@ class LLMThread:
             extra_summary=summary, query=_memory_query,
             memory_results=_memory_results, prompt_mode=prompt_mode,
             tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
-            self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
             nl_tools=nl_tools,
+            prediction_results=_prediction_results,
         )
         active_schemas = tool_module.get_tool_schemas(
             nl_tools=nl_tools,
@@ -774,15 +794,16 @@ class LLMThread:
                 extra_summary=summary, query=_memory_query,
                 memory_results=_memory_results, prompt_mode=prompt_mode,
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
-                self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
                 nl_tools=nl_tools,
+                prediction_results=_prediction_results,
             )
 
         self._last_system_prompt[thread_id] = system_prompt
 
         is_sub_session_result = item.is_system_event and "[SUB-SESSION " in item.text
         return (messages, system_prompt, _memory_query, pool, pool_cfg,
-                is_sub_session_result, prompt_mode, _memory_results)
+                is_sub_session_result, prompt_mode, _memory_results,
+                _prediction_results)
 
     async def _save_user_message(
         self, item: _QueueItem, pool_cfg: "ProviderConfig", is_sub_session_result: bool,
@@ -891,6 +912,7 @@ class LLMThread:
         memory_query: "str | None",
         memory_results: "list | None",
         prompt_mode: str,
+        prediction_results: "list | None" = None,
     ) -> "LLMReply":
         """Run the inference loop, retrying once after compaction on context overflow."""
         thread_id = item.thread_id
@@ -912,8 +934,8 @@ class LLMThread:
                 extra_summary=summary, query=memory_query,
                 memory_results=memory_results, prompt_mode=prompt_mode,
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
-                self_model_profiler=self._tool_deps.self_model_profiler if self._tool_deps else None,
                 nl_tools=nl_tools,
+                prediction_results=prediction_results,
             )
             return await self._inference_loop(
                 system_prompt, messages, thread_id,
@@ -926,7 +948,7 @@ class LLMThread:
         # 1. Prepare context: config, messages, memory, system prompt, pre-compaction.
         (messages, system_prompt, _memory_query, pool, pool_cfg,
          is_sub_session_result, _prompt_mode,
-         _memory_results) = await self._prepare_inference_context(item)
+         _memory_results, _prediction_results) = await self._prepare_inference_context(item)
 
         # 2. Save the incoming message to DB.
         await self._save_user_message(item, pool_cfg, is_sub_session_result)
@@ -936,6 +958,7 @@ class LLMThread:
         reply = await self._run_inference_with_retry(
             item, system_prompt, messages, pool,
             _memory_query, _memory_results, _prompt_mode,
+            prediction_results=_prediction_results,
         )
         _inference_duration = _time.time() - _inference_start
 

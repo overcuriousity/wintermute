@@ -2,11 +2,14 @@
 Assembles the complete system prompt from individual file components.
 
 Order:
-  1. BASE_PROMPT.txt   – immutable core
-  2. Current datetime   – local time + timezone
-  3. MEMORIES.txt      – long-term user facts
-  4. Tasks (from DB)    – active goals, reminders, scheduled actions
-  5. Skills TOC        – query-ranked when vector backend is active
+  1. BASE_PROMPT.txt          – immutable core
+  2. Current datetime          – local time + timezone
+  3. MEMORIES.txt             – long-term user facts
+  4. Tasks (from DB)           – active goals, reminders, scheduled actions
+  5. System Observations      – runtime diagnostics (main thread only)
+  6. Predictions & Patterns   – dreaming predictions + promoted schemas (main thread only)
+  7. Conversation Summary     – compaction summary (when context has been compacted)
+  8. Skills TOC               – query-ranked when vector backend is active
 """
 
 import json
@@ -208,7 +211,37 @@ def _get_reflection_observations() -> str:
     if not lines:
         return ""
     combined = "\n".join(lines[:8])
-    return combined[:500]
+    return combined[:300]
+
+
+# Hard cap for prediction text injected into the system prompt.
+_PREDICTIONS_CAP = 800
+
+
+def fetch_predictions() -> list[str]:
+    """Fetch prediction lines from memory store (blocking I/O).
+
+    Intended to be called via ``asyncio.to_thread`` from async callers,
+    then passed to ``assemble(prediction_results=...)``.
+    """
+    from wintermute.infra import memory_store
+
+    dreaming_cfg = memory_store.get_dreaming_config()
+    if not dreaming_cfg.get("prediction_inject_prompt", True):
+        return []
+
+    lines: list[str] = []
+    try:
+        for source in ("dreaming_prediction", "dreaming_schema"):
+            entries = memory_store.get_by_source(source, limit=20)
+            for e in entries:
+                text = e.get("text", "").strip()
+                if text:
+                    lines.append(f"- {text}")
+    except Exception as exc:
+        logger.debug("Prediction retrieval failed: %s", exc)
+    return lines
+
 
 
 def _read_skills_toc(query: Optional[str] = None) -> str:
@@ -257,8 +290,8 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
              memory_results: Optional[list[dict]] = None,
              prompt_mode: str = "full",
              tool_profiles: Optional[dict[str, dict]] = None,  # deprecated — profiles now in tool schemas
-             self_model_profiler: Optional[object] = None,
-             nl_tools: Optional[set[str]] = None) -> str:
+             nl_tools: Optional[set[str]] = None,
+             prediction_results: Optional[list[str]] = None) -> str:
     """
     Build and return the full system prompt string.
 
@@ -276,6 +309,11 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     instead of calling memory_store.search() synchronously. Callers in async
     contexts should fetch memories via ``asyncio.to_thread`` and pass them here
     to avoid blocking the event loop.
+
+    ``prediction_results``, when provided, is a pre-fetched list of prediction
+    entries to inject into the Predictions & Patterns section.  Callers should
+    fetch this off-thread (e.g. via ``asyncio.to_thread``) to avoid blocking
+    the event loop.  When None, predictions are not included.
 
     ``prompt_mode`` controls how much context is injected:
       - ``"full"`` (default): all sections (memories, tasks, skills, etc.)
@@ -328,10 +366,10 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
             if reflection:
                 sections.append(f"# System Observations\n\n{reflection}")
 
-            if self_model_profiler:
-                sm = self_model_profiler.get_summary()
-                if sm:
-                    sections.append(f"# Self-Assessment\n\n{sm}")
+        # Predictions & Patterns — main thread only
+        if available_tools is None and prediction_results:
+            predictions_text = "\n".join(prediction_results)[:_PREDICTIONS_CAP]
+            sections.append(f"# Predictions & Patterns\n\n{predictions_text}")
 
     if extra_summary:
         sections.append(f"# Conversation Summary\n\n{extra_summary}")

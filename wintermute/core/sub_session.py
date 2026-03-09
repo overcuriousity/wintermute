@@ -1879,7 +1879,6 @@ class SubSessionManager:
                 thread_id=thread_id, available_tools=available_tools,
                 query=objective,
                 tool_profiles=tool_deps.tool_profiles if tool_deps else None,
-                self_model_profiler=tool_deps.self_model_profiler if tool_deps else None,
                 nl_tools=nl_tools,
             )
         else:  # "base_only"

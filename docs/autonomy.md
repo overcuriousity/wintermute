@@ -52,6 +52,55 @@ When the **flat-file backend** is active, only phases 5–6 (task + skill consol
 
 Configurable via `memory.dreaming` in `config.yaml` (16 config keys across housekeeping, association, schema, and prediction sections) and `dreaming` (schedule). Prompts are stored in `data/prompts/` and can be customised. See [system-prompts.md](system-prompts.md#customisable-prompt-templates).
 
+## Prediction Consumption
+
+**Modules:** `wintermute/infra/prompt_assembler.py`, `wintermute/workers/scheduler_thread.py`, `wintermute/workers/reflection.py`, `wintermute/infra/database.py`
+
+The dreaming loop generates predictions (phase 9) but their value depends on runtime consumption. This pipeline closes the loop:
+
+### Source-Filtered Retrieval
+
+`memory_store.get_by_source("dreaming_prediction")` fetches all entries tagged with a specific source. Access counts are bumped on retrieval, feeding the promotion pipeline (≥5 accesses → promoted to `dreaming_schema`). This source-filtered retrieval (and thus prediction consumption) requires a backend that stores metadata (FTS5/local_vector/Qdrant); with the flat-file backend, `get_by_source()` returns an empty list and predictions will not be consumed.
+
+### Prompt Injection
+
+The `prompt_assembler` injects a `# Predictions & Patterns` section into the main-thread system prompt, after System Observations and before Conversation Summary. Includes both `dreaming_prediction` and `dreaming_schema` entries. Hard-capped at 800 characters. Gated by `memory.dreaming.prediction_inject_prompt` (default: `true`).
+
+### Proactive Scheduling
+
+The scheduler runs an hourly check against temporal predictions. When the current time falls within a predicted active window (parsed from prediction text), a full sub-session is spawned to check for pending tasks, reminders, or anything useful to surface proactively. Responses with `[NO_ACTION]` are suppressed.
+
+- **Cooldown:** `prediction_proactive_cooldown_hours` (default: 4) between fires per prediction
+- **Day matching:** If the prediction mentions specific weekdays, the current day must match
+- **Config gate:** `memory.dreaming.prediction_proactive_scheduling` (default: `true`)
+
+Behavioral and preference predictions are injected as context into task-triggered sub-sessions, enriching the worker's awareness of user patterns.
+
+### Reflection Validation
+
+The reflection loop's rule engine (Rule 5: `prediction_validation`) validates stored predictions against actual outcome data:
+
+- **Temporal predictions:** Compares predicted active-hour windows against actual outcome timestamps
+- **Behavioral predictions:** Matches predicted tool patterns against actual tool usage stats
+- Confirmed predictions get access-count bumps (feeding promotion to schemas)
+- Contradicted predictions accumulate misses in the `prediction_accuracy` table
+- Findings are emitted as events for the `/debug` SSE stream
+
+### Accuracy Tracking
+
+The `prediction_accuracy` table in `conversation.db` tracks each prediction's lifecycle:
+
+| Column | Description |
+|--------|-------------|
+| `prediction_id` | Memory store entry ID |
+| `source_text` | Full tagged prediction text |
+| `pred_type` | `temporal` / `behavioral` / `preference` |
+| `confirmed` | Times validated as correct by reflection |
+| `missed` | Times contradicted by reflection |
+| `retired_at` | Set when pruned or promoted (preserves historical data) |
+
+Predictions flow through a complete lifecycle: **generation** (dreaming) → **injection** (prompt assembler) → **proactive action** (scheduler) → **validation** (reflection) → **promotion or pruning** (dreaming).
+
 ## Memory Harvest
 
 **Module:** `wintermute/workers/memory_harvest.py`
@@ -149,11 +198,11 @@ Runs inside the reflection cycle (no separate asyncio task) and builds an operat
 
 Changes are applied immediately to the live `SubSessionManager` and `MemoryHarvestLoop` objects — no restart required.
 
-**Summary injection:** After each cycle a one-shot LLM call generates a 2–3 sentence prose summary (prompt: `data/prompts/SELF_MODEL_SUMMARY.txt`). This summary is injected into the main-thread system prompt as a `# Self-Assessment` section so the assistant has passive awareness of its own performance. The summary is cached and served without LLM cost on subsequent turns.
+**Summary generation:** After each cycle a one-shot LLM call generates a 2–3 sentence prose summary (prompt: `data/prompts/SELF_MODEL_SUMMARY.txt`). The summary is cached and available via `query_telemetry(query_type="self_model")` and the `/status` command, but is **not** injected into the system prompt (the per-turn token cost was not justified by measurable benefit).
 
 **Persistence:** State is written to `data/self_model.yaml` after every update and auto-committed to the data git repo. The summary survives restarts.
 
-**Visibility:** `/status` shows the self-model summary, last-updated timestamp, and any tuning changes from the last cycle. `/reflect` triggers an immediate cycle and prints the updated self-assessment inline.
+**Visibility:** `/status` shows the self-model summary, last-updated timestamp, and any tuning changes from the last cycle. `/reflect` triggers an immediate cycle and prints the updated self-assessment inline. The LLM can query its own metrics on demand via `query_telemetry`.
 
 **Configuration:** See `self_model:` section in `config.yaml`.
 
@@ -197,7 +246,7 @@ The reflection cycle uses skill stats in two ways:
 
 ### Self-Model Integration
 
-The self-model profiler collects three skill metrics each cycle: total skill count, total reads across all skills, and number of skills unused for 90+ days. These flow into the self-assessment summary automatically.
+The self-model profiler collects three skill metrics each cycle: total skill count, total reads across all skills, and number of skills unused for 90+ days. These are persisted in `data/self_model.yaml` and available via `query_telemetry`.
 
 ### Changelog
 

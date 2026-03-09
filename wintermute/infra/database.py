@@ -177,6 +177,16 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             config_json TEXT NOT NULL,
             updated_at  REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS prediction_accuracy (
+            prediction_id   TEXT PRIMARY KEY,
+            source_text     TEXT,
+            pred_type       TEXT,
+            created_at      REAL,
+            last_checked_at REAL,
+            confirmed       INTEGER DEFAULT 0,
+            missed          INTEGER DEFAULT 0,
+            retired_at      REAL
+        );
     """)
     conn.commit()
     # Inline migrations: add columns that may not exist in older DBs.
@@ -1120,6 +1130,82 @@ def set_thread_config(thread_id: str, config_json: str) -> None:
             (thread_id, config_json, time.time()),
         )
         conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Prediction Accuracy Tracking
+# ---------------------------------------------------------------------------
+
+def upsert_prediction(prediction_id: str, source_text: str,
+                      pred_type: str) -> None:
+    """Record a newly generated prediction."""
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO prediction_accuracy "
+            "(prediction_id, source_text, pred_type, created_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(prediction_id) DO UPDATE SET "
+            "source_text = excluded.source_text, "
+            "pred_type = excluded.pred_type, "
+            "created_at = COALESCE(prediction_accuracy.created_at, excluded.created_at), "
+            "retired_at = NULL",
+            (prediction_id, source_text, pred_type, time.time()),
+        )
+        conn.commit()
+
+
+def record_prediction_check(prediction_id: str, confirmed: bool,
+                            source_text: str = "", pred_type: str = "") -> None:
+    """Increment confirmed or missed counter for a prediction.
+
+    Uses UPSERT so checks against previously-untracked predictions
+    still create a row in prediction_accuracy.  Optional *source_text*
+    and *pred_type* populate metadata on first insert.
+    """
+    inc_confirmed = 1 if confirmed else 0
+    inc_missed = 0 if confirmed else 1
+    now = time.time()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO prediction_accuracy "
+            "(prediction_id, confirmed, missed, last_checked_at, created_at, "
+            "source_text, pred_type) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(prediction_id) DO UPDATE SET "
+            "confirmed = prediction_accuracy.confirmed + excluded.confirmed, "
+            "missed = prediction_accuracy.missed + excluded.missed, "
+            "last_checked_at = excluded.last_checked_at",
+            (prediction_id, inc_confirmed, inc_missed, now, now,
+             source_text, pred_type),
+        )
+        conn.commit()
+
+
+def retire_prediction(prediction_id: str) -> None:
+    """Mark a prediction as retired (pruned/promoted) without deleting it."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE prediction_accuracy SET retired_at = ? "
+            "WHERE prediction_id = ?",
+            (time.time(), prediction_id),
+        )
+        conn.commit()
+
+
+def get_active_predictions_accuracy() -> list[dict]:
+    """Return all non-retired prediction accuracy records."""
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT prediction_id, source_text, pred_type, created_at, "
+            "last_checked_at, confirmed, missed, "
+            "CASE WHEN confirmed + missed > 0 "
+            "THEN CAST(confirmed AS REAL) / (confirmed + missed) "
+            "ELSE 0.0 END AS accuracy "
+            "FROM prediction_accuracy WHERE retired_at IS NULL "
+            "ORDER BY created_at DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def delete_thread_config(thread_id: str) -> bool:
