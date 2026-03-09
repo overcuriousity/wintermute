@@ -65,16 +65,6 @@ TOOL_SCHEMAS = [
                         "file contents, credentials. Unneeded when using depends_on."
                     ),
                 },
-                "system_prompt_mode": {
-                    "type": "string",
-                    "enum": ["minimal", "full", "base_only", "none"],
-                    "description": (
-                        "'minimal' (default): lightweight agent, no memories/skills. "
-                        "'full': complete context (memories + tasks + skills). "
-                        "'base_only': core instructions only. "
-                        "'none': no system prompt."
-                    ),
-                },
                 "timeout": {
                     "type": "integer",
                     "description": "Max seconds before timeout (default: 300).",
@@ -95,9 +85,9 @@ TOOL_SCHEMAS = [
                 "profile": {
                     "type": "string",
                     "description": (
-                        "Named tool profile. Overrides system_prompt_mode and "
-                        "sets an optimised tool set. Only use a profile name "
-                        "listed as available in the system prompt."
+                        "Worker capability profile. Determines which tools and "
+                        "context the worker receives. Must be one of the available "
+                        "profile names. Required for spawn."
                     ),
                 },
             },
