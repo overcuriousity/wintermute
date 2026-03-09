@@ -568,8 +568,10 @@ class ReflectionLoop:
             original_text = pred.get("text", "")
             text = original_text.lower()
             confirmed = False
+            pred_type = ""
 
             if "[prediction:temporal]" in text or "active during" in text or "most active" in text:
+                pred_type = "temporal"
                 # Check if predicted hours match actual activity.
                 # Look for hour patterns like "8-9 AM", "21:00-23:00", etc.
                 hour_matches = re.findall(
@@ -614,6 +616,7 @@ class ReflectionLoop:
                         confirmed = day_match
 
             elif "[prediction:behavioral]" in text or "relies on" in text or "file operations" in text:
+                pred_type = "behavioral"
                 # Check if predicted tool patterns match actual usage.
                 _tool_synonyms = {
                     "shell": "execute_shell", "execute_shell": "execute_shell",
@@ -646,10 +649,7 @@ class ReflectionLoop:
                 await database.async_call(
                     database.record_prediction_check, pred_id, confirmed,
                     source_text=original_text[:500],
-                    pred_type=("temporal" if "[prediction:temporal]" in text
-                               else "behavioral" if "[prediction:behavioral]" in text
-                               else "preference" if "[prediction:preference]" in text
-                               else "")
+                    pred_type=pred_type,
                 )
             except Exception:
                 logger.debug("[reflection] Failed to record prediction check", exc_info=True)

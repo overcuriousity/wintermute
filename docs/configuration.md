@@ -410,6 +410,7 @@ Controls the vector-native dreaming pipeline. Only used when `backend` is `local
 | `prediction_inject_prompt` | no | `true` | Inject predictions into the main-thread system prompt |
 | `prediction_proactive_scheduling` | no | `true` | Spawn proactive sub-sessions at predicted active times |
 | `prediction_proactive_cooldown_hours` | no | `4` | Minimum hours between proactive fires per prediction |
+| `proactive_target_thread_id` | no | `"default"` | Thread ID to deliver proactive sub-session results to (e.g. a Matrix room thread); defaults to the main LLM thread |
 
 **Cold boot:** When a vector backend is configured and the index is empty but `MEMORIES.txt` has content, all entries are automatically imported at startup.
 

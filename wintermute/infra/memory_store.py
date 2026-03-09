@@ -1029,7 +1029,7 @@ class QdrantBackend:
                     with_payload=["access_count"],
                 )
                 count_map = {
-                    str(p.id): p.payload.get("access_count", 0)
+                    str(p.id): int((p.payload or {}).get("access_count") or 0)
                     for p in pts
                 }
                 for pt in pts:
