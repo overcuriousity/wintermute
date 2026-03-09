@@ -1032,13 +1032,17 @@ class QdrantBackend:
                     str(p.id): p.payload.get("access_count", 0)
                     for p in pts
                 }
-                for eid in entry_ids:
+                for pt in pts:
+                    eid = str(pt.id)
                     current_count = count_map.get(eid, 0)
-                    self._client.set_payload(
-                        collection_name=self._collection,
-                        payload={"last_accessed": now, "access_count": current_count + 1},
-                        points=[eid],
-                    )
+                    try:
+                        self._client.set_payload(
+                            collection_name=self._collection,
+                            payload={"last_accessed": now, "access_count": current_count + 1},
+                            points=[eid],
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass  # Best-effort per-point.
         except Exception:  # noqa: BLE001
             pass  # Best-effort access tracking.
 

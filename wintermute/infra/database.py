@@ -1148,9 +1148,7 @@ def upsert_prediction(prediction_id: str, source_text: str,
             "source_text = excluded.source_text, "
             "pred_type = excluded.pred_type, "
             "created_at = COALESCE(prediction_accuracy.created_at, excluded.created_at), "
-            "retired_at = NULL, "
-            "confirmed = 0, "
-            "missed = 0",
+            "retired_at = NULL",
             (prediction_id, source_text, pred_type, time.time()),
         )
         conn.commit()
