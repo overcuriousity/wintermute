@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.8.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.7.0-alpha...v0.8.0-alpha) (2026-03-09)
+
+
+### Features
+
+* prediction consumption pipeline ([db0b678](https://github.com/overcuriousity/wintermute/commit/db0b6787c7c34ceb0f6df0b3ff24aee203e05b2f))
+* prediction consumption pipeline — close the generate→act loop ([ee298cd](https://github.com/overcuriousity/wintermute/commit/ee298cd9462a3fd4e7263ecbfad35555c58bf208))
+* **web:** upgrade skills panel for vector skill store ([8dea2ba](https://github.com/overcuriousity/wintermute/commit/8dea2baed4e2c9bec3cd7ed193d094355161b304))
+
+
+### Bug Fixes
+
+* add track_access to MemoryBackend protocol and all backends ([16d8a88](https://github.com/overcuriousity/wintermute/commit/16d8a88f9f78c027f5693303e21ee53ef990c30a))
+* address Copilot review — payload safety, pred_type accuracy, docs ([ee38f38](https://github.com/overcuriousity/wintermute/commit/ee38f38f5b88368371f8c9280f3ed97cd62f775f))
+* address Copilot review feedback (AM/PM parsing, imports, docs) ([a47966d](https://github.com/overcuriousity/wintermute/commit/a47966dfb7894fb32336a00056f30c450feb8462))
+* address eighth round of PR review feedback ([3c16e0c](https://github.com/overcuriousity/wintermute/commit/3c16e0cab189c621f0f325e91977ff39753b2d50))
+* address fifth round of PR review feedback ([3bb98ea](https://github.com/overcuriousity/wintermute/commit/3bb98eaf2c4023566c910bf60d2b1205d48f96a4))
+* address fourth round of PR review feedback ([161f2d4](https://github.com/overcuriousity/wintermute/commit/161f2d4bc6e59207c9c6a6b294d8e6bbf07e82c0))
+* address PR review comments ([20b5aba](https://github.com/overcuriousity/wintermute/commit/20b5aba80fff1d243ea7fb2ae46660bc9391e39c))
+* address PR review feedback on prediction consumption ([162cf0e](https://github.com/overcuriousity/wintermute/commit/162cf0eba1da79f83f6ba2fee3d3299d05f60d2d))
+* address second round of PR review feedback ([08c5173](https://github.com/overcuriousity/wintermute/commit/08c51738e4ef233782083a75fd6ba9414cdd1e4c))
+* address seventh round of PR review feedback ([7a1dc03](https://github.com/overcuriousity/wintermute/commit/7a1dc03ea09242954676b7f0adee037d04b85a8e))
+* address sixth round of PR review feedback ([76f8e2d](https://github.com/overcuriousity/wintermute/commit/76f8e2dfc15b7f3342359500b650a4cb1494c849))
+* address third round of PR review feedback ([32f6894](https://github.com/overcuriousity/wintermute/commit/32f6894f7d8db546dfc2f3ad04a9d20733f7d802))
+* capture AM/PM per-endpoint and clear retired_at on prediction re-insert ([2628c4a](https://github.com/overcuriousity/wintermute/commit/2628c4a5c0dea40541643555bf3e31b581288119))
+* eliminate two-phase construction in main.py ([#82](https://github.com/overcuriousity/wintermute/issues/82)) ([1953262](https://github.com/overcuriousity/wintermute/commit/19532628f14f005ee51bacbc685c441b4235a136))
+* eliminate two-phase construction in main.py ([#82](https://github.com/overcuriousity/wintermute/issues/82)) ([d46d292](https://github.com/overcuriousity/wintermute/commit/d46d292aab4c7e0ce488f67510a5f79b058981a9))
+* preserve prediction accuracy counters on re-insert; per-point Qdrant access bump ([a5ba271](https://github.com/overcuriousity/wintermute/commit/a5ba271a8f7a4656227c7bfb8a6c498c56e4e138))
+* route proactive prediction sub-sessions to target thread ([c640089](https://github.com/overcuriousity/wintermute/commit/c640089951de85c2ff91d6cc0aa14a0dd87129a8))
+* use module-level function for prediction check job ([96ea458](https://github.com/overcuriousity/wintermute/commit/96ea45830c52fe653f3e63d08b153780e9609fc3))
+
 ## [0.7.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.6.0-alpha...v0.7.0-alpha) (2026-03-06)
 
 
