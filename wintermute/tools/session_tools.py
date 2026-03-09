@@ -102,7 +102,6 @@ def tool_worker_delegation(inputs: dict, thread_id: Optional[str] = None,
             objective=inputs["objective"],
             context_blobs=context_blobs,
             parent_thread_id=thread_id,
-            system_prompt_mode=inputs.get("system_prompt_mode", "minimal"),
             nesting_depth=nesting_depth + 1,
         )
         if "timeout" in inputs:
