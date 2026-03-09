@@ -88,6 +88,7 @@ class SchedulerConfig:
     timezone: str = "UTC"
     prediction_proactive_scheduling: bool = True
     prediction_proactive_cooldown_hours: int = 4
+    proactive_target_thread_id: str = "default"
 
 
 class TaskScheduler:
@@ -456,6 +457,7 @@ class TaskScheduler:
                     f"exactly: [NO_ACTION]"
                 ),
                 system_prompt_mode="full",
+                parent_thread_id=self._cfg.proactive_target_thread_id,
             )
 
             if self._event_bus:

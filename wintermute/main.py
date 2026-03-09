@@ -446,6 +446,7 @@ async def main() -> None:
         timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
         prediction_proactive_scheduling=memory_dreaming_raw.get("prediction_proactive_scheduling", True),
         prediction_proactive_cooldown_hours=memory_dreaming_raw.get("prediction_proactive_cooldown_hours", 4),
+        proactive_target_thread_id=memory_dreaming_raw.get("proactive_target_thread_id", "default"),
     )
     # --- Tuning constants (optional overrides from config) ---
     _tuning_raw = cfg.get("tuning")
