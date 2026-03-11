@@ -9,6 +9,7 @@ Extracted from LLMThread as part of the Phase 4 god-object decomposition (#79).
 
 import logging
 import time as _time
+from collections.abc import Callable
 from typing import Optional, TYPE_CHECKING
 
 from wintermute.infra import database
