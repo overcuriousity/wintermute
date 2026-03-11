@@ -92,13 +92,18 @@ LLMThread retains: queue, run loop, inference orchestration (`_process`, `_infer
 
 **Depends on:** #104, #83, #80
 
-### Phase 5 — Per-thread queues
+### Phase 5 — Per-thread queues ✅
 
 **Issue #85** — Replace single queue with per-thread queues
 
-This is the final issue and requires LLMThread to be sufficiently decomposed (#79) so that adding per-thread queue routing doesn't re-inflate a god object.
+Completed. Replaced the single `asyncio.Queue` with per-thread queues and workers:
 
-Approach: one `asyncio.Queue` per `thread_id`, with a dispatcher that routes incoming messages. Enables true per-thread concurrency.
+- **`_dispatch(item)`** routes items to per-thread queues, lazily spawning a `_thread_worker` task on first message for each thread_id
+- **`_thread_worker(thread_id)`** contains the per-item processing loop (previously in `run()`), running one consumer per active thread for true cross-thread concurrency
+- **Idle cleanup:** workers self-terminate after 300s of inactivity, removing their queue/worker entries to prevent resource leaks
+- **Graceful shutdown:** `run()` finally-block cancels all workers; crashed workers are cleaned up and respawn on next message
+- **`queue_size`** returns sum of all per-thread queue sizes (backwards compatible)
+- No changes to any consumer (Matrix, web, slash commands, sub-sessions, scheduler) — public `enqueue_*` API preserved
 
 **Depends on:** #79
 
@@ -120,4 +125,4 @@ Phase 2A              Phase 2B           Phase 3              Phase 4       Phas
 | 1 | **#104**, **#83** | 2A + 2B | Yes, parallel | ✅ Done |
 | 2 | **#80**, **#81**, **#82** | 3 | Yes, parallel (all need #83 done) | ✅ All done |
 | 3 | **#79** | 4 | No (needs #104 + #80 + #83) | ✅ Done |
-| 4 | **#85** | 5 | No (needs #79) | |
+| 4 | **#85** | 5 | No (needs #79) | ✅ Done |
