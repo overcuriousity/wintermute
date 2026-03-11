@@ -235,9 +235,18 @@ class SlashCommandHandler:
         if self._dreaming_loop:
             state = "running" if self._dreaming_loop._running else "stopped"
             dl_cfg = self._dreaming_loop._cfg
+            dream_extra = ""
+            try:
+                dream_state = await db.async_call(db.get_dreaming_phase_state, "consolidation")
+                if dream_state and dream_state.get("last_run_at"):
+                    from datetime import datetime as _dt, timezone as _tz
+                    last_dream = _dt.fromtimestamp(dream_state["last_run_at"], tz=_tz.utc)
+                    dream_extra = f", last: {last_dream.strftime('%Y-%m-%d %H:%M')} UTC"
+            except Exception:
+                pass
             lines.append(
                 f"Dreaming: {state} (nightly at {dl_cfg.hour:02d}:{dl_cfg.minute:02d} UTC,"
-                f" model: `{self._dreaming_loop._pool.primary.model}`)"
+                f" model: `{self._dreaming_loop._pool.primary.model}`{dream_extra})"
             )
         if self._memory_harvest:
             mh = self._memory_harvest
@@ -257,7 +266,45 @@ class SlashCommandHandler:
             if jobs:
                 lines.append(f"Scheduler jobs ({len(jobs)} active):")
                 for j in jobs:
-                    lines.append(f"- {j.get('id', '?')}: next {j.get('next_run', '?')}")
+                    jid = j.get("id", "?")
+                    kw = j.get("kwargs", {})
+                    # Human-readable schedule from kwargs, fall back to trigger repr
+                    schedule = kw.get("schedule") or str(j.get("trigger", "?"))
+                    # Task content (truncated)
+                    msg = kw.get("message", "")
+                    label = (msg[:60] + "…") if len(msg) > 60 else msg
+                    # Next run time
+                    nrt = j.get("next_run_time")
+                    if nrt:
+                        try:
+                            from datetime import datetime as _dt, timezone as _tz
+                            next_dt = _dt.fromisoformat(nrt)
+                            delta = next_dt - _dt.now(tz=_tz.utc)
+                            total_sec = int(delta.total_seconds())
+                            if total_sec < 0:
+                                next_str = "overdue"
+                            elif total_sec < 3600:
+                                next_str = f"in {total_sec // 60}m"
+                            elif total_sec < 86400:
+                                next_str = f"in {total_sec // 3600}h {(total_sec % 3600) // 60}m"
+                            else:
+                                next_str = next_dt.strftime("%Y-%m-%d %H:%M")
+                        except Exception:
+                            next_str = nrt
+                    else:
+                        next_str = "paused"
+                    # Last run info from task DB
+                    last_str = ""
+                    try:
+                        task_row = await db.async_call(db.get_task, jid)
+                        if task_row and task_row.get("last_run_at"):
+                            from datetime import datetime as _dt, timezone as _tz
+                            last_dt = _dt.fromtimestamp(task_row["last_run_at"], tz=_tz.utc)
+                            runs = task_row.get("run_count", 0)
+                            last_str = f", last: {last_dt.strftime('%m-%d %H:%M')}, runs: {runs}"
+                    except Exception:
+                        pass
+                    lines.append(f"- `{jid}`: {label} ({schedule}, next: {next_str}{last_str})")
             else:
                 lines.append("Scheduler jobs: none")
 

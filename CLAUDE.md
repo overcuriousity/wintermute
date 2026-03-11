@@ -59,7 +59,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 - `data/MEMORIES.txt` — Long-term memory (append-based, consolidated nightly)
 - `data/conversation.db` — SQLite: messages, summaries, tasks, interaction_log
 - `data/skills/` — Learned procedures (vector-indexed via skill store; legacy `*.md` files migrated at first startup)
-- `data/scratchpad/{workflow_id}/` — Ephemeral per-workflow directories for parallel worker communication (auto-cleaned on workflow completion)
+- `data/scratchpad/{workflow_id}/` — Per-workflow directories for parallel worker communication (preserved after completion for later reference; overwritten if a new workflow reuses the same ID)
 - `data/TURING_PROTOCOL_HOOKS.txt` — Hook definitions (JSON)
 - `config.yaml` — Runtime config (gitignored)
 

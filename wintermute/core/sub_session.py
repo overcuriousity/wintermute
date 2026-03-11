@@ -60,7 +60,6 @@ import asyncio
 import json
 import logging
 import re
-import shutil
 import time as _time
 import uuid
 from dataclasses import dataclass, field
@@ -994,11 +993,6 @@ class SubSessionManager:
         wf = self._workflows.get(workflow_id)
         if wf is None:
             return
-
-        # Remove scratchpad directory for this workflow.
-        scratchpad_dir = Path(f"data/scratchpad/{workflow_id}")
-        if scratchpad_dir.exists():
-            shutil.rmtree(scratchpad_dir, ignore_errors=True)
 
         # The workflow is terminal — aggregation guards are no longer needed.
         for nid in wf.nodes:
