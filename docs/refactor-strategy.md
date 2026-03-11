@@ -80,7 +80,7 @@ Completed. Eliminated all post-construction `obj._attr = ...` injection blocks:
 
 ### Phase 4 — LLMThread decomposition ✅
 
-**Issue #79** — Break up the LLMThread god object (1349 → 1075 lines)
+**Issue #79** — Break up the LLMThread god object (1349 → 1074 lines)
 
 Completed. Extracted three focused modules:
 
