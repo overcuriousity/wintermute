@@ -182,7 +182,7 @@ class LLMThread:
 
     @property
     def queue_size(self) -> int:
-        return sum(q.qsize() for q in self._queues.values())
+        return sum(q.qsize() for q in list(self._queues.values()))
 
     @property
     def thread_config_manager(self) -> "Optional[ThreadConfigManager]":
@@ -252,16 +252,17 @@ class LLMThread:
     async def _dispatch(self, item: _QueueItem) -> None:
         """Route a queue item to the per-thread queue, spawning a worker if needed."""
         tid = item.thread_id
-        if tid not in self._queues:
-            async with self._queues_lock:
-                if tid not in self._queues:  # double-check after lock
-                    self._queues[tid] = asyncio.Queue()
-                    task = asyncio.create_task(
-                        self._thread_worker(tid), name=f"llm_worker_{tid}",
-                    )
-                    self._workers[tid] = task
-                    logger.debug("Spawned per-thread worker for %s", tid)
-        await self._queues[tid].put(item)
+        async with self._queues_lock:
+            queue = self._queues.get(tid)
+            if queue is None:
+                queue = asyncio.Queue()
+                self._queues[tid] = queue
+                task = asyncio.create_task(
+                    self._thread_worker(tid), name=f"llm_worker_{tid}",
+                )
+                self._workers[tid] = task
+                logger.debug("Spawned per-thread worker for %s", tid)
+        await queue.put(item)
 
     async def _cleanup_worker(self, thread_id: str) -> None:
         """Remove the queue and worker entry for an idle thread."""
@@ -289,30 +290,38 @@ class LLMThread:
                 await asyncio.sleep(1.0)
         finally:
             # Cancel all per-thread workers and background tasks.
-            for task in self._workers.values():
+            # Snapshot to avoid RuntimeError from concurrent dict mutation.
+            worker_tasks = list(self._workers.values())
+            for task in worker_tasks:
                 task.cancel()
-            for task in self._background_tasks:
+            for task in list(self._background_tasks):
                 task.cancel()
-            if self._workers:
-                await asyncio.gather(*self._workers.values(), return_exceptions=True)
+            if worker_tasks:
+                await asyncio.gather(*worker_tasks, return_exceptions=True)
 
     async def _thread_worker(self, thread_id: str) -> None:
         """Per-thread consumer loop.  Processes items strictly in order.
 
         Self-terminates after ``_worker_idle_timeout`` seconds of inactivity,
         cleaning up its queue and worker entry so resources are not leaked for
-        idle threads.
+        idle threads.  Runs until cancelled (not tied to ``_running`` flag) so
+        items enqueued before ``run()`` starts are still processed.
         """
         queue = self._queues[thread_id]
         logger.debug("Worker started for thread %s", thread_id)
 
         try:
-            while self._running:
+            while True:
                 try:
                     item = await asyncio.wait_for(
                         queue.get(), timeout=self._worker_idle_timeout,
                     )
                 except asyncio.TimeoutError:
+                    # Re-check under lock: if a message was enqueued between
+                    # the timeout and now, keep running instead of exiting.
+                    async with self._queues_lock:
+                        if not queue.empty():
+                            continue  # items arrived — keep processing
                     logger.debug("Worker idle timeout for thread %s — exiting", thread_id)
                     break
 
