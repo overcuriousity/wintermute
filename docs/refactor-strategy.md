@@ -78,17 +78,17 @@ Completed. Eliminated all post-construction `obj._attr = ...` injection blocks:
 **All three depend on:** #83
 **Can be parallelized:** Yes, #80 / #81 / #82 touch different files
 
-### Phase 4 — LLMThread decomposition
+### Phase 4 — LLMThread decomposition ✅
 
-**Issue #79** — Break up the LLMThread god object (1199 lines)
+**Issue #79** — Break up the LLMThread god object (1349 → 1074 lines)
 
-This is the capstone. After #104 splits `_process()` and #83/#80 clean up DI and tools, LLMThread's remaining responsibilities can be separated:
+Completed. Extracted three focused modules:
 
-- **Queue + run loop** → stays in `LLMThread` (its core purpose)
-- **Conversation history + DB** → extract `ConversationStore` or similar
-- **Context compaction** → extract `ContextCompactor`
-- **Inference orchestration** → already partially separated via `inference_engine.py`; complete the extraction
-- **Session management** → extract `SessionManager` (timeouts, resets, per-thread config)
+- **`core/conversation_store.py`** — `ConversationStore`: conversation history persistence, message construction, token counting (`count_tokens`), compaction summary/system prompt accessors, token budget accounting
+- **`core/context_compactor.py`** — `ContextCompactor`: context compaction (`compact()`), tool-result trimming (`trim_tool_results()`), component size monitoring (`maybe_summarise_components()`)
+- **`core/session_manager.py`** — `SessionManager`: session resets, timeout checking, per-thread pool/config resolution, activity tracking
+
+LLMThread retains: queue, run loop, inference orchestration (`_process`, `_inference_loop`, `_run_inference_with_retry`, `_prepare_inference_context`), Turing Protocol integration. Composes the three components via `self._store`, `self._compactor`, `self._session_mgr`.
 
 **Depends on:** #104, #83, #80
 
@@ -119,5 +119,5 @@ Phase 2A              Phase 2B           Phase 3              Phase 4       Phas
 |---|---|---|---|---|
 | 1 | **#104**, **#83** | 2A + 2B | Yes, parallel | ✅ Done |
 | 2 | **#80**, **#81**, **#82** | 3 | Yes, parallel (all need #83 done) | ✅ All done |
-| 3 | **#79** | 4 | No (needs #104 + #80 + #83) | |
+| 3 | **#79** | 4 | No (needs #104 + #80 + #83) | ✅ Done |
 | 4 | **#85** | 5 | No (needs #79) | |
