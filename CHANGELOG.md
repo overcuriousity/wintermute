@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.9.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.8.0-alpha...v0.9.0-alpha) (2026-03-11)
+
+
+### Features
+
+* preserve scratchpad dirs post-workflow; enrich /status output ([95fc00b](https://github.com/overcuriousity/wintermute/commit/95fc00b6ad2918efc3b8a3d4c989c988a9cd9fe6))
+
+
+### Bug Fixes
+
+* address 4 bugs in sub_session — empty response loop, workflow flood, visibility, cleanup ([0a6c0a8](https://github.com/overcuriousity/wintermute/commit/0a6c0a854b458a423ea0e4c9816d8af1e17d44fb))
+* address Copilot review — harden per-thread queue concurrency ([469b002](https://github.com/overcuriousity/wintermute/commit/469b002f0efd15da2fb4885f6a7eff20e4c42da5))
+* address PR review feedback from Copilot ([897d292](https://github.com/overcuriousity/wintermute/commit/897d2920b265c7654e53ca1d2c1b5efd91c9defc))
+* harden dispatch/cleanup race, gate workers on startup, await bg tasks ([5d3913e](https://github.com/overcuriousity/wintermute/commit/5d3913ef5543526cdd7d771581c482007ba00b58))
+* import Callable in session_manager; drop stale line counts from docs ([9ee089d](https://github.com/overcuriousity/wintermute/commit/9ee089d8afcb002396c2bce585df2f370541d6b3))
+* prevent orphaned queue on idle exit with pending items ([e1d84c4](https://github.com/overcuriousity/wintermute/commit/e1d84c432ee42137de866f530d4a382a674ec957))
+* reset empty_retries on success; guard workflow report double-delivery ([3045714](https://github.com/overcuriousity/wintermute/commit/3045714dc5f7d9fc45f80db161c732a023b1d214))
+* soften profile field description per review ([4449607](https://github.com/overcuriousity/wintermute/commit/44496074bdc1ec1c8a54548558b4055bad4d94a4))
+
 ## [0.8.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.7.0-alpha...v0.8.0-alpha) (2026-03-09)
 
 
