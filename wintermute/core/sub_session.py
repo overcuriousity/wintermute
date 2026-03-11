@@ -1382,6 +1382,9 @@ class SubSessionManager:
                     return
 
                 # All nodes terminal — deliver one aggregated report.
+                # Guard: another node's _report() may have already delivered.
+                if wf_id not in self._workflow_reports:
+                    return
                 parts = []
                 any_fail = False
                 for nid, node in wf.nodes.items():
@@ -1676,6 +1679,8 @@ class SubSessionManager:
                 state.messages.append({"role": "assistant", "content": "[No response generated]"})
                 state.messages.append({"role": "user", "content": "Continue."})
                 continue
+
+            _empty_retries = 0  # reset on successful (non-empty) response
 
             # Convert LLMResponse to a plain dict for conversation history.
             msg = response.to_message_dict()
