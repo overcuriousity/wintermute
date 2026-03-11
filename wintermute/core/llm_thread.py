@@ -269,25 +269,23 @@ class LLMThread:
                 logger.debug("Spawned per-thread worker for %s", tid)
         await queue.put(item)
 
-    async def _cleanup_worker(self, thread_id: str) -> None:
+    async def _cleanup_worker(self, thread_id: str) -> bool:
         """Remove queue/worker entry for an idle thread if still owned by this worker.
 
-        Careful not to remove a queue that received new items after the worker
-        decided to exit, and not to remove a worker entry that was already
-        replaced by a newly-spawned worker from ``_dispatch()``.
+        Returns True if cleanup succeeded (worker should exit).  Returns False
+        if new work arrived in the queue — the worker should keep running.
         """
         current_task = asyncio.current_task()
         async with self._queues_lock:
             registered_worker = self._workers.get(thread_id)
             if registered_worker is not current_task:
-                return  # another worker was spawned — don't touch mappings
+                return True  # another worker was spawned — just exit
             queue = self._queues.get(thread_id)
             if queue is not None and not queue.empty():
-                # New work arrived — drop worker entry so _dispatch respawns.
-                self._workers.pop(thread_id, None)
-            else:
-                self._queues.pop(thread_id, None)
-                self._workers.pop(thread_id, None)
+                return False  # new work arrived — caller should keep running
+            self._queues.pop(thread_id, None)
+            self._workers.pop(thread_id, None)
+            return True
 
     # ------------------------------------------------------------------
     # Main loop
@@ -341,13 +339,11 @@ class LLMThread:
                         queue.get(), timeout=self._worker_idle_timeout,
                     )
                 except asyncio.TimeoutError:
-                    # Re-check under lock: if a message was enqueued between
-                    # the timeout and now, keep running instead of exiting.
-                    async with self._queues_lock:
-                        if not queue.empty():
-                            continue  # items arrived — keep processing
-                    logger.debug("Worker idle timeout for thread %s — exiting", thread_id)
-                    break
+                    # Attempt cleanup; if new work arrived, keep running.
+                    if await self._cleanup_worker(thread_id):
+                        logger.debug("Worker idle timeout for thread %s — exiting", thread_id)
+                        return  # cleanup succeeded, exit without finally cleanup
+                    continue  # new items in queue — keep processing
 
                 # Drop stale Turing Protocol corrections.
                 if item.turing_depth > 0 and item.correction_for_seq is not None:
@@ -552,9 +548,9 @@ class LLMThread:
 
         except asyncio.CancelledError:
             logger.debug("Worker cancelled for thread %s", thread_id)
+            await self._cleanup_worker(thread_id)
         except Exception:  # noqa: BLE001
             logger.exception("Worker crashed for thread %s — will respawn on next message", thread_id)
-        finally:
             await self._cleanup_worker(thread_id)
 
     def stop(self) -> None:
