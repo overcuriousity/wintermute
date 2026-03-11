@@ -133,6 +133,8 @@ class LLMThread:
         self._queues_lock = asyncio.Lock()
         # Idle timeout (seconds) before a per-thread worker self-terminates.
         self._worker_idle_timeout = 300.0
+        # Gate: workers wait on this before processing so summaries are loaded.
+        self._ready = asyncio.Event()
 
         # --- Composed components ---
         self._store = ConversationStore(
@@ -257,6 +259,9 @@ class LLMThread:
             if queue is None:
                 queue = asyncio.Queue()
                 self._queues[tid] = queue
+            # (Re)spawn worker if missing or finished (idle exit / crash).
+            worker = self._workers.get(tid)
+            if worker is None or worker.done():
                 task = asyncio.create_task(
                     self._thread_worker(tid), name=f"llm_worker_{tid}",
                 )
@@ -265,10 +270,24 @@ class LLMThread:
         await queue.put(item)
 
     async def _cleanup_worker(self, thread_id: str) -> None:
-        """Remove the queue and worker entry for an idle thread."""
+        """Remove queue/worker entry for an idle thread if still owned by this worker.
+
+        Careful not to remove a queue that received new items after the worker
+        decided to exit, and not to remove a worker entry that was already
+        replaced by a newly-spawned worker from ``_dispatch()``.
+        """
+        current_task = asyncio.current_task()
         async with self._queues_lock:
-            self._queues.pop(thread_id, None)
-            self._workers.pop(thread_id, None)
+            registered_worker = self._workers.get(thread_id)
+            if registered_worker is not current_task:
+                return  # another worker was spawned — don't touch mappings
+            queue = self._queues.get(thread_id)
+            if queue is not None and not queue.empty():
+                # New work arrived — drop worker entry so _dispatch respawns.
+                self._workers.pop(thread_id, None)
+            else:
+                self._queues.pop(thread_id, None)
+                self._workers.pop(thread_id, None)
 
     # ------------------------------------------------------------------
     # Main loop
@@ -277,6 +296,7 @@ class LLMThread:
     async def run(self) -> None:
         self._running = True
         await self._store.load_summaries()
+        self._ready.set()
         logger.info("LLM thread started (endpoint=%s model=%s)", self._cfg.base_url, self._cfg.model)
         if self._turing_protocol_pool.enabled:
             logger.info("Turing Protocol enabled (model=%s)", self._turing_protocol_pool.primary.model)
@@ -292,12 +312,14 @@ class LLMThread:
             # Cancel all per-thread workers and background tasks.
             # Snapshot to avoid RuntimeError from concurrent dict mutation.
             worker_tasks = list(self._workers.values())
+            bg_tasks = list(self._background_tasks)
             for task in worker_tasks:
                 task.cancel()
-            for task in list(self._background_tasks):
+            for task in bg_tasks:
                 task.cancel()
-            if worker_tasks:
-                await asyncio.gather(*worker_tasks, return_exceptions=True)
+            all_tasks = worker_tasks + bg_tasks
+            if all_tasks:
+                await asyncio.gather(*all_tasks, return_exceptions=True)
 
     async def _thread_worker(self, thread_id: str) -> None:
         """Per-thread consumer loop.  Processes items strictly in order.
@@ -309,6 +331,8 @@ class LLMThread:
         """
         queue = self._queues[thread_id]
         logger.debug("Worker started for thread %s", thread_id)
+        # Wait for run() to finish loading summaries before processing.
+        await self._ready.wait()
 
         try:
             while True:
