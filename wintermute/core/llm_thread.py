@@ -125,9 +125,14 @@ class LLMThread:
         self._cfg = main_pool.primary
         self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)
         self._get_sub_sessions = sub_session_getter  # lazy getter breaks LLMThread↔SSM cycle
-        self._queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         self._running = False
         self._background_tasks: set[asyncio.Task] = set()
+        # Per-thread queues and worker tasks for concurrent thread processing.
+        self._queues: dict[str, asyncio.Queue[_QueueItem]] = {}
+        self._workers: dict[str, asyncio.Task] = {}
+        self._queues_lock = asyncio.Lock()
+        # Idle timeout (seconds) before a per-thread worker self-terminates.
+        self._worker_idle_timeout = 300.0
 
         # --- Composed components ---
         self._store = ConversationStore(
@@ -177,7 +182,7 @@ class LLMThread:
 
     @property
     def queue_size(self) -> int:
-        return self._queue.qsize()
+        return sum(q.qsize() for q in self._queues.values())
 
     @property
     def thread_config_manager(self) -> "Optional[ThreadConfigManager]":
@@ -203,14 +208,14 @@ class LLMThread:
         """
         loop = asyncio.get_running_loop()
         fut: asyncio.Future = loop.create_future()
-        await self._queue.put(_QueueItem(
+        await self._dispatch(_QueueItem(
             text=text, thread_id=thread_id, future=fut, content=content,
         ))
         return await fut
 
     async def enqueue_system_event(self, text: str, thread_id: str = "default") -> None:
         """Submit an autonomous system event (heartbeat, scheduled task, etc.)."""
-        await self._queue.put(_QueueItem(text=text, thread_id=thread_id, is_system_event=True))
+        await self._dispatch(_QueueItem(text=text, thread_id=thread_id, is_system_event=True))
 
     async def enqueue_system_event_with_reply(self, text: str,
                                               thread_id: str = "default") -> str:
@@ -221,8 +226,8 @@ class LLMThread:
         """
         loop = asyncio.get_running_loop()
         fut: asyncio.Future = loop.create_future()
-        await self._queue.put(_QueueItem(text=text, thread_id=thread_id,
-                                         is_system_event=True, future=fut))
+        await self._dispatch(_QueueItem(text=text, thread_id=thread_id,
+                                        is_system_event=True, future=fut))
         return await fut
 
     async def reset_session(self, thread_id: str = "default") -> None:
@@ -241,6 +246,30 @@ class LLMThread:
         return self._store.get_token_budget(thread_id)
 
     # ------------------------------------------------------------------
+    # Dispatcher and per-thread worker infrastructure
+    # ------------------------------------------------------------------
+
+    async def _dispatch(self, item: _QueueItem) -> None:
+        """Route a queue item to the per-thread queue, spawning a worker if needed."""
+        tid = item.thread_id
+        if tid not in self._queues:
+            async with self._queues_lock:
+                if tid not in self._queues:  # double-check after lock
+                    self._queues[tid] = asyncio.Queue()
+                    task = asyncio.create_task(
+                        self._thread_worker(tid), name=f"llm_worker_{tid}",
+                    )
+                    self._workers[tid] = task
+                    logger.debug("Spawned per-thread worker for %s", tid)
+        await self._queues[tid].put(item)
+
+    async def _cleanup_worker(self, thread_id: str) -> None:
+        """Remove the queue and worker entry for an idle thread."""
+        async with self._queues_lock:
+            self._queues.pop(thread_id, None)
+            self._workers.pop(thread_id, None)
+
+    # ------------------------------------------------------------------
     # Main loop
     # ------------------------------------------------------------------
 
@@ -253,246 +282,247 @@ class LLMThread:
         else:
             logger.info("Turing Protocol disabled")
 
-        while self._running:
-            try:
-                item = await asyncio.wait_for(self._queue.get(), timeout=1.0)
-            except asyncio.TimeoutError:
-                continue
+        # The run loop waits for shutdown.  Per-thread workers are spawned
+        # on demand by _dispatch() when messages arrive.
+        try:
+            while self._running:
+                await asyncio.sleep(1.0)
+        finally:
+            # Cancel all per-thread workers and background tasks.
+            for task in self._workers.values():
+                task.cancel()
+            for task in self._background_tasks:
+                task.cancel()
+            if self._workers:
+                await asyncio.gather(*self._workers.values(), return_exceptions=True)
 
-            # Drop Turing Protocol corrections that are stale — i.e. the thread
-            # has already processed at least one new user-facing turn since the
-            # correction was issued, making it no longer relevant.
-            if item.turing_depth > 0 and item.correction_for_seq is not None:
-                current_seq = self._store.thread_seq.get(item.thread_id, 0)
-                if current_seq > item.correction_for_seq:
-                    logger.warning(
-                        "Dropping stale Turing Protocol correction for thread %s "
-                        "(issued at seq=%d, current seq=%d)",
-                        item.thread_id, item.correction_for_seq, current_seq,
+    async def _thread_worker(self, thread_id: str) -> None:
+        """Per-thread consumer loop.  Processes items strictly in order.
+
+        Self-terminates after ``_worker_idle_timeout`` seconds of inactivity,
+        cleaning up its queue and worker entry so resources are not leaked for
+        idle threads.
+        """
+        queue = self._queues[thread_id]
+        logger.debug("Worker started for thread %s", thread_id)
+
+        try:
+            while self._running:
+                try:
+                    item = await asyncio.wait_for(
+                        queue.get(), timeout=self._worker_idle_timeout,
                     )
+                except asyncio.TimeoutError:
+                    logger.debug("Worker idle timeout for thread %s — exiting", thread_id)
+                    break
+
+                # Drop stale Turing Protocol corrections.
+                if item.turing_depth > 0 and item.correction_for_seq is not None:
+                    current_seq = self._store.thread_seq.get(thread_id, 0)
+                    if current_seq > item.correction_for_seq:
+                        logger.warning(
+                            "Dropping stale Turing Protocol correction for thread %s "
+                            "(issued at seq=%d, current seq=%d)",
+                            thread_id, item.correction_for_seq, current_seq,
+                        )
+                        try:
+                            await database.async_call(
+                                database.save_interaction_log,
+                                _time.time(), "turing_stale_drop", thread_id,
+                                self._main_pool.last_used,
+                                item.text[:2000], "", "stale",
+                            )
+                        except Exception:
+                            pass
+                        queue.task_done()
+                        continue
+
+                # Advance per-thread sequence counter.
+                if not item.is_system_event or item.turing_depth > 0:
+                    self._store.thread_seq[thread_id] = (
+                        self._store.thread_seq.get(thread_id, 0) + 1
+                    )
+
+                # Seed empty threads on first real user message.
+                if not item.is_system_event and not await database.async_call(database.thread_has_messages, thread_id):
+                    try:
+                        seed_prompt = prompt_loader.load_seed(self._seed_language)
+                        seed_item = _QueueItem(
+                            text=seed_prompt,
+                            thread_id=thread_id,
+                            is_system_event=True,
+                        )
+                        seed_reply = await self._process(seed_item)
+                        if seed_reply.text:
+                            try:
+                                await self._broadcast(
+                                    seed_reply.text, thread_id,
+                                    reasoning=seed_reply.reasoning,
+                                )
+                            except Exception:  # noqa: BLE001
+                                logger.exception("Failed to broadcast seed reply")
+                    except Exception:  # noqa: BLE001
+                        logger.exception("Seed injection failed (non-fatal)")
+
+                # Collect recent assistant messages BEFORE _process().
+                _prior_assistant = None
+                _recent_assistant: list[str] = []
+                try:
+                    _db_msgs = await database.async_call(database.load_active_messages, thread_id)
+                    for m in reversed(_db_msgs):
+                        if m.get("role") == "assistant":
+                            content = m.get("content", "")
+                            if isinstance(content, str) and content:
+                                _recent_assistant.append(content)
+                                if _prior_assistant is None:
+                                    _prior_assistant = content
+                                if len(_recent_assistant) >= 3:
+                                    break
+                    _recent_assistant.reverse()
+                except Exception:
+                    pass
+
+                try:
+                    reply = await self._process(item)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("LLM processing error")
                     try:
                         await database.async_call(
                             database.save_interaction_log,
-                            _time.time(), "turing_stale_drop", item.thread_id,
+                            _time.time(), "chat", thread_id,
                             self._main_pool.last_used,
-                            item.text[:2000], "", "stale",
+                            item.text, str(exc), "error",
                         )
-                    except Exception:
+                    except Exception:  # noqa: BLE001
                         pass
-                    self._queue.task_done()
-                    continue
+                    err_msg = str(exc)
+                    if "401" in err_msg and "Gemini" in err_msg:
+                        err_msg += (
+                            "\n\nGemini credentials have expired or are invalid. "
+                            "Re-run authentication on the server:\n"
+                            "  uv run python -m wintermute.gemini_auth"
+                        )
+                    reply = LLMReply(text=f"[Error during inference: {err_msg}]")
 
-            # Advance the per-thread sequence counter for every user-facing turn
-            # and for Turing corrections that passed the staleness check.
-            # Corrections must also advance the counter so that cascaded
-            # corrections (depth > 1) record a higher correction_for_seq and
-            # aren't falsely dropped if a user turn arrives in between.
-            if not item.is_system_event or item.turing_depth > 0:
-                self._store.thread_seq[item.thread_id] = (
-                    self._store.thread_seq.get(item.thread_id, 0) + 1
-                )
-
-            # Seed empty threads on first real user message
-            if not item.is_system_event and not await database.async_call(database.thread_has_messages, item.thread_id):
-                try:
-                    seed_prompt = prompt_loader.load_seed(self._seed_language)
-                    seed_item = _QueueItem(
-                        text=seed_prompt,
-                        thread_id=item.thread_id,
-                        is_system_event=True,
+                if item.future and not item.future.done():
+                    item.future.set_result(reply)
+                elif item.is_system_event and not item.future and item.turing_depth == 0:
+                    text_to_send = reply.text or item.text
+                    logger.info(
+                        "Broadcasting system-event reply for thread %s (%d chars, reply_empty=%s)",
+                        thread_id, len(text_to_send), not reply.text,
                     )
-                    seed_reply = await self._process(seed_item)
-                    if seed_reply.text:
-                        try:
-                            await self._broadcast(
-                                seed_reply.text, item.thread_id,
-                                reasoning=seed_reply.reasoning,
-                            )
-                        except Exception:  # noqa: BLE001
-                            logger.exception("Failed to broadcast seed reply")
-                except Exception:  # noqa: BLE001
-                    logger.exception("Seed injection failed (non-fatal)")
-
-            # Collect recent assistant messages BEFORE _process() saves
-            # the new reply to the DB.  This avoids the repetition detector
-            # comparing the current response against itself (which would
-            # always yield 100% similarity).
-            _prior_assistant = None
-            _recent_assistant: list[str] = []
-            try:
-                _db_msgs = await database.async_call(database.load_active_messages, item.thread_id)
-                for m in reversed(_db_msgs):
-                    if m.get("role") == "assistant":
-                        content = m.get("content", "")
-                        if isinstance(content, str) and content:
-                            _recent_assistant.append(content)
-                            if _prior_assistant is None:
-                                _prior_assistant = content
-                            if len(_recent_assistant) >= 3:
-                                break
-                _recent_assistant.reverse()
-            except Exception:
-                pass
-
-            try:
-                reply = await self._process(item)
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("LLM processing error")
-                try:
-                    await database.async_call(
-                        database.save_interaction_log,
-                        _time.time(), "chat", item.thread_id,
-                        self._main_pool.last_used,
-                        item.text, str(exc), "error",
+                    try:
+                        await self._broadcast(text_to_send, thread_id,
+                                              reasoning=reply.reasoning)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("Failed to broadcast system-event reply for thread %s",
+                                         thread_id)
+                elif item.turing_depth > 0 and reply.text:
+                    logger.info(
+                        "Broadcasting Turing correction response for thread %s "
+                        "(depth=%d, tools=%s)",
+                        thread_id, item.turing_depth,
+                        reply.tool_calls_made or "none",
                     )
-                except Exception:  # noqa: BLE001
-                    pass
-                err_msg = str(exc)
-                # Provide actionable hint for Gemini auth failures
-                if "401" in err_msg and "Gemini" in err_msg:
-                    err_msg += (
-                        "\n\nGemini credentials have expired or are invalid. "
-                        "Re-run authentication on the server:\n"
-                        "  uv run python -m wintermute.gemini_auth"
+                    try:
+                        await self._broadcast(reply.text, thread_id,
+                                              reasoning=reply.reasoning)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("Failed to broadcast Turing correction response")
+
+                # -- Turing Protocol validation --
+                if (
+                    not thread_id.startswith("sub_")
+                    and reply.text
+                    and item.turing_depth < 2
+                ):
+                    seq_at_fire = self._store.thread_seq.get(thread_id, 0)
+                    _prior_tc = self._session_mgr.prior_tool_calls.get(thread_id, [])
+                    _tp_task = asyncio.create_task(
+                        self._run_turing_check(
+                            user_message=item.text,
+                            assistant_response=reply.text,
+                            tool_calls_made=reply.tool_calls_made,
+                            thread_id=thread_id,
+                            issued_for_seq=seq_at_fire,
+                            turing_depth=item.turing_depth,
+                            prior_assistant_message=_prior_assistant,
+                            prior_tool_calls_made=_prior_tc,
+                            recent_assistant_messages=_recent_assistant,
+                        ),
+                        name=f"turing_{thread_id}",
                     )
-                reply = LLMReply(text=f"[Error during inference: {err_msg}]")
+                    self._background_tasks.add(_tp_task)
+                    _tp_task.add_done_callback(self._background_tasks.discard)
 
-            if item.future and not item.future.done():
-                item.future.set_result(reply)
-            elif item.is_system_event and not item.future and item.turing_depth == 0:
-                # System events without a future (sub-session results,
-                # scheduled tasks, /tasks commands) have no caller waiting for
-                # the reply.  Broadcast the LLM's response directly so
-                # it reaches the user.
-                text_to_send = reply.text or item.text  # fallback to raw event
-                logger.info(
-                    "Broadcasting system-event reply for thread %s (%d chars, reply_empty=%s)",
-                    item.thread_id, len(text_to_send), not reply.text,
-                )
-                try:
-                    await self._broadcast(text_to_send, item.thread_id,
-                                          reasoning=reply.reasoning)
-                except Exception:  # noqa: BLE001
-                    logger.exception("Failed to broadcast system-event reply for thread %s",
-                                     item.thread_id)
-            elif item.turing_depth > 0 and reply.text:
-                # Turing correction response — always broadcast so the user
-                # sees the self-correction.  The model may have complied with
-                # tool calls, or explained why it can't — either way the user
-                # should see the result.
-                logger.info(
-                    "Broadcasting Turing correction response for thread %s "
-                    "(depth=%d, tools=%s)",
-                    item.thread_id, item.turing_depth,
-                    reply.tool_calls_made or "none",
-                )
-                try:
-                    await self._broadcast(reply.text, item.thread_id,
-                                          reasoning=reply.reasoning)
-                except Exception:  # noqa: BLE001
-                    logger.exception("Failed to broadcast Turing correction response")
+                # Update prior-turn tool calls.
+                self._session_mgr.prior_tool_calls[thread_id] = reply.tool_calls_made or []
 
-            # -- Turing Protocol validation --
-            # Fire async after the reply is delivered.  Checks user-facing
-            # messages AND correction responses (up to depth 2 to prevent
-            # infinite loops).  If the model ignores a correction and
-            # repeats the violation, the re-check catches it.
-            # System events (sub-session results) are also validated —
-            # the model may promise actions in response to them without
-            # actually calling any tools.
-            if (
-                not item.thread_id.startswith("sub_")
-                and reply.text
-                and item.turing_depth < 2
-            ):
-                # Snapshot the current sequence number so the correction can
-                # be dropped if the conversation has moved on before it lands.
-                seq_at_fire = self._store.thread_seq.get(item.thread_id, 0)
-                # _prior_assistant and _recent_assistant were collected
-                # before _process() above, so they don't include the
-                # current reply.  _prior_tc pairs with _prior_assistant so
-                # Stage 2 validators can tell which tools the *prior* turn
-                # already called (avoiding cross-turn false positives).
-                _prior_tc = self._session_mgr.prior_tool_calls.get(item.thread_id, [])
-                _tp_task = asyncio.create_task(
-                    self._run_turing_check(
-                        user_message=item.text,
-                        assistant_response=reply.text,
-                        tool_calls_made=reply.tool_calls_made,
-                        thread_id=item.thread_id,
-                        issued_for_seq=seq_at_fire,
-                        turing_depth=item.turing_depth,
-                        prior_assistant_message=_prior_assistant,
-                        prior_tool_calls_made=_prior_tc,
-                        recent_assistant_messages=_recent_assistant,
-                    ),
-                    name=f"turing_{item.thread_id}",
-                )
-                self._background_tasks.add(_tp_task)
-                _tp_task.add_done_callback(self._background_tasks.discard)
-
-            # Update prior-turn tool calls for the next Turing check.
-            self._session_mgr.prior_tool_calls[item.thread_id] = reply.tool_calls_made or []
-
-            # Emit main-thread turn event for reflection/synthesis.
-            if (
-                self._event_bus
-                and not item.thread_id.startswith("sub_")
-                and not item.is_system_event
-            ):
-                # Extract skills loaded from read_file calls on data/skills/.
-                skills_loaded = []
-                for tc in reply.tool_call_details:
-                    if tc.get("name") == "read_file":
-                        try:
-                            args = json.loads(tc.get("arguments", "{}"))
-                            p = args.get("path", "")
-                            parts = Path(p).parts
-                            if (
-                                "data" in parts
-                                and "skills" in parts
-                                and parts.index("skills") == parts.index("data") + 1
-                                and p.endswith(".md")
-                            ):
-                                m = re.search(r'data/skills/([^/]+)\.md', p)
-                                if m:
-                                    skills_loaded.append(m.group(1))
-                        except Exception:
-                            pass
-                self._event_bus.emit(
-                    "main_thread.turn_completed",
-                    thread_id=item.thread_id,
-                    tools_used=reply.tool_calls_made,
-                    skills_loaded=skills_loaded,
-                    had_error="[Error" in (reply.text or ""),
-                )
-
-            # Record main-thread turn in outcomes table so the debug UI
-            # shows it alongside sub-session outcomes.
-            if (
-                not item.thread_id.startswith("sub_")
-                and not item.is_system_event
-                and item.turing_depth == 0
-            ):
-                _had_error = "[Error" in (reply.text or "")
-                try:
-                    await database.async_call(
-                        database.save_sub_session_outcome,
-                        session_id=item.thread_id,
-                        timestamp=_time.time(),
-                        objective=item.text[:200] if item.text else "",
-                        system_prompt_mode="main_thread",
-                        tools_used=reply.tool_calls_made or None,
-                        tool_call_count=len(reply.tool_call_details) if reply.tool_call_details else 0,
-                        duration_seconds=reply.duration_seconds,
-                        status="error" if _had_error else "completed",
-                        result_length=len(reply.text) if reply.text else 0,
-                        backend_used=reply.backend_used,
+                # Emit main-thread turn event.
+                if (
+                    self._event_bus
+                    and not thread_id.startswith("sub_")
+                    and not item.is_system_event
+                ):
+                    skills_loaded = []
+                    for tc in reply.tool_call_details:
+                        if tc.get("name") == "read_file":
+                            try:
+                                args = json.loads(tc.get("arguments", "{}"))
+                                p = args.get("path", "")
+                                parts = Path(p).parts
+                                if (
+                                    "data" in parts
+                                    and "skills" in parts
+                                    and parts.index("skills") == parts.index("data") + 1
+                                    and p.endswith(".md")
+                                ):
+                                    m = re.search(r'data/skills/([^/]+)\.md', p)
+                                    if m:
+                                        skills_loaded.append(m.group(1))
+                            except Exception:
+                                pass
+                    self._event_bus.emit(
+                        "main_thread.turn_completed",
+                        thread_id=thread_id,
+                        tools_used=reply.tool_calls_made,
+                        skills_loaded=skills_loaded,
+                        had_error="[Error" in (reply.text or ""),
                     )
-                except Exception:  # noqa: BLE001
-                    logger.debug("Failed to save main-thread outcome", exc_info=True)
 
-            self._queue.task_done()
+                # Record main-thread turn in outcomes table.
+                if (
+                    not thread_id.startswith("sub_")
+                    and not item.is_system_event
+                    and item.turing_depth == 0
+                ):
+                    _had_error = "[Error" in (reply.text or "")
+                    try:
+                        await database.async_call(
+                            database.save_sub_session_outcome,
+                            session_id=thread_id,
+                            timestamp=_time.time(),
+                            objective=item.text[:200] if item.text else "",
+                            system_prompt_mode="main_thread",
+                            tools_used=reply.tool_calls_made or None,
+                            tool_call_count=len(reply.tool_call_details) if reply.tool_call_details else 0,
+                            duration_seconds=reply.duration_seconds,
+                            status="error" if _had_error else "completed",
+                            result_length=len(reply.text) if reply.text else 0,
+                            backend_used=reply.backend_used,
+                        )
+                    except Exception:  # noqa: BLE001
+                        logger.debug("Failed to save main-thread outcome", exc_info=True)
+
+                queue.task_done()
+
+        except asyncio.CancelledError:
+            logger.debug("Worker cancelled for thread %s", thread_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("Worker crashed for thread %s — will respawn on next message", thread_id)
+        finally:
+            await self._cleanup_worker(thread_id)
 
     def stop(self) -> None:
         self._running = False
@@ -575,7 +605,7 @@ class LLMThread:
                 thread_id, new_depth,
                 [m["hook"] for m in result.correction_metadata],
             )
-            await self._queue.put(_QueueItem(
+            await self._dispatch(_QueueItem(
                 text=correction_text,
                 thread_id=thread_id,
                 is_system_event=True,
