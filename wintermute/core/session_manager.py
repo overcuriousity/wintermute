@@ -9,12 +9,10 @@ Extracted from LLMThread as part of the Phase 4 god-object decomposition (#79).
 
 import logging
 import time as _time
-from typing import Callable, Optional
+from typing import Optional, TYPE_CHECKING
 
 from wintermute.infra import database
 from wintermute.core.types import BackendPool
-
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager
     from wintermute.infra.thread_config import ThreadConfigManager, ResolvedThreadConfig

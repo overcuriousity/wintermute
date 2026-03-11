@@ -9,15 +9,13 @@ Extracted from LLMThread as part of the Phase 4 god-object decomposition (#79).
 
 import logging
 import time as _time
-from typing import Optional
+from typing import TYPE_CHECKING
 
 from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
 from wintermute.core.types import BackendPool
 from wintermute.core.conversation_store import count_tokens
-
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from wintermute.core.conversation_store import ConversationStore
 
@@ -54,6 +52,11 @@ class ContextCompactor:
             logger.warning("compaction_keep_recent %r < 1; clamping to 1", _keep)
             _keep = 1
         self._keep_recent = _keep
+
+    @property
+    def pool(self) -> BackendPool:
+        """The compaction backend pool."""
+        return self._compaction_pool
 
     async def compact(self, thread_id: str = "default") -> None:
         """Summarise and archive old messages for the given thread."""

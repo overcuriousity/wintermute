@@ -9,14 +9,11 @@ Extracted from LLMThread as part of the Phase 4 god-object decomposition (#79).
 
 import json
 import logging
-import time as _time
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.core.types import ProviderConfig
-
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from wintermute.core.tool_deps import ToolDeps
     from wintermute.infra.event_bus import EventBus
@@ -166,7 +163,7 @@ class ConversationStore:
                 token_count=count_tokens(text, model))
 
     async def save_assistant_message(
-        self, text: str, thread_id: str, model: str,
+        self, text: Optional[str], thread_id: str, model: str,
     ) -> None:
         """Persist the assistant response to DB and emit events."""
         _assistant_text = text or "..."

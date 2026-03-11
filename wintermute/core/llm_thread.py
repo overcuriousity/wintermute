@@ -24,7 +24,7 @@ import re
 import time as _time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, TYPE_CHECKING
 
 from wintermute.infra import database
 from wintermute.infra import prompt_assembler
@@ -51,8 +51,6 @@ from wintermute.core.tool_deps import ToolDeps
 from wintermute.core.conversation_store import ConversationStore, count_tokens
 from wintermute.core.context_compactor import ContextCompactor, COMPACTION_KEEP_RECENT
 from wintermute.core.session_manager import SessionManager
-
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager
     from wintermute.infra.event_bus import EventBus
@@ -167,7 +165,7 @@ class LLMThread:
 
     @property
     def compaction_pool(self) -> BackendPool:
-        return self._compactor._compaction_pool
+        return self._compactor.pool
 
     @property
     def turing_protocol_pool(self) -> BackendPool:
