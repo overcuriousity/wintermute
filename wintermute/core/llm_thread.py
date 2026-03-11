@@ -1,11 +1,13 @@
 """
 LLM Inference Thread
 
-Owns the conversation history and all interactions with any OpenAI-compatible
-API endpoint (llama-server, vLLM, LM Studio, OpenAI, etc.).
+Queue-based inference orchestrator.  Receives user messages via an asyncio
+Queue, runs inference (including multi-step tool-use loops), and delivers
+responses back through reply Futures.
 
-Receives user messages via an asyncio Queue, runs inference (including
-multi-step tool-use loops), and delivers responses back through reply Futures.
+Conversation persistence, context compaction, and session lifecycle are
+delegated to ``ConversationStore``, ``ContextCompactor``, and
+``SessionManager`` respectively.
 
 Public API used by other modules
 ---------------------------------
@@ -46,6 +48,9 @@ from wintermute.core.tool_call_rescue import rescue_tool_calls
 from wintermute import tools as tool_module
 
 from wintermute.core.tool_deps import ToolDeps
+from wintermute.core.conversation_store import ConversationStore, count_tokens
+from wintermute.core.context_compactor import ContextCompactor, COMPACTION_KEEP_RECENT
+from wintermute.core.session_manager import SessionManager
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -55,30 +60,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
-# Keep the last N messages untouched during compaction (default; overridable via config).
-COMPACTION_KEEP_RECENT = 10
-
 # Maximum consecutive empty-choices responses before aborting the inference loop.
 MAX_EMPTY_RETRIES = 3
 
-
-
-def _count_tokens(text: str, model: str) -> int:
-    """
-    Estimate token count using tiktoken.
-    Falls back to cl100k_base (GPT-4 / DeepSeek / Qwen BPE) for unknown
-    model names, and to len//4 if tiktoken itself is unavailable.
-    """
-    try:
-        import tiktoken
-        try:
-            enc = tiktoken.encoding_for_model(model)
-        except KeyError:
-            enc = tiktoken.get_encoding("cl100k_base")
-        return len(enc.encode(text))
-    except Exception:  # noqa: BLE001
-        return len(text) // 4
+# Backwards-compat alias: external consumers (web_interface) import this.
+_count_tokens = count_tokens
 
 
 @dataclass
@@ -125,7 +111,6 @@ class LLMThread:
                  compaction_keep_recent: int = COMPACTION_KEEP_RECENT,
                  tool_deps: "Optional[ToolDeps]" = None) -> None:
         self._main_pool = main_pool
-        self._compaction_pool = compaction_pool
         self._turing_protocol_pool = turing_protocol_pool
         from wintermute.core.tp_runner import TuringProtocolRunner
         self._tp_runner = TuringProtocolRunner(
@@ -137,42 +122,36 @@ class LLMThread:
         self._nl_translation_config = nl_translation_config or {}
         self._seed_language = seed_language
         self._event_bus = event_bus
-        self._thread_config_manager = thread_config_manager
-        self._backend_pools_by_name = backend_pools_by_name or {}
-        try:
-            _keep = int(compaction_keep_recent)
-        except (TypeError, ValueError):
-            logger.warning(
-                "Invalid compaction_keep_recent %r; falling back to default %d",
-                compaction_keep_recent, COMPACTION_KEEP_RECENT,
-            )
-            _keep = COMPACTION_KEEP_RECENT
-        if _keep < 1:
-            logger.warning("compaction_keep_recent %r < 1; clamping to 1", _keep)
-            _keep = 1
-        self._compaction_keep_recent = _keep
+        self._tool_deps = tool_deps
         # Convenience: primary config for context_size / model name lookups.
         self._cfg = main_pool.primary
         self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)
         self._get_sub_sessions = sub_session_getter  # lazy getter breaks LLMThread↔SSM cycle
-        self._tool_deps = tool_deps
         self._queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         self._running = False
-        # Per-thread compaction summaries: thread_id -> summary text
-        self._compaction_summaries: dict[str, Optional[str]] = {}
-        # Per-thread sequence counter for user-facing turns.  Incremented each
-        # time a non-system-event item is processed.  Used to detect stale
-        # Turing Protocol corrections that arrived after the conversation moved on.
-        self._thread_seq: dict[str, int] = {}
-        # Per-thread cache of the last system prompt actually sent to the LLM.
-        self._last_system_prompt: dict[str, str] = {}
-        # Per-thread last activity timestamp (for session timeout tracking).
-        self._last_activity: dict[str, float] = {}
-        # Per-thread tool calls from the previous turn.  Passed to the Turing
-        # Protocol so Stage 2 validators can distinguish cross-turn context
-        # (prior_assistant_message) from the current turn's execution facts.
-        self._prior_tool_calls: dict[str, list[str]] = {}
         self._background_tasks: set[asyncio.Task] = set()
+
+        # --- Composed components ---
+        self._store = ConversationStore(
+            primary_config=main_pool.primary,
+            event_bus=event_bus,
+            nl_translation_config=self._nl_translation_config,
+            tool_deps=tool_deps,
+        )
+        self._compactor = ContextCompactor(
+            compaction_pool=compaction_pool,
+            broadcast_fn=broadcast_fn,
+            store=self._store,
+            keep_recent=compaction_keep_recent,
+            enqueue_system_event_fn=self.enqueue_system_event,
+        )
+        self._session_mgr = SessionManager(
+            main_pool=main_pool,
+            thread_config_manager=thread_config_manager,
+            backend_pools_by_name=backend_pools_by_name,
+            sub_session_getter=sub_session_getter,
+            store=self._store,
+        )
 
     # ------------------------------------------------------------------
     # Read-only accessors for external consumers (interfaces, /status)
@@ -188,7 +167,7 @@ class LLMThread:
 
     @property
     def compaction_pool(self) -> BackendPool:
-        return self._compaction_pool
+        return self._compactor._compaction_pool
 
     @property
     def turing_protocol_pool(self) -> BackendPool:
@@ -204,39 +183,10 @@ class LLMThread:
 
     @property
     def thread_config_manager(self) -> "Optional[ThreadConfigManager]":
-        return self._thread_config_manager
-
-    def _resolve_pool(self, thread_id: str) -> BackendPool:
-        """Return the inference pool for a thread, respecting per-thread overrides."""
-        if not self._thread_config_manager:
-            return self._main_pool
-        resolved = self._thread_config_manager.resolve(thread_id)
-        if resolved.backend_name and resolved.backend_name in self._backend_pools_by_name:
-            return self._backend_pools_by_name[resolved.backend_name]
-        return self._main_pool
-
-    def _resolve_config(self, thread_id: str) -> "Optional[ResolvedThreadConfig]":
-        """Return resolved per-thread config, or None if no manager is set."""
-        if not self._thread_config_manager:
-            return None
-        return self._thread_config_manager.resolve(thread_id)
+        return self._session_mgr.thread_config_manager
 
     def check_session_timeouts(self) -> list[str]:
-        """Return thread_ids that have exceeded their configured session timeout.
-
-        Only checks threads that have both a configured timeout and recorded
-        last-activity timestamps. Returns empty list if no config manager.
-        """
-        if not self._thread_config_manager:
-            return []
-        now = _time.time()
-        expired = []
-        for tid, last_ts in self._last_activity.items():
-            resolved = self._thread_config_manager.resolve(tid)
-            timeout = resolved.session_timeout_minutes
-            if timeout is not None and (now - last_ts) > timeout * 60:
-                expired.append(tid)
-        return expired
+        return self._session_mgr.check_session_timeouts()
 
     # ------------------------------------------------------------------
     # Public interface
@@ -278,73 +228,19 @@ class LLMThread:
         return await fut
 
     async def reset_session(self, thread_id: str = "default") -> None:
-        await database.async_call(database.clear_active_messages, thread_id)
-        self._compaction_summaries.pop(thread_id, None)
-        ssm = self._get_sub_sessions() if self._get_sub_sessions else None
-        if ssm:
-            n = await ssm.cancel_for_thread(thread_id)
-            if n:
-                logger.info("Cancelled %d sub-session(s) for reset thread %s", n, thread_id)
-        logger.info("Session reset for thread %s", thread_id)
+        await self._session_mgr.reset_session(thread_id)
 
     async def force_compact(self, thread_id: str = "default") -> None:
-        await self._compact_context(thread_id)
+        await self._compactor.compact(thread_id)
 
     def get_compaction_summary(self, thread_id: str = "default") -> Optional[str]:
-        """Return the current in-memory compaction summary for a thread, or None."""
-        return self._compaction_summaries.get(thread_id)
+        return self._store.get_compaction_summary(thread_id)
 
     def get_last_system_prompt(self, thread_id: str = "default") -> Optional[str]:
-        """Return the last system prompt actually sent to the LLM for *thread_id*."""
-        return self._last_system_prompt.get(thread_id)
+        return self._store.get_last_system_prompt(thread_id)
 
     def get_token_budget(self, thread_id: str = "default") -> dict:
-        """Return precise token accounting for a thread."""
-        total_limit = max(self._cfg.context_size - self._cfg.max_tokens, 1)
-        model = self._cfg.model
-
-        # Prefer the cached prompt that was actually sent to the LLM.
-        nl_enabled = self._nl_translation_config.get("enabled", False)
-        nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
-
-        sp_text = self._last_system_prompt.get(thread_id)
-        if sp_text is None:
-            # Fallback assembly — predictions are omitted because fetching
-            # them requires async I/O.  The cached prompt (preferred path)
-            # already includes predictions, so this only affects the first
-            # call before any LLM turn has run.
-            summary = self._compaction_summaries.get(thread_id)
-            try:
-                sp_text = prompt_assembler.assemble(
-                    extra_summary=summary,
-                    prompt_mode="minimal",
-                    tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
-                    nl_tools=nl_tools,
-                )
-            except Exception:  # noqa: BLE001
-                sp_text = ""
-        sp_tokens = _count_tokens(sp_text, model)
-        active_schemas = tool_module.get_tool_schemas(
-            nl_tools=nl_tools,
-            tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
-        )
-        tools_tokens = _count_tokens(json.dumps(active_schemas), model)
-
-        stats = database.get_thread_stats(thread_id)
-        hist_tokens = stats["token_used"]
-
-        total_used = sp_tokens + tools_tokens + hist_tokens
-        pct = round(min(total_used / total_limit * 100, 100), 1)
-
-        return {
-            "total_limit": total_limit,
-            "sp_tokens": sp_tokens,
-            "tools_tokens": tools_tokens,
-            "hist_tokens": hist_tokens,
-            "total_used": total_used,
-            "pct": pct,
-            "msg_count": stats["msg_count"],
-        }
+        return self._store.get_token_budget(thread_id)
 
     # ------------------------------------------------------------------
     # Main loop
@@ -352,11 +248,7 @@ class LLMThread:
 
     async def run(self) -> None:
         self._running = True
-        # Load summaries for all known threads
-        for tid in await database.async_call(database.get_active_thread_ids):
-            summary = await database.async_call(database.load_latest_summary, tid)
-            if summary:
-                self._compaction_summaries[tid] = summary
+        await self._store.load_summaries()
         logger.info("LLM thread started (endpoint=%s model=%s)", self._cfg.base_url, self._cfg.model)
         if self._turing_protocol_pool.enabled:
             logger.info("Turing Protocol enabled (model=%s)", self._turing_protocol_pool.primary.model)
@@ -373,7 +265,7 @@ class LLMThread:
             # has already processed at least one new user-facing turn since the
             # correction was issued, making it no longer relevant.
             if item.turing_depth > 0 and item.correction_for_seq is not None:
-                current_seq = self._thread_seq.get(item.thread_id, 0)
+                current_seq = self._store.thread_seq.get(item.thread_id, 0)
                 if current_seq > item.correction_for_seq:
                     logger.warning(
                         "Dropping stale Turing Protocol correction for thread %s "
@@ -398,8 +290,8 @@ class LLMThread:
             # corrections (depth > 1) record a higher correction_for_seq and
             # aren't falsely dropped if a user turn arrives in between.
             if not item.is_system_event or item.turing_depth > 0:
-                self._thread_seq[item.thread_id] = (
-                    self._thread_seq.get(item.thread_id, 0) + 1
+                self._store.thread_seq[item.thread_id] = (
+                    self._store.thread_seq.get(item.thread_id, 0) + 1
                 )
 
             # Seed empty threads on first real user message
@@ -517,13 +409,13 @@ class LLMThread:
             ):
                 # Snapshot the current sequence number so the correction can
                 # be dropped if the conversation has moved on before it lands.
-                seq_at_fire = self._thread_seq.get(item.thread_id, 0)
+                seq_at_fire = self._store.thread_seq.get(item.thread_id, 0)
                 # _prior_assistant and _recent_assistant were collected
                 # before _process() above, so they don't include the
                 # current reply.  _prior_tc pairs with _prior_assistant so
                 # Stage 2 validators can tell which tools the *prior* turn
                 # already called (avoiding cross-turn false positives).
-                _prior_tc = self._prior_tool_calls.get(item.thread_id, [])
+                _prior_tc = self._session_mgr.prior_tool_calls.get(item.thread_id, [])
                 _tp_task = asyncio.create_task(
                     self._run_turing_check(
                         user_message=item.text,
@@ -542,7 +434,7 @@ class LLMThread:
                 _tp_task.add_done_callback(self._background_tasks.discard)
 
             # Update prior-turn tool calls for the next Turing check.
-            self._prior_tool_calls[item.thread_id] = reply.tool_calls_made or []
+            self._session_mgr.prior_tool_calls[item.thread_id] = reply.tool_calls_made or []
 
             # Emit main-thread turn event for reflection/synthesis.
             if (
@@ -707,15 +599,15 @@ class LLMThread:
         Also handles pre-compaction if the history exceeds the token budget.
         """
         thread_id = item.thread_id
-        messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
+        messages = await self._store.build_messages(item.text, item.is_system_event, thread_id, item.content)
 
         # Track last activity for session timeout checking (#58 plumbing).
         if not item.is_system_event:
-            self._last_activity[thread_id] = _time.time()
+            self._session_mgr.record_activity(thread_id)
 
         # Resolve per-thread config overrides.
-        resolved_cfg = self._resolve_config(thread_id)
-        pool = self._resolve_pool(thread_id)
+        resolved_cfg = self._session_mgr.resolve_config(thread_id)
+        pool = self._session_mgr.resolve_pool(thread_id)
         pool_cfg = pool.primary if pool.enabled else self._cfg
         prompt_mode = resolved_cfg.system_prompt_mode if resolved_cfg else "full"
 
@@ -757,7 +649,7 @@ class LLMThread:
         # Assemble system prompt first so we can measure its real token cost.
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
-        summary = self._compaction_summaries.get(thread_id)
+        summary = self._store.compaction_summaries.get(thread_id)
         system_prompt = prompt_assembler.assemble(
             extra_summary=summary, query=_memory_query,
             memory_results=_memory_results, prompt_mode=prompt_mode,
@@ -786,10 +678,10 @@ class LLMThread:
                 "History at %d tokens (overhead %d, threshold %d) – compacting before inference (thread=%s)",
                 history_tokens, overhead_tokens, compaction_threshold, thread_id,
             )
-            await self._compact_context(thread_id)
-            messages = await self._build_messages(item.text, item.is_system_event, thread_id, item.content)
+            await self._compactor.compact(thread_id)
+            messages = await self._store.build_messages(item.text, item.is_system_event, thread_id, item.content)
             # Reassemble with the updated compaction summary.
-            summary = self._compaction_summaries.get(thread_id)
+            summary = self._store.compaction_summaries.get(thread_id)
             system_prompt = prompt_assembler.assemble(
                 extra_summary=summary, query=_memory_query,
                 memory_results=_memory_results, prompt_mode=prompt_mode,
@@ -798,7 +690,7 @@ class LLMThread:
                 prediction_results=_prediction_results,
             )
 
-        self._last_system_prompt[thread_id] = system_prompt
+        self._store.last_system_prompt[thread_id] = system_prompt
 
         is_sub_session_result = item.is_system_event and "[SUB-SESSION " in item.text
         return (messages, system_prompt, _memory_query, pool, pool_cfg,
@@ -809,29 +701,13 @@ class LLMThread:
         self, item: _QueueItem, pool_cfg: "ProviderConfig", is_sub_session_result: bool,
     ) -> None:
         """Persist the incoming user/system message to DB and emit events."""
-        thread_id = item.thread_id
-        if not item.is_system_event:
-            db_text = item.text
-            if item.content is not None:
-                db_text = item.text or "[image attached]"
-            await database.async_call(
-                database.save_message, "user", db_text, thread_id,
-                token_count=_count_tokens(db_text, pool_cfg.model))
-            if self._event_bus:
-                self._event_bus.emit("message.received", thread_id=thread_id, text=db_text)
-        elif is_sub_session_result:
-            _se_text = f"[SYSTEM EVENT] {item.text}"
-            await database.async_call(
-                database.save_message, "user", _se_text, thread_id,
-                token_count=_count_tokens(_se_text, pool_cfg.model))
-        elif item.turing_depth > 0:
-            # Turing correction prompt: saved to DB before inference so the
-            # model sees it.  If the model ignores the correction (no tool
-            # calls), both the prompt and the response are deleted afterward
-            # to avoid polluting future turns (see cleanup below).
-            await database.async_call(
-                database.save_message, "user", item.text, thread_id,
-                token_count=_count_tokens(item.text, pool_cfg.model))
+        await self._store.save_user_message(
+            text=item.text, thread_id=item.thread_id,
+            is_system_event=item.is_system_event,
+            is_sub_session_result=is_sub_session_result,
+            turing_depth=item.turing_depth,
+            content=item.content, model=pool_cfg.model,
+        )
 
     async def _save_inference_result(
         self, item: _QueueItem, reply: LLMReply,
@@ -888,14 +764,11 @@ class LLMThread:
         except Exception:  # noqa: BLE001
             logger.debug("Failed to log inference_completed", exc_info=True)
 
-        _assistant_text = reply.text or "..."
-        await database.async_call(
-            database.save_message, "assistant", _assistant_text, thread_id,
-            token_count=_count_tokens(_assistant_text, pool_cfg.model))
-        if self._event_bus:
-            self._event_bus.emit("message.sent", thread_id=thread_id, text=_assistant_text)
+        await self._store.save_assistant_message(
+            reply.text, thread_id, pool_cfg.model,
+        )
 
-        await self._maybe_summarise_components(
+        await self._compactor.maybe_summarise_components(
             thread_id, _from_system_event=item.is_system_event,
         )
 
@@ -923,13 +796,13 @@ class LLMThread:
             )
         except ContextTooLargeError:
             logger.warning("Context too large for thread %s — forcing compaction", thread_id)
-            await self._compact_context(thread_id)
-            messages = await self._build_messages(
+            await self._compactor.compact(thread_id)
+            messages = await self._store.build_messages(
                 item.text, item.is_system_event, thread_id, item.content,
             )
             nl_enabled = self._nl_translation_config.get("enabled", False)
             nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
-            summary = self._compaction_summaries.get(thread_id)
+            summary = self._store.compaction_summaries.get(thread_id)
             system_prompt = prompt_assembler.assemble(
                 extra_summary=summary, query=memory_query,
                 memory_results=memory_results, prompt_mode=prompt_mode,
@@ -972,52 +845,6 @@ class LLMThread:
     # ------------------------------------------------------------------
     # OpenAI inference loop (handles tool-use rounds)
     # ------------------------------------------------------------------
-
-    def _trim_tool_results(self, messages: list[dict], token_budget: int) -> None:
-        """Truncate oldest tool-result messages if total tokens exceed budget.
-
-        Modifies *messages* in place.  Only tool-role messages are truncated
-        (replaced with a short notice).  This prevents 400 errors from
-        providers when tool results cause the payload to exceed the context
-        window.
-        """
-        model = self._cfg.model
-        total = sum(
-            _count_tokens(
-                m.get("content", "") if isinstance(m.get("content"), str)
-                else " ".join(
-                    p.get("text", "") for p in m.get("content", [])
-                    if isinstance(p, dict)
-                ) if isinstance(m.get("content"), list)
-                else str(m.get("content", "") or ""),
-                model,
-            )
-            for m in messages
-        )
-        if total <= token_budget:
-            return
-
-        # Collect indices of tool-result messages, oldest first.
-        tool_indices = [
-            i for i, m in enumerate(messages)
-            if m["role"] == "tool"
-        ]
-        truncation_notice = "[tool output truncated to fit context window]"
-        for idx in tool_indices:
-            if total <= token_budget:
-                break
-            msg = messages[idx]
-            old_content = msg["content"]
-            if old_content == truncation_notice:
-                continue
-            old_tokens = _count_tokens(
-                old_content if isinstance(old_content, str) else str(old_content),
-                model,
-            )
-            new_tokens = _count_tokens(truncation_notice, model)
-            msg["content"] = truncation_notice
-            total -= (old_tokens - new_tokens)
-            logger.info("Trimmed tool result at index %d (saved ~%d tokens)", idx, old_tokens - new_tokens)
 
     async def _inference_loop(self, system_prompt: str, messages: list[dict],
                               thread_id: str = "default",
@@ -1085,7 +912,7 @@ class LLMThread:
         empty_retries = 0
         while True:
             # Trim oldest tool results if accumulated context exceeds budget.
-            self._trim_tool_results(full_messages, token_budget)
+            self._compactor.trim_tool_results(full_messages, token_budget, active_cfg.model)
 
             response = await active_pool.call(
                 messages=full_messages,
@@ -1246,103 +1073,3 @@ class LLMThread:
             nl_tools=nl_tools,
         )
 
-    # ------------------------------------------------------------------
-    # Context compaction
-    # ------------------------------------------------------------------
-
-    async def _compact_context(self, thread_id: str = "default") -> None:
-        rows = await database.async_call(database.load_active_messages, thread_id)
-        if len(rows) <= self._compaction_keep_recent:
-            return
-
-        to_summarise = rows[:-self._compaction_keep_recent]
-
-        # Include the previous compaction summary so information chains
-        # across compaction cycles instead of being lost.
-        prior_summary = self._compaction_summaries.get(thread_id)
-        parts = []
-        if prior_summary:
-            parts.append(f"[PRIOR SUMMARY]\n{prior_summary}\n")
-        parts.append("[NEW MESSAGES]\n" + "\n".join(
-            f"{r['role'].upper()}: {r['content']}" for r in to_summarise
-        ))
-        history_text = "\n\n".join(parts)
-
-        summary_prompt = prompt_loader.load("COMPACTION_PROMPT.txt", history=history_text)
-
-        try:
-            summary_response = await self._compaction_pool.call(
-                messages=[{"role": "user", "content": summary_prompt}],
-                max_tokens_override=2048,
-            )
-            summary = (summary_response.content or "").strip()
-        except Exception:  # noqa: BLE001
-            logger.exception("Compaction failed for thread %s — skipping", thread_id)
-            return
-
-        try:
-            await database.async_call(
-                database.save_interaction_log,
-                _time.time(), "compaction", thread_id,
-                self._compaction_pool.last_used,
-                summary_prompt, summary, "ok",
-            )
-        except Exception:  # noqa: BLE001
-            logger.debug("Failed to save compaction interaction log", exc_info=True)
-
-        if to_summarise:
-            await database.async_call(database.archive_messages, to_summarise[-1]["id"], thread_id)
-        await database.async_call(database.save_summary, summary, thread_id)
-        self._compaction_summaries[thread_id] = summary
-
-        logger.info("Compacted %d messages into summary (%d chars) for thread %s",
-                     len(to_summarise), len(summary), thread_id)
-        try:
-            await self._broadcast(
-                "\U0001f4e6 Context compacted: old messages archived and summarised.",
-                thread_id,
-            )
-        except Exception:  # noqa: BLE001
-            pass
-
-    # ------------------------------------------------------------------
-    # Component size monitoring
-    # ------------------------------------------------------------------
-
-    async def _maybe_summarise_components(self, thread_id: str = "default",
-                                            *, _from_system_event: bool = False) -> None:
-        if _from_system_event:
-            return  # Avoid self-reinforcing summarisation loops.
-        sizes = prompt_assembler.check_component_sizes()
-        for component, oversized in sizes.items():
-            if not oversized:
-                continue
-            logger.info("Component '%s' oversized – requesting AI summarisation", component)
-            prompt = prompt_loader.load("COMPONENT_OVERSIZE.txt", component=component)
-            try:
-                await self.enqueue_system_event(prompt, thread_id)
-                await self._broadcast(
-                    f"\u2139\ufe0f Auto-summarising {component} (size limit reached).",
-                    thread_id,
-                )
-            except Exception:  # noqa: BLE001
-                logger.exception("Could not request summarisation for %s", component)
-
-    # ------------------------------------------------------------------
-    # Message list construction
-    # ------------------------------------------------------------------
-
-    async def _build_messages(self, new_text: str, is_system_event: bool,
-                              thread_id: str = "default",
-                              content: Optional[list] = None) -> list[dict]:
-        rows = await database.async_call(database.load_active_messages, thread_id)
-        messages = [
-            {"role": r["role"], "content": r["content"] or "..."}
-            for r in rows
-        ]
-        prefix = "[SYSTEM EVENT] " if is_system_event else ""
-        if content is not None and not is_system_event:
-            messages.append({"role": "user", "content": content})
-        else:
-            messages.append({"role": "user", "content": f"{prefix}{new_text}"})
-        return messages
