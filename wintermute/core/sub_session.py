@@ -316,6 +316,9 @@ class SubSessionManager:
         # Tracks parent sub-session IDs whose children have already been aggregated,
         # preventing duplicate delivery when multiple children complete near-simultaneously.
         self._aggregated_parents: set[str] = set()
+        # Buffers individual node reports for multi-node workflows until all
+        # nodes are terminal, then delivers one aggregated report.
+        self._workflow_reports: dict[str, dict[str, str]] = {}
 
     # ------------------------------------------------------------------
     # Default timeout (tunable by self-model)
@@ -994,9 +997,16 @@ class SubSessionManager:
         if wf is None:
             return
 
-        # The workflow is terminal — aggregation guards are no longer needed.
+        # The workflow is terminal — clean up aggregation guards and report buffers.
         for nid in wf.nodes:
             self._aggregated_parents.discard(nid)
+        # Also discard parent_thread_ids of nodes in this workflow — those are
+        # the keys stored in _aggregated_parents by _check_nested_aggregation.
+        for nid in wf.nodes:
+            s = self._states.get(nid)
+            if s and s.parent_thread_id:
+                self._aggregated_parents.discard(s.parent_thread_id)
+        self._workflow_reports.pop(workflow_id, None)
 
         # Count how many completed workflows already exist (excluding this one).
         completed_wfs = [
@@ -1022,6 +1032,7 @@ class SubSessionManager:
                                 if not _ws_children:
                                     del self._worker_spawned[_ws_parent]
                         self._aggregated_parents.discard(nid)
+                    self._workflow_reports.pop(old_wid, None)
                     logger.debug("Purged completed workflow %s from memory", old_wid)
 
     def list_active(self, thread_id: Optional[str] = None) -> list[dict]:
@@ -1034,7 +1045,9 @@ class SubSessionManager:
             self._serialise(state)
             for state in self._states.values()
             if state.status in ("running", "pending")
-            and (thread_id is None or state.parent_thread_id == thread_id)
+            and (thread_id is None
+                 or state.parent_thread_id == thread_id
+                 or state.root_thread_id == thread_id)
         ]
 
     def list_all(self) -> list[dict]:
@@ -1347,7 +1360,7 @@ class SubSessionManager:
             await self._check_nested_aggregation(state.session_id)
             return
 
-        # Append workflow progress if this session is part of a DAG.
+        # Multi-node workflow: buffer individual reports, deliver aggregated.
         wf_id = self._session_to_workflow.get(state.session_id)
         if wf_id:
             wf = self._workflows.get(wf_id)
@@ -1357,13 +1370,33 @@ class SubSessionManager:
                     if n.status in ("completed", "failed", "timeout")
                 )
                 total = len(wf.nodes)
-                text += f"\n\n(workflow {wf_id}: {done}/{total} nodes complete)"
-                if done == total:
-                    any_fail = any(n.status == "failed" for n in wf.nodes.values())
-                    if any_fail:
-                        text += f"\n[WORKFLOW {wf_id} FINISHED WITH ERRORS]"
-                    else:
-                        text += f"\n[WORKFLOW {wf_id} COMPLETE]"
+
+                wf_reports = self._workflow_reports.setdefault(wf_id, {})
+                wf_reports[state.session_id] = text
+
+                if done < total:
+                    logger.info(
+                        "Sub-session %s: buffering report (%d/%d) for workflow %s",
+                        state.session_id, done, total, wf_id,
+                    )
+                    return
+
+                # All nodes terminal — deliver one aggregated report.
+                parts = []
+                any_fail = False
+                for nid, node in wf.nodes.items():
+                    node_text = wf_reports.get(
+                        nid, f"[{nid}] {node.objective[:100]}: no report",
+                    )
+                    parts.append(node_text)
+                    if node.status == "failed":
+                        any_fail = True
+                status_word = "FINISHED WITH ERRORS" if any_fail else "COMPLETE"
+                text = (
+                    f"[WORKFLOW {wf_id} {status_word} — {total} task(s)]\n\n"
+                    + "\n\n---\n\n".join(parts)
+                )
+                self._workflow_reports.pop(wf_id, None)
 
         if state.parent_thread_id:
             try:
@@ -1581,6 +1614,8 @@ class SubSessionManager:
             ]
 
         round_count = 0
+        _empty_retries = 0
+        _MAX_EMPTY_RETRIES = 3
         while True:
             round_count += 1
             if state.max_rounds is not None and round_count > state.max_rounds:
@@ -1627,9 +1662,18 @@ class SubSessionManager:
                 raise  # Can't trim further, let _run() handle it
 
             if response.content is None and not response.tool_calls:
-                logger.warning("Sub-session %s: LLM returned empty response, retrying", state.session_id)
-                logger.debug("Empty response: %s", response)
-                state.messages.append({"role": "assistant", "content": ""})
+                _empty_retries += 1
+                if _empty_retries > _MAX_EMPTY_RETRIES:
+                    return (
+                        f"Gave up after {_empty_retries} consecutive empty responses "
+                        "from the model. The backend may be unavailable or returning "
+                        "filtered responses."
+                    )
+                logger.warning(
+                    "Sub-session %s: LLM returned empty response (%d/%d), retrying",
+                    state.session_id, _empty_retries, _MAX_EMPTY_RETRIES,
+                )
+                state.messages.append({"role": "assistant", "content": "[No response generated]"})
                 state.messages.append({"role": "user", "content": "Continue."})
                 continue
 
