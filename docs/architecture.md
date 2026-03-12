@@ -19,7 +19,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **SelfModelProfiler** | `self_model.py` | Operational metrics aggregator and parameter auto-tuner (runs inside reflection cycle) |
 | **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
 | **NL Translator** | `nl_translator.py` | Expands natural-language tool descriptions into structured arguments via a translator LLM |
-| **MemoryStore** | `memory_store.py` | Vector-indexed memory retrieval (flat_file / FTS5 / local_vector / Qdrant backends) with access tracking and source tagging |
+| **MemoryStore** | `memory_store.py` | Vector-indexed memory retrieval (FTS5 / local_vector / Qdrant backends) with access tracking and source tagging |
 | **PromptAssembler** | `prompt_assembler.py` | Builds system prompts from file components; injects predictions & patterns for main thread |
 | **Database** | `database.py` | SQLite message persistence (per-thread cached connections), thread management, task storage, sub-session outcome tracking, and prediction accuracy tracking |
 
@@ -56,8 +56,7 @@ User (Matrix / Browser)
                                                         (back to LLMThread)
 
 SchedulerThread -------------------------> LLMThread queue / sub-session (scheduled tasks with ai_prompt)
-DreamingLoop (nightly) ------------------> housekeeping (4-phase) + creative (3-phase, gated) pipeline (vector backends)
-                                           or direct LLM API call (flat-file fallback)
+DreamingLoop (nightly) ------------------> housekeeping (4-phase) + creative (3-phase, gated) pipeline
 ReflectionLoop (event-driven) -----------> rule engine + LLM analysis + sub-session mutations + pattern-to-skill synthesis
 SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + summary → system prompt
 ```
@@ -67,7 +66,7 @@ SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + s
 1. Load `config.yaml`
 2. Configure logging (console + rotating file)
 3. Initialise SQLite databases
-4. Initialise memory store (vector backend or flat-file fallback; cold-boot import if needed)
+4. Initialise memory store (vector backend with fts5 fallback; cold-boot import if needed)
 5. Initialise skill store (vector backend with one-time migration from flat files)
 6. Bootstrap `data/` directories (skills/, scripts/, archive/)
 7. Build BackendPools and per-thread config manager
@@ -179,16 +178,15 @@ These are some architectural choices, which should make it better for local LLMs
 data/
   .git/                      -- Local git repo for auto-versioning (rollback via git log / git revert)
   BASE_PROMPT.txt            -- Immutable core instructions
-  MEMORIES.txt               -- Working set export of top-accessed memories (vector backends) or full memory store (flat-file). Git-versioned.
+  MEMORIES.txt               -- Working set export of top-accessed memories (written by dreaming working_set_export phase). Git-versioned.
   memory_index.db            -- FTS5 keyword index (only when backend=fts5)
   local_vectors.db           -- SQLite vector store with metadata (only when backend=local_vector)
   conversation.db (tasks)     -- Active goals / working memory (managed via task tool, stored in SQLite)
   conversation.db (outcomes)  -- Sub-session outcome tracking (duration, status, TP verdict; used for historical feedback)
   scratchpad/                -- Ephemeral per-workflow directories for parallel worker communication (auto-cleaned)
   skills/                    -- Learned procedures (vector-indexed via skill tool; legacy *.md files migrated at first startup)
-  DREAM_MEMORIES_PROMPT.txt  -- Customisable dreaming prompt for MEMORIES consolidation (flat-file path)
-  DREAM_DEDUP_PROMPT.txt     -- Dreaming deduplication merge prompt (vector-native path)
-  DREAM_CONTRADICTION_PROMPT.txt -- Dreaming contradiction resolution prompt (vector-native path)
+  DREAM_DEDUP_PROMPT.txt     -- Dreaming deduplication merge prompt
+  DREAM_CONTRADICTION_PROMPT.txt -- Dreaming contradiction resolution prompt
   DREAM_ASSOCIATION_PROMPT.txt -- REM-inspired associative discovery prompt (creative phase)
   DREAM_SCHEMA_PROMPT.txt    -- NREM-inspired schema abstraction prompt (creative phase)
   DREAM_PREDICTION_PROMPT.txt -- Predictive pattern extraction prompt (creative phase)
@@ -205,4 +203,4 @@ data/
 
 Changes to MEMORIES.txt, skills, and other data files are automatically committed to a local git repository inside `data/`. This provides a full change history so that any mutation (memory append, nightly consolidation, skill updates) can be inspected with `cd data && git log --oneline` and rolled back with `git revert`.
 
-When a vector memory backend (`fts5`, `local_vector`, or `qdrant`) is active, the vector store is the **primary unbounded memory**. Each memory entry is tagged with metadata: `source` (origin: `user_explicit`, `harvest`, `dreaming_merge`, `unknown`), `last_accessed` (timestamp of last search hit), and `access_count` (number of search hits). MEMORIES.txt serves as a derived working-set export — the top-N most-accessed entries are written to it during nightly dreaming for flat-file fallback and git versioning. Memory mutations are still dual-written (file + vector store) during normal operation.
+The vector store is the **primary unbounded memory**. Each memory entry is tagged with metadata: `source` (origin: `user_explicit`, `harvest`, `dreaming_merge`, `unknown`), `last_accessed` (timestamp of last search hit), and `access_count` (number of search hits). MEMORIES.txt serves as a derived working-set export — the top-N most-accessed entries are written to it during nightly dreaming for flat-file fallback and git versioning. Memory mutations are still dual-written (file + vector store) during normal operation.

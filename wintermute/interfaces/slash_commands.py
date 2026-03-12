@@ -467,9 +467,6 @@ class SlashCommandHandler:
 
     async def _cmd_rebuild_index(self, send_fn: SendFn) -> None:
         from wintermute.infra import database as db, memory_store
-        if not memory_store.is_vector_enabled():
-            await send_fn("Vector memory is not enabled (backend: flat_file).")
-            return
         await send_fn("Rebuilding memory index...")
         try:
             await db.async_call(memory_store.rebuild)

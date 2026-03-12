@@ -380,7 +380,7 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
             if memory_results:
                 memories_text = "\n".join(r["text"] for r in memory_results)
                 sections.append(f"# User Memories (relevance-ranked)\n\n{memories_text}")
-        elif memory_store.is_vector_enabled() and query:
+        elif query:
             try:
                 results = memory_store.search(query)
             except Exception as exc:
@@ -430,16 +430,11 @@ def check_component_sizes() -> dict[str, bool]:
     Return a dict indicating which components exceed their size thresholds.
     Keys: 'memories', 'tasks', 'skills'
 
-    When vector memory is enabled, the full MEMORIES.txt is never injected
-    into the system prompt (only relevance-ranked results are), so the
-    memories size check is skipped.
+    All memory backends support ranked search, so the full MEMORIES.txt is
+    never injected into the system prompt — only relevance-ranked results are.
+    The memories size check is therefore always False.
     """
-    from wintermute.infra import memory_store
-
-    if memory_store.is_vector_enabled():
-        memories_oversized = False
-    else:
-        memories_oversized = len(read_text_safe(MEMORIES_FILE)) > MEMORIES_LIMIT
+    memories_oversized = False
     tasks_len     = len(database.get_active_tasks_text())
     skills_toc_len = len(_read_skills_toc())
     return {

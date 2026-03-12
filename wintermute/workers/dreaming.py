@@ -5,15 +5,14 @@ Biologically-inspired multi-phase memory consolidation system.
 
 Phases:
   Housekeeping (always):
-    - dedup: Merge near-duplicate memory entries (vector backends)
-    - contradiction: Resolve conflicting memory entries (vector backends)
-    - stale_pruning: Remove old/unaccessed entries (vector backends)
-    - working_set_export: Export top entries to MEMORIES.txt (vector backends)
-    - flat_file: LLM consolidation of MEMORIES.txt (flat-file backends)
+    - dedup: Merge near-duplicate memory entries
+    - contradiction: Resolve conflicting memory entries
+    - stale_pruning: Remove old/unaccessed entries
+    - working_set_export: Export top entries to MEMORIES.txt
     - task_consolidation: Review/clean task items
     - skill_consolidation: Deduplicate and condense skill files
 
-  Creative (vector-only, gated by conditions):
+  Creative (gated by conditions):
     - association: REM-inspired cross-domain insight discovery
     - schema: NREM-inspired episodic→semantic generalisation
     - prediction: Behavioural/temporal pattern extraction
@@ -469,34 +468,6 @@ async def _phase_working_set_export(pool: "BackendPool", cfg: dict,
     else:
         result.summary = "no entries to export"
     logger.info("Dreaming phase working_set_export: %s", result.summary)
-    return result
-
-
-async def _phase_flat_file_consolidation(pool: "BackendPool", cfg: dict,
-                                         sim_data: SimilarityData) -> PhaseResult:
-    """Phase: LLM consolidation for flat-file memory backends."""
-    result = PhaseResult(phase_name="flat_file")
-    memories_snapshot = read_text_safe(MEMORIES_FILE)
-    if not memories_snapshot:
-        result.summary = "MEMORIES.txt empty or missing"
-        return result
-
-    mem_prompt = prompt_loader.load("DREAM_MEMORIES_PROMPT.txt")
-    _snap_lines = [l for l in memories_snapshot.splitlines() if l.strip()]
-    consolidated = await _consolidate(
-        pool, "MEMORIES.txt", mem_prompt, memories_snapshot,
-        source="MEMORIES.txt flat file",
-        entry_count=str(len(_snap_lines)),
-    )
-    if consolidated:
-        merge_consolidated_memories(
-            memories_snapshot, consolidated,
-        )
-        result.items_processed = len(_snap_lines)
-        result.summary = f"consolidated {len(_snap_lines)} lines"
-    else:
-        result.summary = "LLM returned empty result"
-    logger.info("Dreaming phase flat_file: %s", result.summary)
     return result
 
 
@@ -1216,7 +1187,6 @@ async def run_dream_cycle(
     """
     report = DreamReport()
     cfg = _load_dreaming_config()
-    is_vector = memory_store.is_vector_enabled()
 
     # Create Qdrant snapshot before housekeeping for rollback safety.
     if memory_store.is_qdrant_backend():
@@ -1234,41 +1204,35 @@ async def run_dream_cycle(
 
     # Pre-compute shared similarity data (single matrix for all phases).
     sim_data = SimilarityData()
-    if is_vector:
-        try:
-            sim_data = await _compute_similarity_data(cfg)
-        except Exception:  # noqa: BLE001
-            logger.exception("Dreaming: similarity computation failed")
-            report.errors.append("similarity computation failed")
+    try:
+        sim_data = await _compute_similarity_data(cfg)
+    except Exception:  # noqa: BLE001
+        logger.exception("Dreaming: similarity computation failed")
+        report.errors.append("similarity computation failed")
 
     # Define phase roster.
     phases: list[tuple[str, Any]] = []
 
-    if is_vector:
-        phases.append(("dedup", lambda: _phase_dedup(pool, cfg, sim_data)))
-        phases.append(("contradiction",
-                        lambda: _phase_contradiction(pool, cfg, sim_data)))
-        phases.append(("stale_pruning",
-                        lambda: _phase_stale_pruning(pool, cfg, sim_data)))
-        phases.append(("working_set_export",
-                        lambda: _phase_working_set_export(pool, cfg, sim_data)))
-    else:
-        phases.append(("flat_file",
-                        lambda: _phase_flat_file_consolidation(pool, cfg, sim_data)))
+    phases.append(("dedup", lambda: _phase_dedup(pool, cfg, sim_data)))
+    phases.append(("contradiction",
+                    lambda: _phase_contradiction(pool, cfg, sim_data)))
+    phases.append(("stale_pruning",
+                    lambda: _phase_stale_pruning(pool, cfg, sim_data)))
+    phases.append(("working_set_export",
+                    lambda: _phase_working_set_export(pool, cfg, sim_data)))
 
     phases.append(("task_consolidation",
                     lambda: _phase_task_consolidation(pool, cfg, sim_data)))
     phases.append(("skill_consolidation",
                     lambda: _phase_skill_consolidation(pool, cfg, sim_data)))
 
-    # Creative phases (vector-only, gated).
-    if is_vector:
-        phases.append(("association",
-                        lambda: _phase_association(pool, cfg, sim_data)))
-        phases.append(("schema",
-                        lambda: _phase_schema(pool, cfg, sim_data)))
-        phases.append(("prediction",
-                        lambda: _phase_prediction(pool, cfg, sim_data)))
+    # Creative phases (gated by conditions).
+    phases.append(("association",
+                    lambda: _phase_association(pool, cfg, sim_data)))
+    phases.append(("schema",
+                    lambda: _phase_schema(pool, cfg, sim_data)))
+    phases.append(("prediction",
+                    lambda: _phase_prediction(pool, cfg, sim_data)))
 
     # Execute phases sequentially.
     for phase_name, phase_fn in phases:

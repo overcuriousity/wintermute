@@ -346,8 +346,8 @@ async def main() -> None:
     try:
         memory_store.init(cfg.get("memory", {}))
     except Exception:
-        logger.exception("Memory store init failed — falling back to flat_file")
-        memory_store.init({"backend": "flat_file"})
+        logger.exception("Memory store init failed — falling back to fts5")
+        memory_store.init({"backend": "fts5"})
 
     # Initialize skill store (shares embedding + backend config from memory section).
     from wintermute.infra import skill_store

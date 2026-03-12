@@ -309,13 +309,12 @@ nl_translation:
 # backend — the same architecture as memories.  The skills backend is
 # configured separately from the memory backend.  If omitted, startup
 # logic auto-selects as follows:
-#   1. Inherit memory.backend (flat_file is normalised to fts5).
+#   1. Inherit memory.backend.
 #   2. If still unset, use local_vector when memory.embeddings.endpoint
 #      is configured, otherwise fts5.
 # Set skills.backend explicitly to override this auto-detection.
 #
 # Supported backends: fts5, local_vector, qdrant
-# (flat_file is NOT supported for skills — fts5 is used as fallback.)
 #
 # Embedding config is inherited from memory.embeddings by default.
 #
@@ -507,22 +506,22 @@ scheduler:
 # Controls how memories are injected into the system prompt each turn.
 #
 # Backends:
-#   "flat_file"  Default — loads entire MEMORIES.txt (current behavior).
-#                Zero config, works everywhere, no ranking.
-#   "fts5"       SQLite FTS5 keyword search (BM25 ranking). No external
-#                services needed. Creates data/memory_index.db.
-#   "qdrant"     Semantic vector search via Qdrant. Requires a running
-#                Qdrant instance and an embeddings endpoint.
+#   "fts5"         SQLite FTS5 keyword search (BM25 ranking). No external
+#                  services needed. Creates data/memory_index.db. Zero-config
+#                  minimum — good fallback when no embeddings endpoint available.
+#   "local_vector" SQLite + numpy cosine similarity (default). Requires an
+#                  embeddings endpoint but no external vector DB.
+#   "qdrant"       Semantic vector search via Qdrant. Requires a running
+#                  Qdrant instance and an embeddings endpoint.
 #
-# When fts5 or qdrant is active, only the top_k most relevant memories
-# are injected per turn instead of the full file. MEMORIES.txt is kept
-# as a git-versioned backup (dual-write on every mutation).
+# Only the top_k most relevant memories are injected per turn.
+# MEMORIES.txt is kept as a git-versioned export (dual-write on every mutation).
 #
 # If the configured backend fails to initialize at startup, Wintermute
-# warns and falls back to flat_file automatically.
+# warns and falls back to fts5 automatically.
 #
 memory:
-  backend: "local_vector"               # "flat_file" | "fts5" | "local_vector" | "qdrant"
+  backend: "local_vector"               # "fts5" | "local_vector" | "qdrant"
   top_k: 10                            # Max memories to inject per turn
   score_threshold: 0.3                  # Min relevance score (local_vector and qdrant only)
 

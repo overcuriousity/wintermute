@@ -2,9 +2,9 @@
 Vector-indexed memory retrieval for Wintermute.
 
 Provides three backends for memory storage and retrieval:
-  - flat_file  — wraps current MEMORIES.txt behavior (default, zero-config)
-  - fts5       — SQLite FTS5 keyword search with BM25 ranking
-  - qdrant     — Qdrant vector DB with embedding-based semantic search
+  - fts5         — SQLite FTS5 keyword search with BM25 ranking (zero-config)
+  - local_vector — SQLite + numpy cosine similarity (default)
+  - qdrant       — Qdrant vector DB with embedding-based semantic search
 
 Module-level singleton pattern (like database.py, prompt_assembler.py).
 Call ``init(config)`` once at startup; all other functions use the active backend.
@@ -56,74 +56,6 @@ class MemoryBackend(Protocol):
     def get_top_accessed(self, limit: int) -> list[dict]: ...
     def get_by_source(self, source: str, limit: int = 50, bump_access: bool = True) -> list[dict]: ...
     def track_access(self, entry_ids: list[str]) -> None: ...
-
-
-# ---------------------------------------------------------------------------
-# Flat-file backend (default — no ranking, returns all memories)
-# ---------------------------------------------------------------------------
-
-class FlatFileBackend:
-    """Wraps current MEMORIES.txt behavior.  search() returns all memories."""
-
-    def init(self) -> None:
-        logger.info("Memory backend: flat_file (no vector indexing)")
-
-    def add(self, entry: str, entry_id: str | None = None, source: str = "unknown") -> str:
-        # File writes are handled by memory_io; this is a no-op.
-        return entry_id or _make_id(entry)
-
-    def search(self, query: str, top_k: int, threshold: float) -> list[dict]:
-        # Return all memories — no ranking.
-        return self.get_all()
-
-    def get_all(self) -> list[dict]:
-        try:
-            text = MEMORIES_FILE.read_text(encoding="utf-8").strip()
-        except FileNotFoundError:
-            return []
-        if not text:
-            return []
-        return [
-            {"id": _make_id(line), "text": line, "score": 1.0}
-            for line in text.splitlines() if line.strip()
-        ]
-
-    def replace_all(self, entries: list[str]) -> None:
-        pass  # File writes handled by memory_io.
-
-    def delete(self, entry_id: str) -> bool:
-        return False
-
-    def count(self) -> int:
-        try:
-            text = MEMORIES_FILE.read_text(encoding="utf-8").strip()
-        except FileNotFoundError:
-            return 0
-        return len([l for l in text.splitlines() if l.strip()]) if text else 0
-
-    def stats(self) -> dict:
-        return {"backend": "flat_file", "count": self.count()}
-
-    def rebuild(self) -> None:
-        pass  # Nothing to rebuild.
-
-    def get_all_with_vectors(self) -> list[dict]:
-        return []
-
-    def get_stale(self, max_age_days: int, min_access: int) -> list[dict]:
-        return []
-
-    def bulk_delete(self, entry_ids: list[str]) -> int:
-        return 0
-
-    def get_top_accessed(self, limit: int) -> list[dict]:
-        return self.get_all()
-
-    def get_by_source(self, source: str, limit: int = 50, bump_access: bool = True) -> list[dict]:
-        return []  # Flat-file has no source metadata.
-
-    def track_access(self, entry_ids: list[str]) -> None:
-        pass  # Flat-file backend has no access tracking.
 
 
 # ---------------------------------------------------------------------------
@@ -1348,8 +1280,8 @@ def _log_interaction(timestamp: float, action: str, input_text: str,
 def init(config: dict) -> None:
     """Select and initialize the memory backend.
 
-    If the configured backend fails to init, falls back to flat_file.
-    On first run with a vector backend, imports MEMORIES.txt into the index.
+    If the configured backend fails to init, falls back to fts5.
+    On first run, imports MEMORIES.txt into the index if the store is empty.
     """
     global _backend, _config
     _config = dict(config)
@@ -1363,16 +1295,19 @@ def init(config: dict) -> None:
         elif backend_name == "qdrant":
             _backend = QdrantBackend(config)
         else:
-            _backend = FlatFileBackend()
+            raise ValueError(
+                f"Unknown memory backend {backend_name!r}. "
+                f"Supported backends: fts5, local_vector, qdrant"
+            )
         _backend.init()
     except Exception as exc:
-        logger.error("Memory backend %r failed to init: %s — falling back to flat_file",
+        logger.error("Memory backend %r failed to init: %s — falling back to fts5",
                       backend_name, exc)
-        _backend = FlatFileBackend()
+        _backend = FTS5Backend()
         _backend.init()
         return
 
-    # Cold-boot: if vector backend is empty and MEMORIES.txt has content, import.
+    # Cold-boot: if backend is empty and MEMORIES.txt has content, import.
     if backend_name in ("fts5", "local_vector", "qdrant"):
         try:
             if _backend.count() == 0:
@@ -1507,10 +1442,12 @@ def search_neighbors_batch(
 
 
 def is_vector_enabled() -> bool:
-    """True when the active backend is not flat_file (and has been initialized)."""
-    if _backend is None:
-        return False
-    return not isinstance(_backend, FlatFileBackend)
+    """True when a memory backend has been initialized.
+
+    All remaining backends (fts5, local_vector, qdrant) support vector/ranked
+    search, so this returns True whenever a backend is active.
+    """
+    return _backend is not None
 
 
 def get_top_k() -> int:
