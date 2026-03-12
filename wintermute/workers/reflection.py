@@ -83,6 +83,8 @@ def _extract_json_tail(text: str) -> dict | None:
     decoder = json.JSONDecoder()
     # Find all candidate opening braces and try from the last one backwards.
     brace_positions = [m.start() for m in re.finditer(r"\{", text)]
+    if not brace_positions:
+        return None
     for start in reversed(brace_positions):
         try:
             obj, end = decoder.raw_decode(text[start:])
@@ -868,9 +870,9 @@ class ReflectionLoop:
                     content,
                     5,  # priority
                     None,  # thread_id
-                    None,  # schedule_type — unscheduled; scheduling configured separately
-                    None,  # schedule_desc
-                    None,  # schedule_config
+                    ta.get("schedule_type"),   # schedule_type (may be None)
+                    ta.get("schedule_desc"),   # schedule_desc (may be None)
+                    ta.get("schedule_config"), # schedule_config (may be None)
                     ta["ai_prompt"],  # ai_prompt
                     True,  # background
                 )
