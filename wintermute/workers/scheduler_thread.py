@@ -120,6 +120,10 @@ class TaskScheduler:
         self._prediction_last_fired: dict[str, float] = {}
         self._session_manager: Optional["SessionManager"] = None
 
+    def set_session_manager(self, mgr: "SessionManager") -> None:
+        """Wire a session manager for timeout enforcement."""
+        self._session_manager = mgr
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -193,7 +197,9 @@ class TaskScheduler:
                     continue
                 pred_id = e.get("input", "").strip()
                 if pred_id:
-                    self._prediction_last_fired[pred_id] = ts
+                    existing = self._prediction_last_fired.get(pred_id, 0)
+                    if ts > existing:
+                        self._prediction_last_fired[pred_id] = ts
             if self._prediction_last_fired:
                 logger.info("[scheduler] Restored %d prediction cooldown(s) from DB",
                             len(self._prediction_last_fired))
@@ -432,28 +438,30 @@ class TaskScheduler:
             structured_days = re.search(r'\|\|days=([\w,]+)\|\|', text)
 
             in_time_window = False
-            used_structured = False
+            used_structured = bool(structured_hours or structured_days)
 
-            if structured_hours:
-                used_structured = True
-                try:
-                    sh, eh = int(structured_hours.group(1)), int(structured_hours.group(2))
-                    if sh <= 23 and eh <= 23:
-                        if sh <= eh:
-                            in_time_window = sh <= current_hour <= eh
+            if used_structured:
+                # Default: in window unless constrained out by hours/days.
+                in_time_window = True
+
+                if structured_hours:
+                    try:
+                        sh, eh = int(structured_hours.group(1)), int(structured_hours.group(2))
+                        if sh <= 23 and eh <= 23:
+                            if sh <= eh:
+                                in_time_window = sh <= current_hour <= eh
+                            else:
+                                in_time_window = current_hour >= sh or current_hour <= eh
                         else:
-                            in_time_window = current_hour >= sh or current_hour <= eh
-                except (ValueError, TypeError):
-                    pass
+                            in_time_window = False
+                    except (ValueError, TypeError):
+                        in_time_window = False
 
-                if structured_days:
+                if in_time_window and structured_days:
                     days_list = {d.strip().lower()[:3] for d in structured_days.group(1).split(",")}
-                    # Map full day names to 3-letter abbreviations for matching.
                     current_day_abbr = current_day[:3]
                     if current_day_abbr not in days_list:
                         in_time_window = False
-                elif not in_time_window:
-                    pass  # No day constraint, hour check stands.
 
             if not used_structured:
                 # Legacy regex parsing for predictions without structured suffix.
@@ -508,7 +516,8 @@ class TaskScheduler:
             self._prediction_last_fired[pred_id] = now
             # Persist cooldown to interaction_log so it survives restarts.
             try:
-                database.save_interaction_log(
+                await database.async_call(
+                    database.save_interaction_log,
                     now, "prediction_fired", "system:scheduler",
                     "scheduler", pred_id, text[:200], "ok",
                 )

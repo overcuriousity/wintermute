@@ -593,7 +593,7 @@ async def main() -> None:
     )
     tool_deps.task_scheduler = scheduler
     # Wire session manager to scheduler for timeout enforcement.
-    scheduler._session_manager = llm._session_mgr
+    scheduler.set_session_manager(llm.session_manager)
 
     # 5. Memory harvest loop
     harvest_loop: Optional[MemoryHarvestLoop] = None
@@ -627,6 +627,8 @@ async def main() -> None:
                 memory_harvest_loop=harvest_loop,
             )
             tool_deps.self_model_profiler = self_model
+            from wintermute.infra.prompt_assembler import set_self_model_path
+            set_self_model_path(sm_cfg.yaml_path)
             logger.info("Self-model profiler enabled")
         except Exception:
             logger.exception("Self-model profiler failed to initialise — disabling")

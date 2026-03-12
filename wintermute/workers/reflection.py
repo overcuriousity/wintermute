@@ -850,7 +850,7 @@ class ReflectionLoop:
                     content,
                     5,  # priority
                     None,  # thread_id
-                    ta["schedule_type"],  # schedule_type
+                    None,  # schedule_type — no schedule_config, so no APScheduler job
                     None,  # schedule_desc
                     None,  # schedule_config
                     ta["ai_prompt"],  # ai_prompt
