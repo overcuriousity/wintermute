@@ -1100,7 +1100,7 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
                         if suffix_parts:
                             normalized = " ".join(f"||{p}||" for p in suffix_parts)
                             base_text = text[:suffix_match.start()].rstrip()
-                            text = f"{base_text} {normalized}"
+                            text = f"{base_text} {normalized}" if base_text else normalized
                 tagged = f"[prediction:{pred_type}] {text}"
                 entry_id = await asyncio.to_thread(
                     memory_store.add, tagged, None, "dreaming_prediction"

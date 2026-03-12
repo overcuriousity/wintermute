@@ -153,7 +153,13 @@ class TaskScheduler:
 
         # Restore prediction cooldowns from interaction_log.
         # Offload synchronous DB read to a thread to avoid blocking the event loop.
-        asyncio.get_event_loop().run_in_executor(None, self._restore_prediction_cooldowns)
+        def _log_restore_err(fut: asyncio.Future) -> None:
+            exc = fut.exception()
+            if exc is not None:
+                logger.exception("Error restoring prediction cooldowns", exc_info=exc)
+
+        future = asyncio.get_running_loop().run_in_executor(None, self._restore_prediction_cooldowns)
+        future.add_done_callback(_log_restore_err)
 
         logger.info("[scheduler] started (timezone=%s)", self._cfg.timezone)
 
@@ -188,6 +194,10 @@ class TaskScheduler:
             task = await database.async_call(database.get_task, task_id)
             if not task:
                 return
+            # Skip if already scheduled (task_tools._task_add calls ensure_job before emitting).
+            if task.get("apscheduler_job_id"):
+                logger.info("[scheduler] Task %s already has apscheduler_job_id — skipping", task_id)
+                return
             raw_config = task.get("schedule_config")
             if not raw_config:
                 logger.info("[scheduler] New task %s has no schedule_config — skipping job creation", task_id)
@@ -199,6 +209,8 @@ class TaskScheduler:
             background = bool(task.get("background"))
             self.ensure_job(task_id, schedule_config, ai_prompt=ai_prompt,
                             thread_id=thread_id, background=background)
+            # Persist job ID so pause/complete/delete can manage it later.
+            await database.async_call(database.update_task, task_id, apscheduler_job_id=task_id)
             logger.info("[scheduler] Scheduled job for new task %s", task_id)
         except Exception:
             logger.exception("[scheduler] Failed to process task.created for %s", task_id)
