@@ -1381,6 +1381,13 @@ class SubSessionManager:
         if wf_id:
             wf = self._workflows.get(wf_id)
             if wf and len(wf.nodes) > 1:
+                # Sync the reporting node's status so the done-count is accurate.
+                # (_resolve_dependents normally does this, but runs *after* _report.)
+                node = wf.nodes.get(state.session_id)
+                if node:
+                    node.status = state.status
+                    node.result = state.result
+                    node.error = state.error
                 done = sum(
                     1 for n in wf.nodes.values()
                     if n.status in ("completed", "failed", "timeout")
