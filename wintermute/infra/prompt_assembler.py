@@ -227,7 +227,9 @@ def set_self_model_path(path: "Path | str") -> None:
 def _get_self_model_summary() -> str:
     """Read the self-model prose summary, cached by file mtime."""
     global _self_model_cache
-    path = _self_model_path or DATA_DIR / "self_model.yaml"
+    if _self_model_path is None:
+        return ""
+    path = _self_model_path
     try:
         if not path.exists():
             return ""

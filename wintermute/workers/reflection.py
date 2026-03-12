@@ -136,10 +136,16 @@ def _extract_task_actions(text: str) -> list[dict]:
     actions: list[dict] = []
     for item in raw_actions:
         if isinstance(item, dict) and item.get("content") and item.get("ai_prompt"):
+            schedule_config = item.get("schedule_config")
+            # Without a concrete schedule_config the scheduler can't create a
+            # job, so normalise schedule_type to None to avoid misleading DB
+            # entries that look scheduled but never fire.
             actions.append({
                 "content": str(item["content"]),
                 "ai_prompt": str(item["ai_prompt"]),
-                "schedule_type": str(item.get("schedule_type", "once")),
+                "schedule_type": str(item["schedule_type"]) if schedule_config and item.get("schedule_type") else None,
+                "schedule_desc": str(item["schedule_desc"]) if schedule_config and item.get("schedule_desc") else None,
+                "schedule_config": json.dumps(schedule_config) if isinstance(schedule_config, dict) else schedule_config,
             })
     return actions[:1]  # Cap at 1 per cycle.
 
