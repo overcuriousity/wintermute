@@ -592,6 +592,8 @@ async def main() -> None:
         event_bus=event_bus,
     )
     tool_deps.task_scheduler = scheduler
+    # Wire session manager to scheduler for timeout enforcement.
+    scheduler.set_session_manager(llm.session_manager)
 
     # 5. Memory harvest loop
     harvest_loop: Optional[MemoryHarvestLoop] = None
@@ -625,12 +627,18 @@ async def main() -> None:
                 memory_harvest_loop=harvest_loop,
             )
             tool_deps.self_model_profiler = self_model
+            from wintermute.infra.prompt_assembler import set_self_model_path
+            set_self_model_path(sm_cfg.yaml_path)
             logger.info("Self-model profiler enabled")
         except Exception:
             logger.exception("Self-model profiler failed to initialise — disabling")
             self_model = None
     else:
         logger.info("Self-model profiler disabled by config")
+
+    # Restore auto-tuned values from self-model YAML.
+    if self_model:
+        self_model.restore_tuned_params()
 
     # 7. Reflection loop (receives self_model via constructor now)
     reflection_raw = cfg.get("reflection", {}) or {}

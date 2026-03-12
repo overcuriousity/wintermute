@@ -68,7 +68,7 @@ class SessionManager:
             return []
         now = _time.time()
         expired = []
-        for tid, last_ts in self.last_activity.items():
+        for tid, last_ts in list(self.last_activity.items()):
             resolved = self._thread_config_manager.resolve(tid)
             timeout = resolved.session_timeout_minutes
             if timeout is not None and (now - last_ts) > timeout * 60:

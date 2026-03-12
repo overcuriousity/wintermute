@@ -16,9 +16,16 @@ Based on this data, provide brief observations:
 1. What patterns do you see in the failures?
 2. Are any tasks misconfigured or need adjustment?
 3. Should any skills be updated or retired?
+4. Should any recurring task be created to address a pattern? (e.g. periodic checks, maintenance)
 
 After your observations, end your response with this JSON block on its own line:
-{{"skill_actions": []}}
+{{"skill_actions": [], "task_actions": []}}
 
 If you recommend a skill change, add a brief English instruction per action:
 {{"skill_actions": ["Review and update skill 'example' — correlates with 3 failures"]}}
+
+If you recommend creating a persistent task, add it to task_actions:
+{{"task_actions": [{{"content": "brief task description", "ai_prompt": "detailed instruction for the AI worker"}}]}}
+Tasks created here are unscheduled background maintenance tasks. Recurring scheduling must be configured separately via the task tool.
+
+Only recommend task_actions for genuinely recurring patterns that would benefit from automation. Maximum 1 task per analysis.

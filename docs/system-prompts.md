@@ -108,6 +108,11 @@ The `prompt_assembler.assemble()` function builds the final system prompt. It ac
 
 ---
 
+# Operational Self-Model                  (main thread only, when self-model profiling is enabled at startup)
+{self-model prose summary, ≤300 chars}
+
+---
+
 # Predictions & Patterns                 (main thread only, if predictions exist)
 {dreaming predictions and promoted schemas, capped at 800 chars}
 
@@ -166,10 +171,11 @@ The following prompt templates are stored as editable files in `data/` and shipp
 | `DREAM_CONTRADICTION_PROMPT.txt` | Dreaming loop (vector-native) | `{entry_1}`, `{entry_2}` | Instructions for resolving contradictions between two entries (returns JSON: keep_first/keep_second/merge) |
 | `DREAM_ASSOCIATION_PROMPT.txt` | Dreaming loop (creative, REM) | `{seed_memories}`, `{candidate_memories}` | Instructions for discovering non-obvious connections between distant memories (returns JSON insights) |
 | `DREAM_SCHEMA_PROMPT.txt` | Dreaming loop (creative, NREM) | `{cluster_texts}`, `{existing_schemas}` | Instructions for abstracting recurring structural patterns into higher-order schemas (returns JSON) |
-| `DREAM_PREDICTION_PROMPT.txt` | Dreaming loop (creative) | `{recent_memories}`, `{existing_predictions}` | Instructions for extracting actionable predictions from temporal/behavioral patterns (returns JSON) |
+| `DREAM_PREDICTION_PROMPT.txt` | Dreaming loop (creative) | `{content}` | Instructions for extracting actionable predictions from temporal/behavioral patterns (returns JSON). Temporal predictions include structured `\|\|hours=...\|\|days=...\|\|` suffix for machine-parseable time windows. |
 | `DREAM_TASK_PROMPT.txt` | Dreaming loop | `{content}` | Instructions for consolidating tasks overnight (LLM returns JSON actions) |
 | `MEMORY_HARVEST_PROMPT.txt` | Memory harvest workers | `{transcript}` | Instructions for extracting memories from conversation transcripts |
 | `COMPACTION_PROMPT.txt` | Context compaction | `{history}` | Instructions for summarising old conversation history |
+| `REFLECTION_ANALYSIS.txt` | Reflection loop (analysis) | `{findings}`, `{failed_sessions}`, `{active_tasks}`, `{skill_stats}` | LLM analysis prompt for reflection cycle. Outputs `skill_actions` and `task_actions` JSON blocks. |
 | `SKILL_SYNTHESIS.txt` | Reflection loop (synthesis) | `{patterns}` | Instructions for proposing new skills from recurring successful sub-session patterns |
 
 Templates support an optional placeholder (`{content}` or `{history}`). If present, the relevant text is substituted in. If absent, it is appended to the end of the prompt. This means you can write free-form instructions without worrying about placeholder syntax.

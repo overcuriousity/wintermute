@@ -67,6 +67,43 @@ If you recommend a skill change, add a brief English instruction per action:
 """
 
 
+def _extract_json_tail(text: str) -> dict | None:
+    """Find and parse the last JSON object at the end of *text*.
+
+    Uses ``json.JSONDecoder.raw_decode`` starting from each ``{`` position
+    (searching from the end towards the beginning) and returns the last
+    object that parses successfully as a ``dict`` and extends to the end of
+    the string (ignoring trailing whitespace).  This approach is
+    string-aware (handles braces inside quoted values correctly).
+
+    Returns the parsed dict, or ``None`` on failure.
+    """
+    if "}" not in text:
+        return None
+    decoder = json.JSONDecoder()
+    # Find all candidate opening braces and try from the last one backwards.
+    brace_positions = [m.start() for m in re.finditer(r"\{", text)]
+    if not brace_positions:
+        return None
+    for start in reversed(brace_positions):
+        try:
+            obj, end = decoder.raw_decode(text[start:])
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(obj, dict):
+            continue
+        # Ensure nothing but whitespace follows the parsed JSON object.
+        if text[start + end:].strip():
+            continue
+        return obj
+    # All attempts failed — log for debuggability.
+    logger.warning(
+        "[reflection] Found braces but failed to decode JSON tail (%d chars, last 120: %s)",
+        len(text), text[-120:],
+    )
+    return None
+
+
 def _extract_skill_actions(text: str) -> list[str]:
     """Extract skill_actions from a JSON block appended to the LLM response.
 
@@ -74,19 +111,37 @@ def _extract_skill_actions(text: str) -> list[str]:
     Returns an empty list if none is found or the JSON is malformed.
     Language-neutral: works regardless of the prose language.
     """
-    # Match the last JSON object containing skill_actions anywhere in the text.
-    # The block may appear at the end with preceding whitespace/newlines.
-    matches = re.findall(r'\{[^{}]*"skill_actions"\s*:\s*\[[^\]]*\][^{}]*\}', text)
-    if not matches:
+    obj = _extract_json_tail(text)
+    if obj is None:
+        # _extract_json_tail already logs on decode failure; only log here
+        # when there genuinely was no JSON at all.
         return []
-    try:
-        parsed = json.loads(matches[-1])
-        actions = parsed.get("skill_actions", [])
-        if isinstance(actions, list):
-            return [str(a) for a in actions if a]
-    except (json.JSONDecodeError, ValueError):
-        pass
+    actions = obj.get("skill_actions", [])
+    if isinstance(actions, list):
+        return [str(a) for a in actions if a]
     return []
+
+
+def _extract_task_actions(text: str) -> list[dict]:
+    """Extract task_actions from the JSON block in the LLM analysis response.
+
+    Returns a list of dicts with keys: content, ai_prompt.
+    Capped at 1 per cycle.  Reflection tasks are always unscheduled.
+    """
+    obj = _extract_json_tail(text)
+    if obj is None:
+        return []
+    raw_actions = obj.get("task_actions")
+    if not isinstance(raw_actions, list):
+        return []
+    actions: list[dict] = []
+    for item in raw_actions:
+        if isinstance(item, dict) and item.get("content") and item.get("ai_prompt"):
+            actions.append({
+                "content": str(item["content"]),
+                "ai_prompt": str(item["ai_prompt"]),
+            })
+    return actions[:1]  # Cap at 1 per cycle.
 
 
 @dataclass
@@ -798,10 +853,45 @@ class ReflectionLoop:
                 actions_recommended=len(skill_actions),
             )
 
-        # Tier 3: spawn one mutation sub-session per recommended action
-        # (capped at 1 per cycle to avoid runaway mutations).
+        # Tier 3: spawn mutation sub-sessions for recommended actions
+        # (capped at 3 per cycle to avoid runaway mutations).
         if skill_actions and self._sub_sessions:
-            await self._spawn_mutation(skill_actions[0])
+            for action in skill_actions[:3]:
+                await self._spawn_mutation(action)
+
+        # Tier 4: create persistent tasks from analysis recommendations
+        # (capped at 1 per cycle).
+        task_actions = _extract_task_actions(analysis_text)
+        for ta in task_actions[:1]:
+            try:
+                content = f"[reflection] {ta['content']}"
+                # Intentionally background-only (thread_id=None): reflection
+                # tasks are silent maintenance — results stay in sub-session logs.
+                task_id = await database.async_call(
+                    database.add_task,
+                    content,
+                    5,  # priority
+                    None,  # thread_id (silent background task)
+                    None,  # schedule_type (reflection tasks are unscheduled)
+                    None,  # schedule_desc
+                    None,  # schedule_config
+                    ta["ai_prompt"],  # ai_prompt
+                    True,  # background
+                )
+                logger.info("[reflection] Created task %s: %s", task_id, content[:80])
+                if self._event_bus:
+                    self._event_bus.emit(
+                        "reflection.task_created",
+                        task_id=task_id,
+                        content=content[:200],
+                    )
+                    # Generic event so the scheduler can pick up the new task.
+                    self._event_bus.emit(
+                        "task.created",
+                        task_id=task_id,
+                    )
+            except Exception:
+                logger.exception("[reflection] Failed to create task from analysis")
 
     # ------------------------------------------------------------------
     # Tier 3: Sub-session mutation

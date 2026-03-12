@@ -190,6 +190,10 @@ class LLMThread:
     def thread_config_manager(self) -> "Optional[ThreadConfigManager]":
         return self._session_mgr.thread_config_manager
 
+    @property
+    def session_manager(self) -> "SessionManager":
+        return self._session_mgr
+
     def check_session_timeouts(self) -> list[str]:
         return self._session_mgr.check_session_timeouts()
 

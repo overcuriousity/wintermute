@@ -214,6 +214,44 @@ def _get_reflection_observations() -> str:
     return combined[:300]
 
 
+_self_model_cache: tuple[float, str] = (0.0, "")  # (mtime, summary)
+_self_model_path: Optional[Path] = None  # Set at startup via set_self_model_path()
+_self_model_cache_lock = threading.Lock()
+
+
+def set_self_model_path(path: "Path | str") -> None:
+    """Configure the self-model YAML path (called at startup)."""
+    global _self_model_path, _self_model_cache
+    with _self_model_cache_lock:
+        _self_model_path = Path(path)
+        _self_model_cache = (0.0, "")  # Invalidate cache on path change.
+
+
+def _get_self_model_summary() -> str:
+    """Read the self-model prose summary, cached by file mtime."""
+    global _self_model_cache
+    with _self_model_cache_lock:
+        if _self_model_path is None:
+            return ""
+        path = _self_model_path
+    try:
+        if not path.exists():
+            return ""
+        mtime = path.stat().st_mtime
+        with _self_model_cache_lock:
+            if mtime == _self_model_cache[0]:
+                return _self_model_cache[1]
+        import yaml
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        summary = (data.get("summary") or "").strip()[:300]
+        with _self_model_cache_lock:
+            _self_model_cache = (mtime, summary)
+        return summary
+    except Exception:
+        logger.debug("Failed to read self-model summary", exc_info=True)
+        return ""
+
+
 # Hard cap for prediction text injected into the system prompt.
 _PREDICTIONS_CAP = 800
 
@@ -365,6 +403,12 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
             reflection = _get_reflection_observations()
             if reflection:
                 sections.append(f"# System Observations\n\n{reflection}")
+
+        # Operational self-model — main thread only (skip when path explicitly unset)
+        if available_tools is None and _self_model_path is not None:
+            sm_summary = _get_self_model_summary()
+            if sm_summary:
+                sections.append(f"# Operational Self-Model\n\n{sm_summary}")
 
         # Predictions & Patterns — main thread only
         if available_tools is None and prediction_results:

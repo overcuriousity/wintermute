@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
+import re
 import time as _time
 from dataclasses import dataclass, field
 from datetime import datetime, time as dt_time, timedelta, timezone
@@ -1084,6 +1085,22 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
             text = pred.get("text", "").strip()
             pred_type = pred.get("type", "behavioral")
             if text:
+                # Validate structured temporal suffix if present.
+                if pred_type == "temporal" and "||" not in text:
+                    # No structured suffix — leave as-is for legacy compat.
+                    pass
+                elif "||" in text:
+                    # Normalize: ensure suffix is well-formed.
+                    # Match trailing block of one or more segments, supporting
+                    # both spaced (||hours=..|| ||days=..||) and adjacent
+                    # (||hours=..||days=..||) forms.
+                    suffix_match = re.search(r'(?:\s*\|\|\w+=[\w,\-]+\|\|)+\s*$', text)
+                    if suffix_match:
+                        suffix_parts = re.findall(r'\|\|(\w+=[\w,\-]+)\|\|', suffix_match.group(0))
+                        if suffix_parts:
+                            normalized = " ".join(f"||{p}||" for p in suffix_parts)
+                            base_text = text[:suffix_match.start()].rstrip()
+                            text = f"{base_text} {normalized}" if base_text else normalized
                 tagged = f"[prediction:{pred_type}] {text}"
                 entry_id = await asyncio.to_thread(
                     memory_store.add, tagged, None, "dreaming_prediction"

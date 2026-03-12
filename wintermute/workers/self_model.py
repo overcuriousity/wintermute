@@ -139,6 +139,33 @@ class SelfModelProfiler:
         """Return the cached prose summary (no LLM call)."""
         return self._summary
 
+    def restore_tuned_params(self) -> None:
+        """Restore auto-tuned parameters from persisted YAML state."""
+        lo_timeout, hi_timeout = self._cfg.sub_session_timeout_range
+        lo_harvest, hi_harvest = self._cfg.memory_harvest_threshold_range
+
+        tuned_timeout = self._state.get("tuned_sub_session_timeout")
+        if tuned_timeout is not None and self._sub_sessions is not None:
+            try:
+                val = int(tuned_timeout)
+            except (TypeError, ValueError):
+                logger.warning("[self_model] Ignoring invalid tuned_sub_session_timeout: %r", tuned_timeout)
+            else:
+                val = max(lo_timeout, min(val, hi_timeout))
+                self._sub_sessions.default_timeout = val
+                logger.info("[self_model] Restored sub_session_timeout=%ds", val)
+
+        tuned_harvest = self._state.get("tuned_harvest_threshold")
+        if tuned_harvest is not None and self._harvest is not None:
+            try:
+                val = int(tuned_harvest)
+            except (TypeError, ValueError):
+                logger.warning("[self_model] Ignoring invalid tuned_harvest_threshold: %r", tuned_harvest)
+            else:
+                val = max(lo_harvest, min(val, hi_harvest))
+                self._harvest.message_threshold = val
+                logger.info("[self_model] Restored harvest_threshold=%d", val)
+
     # ------------------------------------------------------------------
     # Metrics collection
     # ------------------------------------------------------------------
@@ -238,12 +265,14 @@ class SelfModelProfiler:
             if timeout_rate > 30 and current_timeout < hi_timeout:
                 new_timeout = min(current_timeout + 60, hi_timeout)
                 self._sub_sessions.default_timeout = new_timeout
+                self._state["tuned_sub_session_timeout"] = new_timeout
                 changes.append(f"Increased sub-session timeout {current_timeout}s → {new_timeout}s (timeout_rate={timeout_rate}%)")
                 logger.info("[self_model] %s", changes[-1])
 
             elif timeout_rate < 5 and avg_duration and avg_duration < current_timeout * 0.4 and current_timeout > lo_timeout:
                 new_timeout = max(current_timeout - 60, lo_timeout)
                 self._sub_sessions.default_timeout = new_timeout
+                self._state["tuned_sub_session_timeout"] = new_timeout
                 changes.append(f"Decreased sub-session timeout {current_timeout}s → {new_timeout}s (timeout_rate={timeout_rate}%, avg_duration={avg_duration:.0f}s)")
                 logger.info("[self_model] %s", changes[-1])
 
@@ -255,6 +284,7 @@ class SelfModelProfiler:
                 # Harvest can't keep up — decrease threshold to trigger sooner.
                 new_threshold = max(current_threshold - 5, lo_harvest)
                 self._harvest.message_threshold = new_threshold
+                self._state["tuned_harvest_threshold"] = new_threshold
                 changes.append(f"Decreased harvest threshold {current_threshold} → {new_threshold} (backlog detected)")
                 logger.info("[self_model] %s", changes[-1])
             elif current_threshold < hi_harvest and recent_harvests is not None:
@@ -267,6 +297,7 @@ class SelfModelProfiler:
                     if low_yield:
                         new_threshold = min(current_threshold + 5, hi_harvest)
                         self._harvest.message_threshold = new_threshold
+                        self._state["tuned_harvest_threshold"] = new_threshold
                         changes.append(f"Increased harvest threshold {current_threshold} → {new_threshold} (low yield)")
                         logger.info("[self_model] %s", changes[-1])
                 except Exception:
