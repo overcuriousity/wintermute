@@ -200,8 +200,7 @@ class TaskScheduler:
             if not raw_config:
                 logger.info("[scheduler] New task %s has no schedule_config — skipping job creation", task_id)
                 return
-            import json as _json
-            schedule_config = _json.loads(raw_config) if isinstance(raw_config, str) else raw_config
+            schedule_config = json.loads(raw_config) if isinstance(raw_config, str) else raw_config
             ai_prompt = task.get("ai_prompt")
             thread_id = task.get("thread_id")
             background = bool(task.get("background"))
@@ -594,7 +593,7 @@ class TaskScheduler:
             last = self._session_manager.last_activity.get(tid)
             if last is not None:
                 import time as _time_mod
-                resolved = self._session_manager._thread_config_manager.resolve(tid)
+                resolved = self._session_manager.resolve_config(tid)
                 timeout = resolved.session_timeout_minutes
                 if timeout is None or (_time_mod.time() - last) <= timeout * 60:
                     continue
