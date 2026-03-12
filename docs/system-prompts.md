@@ -108,7 +108,7 @@ The `prompt_assembler.assemble()` function builds the final system prompt. It ac
 
 ---
 
-# Operational Self-Model                  (main thread only, if self-model exists)
+# Operational Self-Model                  (main thread only, when self-model profiling is enabled at startup)
 {self-model prose summary, ≤300 chars}
 
 ---
