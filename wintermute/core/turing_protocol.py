@@ -1254,8 +1254,8 @@ async def run_turing_protocol(
                 json.dumps(context)[:2000], (log_raw or "")[:2000],
                 log_status,
             )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to log turing detection", exc_info=True)
 
         if not violations:
             logger.debug("Stage 1: No violations detected (phase=%s, scope=%s)", phase, scope)
@@ -1318,8 +1318,8 @@ async def run_turing_protocol(
                 pool.last_used,
                 json.dumps(violations)[:2000], stage2_output[:2000], stage2_status,
             )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to log turing validation", exc_info=True)
 
         if not confirmed:
             logger.debug("Stage 2: All violations were false positives")

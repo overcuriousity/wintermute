@@ -319,6 +319,9 @@ class SubSessionManager:
         # Buffers individual node reports for multi-node workflows until all
         # nodes are terminal, then delivers one aggregated report.
         self._workflow_reports: dict[str, dict[str, str]] = {}
+        # Pending time-gate handles (session_id -> TimerHandle) for cancellation
+        # during workflow cleanup.
+        self._time_gate_handles: dict[str, asyncio.TimerHandle] = {}
 
     # ------------------------------------------------------------------
     # Default timeout (tunable by self-model)
@@ -680,14 +683,23 @@ class SubSessionManager:
             "Scheduling time-gate wakeup for %s in %.0fs",
             session_id, delay,
         )
-        self._loop.call_soon_threadsafe(
-            self._loop.call_later,
-            delay,
-            lambda: self._loop.create_task(self._time_gate_wakeup(session_id)),
-        )
+        # Cancel any existing handle for this session before scheduling a new one.
+        old_handle = self._time_gate_handles.pop(session_id, None)
+        if old_handle is not None:
+            old_handle.cancel()
+
+        def _schedule() -> None:
+            handle = self._loop.call_later(
+                delay,
+                lambda: self._loop.create_task(self._time_gate_wakeup(session_id)),
+            )
+            self._time_gate_handles[session_id] = handle
+
+        self._loop.call_soon_threadsafe(_schedule)
 
     async def _time_gate_wakeup(self, session_id: str) -> None:
         """Called when a time gate expires — trigger dependency resolution."""
+        self._time_gate_handles.pop(session_id, None)
         logger.info("Time gate expired for %s — resolving", session_id)
         # Re-run resolution which will now pass the time check.
         await self._resolve_dependents(session_id)
@@ -1023,6 +1035,10 @@ class SubSessionManager:
                         self._states.pop(nid, None)
                         self._tasks.pop(nid, None)
                         self._session_to_workflow.pop(nid, None)
+                        # Cancel any pending time-gate wakeup.
+                        tg_handle = self._time_gate_handles.pop(nid, None)
+                        if tg_handle is not None:
+                            tg_handle.cancel()
                         # Clean up _worker_spawned: nid may be a parent key,
                         # or a child in another parent's list.
                         self._worker_spawned.pop(nid, None)
@@ -1145,8 +1161,8 @@ class SubSessionManager:
                     self._pool.last_used,
                     state.objective[:500], "timeout", "timeout",
                 )
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001
+                logger.debug("Failed to log sub-session timeout", exc_info=True)
             logger.warning(
                 "Sub-session %s timed out after %ds (depth=%d, tool_calls=%d)",
                 state.session_id, timeout, state.continuation_depth,
@@ -1238,8 +1254,8 @@ class SubSessionManager:
                     self._pool.last_used,
                     state.objective[:500], str(exc)[:500], "error",
                 )
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001
+                logger.debug("Failed to log sub-session error", exc_info=True)
             if self._event_bus:
                 self._event_bus.emit("sub_session.failed", session_id=state.session_id,
                                      error=str(exc)[:200])
@@ -1710,8 +1726,8 @@ class SubSessionManager:
                     _input_summary, output_summary, "ok",
                     raw_output=raw_output_data,
                 )
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001
+                logger.debug("Failed to log sub-session inference round", exc_info=True)
 
             if msg_tool_calls:
                 state.messages.append(msg)

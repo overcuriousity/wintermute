@@ -361,8 +361,8 @@ class LLMThread:
                                 self._main_pool.last_used,
                                 item.text[:2000], "", "stale",
                             )
-                        except Exception:
-                            pass
+                        except Exception:  # noqa: BLE001
+                            logger.debug("Failed to log stale drop", exc_info=True)
                         queue.task_done()
                         continue
 
@@ -423,7 +423,7 @@ class LLMThread:
                             item.text, str(exc), "error",
                         )
                     except Exception:  # noqa: BLE001
-                        pass
+                        logger.debug("Failed to log chat error", exc_info=True)
                     err_msg = str(exc)
                     if "401" in err_msg and "Gemini" in err_msg:
                         err_msg += (
@@ -1021,8 +1021,8 @@ class LLMThread:
                             "content": msg_content,
                         }),
                     )
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001
+                    logger.debug("Failed to log inference round", exc_info=True)
                 # Append the assistant's tool-call message (already a dict).
                 full_messages.append(msg)
 
@@ -1068,8 +1068,8 @@ class LLMThread:
                                 "rescue": True,
                             }),
                         )
-                    except Exception:
-                        pass
+                    except Exception:  # noqa: BLE001
+                        logger.debug("Failed to log rescued tool calls", exc_info=True)
                     # Synthesise an assistant message with the rescued calls
                     # and inject tool-result messages, then loop again.
                     full_messages.append({

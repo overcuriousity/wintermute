@@ -53,6 +53,8 @@ class WebInterface:
         self._multi_cfg = multi_cfg
         self._thread_config_manager = thread_config_manager
         self._background_tasks: set[asyncio.Task] = set()
+        # SSE broadcast queue: pending messages for connected SSE clients.
+        self._sse_queues: set[asyncio.Queue] = set()
         # Shared slash-command handler.
         self._slash_handler = slash_handler
 
@@ -67,15 +69,25 @@ class WebInterface:
 
     async def broadcast(self, text: str, thread_id: str = None, *,
                         reasoning: str = None) -> None:
-        """Push a message to all connected clients in a specific thread."""
+        """Push a message to all connected SSE and WebSocket clients."""
         if thread_id is None:
             return
+        # SSE push: notify all connected SSE clients.
+        msg = {"type": "broadcast", "role": "assistant", "text": text,
+               "thread_id": thread_id}
+        if reasoning:
+            msg["reasoning"] = reasoning
+        dead_queues: set[asyncio.Queue] = set()
+        for q in self._sse_queues:
+            try:
+                q.put_nowait(msg)
+            except asyncio.QueueFull:
+                dead_queues.add(q)
+        self._sse_queues -= dead_queues
+        # Legacy WebSocket push (if any WS clients are connected).
         clients = self._threads.get(thread_id, set())
         if not clients:
             return
-        msg = {"role": "assistant", "text": text, "thread_id": thread_id}
-        if reasoning:
-            msg["reasoning"] = reasoning
         payload = json.dumps(msg)
         dead = set()
         for ws in clients:
@@ -510,16 +522,27 @@ class WebInterface:
     # Interaction Log
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _int_param(request: web.Request, name: str, default: int) -> int:
+        """Parse an integer query parameter, returning *default* on bad input."""
+        raw = request.query.get(name)
+        if raw is None:
+            return default
+        try:
+            return int(raw)
+        except (ValueError, TypeError):
+            return default
+
     async def _api_interaction_log(self, request: web.Request) -> web.Response:
         from wintermute.infra import database
-        limit = int(request.query.get("limit", "200"))
-        offset = int(request.query.get("offset", "0"))
+        limit = self._int_param(request, "limit", 200)
+        offset = self._int_param(request, "offset", 0)
         session = request.query.get("session") or None
         action = request.query.get("action") or None
         before_id_s = request.query.get("before_id")
         after_id_s = request.query.get("after_id")
-        before_id = int(before_id_s) if before_id_s else None
-        after_id = int(after_id_s) if after_id_s else None
+        before_id = self._int_param(request, "before_id", 0) or None if before_id_s else None
+        after_id = self._int_param(request, "after_id", 0) or None if after_id_s else None
         entries = await database.async_call(
             database.get_interaction_log, limit=limit, offset=offset,
             session_filter=session, action_filter=action,
@@ -531,7 +554,10 @@ class WebInterface:
 
     async def _api_interaction_log_entry(self, request: web.Request) -> web.Response:
         from wintermute.infra import database
-        entry_id = int(request.match_info["id"])
+        try:
+            entry_id = int(request.match_info["id"])
+        except (ValueError, TypeError):
+            return web.json_response({"error": "invalid id"}, status=400)
         entry = await database.async_call(database.get_interaction_log_entry, entry_id)
         if not entry:
             return web.json_response({"error": "not found"}, status=404)
@@ -543,8 +569,8 @@ class WebInterface:
 
     async def _api_outcomes(self, request: web.Request) -> web.Response:
         from wintermute.infra import database
-        limit = int(request.query.get("limit", "200"))
-        offset = int(request.query.get("offset", "0"))
+        limit = self._int_param(request, "limit", 200)
+        offset = self._int_param(request, "offset", 0)
         status_filter = request.query.get("status") or None
         source_filter = request.query.get("source") or None
         rows, total, stats = await database.async_call(
@@ -581,7 +607,7 @@ class WebInterface:
         from wintermute.infra import memory_store
 
         query = request.query.get("q", "")
-        top_k = int(request.query.get("k", "5"))
+        top_k = self._int_param(request, "k", 5)
 
         def _build_result() -> dict:
             r: dict = {
@@ -669,8 +695,14 @@ class WebInterface:
         if not query:
             return web.json_response(
                 {"error": "query parameter 'q' is required"}, status=400)
-        top_k = int(request.query.get("k", str(skill_store.get_top_k())))
-        threshold = float(request.query.get("t", str(skill_store.get_threshold())))
+        try:
+            top_k = int(request.query.get("k", str(skill_store.get_top_k())))
+        except (ValueError, TypeError):
+            top_k = skill_store.get_top_k()
+        try:
+            threshold = float(request.query.get("t", str(skill_store.get_threshold())))
+        except (ValueError, TypeError):
+            threshold = skill_store.get_threshold()
 
         def _search() -> list:
             return skill_store.search(query, top_k=top_k, threshold=threshold)
@@ -889,6 +921,8 @@ class WebInterface:
             "X-Accel-Buffering": "no",
         })
         await response.prepare(request)
+        q: asyncio.Queue = asyncio.Queue(maxsize=64)
+        self._sse_queues.add(q)
         try:
             while True:
                 try:
@@ -898,7 +932,18 @@ class WebInterface:
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("SSE snapshot error: %s", exc)
+                # Drain any broadcast messages that arrived since last snapshot.
+                while not q.empty():
+                    try:
+                        msg = q.get_nowait()
+                        await response.write(
+                            ("event: broadcast\ndata: " + json.dumps(msg) + "\n\n").encode()
+                        )
+                    except asyncio.QueueEmpty:
+                        break
                 await asyncio.sleep(3)
         except (ConnectionResetError, asyncio.CancelledError):
             pass
+        finally:
+            self._sse_queues.discard(q)
         return response

@@ -123,7 +123,7 @@ def log_store_interaction(timestamp: float, action: str, input_text: str,
             llm, input_text[:2000], output_text[:2000], status,
         )
     except Exception:  # noqa: BLE001
-        pass
+        logger.debug("Failed to save interaction log", exc_info=True)
 
 
 # ---------------------------------------------------------------------------

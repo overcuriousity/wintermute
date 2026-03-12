@@ -205,8 +205,8 @@ async def _translate_nl(
             json.dumps(translated) if translated is not None else "null",
             "ok" if translated is not None else "error",
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to log NL translation", exc_info=True)
 
     if translated is None:
         return _NLResult(error=(
@@ -310,8 +310,8 @@ async def _execute_multi_item(
             json.dumps({"tool": name, "arguments": raw_arguments}),
             combined_content[:500], "ok",
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to log multi-item tool call", exc_info=True)
 
     return ToolCallOutcome(
         content=combined_content,
@@ -474,8 +474,8 @@ async def process_tool_call(
             json.dumps({"tool": name, "arguments": raw_args}),
             result[:500], "ok",
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to log tool call %s", name, exc_info=True)
 
     logger.debug("[%s] Tool %s -> %s", ctx.thread_id, name, result[:200])
 

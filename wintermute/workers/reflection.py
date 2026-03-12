@@ -1014,8 +1014,8 @@ class ReflectionLoop:
                 text[:2000],
                 "ok",
             )
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            logger.debug("[reflection] Failed to log synthesis", exc_info=True)
 
         if self._event_bus:
             self._event_bus.emit(

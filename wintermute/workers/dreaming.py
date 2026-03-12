@@ -115,11 +115,11 @@ async def _consolidate(pool: "BackendPool",
     if json_mode:
         call_kwargs["response_format"] = {"type": "json_object"}
     response = await pool.call(**call_kwargs)
-    if response.content is None:
+    if not response.content:
         logger.warning("Dreaming (%s): LLM returned empty response", label)
         logger.debug("Empty response: %s", response)
         return ""
-    result = (response.content or "").strip()
+    result = response.content.strip()
     try:
         await database.async_call(
             database.save_interaction_log,
@@ -127,8 +127,8 @@ async def _consolidate(pool: "BackendPool",
             pool.last_used,
             prompt[:2000], result[:2000], "ok",
         )
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to log dreaming interaction for %s", label, exc_info=True)
     logger.debug("Dreaming: %s consolidated (%d -> %d chars)", label, len(content), len(result))
     return result
 
@@ -672,8 +672,8 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
                         _time.time(), "dreaming", f"system:dreaming:skill:{name}",
                         pool.last_used, prompt[:2000], condensed_text[:2000], "ok",
                     )
-                except Exception:
-                    pass
+                except Exception:  # noqa: BLE001
+                    logger.debug("Failed to log skill consolidation for %s", name, exc_info=True)
         except Exception:  # noqa: BLE001
             logger.exception("Dreaming: failed to condense skill '%s'", name)
 
