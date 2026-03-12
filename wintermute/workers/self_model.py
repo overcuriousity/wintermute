@@ -146,15 +146,25 @@ class SelfModelProfiler:
 
         tuned_timeout = self._state.get("tuned_sub_session_timeout")
         if tuned_timeout is not None and self._sub_sessions is not None:
-            tuned_timeout = max(lo_timeout, min(int(tuned_timeout), hi_timeout))
-            self._sub_sessions.default_timeout = tuned_timeout
-            logger.info("[self_model] Restored sub_session_timeout=%ds", tuned_timeout)
+            try:
+                val = int(tuned_timeout)
+            except (TypeError, ValueError):
+                logger.warning("[self_model] Ignoring invalid tuned_sub_session_timeout: %r", tuned_timeout)
+            else:
+                val = max(lo_timeout, min(val, hi_timeout))
+                self._sub_sessions.default_timeout = val
+                logger.info("[self_model] Restored sub_session_timeout=%ds", val)
 
         tuned_harvest = self._state.get("tuned_harvest_threshold")
         if tuned_harvest is not None and self._harvest is not None:
-            tuned_harvest = max(lo_harvest, min(int(tuned_harvest), hi_harvest))
-            self._harvest.message_threshold = tuned_harvest
-            logger.info("[self_model] Restored harvest_threshold=%d", tuned_harvest)
+            try:
+                val = int(tuned_harvest)
+            except (TypeError, ValueError):
+                logger.warning("[self_model] Ignoring invalid tuned_harvest_threshold: %r", tuned_harvest)
+            else:
+                val = max(lo_harvest, min(val, hi_harvest))
+                self._harvest.message_threshold = val
+                logger.info("[self_model] Restored harvest_threshold=%d", val)
 
     # ------------------------------------------------------------------
     # Metrics collection

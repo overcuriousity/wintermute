@@ -67,6 +67,33 @@ If you recommend a skill change, add a brief English instruction per action:
 """
 
 
+def _extract_json_tail(text: str) -> dict | None:
+    """Find and parse the last JSON object in *text* using bracket counting.
+
+    Handles nested braces correctly, unlike a simple regex approach.
+    Returns the parsed dict, or ``None`` on failure.
+    """
+    end = text.rfind("}")
+    if end == -1:
+        return None
+    # Walk backwards to find the matching opening brace.
+    depth = 0
+    for i in range(end, -1, -1):
+        if text[i] == "}":
+            depth += 1
+        elif text[i] == "{":
+            depth -= 1
+        if depth == 0:
+            try:
+                obj = json.loads(text[i:end + 1])
+                if isinstance(obj, dict):
+                    return obj
+            except (json.JSONDecodeError, ValueError):
+                pass
+            return None
+    return None
+
+
 def _extract_skill_actions(text: str) -> list[str]:
     """Extract skill_actions from a JSON block appended to the LLM response.
 
@@ -74,19 +101,13 @@ def _extract_skill_actions(text: str) -> list[str]:
     Returns an empty list if none is found or the JSON is malformed.
     Language-neutral: works regardless of the prose language.
     """
-    # Match the last JSON object containing skill_actions anywhere in the text.
-    # The block may appear at the end with preceding whitespace/newlines.
-    matches = re.findall(r'\{[^{}]*"skill_actions"\s*:\s*\[[^\]]*\][^{}]*\}', text)
-    if not matches:
-        logger.warning("[reflection] No skill_actions JSON block found in analysis response (%d chars)", len(text))
+    obj = _extract_json_tail(text)
+    if obj is None:
+        logger.warning("[reflection] No JSON block found in analysis response (%d chars)", len(text))
         return []
-    try:
-        parsed = json.loads(matches[-1])
-        actions = parsed.get("skill_actions", [])
-        if isinstance(actions, list):
-            return [str(a) for a in actions if a]
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("[reflection] Malformed skill_actions JSON: %s — raw: %s", exc, matches[-1][:200])
+    actions = obj.get("skill_actions", [])
+    if isinstance(actions, list):
+        return [str(a) for a in actions if a]
     return []
 
 
@@ -96,32 +117,21 @@ def _extract_task_actions(text: str) -> list[dict]:
     Returns a list of dicts with keys: content, ai_prompt, schedule_type.
     Capped at 1 per cycle.
     """
-    matches = re.findall(r'\{[^{}]*"task_actions"\s*:\s*\[', text)
-    if not matches:
+    obj = _extract_json_tail(text)
+    if obj is None:
         return []
-    # Find the full JSON block containing task_actions with nested objects.
-    # Use a broader pattern that captures the task_actions array.
-    import re as _re
-    block_matches = _re.findall(
-        r'"task_actions"\s*:\s*\[(.*?)\]',
-        text, re.DOTALL,
-    )
-    if not block_matches:
+    raw_actions = obj.get("task_actions")
+    if not isinstance(raw_actions, list):
         return []
-    try:
-        raw = json.loads(f"[{block_matches[-1]}]")
-        actions = []
-        for item in raw:
-            if isinstance(item, dict) and item.get("content") and item.get("ai_prompt"):
-                actions.append({
-                    "content": str(item["content"]),
-                    "ai_prompt": str(item["ai_prompt"]),
-                    "schedule_type": str(item.get("schedule_type", "once")),
-                })
-        return actions[:1]  # Cap at 1 per cycle.
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("[reflection] Malformed task_actions JSON: %s", exc)
-    return []
+    actions: list[dict] = []
+    for item in raw_actions:
+        if isinstance(item, dict) and item.get("content") and item.get("ai_prompt"):
+            actions.append({
+                "content": str(item["content"]),
+                "ai_prompt": str(item["ai_prompt"]),
+                "schedule_type": str(item.get("schedule_type", "once")),
+            })
+    return actions[:1]  # Cap at 1 per cycle.
 
 
 @dataclass
@@ -845,12 +855,13 @@ class ReflectionLoop:
         for ta in task_actions[:1]:
             try:
                 content = f"[reflection] {ta['content']}"
+                schedule_type = ta.get("schedule_type")
                 task_id = await database.async_call(
                     database.add_task,
                     content,
                     5,  # priority
                     None,  # thread_id
-                    None,  # schedule_type — no schedule_config, so no APScheduler job
+                    schedule_type,
                     None,  # schedule_desc
                     None,  # schedule_config
                     ta["ai_prompt"],  # ai_prompt
@@ -862,6 +873,12 @@ class ReflectionLoop:
                         "reflection.task_created",
                         task_id=task_id,
                         content=content[:200],
+                        schedule_type=schedule_type,
+                    )
+                    # Generic event so the scheduler can pick up the new task.
+                    self._event_bus.emit(
+                        "task.created",
+                        task_id=task_id,
                     )
             except Exception:
                 logger.exception("[reflection] Failed to create task from analysis")

@@ -396,8 +396,8 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
             if reflection:
                 sections.append(f"# System Observations\n\n{reflection}")
 
-        # Operational self-model — main thread only
-        if available_tools is None:
+        # Operational self-model — main thread only (skip when path explicitly unset)
+        if available_tools is None and _self_model_path is not None:
             sm_summary = _get_self_model_summary()
             if sm_summary:
                 sections.append(f"# Operational Self-Model\n\n{sm_summary}")
