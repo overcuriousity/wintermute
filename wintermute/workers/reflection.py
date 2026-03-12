@@ -125,8 +125,8 @@ def _extract_skill_actions(text: str) -> list[str]:
 def _extract_task_actions(text: str) -> list[dict]:
     """Extract task_actions from the JSON block in the LLM analysis response.
 
-    Returns a list of dicts with keys: content, ai_prompt, schedule_type.
-    Capped at 1 per cycle.
+    Returns a list of dicts with keys: content, ai_prompt.
+    Capped at 1 per cycle.  Reflection tasks are always unscheduled.
     """
     obj = _extract_json_tail(text)
     if obj is None:
@@ -137,16 +137,9 @@ def _extract_task_actions(text: str) -> list[dict]:
     actions: list[dict] = []
     for item in raw_actions:
         if isinstance(item, dict) and item.get("content") and item.get("ai_prompt"):
-            schedule_config = item.get("schedule_config")
-            # Without a concrete schedule_config the scheduler can't create a
-            # job, so normalise schedule_type to None to avoid misleading DB
-            # entries that look scheduled but never fire.
             actions.append({
                 "content": str(item["content"]),
                 "ai_prompt": str(item["ai_prompt"]),
-                "schedule_type": str(item["schedule_type"]) if schedule_config and item.get("schedule_type") else None,
-                "schedule_desc": str(item["schedule_desc"]) if schedule_config and item.get("schedule_desc") else None,
-                "schedule_config": json.dumps(schedule_config) if isinstance(schedule_config, dict) else schedule_config,
             })
     return actions[:1]  # Cap at 1 per cycle.
 
@@ -879,9 +872,9 @@ class ReflectionLoop:
                     content,
                     5,  # priority
                     None,  # thread_id (silent background task)
-                    ta.get("schedule_type"),   # schedule_type (may be None)
-                    ta.get("schedule_desc"),   # schedule_desc (may be None)
-                    ta.get("schedule_config"), # schedule_config (may be None)
+                    None,  # schedule_type (reflection tasks are unscheduled)
+                    None,  # schedule_desc
+                    None,  # schedule_config
                     ta["ai_prompt"],  # ai_prompt
                     True,  # background
                 )

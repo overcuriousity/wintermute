@@ -152,7 +152,8 @@ class TaskScheduler:
             self._event_bus_subs.append(sub_id)
 
         # Restore prediction cooldowns from interaction_log.
-        self._restore_prediction_cooldowns()
+        # Offload synchronous DB read to a thread to avoid blocking the event loop.
+        asyncio.get_event_loop().run_in_executor(None, self._restore_prediction_cooldowns)
 
         logger.info("[scheduler] started (timezone=%s)", self._cfg.timezone)
 

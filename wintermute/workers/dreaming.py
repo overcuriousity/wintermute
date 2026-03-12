@@ -1091,15 +1091,16 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
                     pass
                 elif "||" in text:
                     # Normalize: ensure suffix is well-formed.
-                    # Match both spaced (||hours=..|| ||days=..||) and adjacent
-                    # (||hours=..||days=..||) segment forms.
-                    suffix_parts = re.findall(r'\|\|(\w+=[\w,\-]+)\|\|', text)
-                    if suffix_parts:
-                        normalized = " ".join(f"||{p}||" for p in suffix_parts)
-                        # Strip all suffix segments (including adjacent forms)
-                        # and re-append normalized with spaces between segments.
-                        base_text = re.sub(r'(?:\|\|\w+=[\w,\-]+\|\|)+', '', text).strip()
-                        text = f"{base_text} {normalized}"
+                    # Match trailing block of one or more segments, supporting
+                    # both spaced (||hours=..|| ||days=..||) and adjacent
+                    # (||hours=..||days=..||) forms.
+                    suffix_match = re.search(r'(?:\s*\|\|\w+=[\w,\-]+\|\|)+\s*$', text)
+                    if suffix_match:
+                        suffix_parts = re.findall(r'\|\|(\w+=[\w,\-]+)\|\|', suffix_match.group(0))
+                        if suffix_parts:
+                            normalized = " ".join(f"||{p}||" for p in suffix_parts)
+                            base_text = text[:suffix_match.start()].rstrip()
+                            text = f"{base_text} {normalized}"
                 tagged = f"[prediction:{pred_type}] {text}"
                 entry_id = await asyncio.to_thread(
                     memory_store.add, tagged, None, "dreaming_prediction"
