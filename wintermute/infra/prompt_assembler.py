@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 from wintermute.infra import database
 from wintermute.infra import prompt_loader
 from wintermute.infra.memory_io import read_text_safe
-from wintermute.infra.paths import DATA_DIR, MEMORIES_FILE
+from wintermute.infra.paths import MEMORIES_FILE
 
 logger = logging.getLogger(__name__)
 

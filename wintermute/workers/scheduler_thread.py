@@ -209,10 +209,13 @@ class TaskScheduler:
         try:
             entries = database.get_interaction_log(limit=50, action_filter="prediction_fired")
             for e in entries:
-                ts = float(e.get("timestamp", 0))
+                try:
+                    ts = float(e.get("timestamp") or 0)
+                except (TypeError, ValueError):
+                    continue
                 if ts < cutoff:
                     continue
-                pred_id = e.get("input", "").strip()
+                pred_id = (e.get("input") or "").strip()
                 if pred_id:
                     existing = self._prediction_last_fired.get(pred_id, 0)
                     if ts > existing:
@@ -451,8 +454,8 @@ class TaskScheduler:
                 continue
 
             # Try structured ||key=val|| suffix first, fall back to regex.
-            structured_hours = re.search(r'\|\|hours=(\d{1,2})-(\d{1,2})\|\|', text)
-            structured_days = re.search(r'\|\|days=([\w,]+)\|\|', text)
+            structured_hours = re.search(r'\|\|hours=(\d{1,2})-(\d{1,2})\|\|', text, re.IGNORECASE)
+            structured_days = re.search(r'\|\|days=([\w,]+)\|\|', text, re.IGNORECASE)
 
             in_time_window = False
             used_structured = bool(structured_hours or structured_days)

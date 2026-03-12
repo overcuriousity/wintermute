@@ -113,7 +113,8 @@ def _extract_skill_actions(text: str) -> list[str]:
     """
     obj = _extract_json_tail(text)
     if obj is None:
-        logger.warning("[reflection] No JSON block found in analysis response (%d chars)", len(text))
+        # _extract_json_tail already logs on decode failure; only log here
+        # when there genuinely was no JSON at all.
         return []
     actions = obj.get("skill_actions", [])
     if isinstance(actions, list):
@@ -871,11 +872,13 @@ class ReflectionLoop:
         for ta in task_actions[:1]:
             try:
                 content = f"[reflection] {ta['content']}"
+                # Intentionally background-only (thread_id=None): reflection
+                # tasks are silent maintenance — results stay in sub-session logs.
                 task_id = await database.async_call(
                     database.add_task,
                     content,
                     5,  # priority
-                    None,  # thread_id
+                    None,  # thread_id (silent background task)
                     ta.get("schedule_type"),   # schedule_type (may be None)
                     ta.get("schedule_desc"),   # schedule_desc (may be None)
                     ta.get("schedule_config"), # schedule_config (may be None)
