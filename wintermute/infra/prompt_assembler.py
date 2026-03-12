@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 from wintermute.infra import database
 from wintermute.infra import prompt_loader
 from wintermute.infra.memory_io import read_text_safe
-from wintermute.infra.paths import MEMORIES_FILE
+from wintermute.infra.paths import DATA_DIR, MEMORIES_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +214,20 @@ def _get_reflection_observations() -> str:
     return combined[:300]
 
 
+def _get_self_model_summary() -> str:
+    """Read the self-model prose summary from data/self_model.yaml."""
+    try:
+        import yaml
+        path = DATA_DIR / "self_model.yaml"
+        if not path.exists():
+            return ""
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return (data.get("summary") or "").strip()[:300]
+    except Exception:
+        logger.debug("Failed to read self-model summary", exc_info=True)
+        return ""
+
+
 # Hard cap for prediction text injected into the system prompt.
 _PREDICTIONS_CAP = 800
 
@@ -365,6 +379,12 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
             reflection = _get_reflection_observations()
             if reflection:
                 sections.append(f"# System Observations\n\n{reflection}")
+
+        # Operational self-model — main thread only
+        if available_tools is None:
+            sm_summary = _get_self_model_summary()
+            if sm_summary:
+                sections.append(f"# Operational Self-Model\n\n{sm_summary}")
 
         # Predictions & Patterns — main thread only
         if available_tools is None and prediction_results:

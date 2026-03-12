@@ -38,6 +38,7 @@ from wintermute import tools as tool_module
 
 if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager
+    from wintermute.core.session_manager import SessionManager
     from wintermute.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,12 @@ async def _check_predictions_job(**_extra) -> None:
         await _instance._check_predictions()
 
 
+async def _check_session_timeouts_job(**_extra) -> None:
+    """Module-level coroutine for periodic session timeout enforcement."""
+    if _instance is not None:
+        await _instance._enforce_session_timeouts()
+
+
 @dataclass
 class SchedulerConfig:
     timezone: str = "UTC"
@@ -111,6 +118,7 @@ class TaskScheduler:
         self._scheduler: Optional[AsyncIOScheduler] = None
         # Track last proactive fire time per prediction ID to enforce cooldowns.
         self._prediction_last_fired: dict[str, float] = {}
+        self._session_manager: Optional["SessionManager"] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -139,6 +147,9 @@ class TaskScheduler:
             sub_id = self._event_bus.subscribe("task.created", self._on_task_created)
             self._event_bus_subs.append(sub_id)
 
+        # Restore prediction cooldowns from interaction_log.
+        self._restore_prediction_cooldowns()
+
         logger.info("[scheduler] started (timezone=%s)", self._cfg.timezone)
 
         # Schedule periodic prediction-based proactive checks.
@@ -152,12 +163,42 @@ class TaskScheduler:
             )
             logger.info("[scheduler] Prediction proactive check scheduled (hourly)")
 
+        # Schedule periodic session timeout enforcement.
+        if self._session_manager is not None:
+            self._scheduler.add_job(
+                _check_session_timeouts_job,
+                trigger=IntervalTrigger(minutes=5),
+                id="_session_timeout_check",
+                replace_existing=True,
+                misfire_grace_time=600,
+            )
+            logger.info("[scheduler] Session timeout check scheduled (every 5 min)")
+
     async def _on_task_created(self, event) -> None:
         """React to task.created events — log for visibility."""
         task_id = event.data.get("task_id")
         schedule_type = event.data.get("schedule_type")
         if task_id and schedule_type:
             logger.info("[scheduler] Notified of new scheduled task %s (%s)", task_id, schedule_type)
+
+    def _restore_prediction_cooldowns(self) -> None:
+        """Pre-populate _prediction_last_fired from recent interaction_log entries."""
+        cooldown_seconds = self._cfg.prediction_proactive_cooldown_hours * 3600
+        cutoff = _time.time() - cooldown_seconds
+        try:
+            entries = database.get_interaction_log(limit=50, action_filter="prediction_fired")
+            for e in entries:
+                ts = float(e.get("timestamp", 0))
+                if ts < cutoff:
+                    continue
+                pred_id = e.get("input", "").strip()
+                if pred_id:
+                    self._prediction_last_fired[pred_id] = ts
+            if self._prediction_last_fired:
+                logger.info("[scheduler] Restored %d prediction cooldown(s) from DB",
+                            len(self._prediction_last_fired))
+        except Exception:
+            logger.debug("[scheduler] Failed to restore prediction cooldowns", exc_info=True)
 
     def stop(self) -> None:
         if self._event_bus:
@@ -386,52 +427,76 @@ class TaskScheduler:
             if now - last_fired < cooldown_seconds:
                 continue
 
-            # Parse time windows from prediction text.
-            hour_matches = re.findall(
-                r'(\d{1,2})(?::\d{2})?\s*(am|pm)?\s*(?:-|to)\s*(\d{1,2})(?::\d{2})?\s*(am|pm)?',
-                text_lower,
-            )
-            day_matches = re.findall(
-                r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?',
-                text_lower,
-            )
+            # Try structured ||key=val|| suffix first, fall back to regex.
+            structured_hours = re.search(r'\|\|hours=(\d{1,2})-(\d{1,2})\|\|', text)
+            structured_days = re.search(r'\|\|days=([\w,]+)\|\|', text)
 
             in_time_window = False
-            if hour_matches:
-                for start_h, start_ampm, end_h, end_ampm in hour_matches:
-                    try:
-                        sh, eh = int(start_h), int(end_h)
-                        # Apply AM/PM independently; fall back to end's
-                        # suffix when start has none (e.g. "8-10 PM").
-                        s_ap = start_ampm or end_ampm
-                        e_ap = end_ampm or start_ampm
-                        if s_ap == "pm" and sh < 12:
-                            sh += 12
-                        elif s_ap == "am" and sh == 12:
-                            sh = 0
-                        if e_ap == "pm" and eh < 12:
-                            eh += 12
-                        elif e_ap == "am" and eh == 12:
-                            eh = 0
-                        # Only treat as hours if both values are in 0-23 range.
-                        if sh > 23 or eh > 23:
-                            continue
+            used_structured = False
+
+            if structured_hours:
+                used_structured = True
+                try:
+                    sh, eh = int(structured_hours.group(1)), int(structured_hours.group(2))
+                    if sh <= 23 and eh <= 23:
                         if sh <= eh:
                             in_time_window = sh <= current_hour <= eh
                         else:
                             in_time_window = current_hour >= sh or current_hour <= eh
-                    except (ValueError, TypeError):
-                        pass
-                    if in_time_window:
-                        break
+                except (ValueError, TypeError):
+                    pass
 
-            # Also check weekday match.
-            if day_matches:
-                if current_day not in {d.lower() for d in day_matches}:
-                    in_time_window = False
-            elif not hour_matches:
-                # No parseable time info — skip.
-                continue
+                if structured_days:
+                    days_list = {d.strip().lower()[:3] for d in structured_days.group(1).split(",")}
+                    # Map full day names to 3-letter abbreviations for matching.
+                    current_day_abbr = current_day[:3]
+                    if current_day_abbr not in days_list:
+                        in_time_window = False
+                elif not in_time_window:
+                    pass  # No day constraint, hour check stands.
+
+            if not used_structured:
+                # Legacy regex parsing for predictions without structured suffix.
+                hour_matches = re.findall(
+                    r'(\d{1,2})(?::\d{2})?\s*(am|pm)?\s*(?:-|to)\s*(\d{1,2})(?::\d{2})?\s*(am|pm)?',
+                    text_lower,
+                )
+                day_matches = re.findall(
+                    r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?',
+                    text_lower,
+                )
+
+                if hour_matches:
+                    for start_h, start_ampm, end_h, end_ampm in hour_matches:
+                        try:
+                            sh, eh = int(start_h), int(end_h)
+                            s_ap = start_ampm or end_ampm
+                            e_ap = end_ampm or start_ampm
+                            if s_ap == "pm" and sh < 12:
+                                sh += 12
+                            elif s_ap == "am" and sh == 12:
+                                sh = 0
+                            if e_ap == "pm" and eh < 12:
+                                eh += 12
+                            elif e_ap == "am" and eh == 12:
+                                eh = 0
+                            if sh > 23 or eh > 23:
+                                continue
+                            if sh <= eh:
+                                in_time_window = sh <= current_hour <= eh
+                            else:
+                                in_time_window = current_hour >= sh or current_hour <= eh
+                        except (ValueError, TypeError):
+                            pass
+                        if in_time_window:
+                            break
+
+                if day_matches:
+                    if current_day not in {d.lower() for d in day_matches}:
+                        in_time_window = False
+                elif not hour_matches:
+                    # No parseable time info — skip.
+                    continue
 
             if not in_time_window:
                 continue
@@ -441,6 +506,14 @@ class TaskScheduler:
                 "[scheduler] Proactive prediction trigger: %s", text[:120]
             )
             self._prediction_last_fired[pred_id] = now
+            # Persist cooldown to interaction_log so it survives restarts.
+            try:
+                database.save_interaction_log(
+                    now, "prediction_fired", "system:scheduler",
+                    "scheduler", pred_id, text[:200], "ok",
+                )
+            except Exception:
+                logger.debug("[scheduler] Failed to log prediction firing", exc_info=True)
             # Bump access count — this prediction was actually used.
             try:
                 from wintermute.infra import memory_store
@@ -466,6 +539,24 @@ class TaskScheduler:
                     prediction_id=pred_id,
                     prediction_text=text[:200],
                 )
+
+    # ------------------------------------------------------------------
+    # Session timeout enforcement
+    # ------------------------------------------------------------------
+
+    async def _enforce_session_timeouts(self) -> None:
+        """Check for expired sessions and reset them."""
+        if self._session_manager is None:
+            return
+        expired = self._session_manager.check_session_timeouts()
+        for tid in expired:
+            logger.info("[scheduler] Session timeout — resetting thread %s", tid)
+            try:
+                await self._session_manager.reset_session(tid)
+                if self._event_bus:
+                    self._event_bus.emit("session.timeout_reset", thread_id=tid)
+            except Exception:
+                logger.exception("[scheduler] Failed to reset timed-out session %s", tid)
 
     # ------------------------------------------------------------------
     # Prediction context injection for task sub-sessions

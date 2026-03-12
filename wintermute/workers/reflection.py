@@ -78,14 +78,49 @@ def _extract_skill_actions(text: str) -> list[str]:
     # The block may appear at the end with preceding whitespace/newlines.
     matches = re.findall(r'\{[^{}]*"skill_actions"\s*:\s*\[[^\]]*\][^{}]*\}', text)
     if not matches:
+        logger.warning("[reflection] No skill_actions JSON block found in analysis response (%d chars)", len(text))
         return []
     try:
         parsed = json.loads(matches[-1])
         actions = parsed.get("skill_actions", [])
         if isinstance(actions, list):
             return [str(a) for a in actions if a]
-    except (json.JSONDecodeError, ValueError):
-        pass
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning("[reflection] Malformed skill_actions JSON: %s — raw: %s", exc, matches[-1][:200])
+    return []
+
+
+def _extract_task_actions(text: str) -> list[dict]:
+    """Extract task_actions from the JSON block in the LLM analysis response.
+
+    Returns a list of dicts with keys: content, ai_prompt, schedule_type.
+    Capped at 1 per cycle.
+    """
+    matches = re.findall(r'\{[^{}]*"task_actions"\s*:\s*\[', text)
+    if not matches:
+        return []
+    # Find the full JSON block containing task_actions with nested objects.
+    # Use a broader pattern that captures the task_actions array.
+    import re as _re
+    block_matches = _re.findall(
+        r'"task_actions"\s*:\s*\[(.*?)\]',
+        text, re.DOTALL,
+    )
+    if not block_matches:
+        return []
+    try:
+        raw = json.loads(f"[{block_matches[-1]}]")
+        actions = []
+        for item in raw:
+            if isinstance(item, dict) and item.get("content") and item.get("ai_prompt"):
+                actions.append({
+                    "content": str(item["content"]),
+                    "ai_prompt": str(item["ai_prompt"]),
+                    "schedule_type": str(item.get("schedule_type", "once")),
+                })
+        return actions[:1]  # Cap at 1 per cycle.
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning("[reflection] Malformed task_actions JSON: %s", exc)
     return []
 
 
@@ -798,10 +833,38 @@ class ReflectionLoop:
                 actions_recommended=len(skill_actions),
             )
 
-        # Tier 3: spawn one mutation sub-session per recommended action
-        # (capped at 1 per cycle to avoid runaway mutations).
+        # Tier 3: spawn mutation sub-sessions for recommended actions
+        # (capped at 3 per cycle to avoid runaway mutations).
         if skill_actions and self._sub_sessions:
-            await self._spawn_mutation(skill_actions[0])
+            for action in skill_actions[:3]:
+                await self._spawn_mutation(action)
+
+        # Tier 4: create persistent tasks from analysis recommendations
+        # (capped at 1 per cycle).
+        task_actions = _extract_task_actions(analysis_text)
+        for ta in task_actions[:1]:
+            try:
+                content = f"[reflection] {ta['content']}"
+                task_id = await database.async_call(
+                    database.add_task,
+                    content,
+                    5,  # priority
+                    None,  # thread_id
+                    ta["schedule_type"],  # schedule_type
+                    None,  # schedule_desc
+                    None,  # schedule_config
+                    ta["ai_prompt"],  # ai_prompt
+                    True,  # background
+                )
+                logger.info("[reflection] Created task %s: %s", task_id, content[:80])
+                if self._event_bus:
+                    self._event_bus.emit(
+                        "reflection.task_created",
+                        task_id=task_id,
+                        content=content[:200],
+                    )
+            except Exception:
+                logger.exception("[reflection] Failed to create task from analysis")
 
     # ------------------------------------------------------------------
     # Tier 3: Sub-session mutation

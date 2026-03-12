@@ -592,6 +592,8 @@ async def main() -> None:
         event_bus=event_bus,
     )
     tool_deps.task_scheduler = scheduler
+    # Wire session manager to scheduler for timeout enforcement.
+    scheduler._session_manager = llm._session_mgr
 
     # 5. Memory harvest loop
     harvest_loop: Optional[MemoryHarvestLoop] = None
@@ -631,6 +633,10 @@ async def main() -> None:
             self_model = None
     else:
         logger.info("Self-model profiler disabled by config")
+
+    # Restore auto-tuned values from self-model YAML.
+    if self_model:
+        self_model.restore_tuned_params()
 
     # 7. Reflection loop (receives self_model via constructor now)
     reflection_raw = cfg.get("reflection", {}) or {}

@@ -70,7 +70,8 @@ The `prompt_assembler` injects a `# Predictions & Patterns` section into the mai
 
 The scheduler runs an hourly check against temporal predictions. When the current time falls within a predicted active window (parsed from prediction text), a full sub-session is spawned to check for pending tasks, reminders, or anything useful to surface proactively. Responses with `[NO_ACTION]` are suppressed.
 
-- **Cooldown:** `prediction_proactive_cooldown_hours` (default: 4) between fires per prediction
+- **Cooldown:** `prediction_proactive_cooldown_hours` (default: 4) between fires per prediction. Cooldowns persist across restarts via `interaction_log` (action=`prediction_fired`).
+- **Structured time windows:** Temporal predictions can include a structured suffix `||hours=8-22||days=mon,tue,wed,thu,fri||` for reliable parsing. Legacy free-text time windows are still parsed via regex fallback.
 - **Day matching:** If the prediction mentions specific weekdays, the current day must match
 - **Config gate:** `memory.dreaming.prediction_proactive_scheduling` (default: `true`)
 
@@ -145,7 +146,8 @@ An event-driven feedback loop that closes the observe→reflect→adapt cycle. T
 
 1. **Rule engine (zero LLM cost):** Programmatic pattern detection on DB and event data. Auto-applies simple actions (pause failing tasks, flag stale skills). Runs on every trigger event.
 2. **LLM analysis (cheap, one-shot):** A direct `pool.call()` with a prose prompt summarizing recent findings. Only runs when the rule engine finds something interesting.
-3. **Sub-session mutations (expensive, rare):** A constrained sub-session is spawned only when the LLM analysis recommends a creative change (e.g. rewriting a skill). Limited to `read_file`, `skill`, and `append_memory` tools with a 5-round cap.
+3. **Sub-session mutations (expensive, rare):** A constrained sub-session is spawned only when the LLM analysis recommends a creative change (e.g. rewriting a skill). Limited to `read_file`, `skill`, and `append_memory` tools with a 5-round cap. Up to 3 skill actions are processed per cycle (previously only 1).
+4. **Autonomous task creation (rare):** The LLM analysis can recommend creating a persistent scheduled task via `task_actions` in its JSON output. Capped at 1 task per cycle. Task content is prefixed with `[reflection]` for auditability. Events are emitted as `reflection.task_created`.
 4. **Pattern-to-skill synthesis (periodic):** Clusters completed sub-session outcomes by tool usage patterns, identifies recurring workflows not yet captured as skills, and proposes new skills via a one-shot LLM call. Gates: ≥20 completed outcomes in the lookback window and 24h cooldown. Proposals are executed as mutation sub-sessions (max 2 per cycle).
 
 ### Trigger Conditions (event-driven, no polling)
@@ -198,9 +200,9 @@ Runs inside the reflection cycle (no separate asyncio task) and builds an operat
 
 Changes are applied immediately to the live `SubSessionManager` and `MemoryHarvestLoop` objects — no restart required.
 
-**Summary generation:** After each cycle a one-shot LLM call generates a 2–3 sentence prose summary (prompt: `data/prompts/SELF_MODEL_SUMMARY.txt`). The summary is cached and available via `query_telemetry(query_type="self_model")` and the `/status` command, but is **not** injected into the system prompt (the per-turn token cost was not justified by measurable benefit).
+**Summary generation:** After each cycle a one-shot LLM call generates a 2–3 sentence prose summary (prompt: `data/prompts/SELF_MODEL_SUMMARY.txt`). The summary is cached and injected into the main-thread system prompt as an `# Operational Self-Model` section (after System Observations, ~300 chars max). Also available via `query_telemetry(query_type="self_model")` and the `/status` command.
 
-**Persistence:** State is written to `data/self_model.yaml` after every update and auto-committed to the data git repo. The summary survives restarts.
+**Persistence:** State is written to `data/self_model.yaml` after every update and auto-committed to the data git repo. The summary survives restarts. Auto-tuned values (`sub_session_timeout`, `harvest_threshold`) are also persisted in the YAML and restored on startup via `restore_tuned_params()`, so tuning decisions survive restarts.
 
 **Visibility:** `/status` shows the self-model summary, last-updated timestamp, and any tuning changes from the last cycle. `/reflect` triggers an immediate cycle and prints the updated self-assessment inline. The LLM can query its own metrics on demand via `query_telemetry`.
 
@@ -365,6 +367,15 @@ Tasks with schedules can optionally trigger AI inference when they fire:
 - System tasks (no thread) fire as system events
 - Supports one-time, daily, weekly, monthly, and interval schedules
 - Interval tasks can be restricted to time windows (e.g. 08:00-20:00)
+
+## Session Timeout Enforcement
+
+**Modules:** `wintermute/workers/scheduler_thread.py`, `wintermute/core/session_manager.py`
+
+An APScheduler job runs every 5 minutes and calls `SessionManager.check_session_timeouts()`. For each thread that has exceeded its configured `session_timeout_minutes` (set via per-thread config), the session is reset: active messages are cleared and running sub-sessions are cancelled. A `session.timeout_reset` event is emitted.
+
+- **Configuration:** Per-thread `session_timeout_minutes` via `/config` or the web debug API (default: disabled)
+- **Scope:** Only threads with an explicit timeout configured are affected
 
 ## Context Compaction
 

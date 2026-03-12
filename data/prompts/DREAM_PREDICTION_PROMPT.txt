@@ -10,6 +10,10 @@ Rules:
 - Distinguish between: temporal (time-based patterns), behavioral (user habit patterns), and preference (user preference patterns).
 - Maximum 3 predictions.
 - If the data is too sparse for meaningful patterns, return an empty predictions array.
+- For TEMPORAL predictions, append a structured suffix to the text with machine-parseable time windows:
+  ||hours=START-END||days=mon,tue,wed,...||
+  Example: "User is most active in the evening on weekdays ||hours=18-22||days=mon,tue,wed,thu,fri||"
+  Use 24-hour format for hours. Omit ||days=...|| if all days apply. Omit ||hours=...|| if all hours apply.
 
 Return JSON:
 {{"predictions": [{{"text": "concise prediction statement", "type": "temporal|behavioral|preference", "confidence": "high|medium"}}]}}

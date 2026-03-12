@@ -446,10 +446,13 @@ Event-driven feedback loop that observes sub-session outcomes, detects patterns 
 | `consecutive_failure_limit` | no | `3` | Auto-pause tasks after N consecutive failures |
 | `lookback_seconds` | no | `86400` | Time window (seconds) for pattern detection (default: 24h) |
 | `min_result_length` | no | `50` | Results shorter than this are flagged as "no meaningful output" (stale task check) |
+| `main_turn_batch_threshold` | no | `15` | Trigger reflection after N main-thread turns |
+| `synthesis_min_cluster_size` | no | `3` | Minimum sessions per tool-set cluster for pattern-to-skill synthesis |
+| `synthesis_min_outcomes` | no | `20` | Minimum completed outcomes before synthesis runs |
 
 ### `self_model`
 
-Operational self-awareness profiler that runs inside the reflection cycle. Aggregates metrics from sub-session outcomes, interaction log, and event bus, then auto-tunes internal parameters. A cached prose summary is available via `query_telemetry` and `/status` but is not injected into the system prompt. See [autonomy.md — Self-Model](autonomy.md#self-model) for details.
+Operational self-awareness profiler that runs inside the reflection cycle. Aggregates metrics from sub-session outcomes, interaction log, and event bus, then auto-tunes internal parameters. A cached prose summary is injected into the main-thread system prompt and available via `query_telemetry` and `/status`. Auto-tuned values persist across restarts. See [autonomy.md — Self-Model](autonomy.md#self-model) for details.
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|

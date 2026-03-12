@@ -1084,6 +1084,19 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
             text = pred.get("text", "").strip()
             pred_type = pred.get("type", "behavioral")
             if text:
+                # Validate structured temporal suffix if present.
+                if pred_type == "temporal" and "||" not in text:
+                    # No structured suffix — leave as-is for legacy compat.
+                    pass
+                elif "||" in text:
+                    # Normalize: ensure suffix is well-formed.
+                    import re as _re_pred
+                    suffix_parts = _re_pred.findall(r'\|\|(\w+=[\w,\-]+)\|\|', text)
+                    if suffix_parts:
+                        normalized = " ".join(f"||{p}||" for p in suffix_parts)
+                        # Strip existing suffix and re-append normalized.
+                        base_text = _re_pred.sub(r'\|\|\w+=[\w,\-]+\|\|', '', text).strip()
+                        text = f"{base_text} {normalized}"
                 tagged = f"[prediction:{pred_type}] {text}"
                 entry_id = await asyncio.to_thread(
                     memory_store.add, tagged, None, "dreaming_prediction"
