@@ -152,14 +152,12 @@ class TaskScheduler:
             self._event_bus_subs.append(sub_id)
 
         # Restore prediction cooldowns from interaction_log.
-        # Offload synchronous DB read to a thread to avoid blocking the event loop.
-        def _log_restore_err(fut: asyncio.Future) -> None:
-            exc = fut.exception()
-            if exc is not None:
-                logger.exception("Error restoring prediction cooldowns", exc_info=exc)
-
-        future = asyncio.get_running_loop().run_in_executor(None, self._restore_prediction_cooldowns)
-        future.add_done_callback(_log_restore_err)
+        # Run synchronously on the loop thread to avoid cross-thread races
+        # on self._prediction_last_fired (read/written by async jobs too).
+        try:
+            self._restore_prediction_cooldowns()
+        except Exception:
+            logger.exception("Error restoring prediction cooldowns")
 
         logger.info("[scheduler] started (timezone=%s)", self._cfg.timezone)
 
@@ -592,6 +590,14 @@ class TaskScheduler:
             return
         expired = self._session_manager.check_session_timeouts()
         for tid in expired:
+            # Re-check: last_activity may have been updated since the snapshot.
+            last = self._session_manager.last_activity.get(tid)
+            if last is not None:
+                import time as _time_mod
+                resolved = self._session_manager._thread_config_manager.resolve(tid)
+                timeout = resolved.session_timeout_minutes
+                if timeout is None or (_time_mod.time() - last) <= timeout * 60:
+                    continue
             logger.info("[scheduler] Session timeout — resetting thread %s", tid)
             try:
                 await self._session_manager.reset_session(tid)

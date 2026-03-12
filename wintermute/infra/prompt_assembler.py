@@ -216,30 +216,36 @@ def _get_reflection_observations() -> str:
 
 _self_model_cache: tuple[float, str] = (0.0, "")  # (mtime, summary)
 _self_model_path: Optional[Path] = None  # Set at startup via set_self_model_path()
+_self_model_cache_lock = threading.Lock()
 
 
 def set_self_model_path(path: "Path | str") -> None:
     """Configure the self-model YAML path (called at startup)."""
-    global _self_model_path
-    _self_model_path = Path(path)
+    global _self_model_path, _self_model_cache
+    with _self_model_cache_lock:
+        _self_model_path = Path(path)
+        _self_model_cache = (0.0, "")  # Invalidate cache on path change.
 
 
 def _get_self_model_summary() -> str:
     """Read the self-model prose summary, cached by file mtime."""
     global _self_model_cache
-    if _self_model_path is None:
-        return ""
-    path = _self_model_path
+    with _self_model_cache_lock:
+        if _self_model_path is None:
+            return ""
+        path = _self_model_path
     try:
         if not path.exists():
             return ""
         mtime = path.stat().st_mtime
-        if mtime == _self_model_cache[0]:
-            return _self_model_cache[1]
+        with _self_model_cache_lock:
+            if mtime == _self_model_cache[0]:
+                return _self_model_cache[1]
         import yaml
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         summary = (data.get("summary") or "").strip()[:300]
-        _self_model_cache = (mtime, summary)
+        with _self_model_cache_lock:
+            _self_model_cache = (mtime, summary)
         return summary
     except Exception:
         logger.debug("Failed to read self-model summary", exc_info=True)
