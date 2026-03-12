@@ -591,12 +591,12 @@ class TaskScheduler:
         for tid in expired:
             # Re-check: last_activity may have been updated since the snapshot.
             last = self._session_manager.last_activity.get(tid)
-            if last is not None:
-                import time as _time_mod
-                resolved = self._session_manager.resolve_config(tid)
-                timeout = resolved.session_timeout_minutes
-                if timeout is None or (_time_mod.time() - last) <= timeout * 60:
-                    continue
+            if last is None:
+                continue  # Already cleaned up.
+            resolved = self._session_manager.resolve_config(tid)
+            timeout = resolved.session_timeout_minutes if resolved else None
+            if timeout is None or (_time.time() - last) <= timeout * 60:
+                continue
             logger.info("[scheduler] Session timeout — resetting thread %s", tid)
             try:
                 await self._session_manager.reset_session(tid)

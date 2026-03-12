@@ -148,7 +148,7 @@ An event-driven feedback loop that closes the observe→reflect→adapt cycle. T
 2. **LLM analysis (cheap, one-shot):** A direct `pool.call()` with a prose prompt summarizing recent findings. Only runs when the rule engine finds something interesting.
 3. **Sub-session mutations (expensive, rare):** A constrained sub-session is spawned only when the LLM analysis recommends a creative change (e.g. rewriting a skill). Limited to `read_file`, `skill`, and `append_memory` tools with a 5-round cap. Up to 3 skill actions are processed per cycle (previously only 1).
 4. **Autonomous task creation (rare):** The LLM analysis can recommend creating a new persistent task via `task_actions` in its JSON output. Capped at 1 task per cycle. Task content is prefixed with `[reflection]` for auditability. A `task.created` event is emitted so the scheduler can pick up the new task. Note: recurring scheduling must be configured separately (e.g. via the task tool or UI).
-4. **Pattern-to-skill synthesis (periodic):** Clusters completed sub-session outcomes by tool usage patterns, identifies recurring workflows not yet captured as skills, and proposes new skills via a one-shot LLM call. Gates: ≥20 completed outcomes in the lookback window and 24h cooldown. Proposals are executed as mutation sub-sessions (max 2 per cycle).
+5. **Pattern-to-skill synthesis (periodic):** Clusters completed sub-session outcomes by tool usage patterns, identifies recurring workflows not yet captured as skills, and proposes new skills via a one-shot LLM call. Gates: ≥20 completed outcomes in the lookback window and 24h cooldown. Proposals are executed as mutation sub-sessions (max 2 per cycle).
 
 ### Trigger Conditions (event-driven, no polling)
 
