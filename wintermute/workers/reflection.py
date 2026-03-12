@@ -68,29 +68,37 @@ If you recommend a skill change, add a brief English instruction per action:
 
 
 def _extract_json_tail(text: str) -> dict | None:
-    """Find and parse the last JSON object in *text* using bracket counting.
+    """Find and parse the last JSON object at the end of *text*.
 
-    Handles nested braces correctly, unlike a simple regex approach.
+    Uses ``json.JSONDecoder.raw_decode`` starting from each ``{`` position
+    (searching from the end towards the beginning) and returns the last
+    object that parses successfully as a ``dict`` and extends to the end of
+    the string (ignoring trailing whitespace).  This approach is
+    string-aware (handles braces inside quoted values correctly).
+
     Returns the parsed dict, or ``None`` on failure.
     """
-    end = text.rfind("}")
-    if end == -1:
+    if "}" not in text:
         return None
-    # Walk backwards to find the matching opening brace.
-    depth = 0
-    for i in range(end, -1, -1):
-        if text[i] == "}":
-            depth += 1
-        elif text[i] == "{":
-            depth -= 1
-        if depth == 0:
-            try:
-                obj = json.loads(text[i:end + 1])
-                if isinstance(obj, dict):
-                    return obj
-            except (json.JSONDecodeError, ValueError):
-                pass
-            return None
+    decoder = json.JSONDecoder()
+    # Find all candidate opening braces and try from the last one backwards.
+    brace_positions = [m.start() for m in re.finditer(r"\{", text)]
+    for start in reversed(brace_positions):
+        try:
+            obj, end = decoder.raw_decode(text[start:])
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(obj, dict):
+            continue
+        # Ensure nothing but whitespace follows the parsed JSON object.
+        if text[start + end:].strip():
+            continue
+        return obj
+    # All attempts failed — log for debuggability.
+    logger.warning(
+        "[reflection] Found braces but failed to decode JSON tail (%d chars, last 120: %s)",
+        len(text), text[-120:],
+    )
     return None
 
 
@@ -855,13 +863,12 @@ class ReflectionLoop:
         for ta in task_actions[:1]:
             try:
                 content = f"[reflection] {ta['content']}"
-                schedule_type = ta.get("schedule_type")
                 task_id = await database.async_call(
                     database.add_task,
                     content,
                     5,  # priority
                     None,  # thread_id
-                    schedule_type,
+                    None,  # schedule_type — unscheduled; scheduling configured separately
                     None,  # schedule_desc
                     None,  # schedule_config
                     ta["ai_prompt"],  # ai_prompt
@@ -873,7 +880,6 @@ class ReflectionLoop:
                         "reflection.task_created",
                         task_id=task_id,
                         content=content[:200],
-                        schedule_type=schedule_type,
                     )
                     # Generic event so the scheduler can pick up the new task.
                     self._event_bus.emit(

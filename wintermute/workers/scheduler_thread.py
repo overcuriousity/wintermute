@@ -179,11 +179,28 @@ class TaskScheduler:
             logger.info("[scheduler] Session timeout check scheduled (every 5 min)")
 
     async def _on_task_created(self, event) -> None:
-        """React to task.created events — log for visibility."""
+        """React to task.created events — schedule the job if it has schedule_config."""
         task_id = event.data.get("task_id")
-        schedule_type = event.data.get("schedule_type")
-        if task_id and schedule_type:
-            logger.info("[scheduler] Notified of new scheduled task %s (%s)", task_id, schedule_type)
+        if not task_id:
+            return
+        try:
+            task = await database.async_call(database.get_task, task_id)
+            if not task:
+                return
+            raw_config = task.get("schedule_config")
+            if not raw_config:
+                logger.info("[scheduler] New task %s has no schedule_config — skipping job creation", task_id)
+                return
+            import json as _json
+            schedule_config = _json.loads(raw_config) if isinstance(raw_config, str) else raw_config
+            ai_prompt = task.get("ai_prompt")
+            thread_id = task.get("thread_id")
+            background = bool(task.get("background"))
+            self.ensure_job(task_id, schedule_config, ai_prompt=ai_prompt,
+                            thread_id=thread_id, background=background)
+            logger.info("[scheduler] Scheduled job for new task %s", task_id)
+        except Exception:
+            logger.exception("[scheduler] Failed to process task.created for %s", task_id)
 
     def _restore_prediction_cooldowns(self) -> None:
         """Pre-populate _prediction_last_fired from recent interaction_log entries."""
@@ -562,6 +579,9 @@ class TaskScheduler:
             logger.info("[scheduler] Session timeout — resetting thread %s", tid)
             try:
                 await self._session_manager.reset_session(tid)
+                # Clear the last-activity marker so this thread is not
+                # repeatedly treated as expired on subsequent checks.
+                self._session_manager.last_activity.pop(tid, None)
                 if self._event_bus:
                     self._event_bus.emit("session.timeout_reset", thread_id=tid)
             except Exception:

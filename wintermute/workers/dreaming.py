@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
+import re
 import time as _time
 from dataclasses import dataclass, field
 from datetime import datetime, time as dt_time, timedelta, timezone
@@ -1090,12 +1091,11 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
                     pass
                 elif "||" in text:
                     # Normalize: ensure suffix is well-formed.
-                    import re as _re_pred
-                    suffix_parts = _re_pred.findall(r'\|\|(\w+=[\w,\-]+)\|\|', text)
+                    suffix_parts = re.findall(r'\|\|(\w+=[\w,\-]+)\|\|', text)
                     if suffix_parts:
                         normalized = " ".join(f"||{p}||" for p in suffix_parts)
                         # Strip existing suffix and re-append normalized.
-                        base_text = _re_pred.sub(r'\|\|\w+=[\w,\-]+\|\|', '', text).strip()
+                        base_text = re.sub(r'\|\|\w+=[\w,\-]+\|\|', '', text).strip()
                         text = f"{base_text} {normalized}"
                 tagged = f"[prediction:{pred_type}] {text}"
                 entry_id = await asyncio.to_thread(
