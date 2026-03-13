@@ -1,5 +1,5 @@
 """
-Vector-indexed memory retrieval for Wintermute.
+Ranked memory retrieval for Wintermute.
 
 Provides three backends for memory storage and retrieval:
   - fts5         — SQLite FTS5 keyword search with BM25 ranking (zero-config)

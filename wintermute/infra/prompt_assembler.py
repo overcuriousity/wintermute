@@ -340,8 +340,8 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     include those relevant to the given tool set.  When None (default), all
     sections are included (backward compatible).
 
-    ``query``, when provided alongside a vector memory backend, triggers
-    relevance-ranked memory retrieval instead of loading the full file.
+    ``query``, when provided, triggers relevance-ranked memory retrieval
+    (works with any backend including fts5) instead of loading the full file.
 
     ``memory_results``, when provided, uses pre-fetched memory search results
     instead of calling memory_store.search() synchronously. Callers in async
@@ -431,8 +431,11 @@ def check_component_sizes() -> dict[str, bool]:
     Keys: 'memories', 'tasks', 'skills'
 
     When a query is available, only relevance-ranked results are injected
-    (never oversized). When no query is provided, the full MEMORIES.txt is
-    used as fallback, so we check its size against the threshold.
+    (never oversized). When no query is provided, the full MEMORIES.txt may
+    be used as fallback, so we check its size against the threshold.
+
+    Callers should treat this as a worst-case indicator; when ranked retrieval
+    is active the memories section will be smaller than reported here.
     """
     memories_text = read_text_safe(MEMORIES_FILE)
     memories_oversized = len(memories_text) > MEMORIES_LIMIT
