@@ -1133,8 +1133,10 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
     # Promote validated predictions (high access count) to schemas.
     promoted = 0
     try:
-        # Get all prediction-source entries that are well-accessed.
-        all_entries = await asyncio.to_thread(memory_store.get_all_with_vectors)
+        # Get prediction-source entries that are well-accessed.
+        all_entries = await asyncio.to_thread(
+            memory_store.get_by_source, "dreaming_prediction", 200, False
+        )
         for entry in all_entries:
             if (entry.get("source") == "dreaming_prediction"
                     and entry.get("access_count", 0) >= 5):

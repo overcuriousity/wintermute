@@ -42,7 +42,7 @@ def update_memories(content: str) -> None:
             entries = [l.strip() for l in content.strip().splitlines() if l.strip()]
             memory_store.replace_all(entries)
         except Exception as exc:
-            logger.error("Failed to sync vector store on update_memories: %s", exc)
+            logger.error("Failed to sync memory backend on update_memories: %s", exc)
     data_versioning.commit_async("memory: consolidation")
 
 
@@ -63,7 +63,7 @@ def append_memory(entry: str, source: str = "unknown") -> int:
         try:
             memory_store.add(entry.strip(), source=source)
         except Exception as exc:
-            logger.error("Failed to add memory to vector store: %s", exc)
+            logger.error("Failed to add memory to backend: %s", exc)
     data_versioning.commit_async("memory: append")
     return len(new_content)
 
@@ -105,7 +105,7 @@ def merge_consolidated_memories(snapshot: str, consolidated: str) -> None:
             entries = [l.strip() for l in merged.splitlines() if l.strip()]
             memory_store.replace_all(entries)
         except Exception as exc:
-            logger.error("Failed to sync vector store on merge_consolidated: %s", exc)
+            logger.error("Failed to sync memory backend on merge_consolidated: %s", exc)
 
 
 def write_memories_raw(content: str) -> None:

@@ -376,6 +376,8 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
 
     if not minimal:
         if memory_results is not None:
+            # Treat pre-fetched results as authoritative ([] means search
+            # returned nothing or failed — do not retry).
             if memory_results:
                 memories_text = "\n".join(r["text"] for r in memory_results)
                 sections.append(f"# User Memories (relevance-ranked)\n\n{memories_text}")
