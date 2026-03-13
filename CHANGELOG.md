@@ -5,6 +5,31 @@
 ### Breaking Changes
 
 * **remove: flat-file memory backend** — The `flat_file` memory backend has been removed. All memory storage now uses ranked/searchable backends (`fts5`, `local_vector`, `qdrant`). If your `config.yaml` has `backend: "flat_file"`, change it to `backend: "fts5"` for a zero-config replacement. Startup with an unknown backend name now raises a `ValueError` instead of silently falling back. The startup fallback on init failure has changed from `flat_file` to `fts5`. MEMORIES.txt remains as a git-versioned export target (written by `append_memory` dual-write and dreaming `working_set_export` phase).
+## [0.10.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.9.0-alpha...v0.10.0-alpha) (2026-03-12)
+
+
+### Features
+
+* wire up dead autonomy systems — self-model injection, prediction persistence, session timeouts ([aeb42f6](https://github.com/overcuriousity/wintermute/commit/aeb42f6483a533d34e9800dd107a048b4179cbb2))
+* wire up dead autonomy systems — self-model injection, prediction persistence, session timeouts ([54078a7](https://github.com/overcuriousity/wintermute/commit/54078a70d63167fb20efdc095209ef01c26c08cf))
+
+
+### Bug Fixes
+
+* 6 bugs — query param validation, SSE broadcast, time-gate cleanup, silent logging ([ed0f1be](https://github.com/overcuriousity/wintermute/commit/ed0f1bed4a4e28f23f8eebe3f99c92042e3f2031))
+* address 3 more Copilot review findings ([d3df642](https://github.com/overcuriousity/wintermute/commit/d3df6429d875c101775329388436d0337d7f2b32))
+* address 3 more Copilot review findings ([074630c](https://github.com/overcuriousity/wintermute/commit/074630c7b247182542042f3c35ac379b3bf10747))
+* address 4 more Copilot review findings ([b721f32](https://github.com/overcuriousity/wintermute/commit/b721f32d9e21203dca471346e2374e83ead260b1))
+* address 4 more Copilot review findings ([f27fcd0](https://github.com/overcuriousity/wintermute/commit/f27fcd0a5ec89bd778cc107aeb97bf53e578d191))
+* address 5 more Copilot review findings ([8c3dff1](https://github.com/overcuriousity/wintermute/commit/8c3dff12493234909d9f3a9cb61a8549b4a57f24))
+* address 6 additional Copilot review findings ([3dea2bc](https://github.com/overcuriousity/wintermute/commit/3dea2bcdf7c4570de1d700ddd0da83f6c30270bb))
+* address 7 Copilot review findings on autonomy wiring PR ([7551788](https://github.com/overcuriousity/wintermute/commit/7551788fe03d898f2794df0ac1fcfb096b71b905))
+* address latest Copilot review findings ([e429159](https://github.com/overcuriousity/wintermute/commit/e429159113f6fdf910d4ed41d0ae256d71e09a7d))
+* address remaining Copilot review findings on autonomy PR ([5d383b4](https://github.com/overcuriousity/wintermute/commit/5d383b4d29124ab5714d4ee6aebcfc86a5082769))
+* gate self-model injection on explicit enablement and normalize reflection task scheduling ([53aaae2](https://github.com/overcuriousity/wintermute/commit/53aaae2f8611dc02ff823fd2fe9616d545c26990))
+* session timeout re-check logic and docs numbering ([f4bd616](https://github.com/overcuriousity/wintermute/commit/f4bd61625c5d71fb093d8b974d2303c614ffe71c))
+* sync TaskNode status before workflow done-count in _report() ([d9064d8](https://github.com/overcuriousity/wintermute/commit/d9064d8a4558035554c98030868dae403469b41b))
+* use public resolve_config API and module-level json import ([5a16ba3](https://github.com/overcuriousity/wintermute/commit/5a16ba385f42b81f0ec244115a044a0ba778c195))
 
 ## [0.9.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.8.0-alpha...v0.9.0-alpha) (2026-03-11)
 
