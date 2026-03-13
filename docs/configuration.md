@@ -337,7 +337,7 @@ MEMORIES.txt is kept as a git-versioned export via dual-write on every mutation.
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `backend` | no | `"local_vector"` | `"fts5"`, `"local_vector"`, or `"qdrant"` |
+| `backend` | no | `"local_vector"` if `embeddings.endpoint` is configured, otherwise `"fts5"` | `"fts5"`, `"local_vector"`, or `"qdrant"` |
 | `top_k` | no | `10` | Maximum memories to inject per turn |
 | `score_threshold` | no | `0.3` | Minimum relevance score (vector backends only) |
 
@@ -363,7 +363,7 @@ MEMORIES.txt is kept as a git-versioned export via dual-write on every mutation.
 
 #### `memory.dreaming`
 
-Controls the dreaming pipeline parameters. All backends support the full multi-phase dreaming pipeline.
+Controls the dreaming pipeline parameters. The dedup, contradiction, and schema housekeeping phases rely on vector similarity data and are effectively no-ops when `backend: fts5` is active. The working-set export and creative phases work with all backends.
 
 **Housekeeping settings:**
 

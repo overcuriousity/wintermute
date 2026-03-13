@@ -19,7 +19,7 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **SelfModelProfiler** | `self_model.py` | Operational metrics aggregator and parameter auto-tuner (runs inside reflection cycle) |
 | **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
 | **NL Translator** | `nl_translator.py` | Expands natural-language tool descriptions into structured arguments via a translator LLM |
-| **MemoryStore** | `memory_store.py` | Vector-indexed memory retrieval (FTS5 / local_vector / Qdrant backends) with access tracking and source tagging |
+| **MemoryStore** | `memory_store.py` | Ranked memory retrieval (FTS5 / local_vector / Qdrant backends) with access tracking and source tagging |
 | **PromptAssembler** | `prompt_assembler.py` | Builds system prompts from file components; injects predictions & patterns for main thread |
 | **Database** | `database.py` | SQLite message persistence (per-thread cached connections), thread management, task storage, sub-session outcome tracking, and prediction accuracy tracking |
 

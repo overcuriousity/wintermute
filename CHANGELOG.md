@@ -4,7 +4,8 @@
 
 ### Breaking Changes
 
-* **remove: flat-file memory backend** — The `flat_file` memory backend has been removed. All memory storage now uses ranked/searchable backends (`fts5`, `local_vector`, `qdrant`). If your `config.yaml` has `backend: "flat_file"`, change it to `backend: "fts5"` for a zero-config replacement. Startup with an unknown backend name now raises a `ValueError` instead of silently falling back. The startup fallback on init failure has changed from `flat_file` to `fts5`. MEMORIES.txt remains as a git-versioned export target (written by `append_memory` dual-write and dreaming `working_set_export` phase).
+* **remove: flat-file memory backend** — The `flat_file` memory backend has been removed. All memory storage now uses ranked/searchable backends (`fts5`, `local_vector`, `qdrant`). If your `config.yaml` has `backend: "flat_file"`, change it to `backend: "fts5"` for a zero-config replacement. Startup with an unknown backend name now raises a `ValueError` instead of silently falling back (init-time failures for valid backends still fall back to `fts5`). The startup fallback on init failure has changed from `flat_file` to `fts5`. MEMORIES.txt remains as a git-versioned export target (written by `append_memory` dual-write and dreaming `working_set_export` phase).
+
 ## [0.10.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.9.0-alpha...v0.10.0-alpha) (2026-03-12)
 
 

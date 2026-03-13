@@ -1310,7 +1310,7 @@ def init(config: dict) -> None:
                       backend_name, exc)
         _backend = FTS5Backend()
         _backend.init()
-        return
+        backend_name = "fts5"
 
     # Cold-boot: if backend is empty and MEMORIES.txt has content, import.
     if backend_name in ("fts5", "local_vector", "qdrant"):

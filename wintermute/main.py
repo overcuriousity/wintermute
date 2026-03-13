@@ -345,6 +345,8 @@ async def main() -> None:
     from wintermute.infra import memory_store
     try:
         memory_store.init(cfg.get("memory", {}))
+    except ValueError:
+        raise  # invalid config (unknown backend) — fail fast
     except Exception:
         logger.exception("Memory store init failed — falling back to fts5")
         memory_store.init({"backend": "fts5"})
