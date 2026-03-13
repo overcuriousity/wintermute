@@ -30,7 +30,7 @@ def read_text_safe(path: Path, default: str = "") -> str:
 
 
 def update_memories(content: str) -> None:
-    """Overwrite MEMORIES.txt with *content* and sync the vector store."""
+    """Overwrite MEMORIES.txt with *content* and sync any initialized memory backend."""
     from wintermute.infra import memory_store
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -111,7 +111,7 @@ def merge_consolidated_memories(snapshot: str, consolidated: str) -> None:
 def write_memories_raw(content: str) -> None:
     """Write raw content to MEMORIES.txt under the memories lock.
 
-    Unlike ``update_memories``, this does **not** sync the vector store or
+    Unlike ``update_memories``, this does **not** sync the memory backend or
     trigger a data-versioning commit — the caller is responsible for those
     side-effects.  Used by the dreaming working-set export phase.
     """
