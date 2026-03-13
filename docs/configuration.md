@@ -323,22 +323,21 @@ Notifications are sent to the Matrix rooms listed in `matrix.allowed_rooms` (or 
 
 ### `memory`
 
-Controls how memories are injected into the system prompt. By default, the entire `MEMORIES.txt` file is loaded each turn (flat-file mode). When a vector backend is configured, only the top-K most relevant memories are injected based on the current conversation context.
+Controls how memories are injected into the system prompt. Only the top-K most relevant memories are injected each turn via ranked retrieval from the memory backend. When no query context is available (e.g. first turn), no memories are injected.
 
 Three backends are available:
 
 | Backend | Dependencies | Description |
 |---------|-------------|-------------|
-| `flat_file` | none | Default. Loads entire MEMORIES.txt (current behavior). Zero config. |
-| `fts5` | none | SQLite FTS5 keyword search with BM25 ranking. Creates `data/memory_index.db`. |
-| `local_vector` | embeddings endpoint | Semantic vector search with numpy cosine similarity. Vectors stored in `data/local_vectors.db`. No external vector service required. |
+| `fts5` | none | SQLite FTS5 keyword search with BM25 ranking. Creates `data/memory_index.db`. Zero-config minimum. |
+| `local_vector` | embeddings endpoint | Semantic vector search with numpy cosine similarity. Vectors stored in `data/local_vectors.db`. No external vector service required. Default. |
 | `qdrant` | Qdrant instance + embeddings endpoint | Semantic vector search via Qdrant. Requires a running Qdrant instance and an OpenAI-compatible embeddings endpoint. |
 
-When any non-`flat_file` backend is active, MEMORIES.txt is kept as a git-versioned backup via dual-write on every mutation. If the configured backend fails to initialize at startup, Wintermute warns and falls back to `flat_file` automatically.
+MEMORIES.txt is kept as a git-versioned export via dual-write on every mutation. If the configured backend fails to initialize at startup, Wintermute warns and falls back to `fts5` automatically.
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `backend` | no | `"flat_file"` | `"flat_file"`, `"fts5"`, `"local_vector"`, or `"qdrant"` |
+| `backend` | no | `"local_vector"` if `embeddings.endpoint` is configured, otherwise `"fts5"` | `"fts5"`, `"local_vector"`, or `"qdrant"` |
 | `top_k` | no | `10` | Maximum memories to inject per turn |
 | `score_threshold` | no | `0.3` | Minimum relevance score (vector backends only) |
 
@@ -362,9 +361,9 @@ When any non-`flat_file` backend is active, MEMORIES.txt is kept as a git-versio
 | `api_key` | no | `""` | Qdrant API key (required for Qdrant Cloud or authenticated instances) |
 | `collection` | no | `"wintermute_memories"` | Qdrant collection name |
 
-#### `memory.dreaming` (vector backends only)
+#### `memory.dreaming`
 
-Controls the vector-native dreaming pipeline. Only used when `backend` is `local_vector` or `qdrant`. When `flat_file` is active, only flat-file LLM consolidation + task/skill consolidation run.
+Controls the dreaming pipeline parameters. The dedup, contradiction, schema, and association phases rely on vector similarity data and are effectively no-ops when `backend: fts5` is active. The stale_pruning, task_consolidation, skill_consolidation, prediction, and working_set_export phases work with all backends.
 
 **Housekeeping settings:**
 

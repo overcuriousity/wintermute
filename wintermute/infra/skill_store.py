@@ -6,7 +6,7 @@ Mirrors the ``memory_store`` architecture with three backends:
   - local_vector — SQLite + numpy cosine similarity (default)
   - qdrant       — Qdrant vector DB with embedding-based semantic search
 
-No flat_file backend — skills start with structured storage from day one.
+Skills use the same backend architecture as memory_store.
 
 Module-level singleton pattern (like memory_store.py).
 Call ``init(config, embed_cfg)`` once at startup; all other functions use
@@ -1294,10 +1294,6 @@ def init(config: dict, embed_cfg: dict | None = None) -> None:
     backend_name = config.get("backend")
     if not backend_name:
         backend_name = "local_vector" if _embed_cfg.get("endpoint") else "fts5"
-
-    # flat_file is not supported for skills — normalise to fts5.
-    if backend_name == "flat_file":
-        backend_name = "fts5"
 
     try:
         if backend_name == "fts5":

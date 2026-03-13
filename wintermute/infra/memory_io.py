@@ -30,19 +30,19 @@ def read_text_safe(path: Path, default: str = "") -> str:
 
 
 def update_memories(content: str) -> None:
-    """Overwrite MEMORIES.txt with *content* and sync the vector store."""
+    """Overwrite MEMORIES.txt with *content* and sync any initialized memory backend."""
     from wintermute.infra import memory_store
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with _memories_lock:
         MEMORIES_FILE.write_text(content, encoding="utf-8")
     logger.info("MEMORIES.txt updated (%d chars)", len(content))
-    if memory_store.is_vector_enabled():
+    if memory_store.is_memory_backend_initialized():
         try:
             entries = [l.strip() for l in content.strip().splitlines() if l.strip()]
             memory_store.replace_all(entries)
         except Exception as exc:
-            logger.error("Failed to sync vector store on update_memories: %s", exc)
+            logger.error("Failed to sync memory backend on update_memories: %s", exc)
     data_versioning.commit_async("memory: consolidation")
 
 
@@ -59,11 +59,11 @@ def append_memory(entry: str, source: str = "unknown") -> int:
             new_content = entry.strip()
         MEMORIES_FILE.write_text(new_content, encoding="utf-8")
     logger.info("MEMORIES.txt appended (%d chars total)", len(new_content))
-    if memory_store.is_vector_enabled():
+    if memory_store.is_memory_backend_initialized():
         try:
             memory_store.add(entry.strip(), source=source)
         except Exception as exc:
-            logger.error("Failed to add memory to vector store: %s", exc)
+            logger.error("Failed to add memory to backend: %s", exc)
     data_versioning.commit_async("memory: append")
     return len(new_content)
 
@@ -100,18 +100,18 @@ def merge_consolidated_memories(snapshot: str, consolidated: str) -> None:
             )
         MEMORIES_FILE.write_text(merged, encoding="utf-8")
     logger.info("MEMORIES.txt merged-write (%d chars)", len(merged))
-    if memory_store.is_vector_enabled():
+    if memory_store.is_memory_backend_initialized():
         try:
             entries = [l.strip() for l in merged.splitlines() if l.strip()]
             memory_store.replace_all(entries)
         except Exception as exc:
-            logger.error("Failed to sync vector store on merge_consolidated: %s", exc)
+            logger.error("Failed to sync memory backend on merge_consolidated: %s", exc)
 
 
 def write_memories_raw(content: str) -> None:
     """Write raw content to MEMORIES.txt under the memories lock.
 
-    Unlike ``update_memories``, this does **not** sync the vector store or
+    Unlike ``update_memories``, this does **not** sync the memory backend or
     trigger a data-versioning commit — the caller is responsible for those
     side-effects.  Used by the dreaming working-set export phase.
     """

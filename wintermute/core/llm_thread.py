@@ -684,11 +684,11 @@ class LLMThread:
         from wintermute.infra import memory_store
 
         async def _fetch_memories():
-            if memory_store.is_vector_enabled() and _memory_query:
+            if memory_store.is_memory_backend_initialized() and _memory_query:
                 try:
                     return await asyncio.to_thread(memory_store.search, _memory_query)
                 except Exception as e:
-                    logger.warning("Vector memory search failed, continuing without memory context: %s", e)
+                    logger.warning("Memory search failed, continuing without memory context: %s", e)
                     return []  # empty list (not None) so assembler won't retry
             return None
 

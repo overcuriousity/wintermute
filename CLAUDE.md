@@ -41,7 +41,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 | `turing_protocol.py` | Phase-aware 3-stage pipeline: detect → validate → correct. Phases: `post_inference`, `pre_execution`, `post_execution`. Scoped to `main` and/or `sub_session`. |
 | `matrix_thread.py` | Matrix client (mautrix) with E2E encryption; voice messages transcribed via configurable Whisper endpoint |
 | `web_interface.py` | aiohttp server: WebSocket chat, debug panel (`/debug`), REST API |
-| `dreaming.py` | Nightly memory consolidation: vector-native 4-phase pipeline (dedup, contradictions, stale pruning, working set export) or flat-file LLM consolidation |
+| `dreaming.py` | Nightly memory consolidation: 4-phase housekeeping pipeline (dedup, contradictions, stale pruning, working set export) + 3 creative phases |
 | `memory_harvest.py` | Periodic conversation mining → MEMORIES.txt extraction via sub-sessions |
 | `scheduler_thread.py` | APScheduler-based task scheduling; `ai_prompt` triggers sub-sessions |
 | `database.py` | SQLite ops (per-thread cached connections): messages, tasks, summaries, interaction_log |
@@ -56,7 +56,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 
 - `data/` has its own local git repo for auto-versioning; mutations to memories and skills are auto-committed for rollback (`cd data && git log`)
 - `data/prompts/*.txt` — All prompt templates (externalized, not hardcoded); seed prompts are per-language (`SEED_en.txt`, `SEED_de.txt`, ...)
-- `data/MEMORIES.txt` — Long-term memory (append-based, consolidated nightly)
+- `data/MEMORIES.txt` — Git-versioned working set export of top-accessed memories (written by dreaming + dual-write on append)
 - `data/conversation.db` — SQLite: messages, summaries, tasks, interaction_log
 - `data/skills/` — Learned procedures (vector-indexed via skill store; legacy `*.md` files migrated at first startup)
 - `data/scratchpad/{workflow_id}/` — Per-workflow directories for parallel worker communication (preserved after completion for later reference; overwritten if a new workflow reuses the same ID)

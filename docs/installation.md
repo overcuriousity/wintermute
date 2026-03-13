@@ -331,7 +331,7 @@ docker run -d --name qdrant -p 6333:6333 qdrant/qdrant
 
 See the [Qdrant documentation](https://qdrant.tech/documentation/quick-start/) for more options.
 
-If no embeddings endpoint is configured, Wintermute falls back to `flat_file` (plain text, no ranking).
+If no embeddings endpoint is configured, Wintermute falls back to `fts5` (SQLite keyword search with BM25 ranking, no external services needed).
 
 ## Timezone Configuration
 

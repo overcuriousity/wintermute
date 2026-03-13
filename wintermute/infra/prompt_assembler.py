@@ -23,14 +23,11 @@ from zoneinfo import ZoneInfo
 
 from wintermute.infra import database
 from wintermute.infra import prompt_loader
-from wintermute.infra.memory_io import read_text_safe
-from wintermute.infra.paths import MEMORIES_FILE
 
 logger = logging.getLogger(__name__)
 
 # Size thresholds (characters) that trigger AI summarisation.
 # Defaults — overridden at startup via set_component_limits() from config.yaml.
-MEMORIES_LIMIT = 10_000
 TASKS_LIMIT    = 5_000
 SKILLS_LIMIT   = 2_000  # TOC-only; individual skills loaded on demand
 
@@ -45,13 +42,15 @@ _sections_lock = threading.Lock()
 
 def set_component_limits(memories: int = 10_000, tasks: int = 5_000,
                          skills: int = 2_000, **_compat) -> None:
-    """Override component size limits from config.yaml."""
-    global MEMORIES_LIMIT, TASKS_LIMIT, SKILLS_LIMIT
-    MEMORIES_LIMIT = memories
+    """Override component size limits from config.yaml.
+
+    The ``memories`` parameter is accepted for backward compatibility but
+    ignored — memories are always injected via ranked retrieval.
+    """
+    global TASKS_LIMIT, SKILLS_LIMIT
     TASKS_LIMIT = tasks
     SKILLS_LIMIT = skills
-    logger.info("Component size limits: memories=%d, tasks=%d, skills=%d",
-                memories, tasks, skills)
+    logger.info("Component size limits: tasks=%d, skills=%d", tasks, skills)
 
 
 def set_timezone(tz: str) -> None:
@@ -340,8 +339,8 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     include those relevant to the given tool set.  When None (default), all
     sections are included (backward compatible).
 
-    ``query``, when provided alongside a vector memory backend, triggers
-    relevance-ranked memory retrieval instead of loading the full file.
+    ``query``, when provided, triggers relevance-ranked memory retrieval
+    (works with any backend including fts5) instead of loading the full file.
 
     ``memory_results``, when provided, uses pre-fetched memory search results
     instead of calling memory_store.search() synchronously. Callers in async
@@ -377,10 +376,12 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
 
     if not minimal:
         if memory_results is not None:
+            # Treat pre-fetched results as authoritative ([] means search
+            # returned nothing or failed — do not retry).
             if memory_results:
                 memories_text = "\n".join(r["text"] for r in memory_results)
                 sections.append(f"# User Memories (relevance-ranked)\n\n{memories_text}")
-        elif memory_store.is_vector_enabled() and query:
+        elif query:
             try:
                 results = memory_store.search(query)
             except Exception as exc:
@@ -389,10 +390,6 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
             if results:
                 memories_text = "\n".join(r["text"] for r in results)
                 sections.append(f"# User Memories (relevance-ranked)\n\n{memories_text}")
-        else:
-            memories = read_text_safe(MEMORIES_FILE)
-            if memories:
-                sections.append(f"# User Memories\n\n{memories}")
 
         tasks_text = database.get_active_tasks_text(thread_id=thread_id)
         if tasks_text:
@@ -430,16 +427,10 @@ def check_component_sizes() -> dict[str, bool]:
     Return a dict indicating which components exceed their size thresholds.
     Keys: 'memories', 'tasks', 'skills'
 
-    When vector memory is enabled, the full MEMORIES.txt is never injected
-    into the system prompt (only relevance-ranked results are), so the
-    memories size check is skipped.
+    Memories are always injected via ranked retrieval from the memory backend,
+    so the memories component is never oversized.
     """
-    from wintermute.infra import memory_store
-
-    if memory_store.is_vector_enabled():
-        memories_oversized = False
-    else:
-        memories_oversized = len(read_text_safe(MEMORIES_FILE)) > MEMORIES_LIMIT
+    memories_oversized = False
     tasks_len     = len(database.get_active_tasks_text())
     skills_toc_len = len(_read_skills_toc())
     return {
