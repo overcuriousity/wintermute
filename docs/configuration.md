@@ -363,7 +363,7 @@ MEMORIES.txt is kept as a git-versioned export via dual-write on every mutation.
 
 #### `memory.dreaming`
 
-Controls the dreaming pipeline parameters. The dedup, contradiction, and schema housekeeping phases rely on vector similarity data and are effectively no-ops when `backend: fts5` is active. The working-set export and creative phases work with all backends.
+Controls the dreaming pipeline parameters. The dedup, contradiction, and schema housekeeping (and other vector-based creative) phases rely on vector similarity data and are effectively no-ops when `backend: fts5` is active. Only the working-set export phase operates with all backends.
 
 **Housekeeping settings:**
 
