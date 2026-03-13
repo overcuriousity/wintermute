@@ -178,7 +178,7 @@ These are some architectural choices, which should make it better for local LLMs
 data/
   .git/                      -- Local git repo for auto-versioning (rollback via git log / git revert)
   BASE_PROMPT.txt            -- Immutable core instructions
-  MEMORIES.txt               -- Working set export of top-accessed memories (written by dreaming working_set_export phase). Git-versioned.
+  MEMORIES.txt               -- Working set export of top-accessed memories (written by dreaming working_set_export phase and dual-write on append/update). Git-versioned.
   memory_index.db            -- FTS5 keyword index (only when backend=fts5)
   local_vectors.db           -- SQLite vector store with metadata (only when backend=local_vector)
   conversation.db (tasks)     -- Active goals / working memory (managed via task tool, stored in SQLite)

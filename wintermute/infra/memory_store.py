@@ -3,7 +3,7 @@ Ranked memory retrieval for Wintermute.
 
 Provides three backends for memory storage and retrieval:
   - fts5         — SQLite FTS5 keyword search with BM25 ranking (zero-config)
-  - local_vector — SQLite + numpy cosine similarity (default)
+  - local_vector — SQLite + numpy cosine similarity (default when embeddings.endpoint is configured)
   - qdrant       — Qdrant vector DB with embedding-based semantic search
 
 Module-level singleton pattern (like database.py, prompt_assembler.py).
