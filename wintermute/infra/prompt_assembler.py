@@ -23,14 +23,11 @@ from zoneinfo import ZoneInfo
 
 from wintermute.infra import database
 from wintermute.infra import prompt_loader
-from wintermute.infra.memory_io import read_text_safe
-from wintermute.infra.paths import MEMORIES_FILE
 
 logger = logging.getLogger(__name__)
 
 # Size thresholds (characters) that trigger AI summarisation.
 # Defaults — overridden at startup via set_component_limits() from config.yaml.
-MEMORIES_LIMIT = 10_000
 TASKS_LIMIT    = 5_000
 SKILLS_LIMIT   = 2_000  # TOC-only; individual skills loaded on demand
 
@@ -45,13 +42,15 @@ _sections_lock = threading.Lock()
 
 def set_component_limits(memories: int = 10_000, tasks: int = 5_000,
                          skills: int = 2_000, **_compat) -> None:
-    """Override component size limits from config.yaml."""
-    global MEMORIES_LIMIT, TASKS_LIMIT, SKILLS_LIMIT
-    MEMORIES_LIMIT = memories
+    """Override component size limits from config.yaml.
+
+    The ``memories`` parameter is accepted for backward compatibility but
+    ignored — memories are always injected via ranked retrieval.
+    """
+    global TASKS_LIMIT, SKILLS_LIMIT
     TASKS_LIMIT = tasks
     SKILLS_LIMIT = skills
-    logger.info("Component size limits: memories=%d, tasks=%d, skills=%d",
-                memories, tasks, skills)
+    logger.info("Component size limits: tasks=%d, skills=%d", tasks, skills)
 
 
 def set_timezone(tz: str) -> None:
@@ -389,10 +388,6 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
             if results:
                 memories_text = "\n".join(r["text"] for r in results)
                 sections.append(f"# User Memories (relevance-ranked)\n\n{memories_text}")
-        else:
-            memories = read_text_safe(MEMORIES_FILE)
-            if memories:
-                sections.append(f"# User Memories\n\n{memories}")
 
         tasks_text = database.get_active_tasks_text(thread_id=thread_id)
         if tasks_text:
@@ -430,15 +425,10 @@ def check_component_sizes() -> dict[str, bool]:
     Return a dict indicating which components exceed their size thresholds.
     Keys: 'memories', 'tasks', 'skills'
 
-    When a query is available, only relevance-ranked results are injected
-    (never oversized). When no query is provided, the full MEMORIES.txt may
-    be used as fallback, so we check its size against the threshold.
-
-    Callers should treat this as a worst-case indicator; when ranked retrieval
-    is active the memories section will be smaller than reported here.
+    Memories are always injected via ranked retrieval from the memory backend,
+    so the memories component is never oversized.
     """
-    memories_text = read_text_safe(MEMORIES_FILE)
-    memories_oversized = len(memories_text) > MEMORIES_LIMIT
+    memories_oversized = False
     tasks_len     = len(database.get_active_tasks_text())
     skills_toc_len = len(_read_skills_toc())
     return {

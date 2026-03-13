@@ -323,7 +323,7 @@ Notifications are sent to the Matrix rooms listed in `matrix.allowed_rooms` (or 
 
 ### `memory`
 
-Controls how memories are injected into the system prompt. When a conversation query is available, only the top-K most relevant memories are injected each turn via ranked retrieval. When no query context is available (e.g. first turn), the full MEMORIES.txt is used as a fallback.
+Controls how memories are injected into the system prompt. Only the top-K most relevant memories are injected each turn via ranked retrieval from the memory backend. When no query context is available (e.g. first turn), no memories are injected.
 
 Three backends are available:
 

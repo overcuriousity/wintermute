@@ -514,9 +514,8 @@ scheduler:
 #   "qdrant"       Semantic vector search via Qdrant. Requires a running
 #                  Qdrant instance and an embeddings endpoint.
 #
-# When a conversation query is available, only the top_k most relevant
-# memories are injected per turn. Without a query (e.g. first turn),
-# the full MEMORIES.txt is used as fallback.
+# Only the top_k most relevant memories are injected per turn via
+# ranked retrieval from the memory backend.
 # MEMORIES.txt is kept as a git-versioned export (dual-write on every mutation).
 #
 # If the configured backend fails to initialize at startup, Wintermute
