@@ -684,7 +684,7 @@ class LLMThread:
         from wintermute.infra import memory_store
 
         async def _fetch_memories():
-            if memory_store.is_vector_enabled() and _memory_query:
+            if memory_store.is_memory_backend_initialized() and _memory_query:
                 try:
                     return await asyncio.to_thread(memory_store.search, _memory_query)
                 except Exception as e:

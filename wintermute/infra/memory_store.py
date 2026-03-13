@@ -1285,7 +1285,17 @@ def init(config: dict) -> None:
     """
     global _backend, _config
     _config = dict(config)
-    backend_name = config.get("backend", "local_vector")
+    # Default to fts5 (zero-config) unless embeddings endpoint is configured.
+    embeddings_cfg = config.get("embeddings", {})
+    has_embeddings = bool(embeddings_cfg.get("endpoint"))
+    default_backend = "local_vector" if has_embeddings else "fts5"
+    backend_name = config.get("backend", default_backend)
+
+    if backend_name not in ("fts5", "local_vector", "qdrant"):
+        raise ValueError(
+            f"Unknown memory backend {backend_name!r}. "
+            f"Supported backends: fts5, local_vector, qdrant"
+        )
 
     try:
         if backend_name == "fts5":
@@ -1294,11 +1304,6 @@ def init(config: dict) -> None:
             _backend = LocalVectorBackend(config)
         elif backend_name == "qdrant":
             _backend = QdrantBackend(config)
-        else:
-            raise ValueError(
-                f"Unknown memory backend {backend_name!r}. "
-                f"Supported backends: fts5, local_vector, qdrant"
-            )
         _backend.init()
     except Exception as exc:
         logger.error("Memory backend %r failed to init: %s — falling back to fts5",
@@ -1442,11 +1447,16 @@ def search_neighbors_batch(
 
 
 def is_vector_enabled() -> bool:
-    """True when a memory backend has been initialized.
+    """True when an embedding-based vector backend is active.
 
-    All remaining backends (fts5, local_vector, qdrant) support vector/ranked
-    search, so this returns True whenever a backend is active.
+    Returns True only for backends that use embedding-based vector
+    search (local_vector or qdrant), and False for pure keyword/FTS backends.
     """
+    return isinstance(_backend, (LocalVectorBackend, QdrantBackend))
+
+
+def is_memory_backend_initialized() -> bool:
+    """True when any memory backend has been initialized (fts5, local_vector, qdrant)."""
     return _backend is not None
 
 

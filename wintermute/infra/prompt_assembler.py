@@ -430,11 +430,12 @@ def check_component_sizes() -> dict[str, bool]:
     Return a dict indicating which components exceed their size thresholds.
     Keys: 'memories', 'tasks', 'skills'
 
-    All memory backends support ranked search, so the full MEMORIES.txt is
-    never injected into the system prompt — only relevance-ranked results are.
-    The memories size check is therefore always False.
+    When a query is available, only relevance-ranked results are injected
+    (never oversized). When no query is provided, the full MEMORIES.txt is
+    used as fallback, so we check its size against the threshold.
     """
-    memories_oversized = False
+    memories_text = read_text_safe(MEMORIES_FILE)
+    memories_oversized = len(memories_text) > MEMORIES_LIMIT
     tasks_len     = len(database.get_active_tasks_text())
     skills_toc_len = len(_read_skills_toc())
     return {

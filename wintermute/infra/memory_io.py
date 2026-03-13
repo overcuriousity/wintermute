@@ -37,7 +37,7 @@ def update_memories(content: str) -> None:
     with _memories_lock:
         MEMORIES_FILE.write_text(content, encoding="utf-8")
     logger.info("MEMORIES.txt updated (%d chars)", len(content))
-    if memory_store.is_vector_enabled():
+    if memory_store.is_memory_backend_initialized():
         try:
             entries = [l.strip() for l in content.strip().splitlines() if l.strip()]
             memory_store.replace_all(entries)
@@ -59,7 +59,7 @@ def append_memory(entry: str, source: str = "unknown") -> int:
             new_content = entry.strip()
         MEMORIES_FILE.write_text(new_content, encoding="utf-8")
     logger.info("MEMORIES.txt appended (%d chars total)", len(new_content))
-    if memory_store.is_vector_enabled():
+    if memory_store.is_memory_backend_initialized():
         try:
             memory_store.add(entry.strip(), source=source)
         except Exception as exc:
@@ -100,7 +100,7 @@ def merge_consolidated_memories(snapshot: str, consolidated: str) -> None:
             )
         MEMORIES_FILE.write_text(merged, encoding="utf-8")
     logger.info("MEMORIES.txt merged-write (%d chars)", len(merged))
-    if memory_store.is_vector_enabled():
+    if memory_store.is_memory_backend_initialized():
         try:
             entries = [l.strip() for l in merged.splitlines() if l.strip()]
             memory_store.replace_all(entries)
