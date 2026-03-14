@@ -119,7 +119,9 @@ def ensure_data_dirs() -> None:
 # Graceful shutdown
 # ---------------------------------------------------------------------------
 
-_RESTART_EXIT_CODE = 42
+# Fallback exit code when os.execv() fails — systemd's Restart=on-failure
+# will restart the service on any non-zero exit.
+_EXECV_FALLBACK_EXIT_CODE = 42
 
 
 class ShutdownCoordinator:
@@ -881,8 +883,8 @@ async def main() -> None:
             os.execv(sys.executable, [sys.executable, "-m", "wintermute.main"] + sys.argv[1:])
         except OSError:
             logger.exception("os.execv failed — exiting with code %d for systemd restart",
-                             _RESTART_EXIT_CODE)
-            sys.exit(_RESTART_EXIT_CODE)
+                             _EXECV_FALLBACK_EXIT_CODE)
+            sys.exit(_EXECV_FALLBACK_EXIT_CODE)
 
 
 if __name__ == "__main__":
