@@ -90,9 +90,14 @@ def _connect() -> sqlite3.Connection:
 
 def _add_column(conn: sqlite3.Connection, table: str, column: str, col_type: str) -> None:
     """Add a column to an existing table if it does not already exist."""
-    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    # Validate identifiers to prevent SQL injection (table/column are never
+    # user-controlled today, but defense-in-depth is cheap here).
+    _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+    if not _IDENT_RE.match(table) or not _IDENT_RE.match(column):
+        raise ValueError(f"Invalid SQL identifier: table={table!r}, column={column!r}")
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info([{table}])")}
     if column not in existing:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
+        conn.execute(f"ALTER TABLE [{table}] ADD COLUMN [{column}] {col_type}")
         conn.commit()
 
 
@@ -666,14 +671,15 @@ def save_sub_session_outcome(**fields) -> int:
     embedding_blob = None
     try:
         from wintermute.infra import memory_store
-        if memory_store.is_vector_enabled() and memory_store._config:
-            embed_cfg = memory_store._config.get("embeddings", {})
-            if embed_cfg.get("endpoint"):
-                vectors = memory_store._embed([objective], embed_cfg)
+        if memory_store.is_vector_enabled():
+            from wintermute.infra.llm_utils import embed
+            embed_cfg = memory_store.get_embed_config()
+            if embed_cfg and embed_cfg.get("endpoint"):
+                vectors = embed([objective], embed_cfg)
                 if vectors and vectors[0]:
                     embedding_blob = struct.pack(f"{len(vectors[0])}f", *vectors[0])
     except Exception as exc:
-        logger.debug("Could not embed outcome objective: %s", exc)
+        logger.warning("Could not embed outcome objective: %s", exc)
 
     with _connect() as conn:
         cur = conn.execute(

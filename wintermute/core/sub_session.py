@@ -560,6 +560,33 @@ class SubSessionManager:
                     "(session does not exist — possibly hallucinated by LLM)",
                     session_id, dep_id,
                 )
+
+        # Cycle detection: walk the transitive dependency graph from each dep.
+        # If session_id is reachable from any dep, we have a cycle.
+        if deps:
+            visited: set[str] = set()
+            stack = list(deps)
+            while stack:
+                nid = stack.pop()
+                if nid == session_id:
+                    logger.error(
+                        "Sub-session %s: dependency cycle detected — "
+                        "dropping all dependencies to prevent deadlock",
+                        session_id,
+                    )
+                    return []
+                if nid in visited:
+                    continue
+                visited.add(nid)
+                # Walk upstream: find what nid depends on via its workflow node.
+                wf_id = self._session_to_workflow.get(nid)
+                if wf_id:
+                    wf = self._workflows.get(wf_id)
+                    if wf:
+                        node = wf.nodes.get(nid)
+                        if node:
+                            stack.extend(node.depends_on)
+
         return deps
 
     def _resolve_root_thread(self, parent_thread_id: Optional[str]) -> Optional[str]:
@@ -755,8 +782,14 @@ class SubSessionManager:
         # Create scratchpad directory for sibling communication.
         workflow_id = self._session_to_workflow.get(session_id)
         if workflow_id:
-            scratchpad_dir = Path(f"data/scratchpad/{workflow_id}")
-            scratchpad_dir.mkdir(parents=True, exist_ok=True)
+            # Sanitise workflow_id to prevent path traversal.
+            safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", workflow_id)
+            scratchpad_dir = Path("data/scratchpad") / safe_id
+            resolved = scratchpad_dir.resolve()
+            if not resolved.is_relative_to(Path("data/scratchpad").resolve()):
+                logger.error("Scratchpad path escapes base directory: %s", workflow_id)
+            else:
+                scratchpad_dir.mkdir(parents=True, exist_ok=True)
 
         existing = self._states.get(session_id)
         state = SubSessionState(

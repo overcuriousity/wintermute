@@ -284,7 +284,7 @@ def _parse_arrow_style(
 
     brace_start = args_m.end() - 1  # position of '{'
     depth = 0
-    brace_end = brace_start
+    brace_end = -1
     for i, ch in enumerate(body[brace_start:], brace_start):
         if ch == "{":
             depth += 1
@@ -293,6 +293,10 @@ def _parse_arrow_style(
             if depth == 0:
                 brace_end = i
                 break
+
+    if brace_end <= brace_start:
+        logger.warning("Unmatched braces in arrow-style args block for tool %r", name)
+        return [SyntheticToolCall.make(name, "{}")]
 
     args_body = body[brace_start + 1 : brace_end].strip()
 

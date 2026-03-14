@@ -1226,6 +1226,11 @@ def recommend(
     return []
 
 
+def get_embed_config() -> dict:
+    """Return the embeddings sub-config (public accessor for cross-module use)."""
+    return _config.get("embeddings", {})
+
+
 def is_qdrant_backend() -> bool:
     """True when the active backend is QdrantBackend."""
     return isinstance(_backend, QdrantBackend)
