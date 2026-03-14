@@ -43,19 +43,12 @@ def append_memory(entry: str, source: str = "unknown", *, pool=None, loop=None) 
             )
             future.result(timeout=30)
         except (concurrent.futures.TimeoutError, TimeoutError):
-            # The coroutine is still running on the event loop — cancel it
-            # to avoid a duplicate add if we fall back.
-            future.cancel()
-            logger.warning("add_with_dedup timed out, attempting cancel + plain add")
-            # Give cancellation a moment to propagate; if the coroutine
-            # already completed we accept the result and skip fallback.
-            try:
-                future.result(timeout=2)
-                # Completed successfully despite the earlier timeout — no fallback needed.
-            except (asyncio.CancelledError, concurrent.futures.TimeoutError, TimeoutError):
-                memory_store.add(entry.strip(), source=source)
-            except Exception:
-                memory_store.add(entry.strip(), source=source)
+            # The coroutine may still be running (e.g. blocked in the LLM
+            # merge call).  Do NOT fall back to a plain add — that risks
+            # duplicates if add_with_dedup eventually completes.  The entry
+            # will be added when the coroutine finishes, or on the next
+            # append if it was lost.
+            logger.warning("add_with_dedup timed out; coroutine still in progress, skipping fallback")
         except Exception as exc:
             logger.error("add_with_dedup failed, falling back to plain add: %s", exc)
             memory_store.add(entry.strip(), source=source)

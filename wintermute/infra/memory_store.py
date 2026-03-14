@@ -1145,6 +1145,57 @@ def create_snapshot() -> str:
 
 _DEDUP_SIMILARITY_THRESHOLD = 0.80
 
+# Source priority for merge promotion — lower index = higher protection.
+_SOURCE_PRIORITY = ("user_explicit", "dreaming_schema", "harvest", "unknown")
+
+
+def _promote_source(entry_id: str, new_source: str) -> None:
+    """Promote the source tag on *entry_id* if *new_source* has higher priority.
+
+    Both backends preserve the existing source on upsert, so after a merge
+    the existing (possibly lower-priority) source remains.  This function
+    explicitly upgrades it when the incoming entry has a more protective source
+    (e.g. user_explicit should never be downgraded to harvest).
+    """
+    def _rank(s: str) -> int:
+        try:
+            return _SOURCE_PRIORITY.index(s)
+        except ValueError:
+            return len(_SOURCE_PRIORITY)
+
+    if isinstance(_backend, LocalVectorBackend):
+        with _backend._lock:
+            conn = _backend._connect()
+            try:
+                row = conn.execute(
+                    "SELECT source FROM local_vectors WHERE entry_id = ?",
+                    (entry_id,),
+                ).fetchone()
+                if row and _rank(new_source) < _rank(row[0]):
+                    conn.execute(
+                        "UPDATE local_vectors SET source = ? WHERE entry_id = ?",
+                        (new_source, entry_id),
+                    )
+                    conn.commit()
+            finally:
+                conn.close()
+    elif isinstance(_backend, QdrantBackend):
+        try:
+            pts = _backend._client.retrieve(
+                collection_name=_backend._collection,
+                ids=[entry_id], with_payload=True, with_vectors=False,
+            )
+            if pts:
+                existing_source = pts[0].payload.get("source", "unknown")
+                if _rank(new_source) < _rank(existing_source):
+                    _backend._client.set_payload(
+                        collection_name=_backend._collection,
+                        payload={"source": new_source},
+                        points=[entry_id],
+                    )
+        except Exception:
+            logger.debug("Source promotion failed for %s", entry_id, exc_info=True)
+
 
 async def add_with_dedup(entry: str, source: str = "unknown", *, pool=None) -> str:
     """Add a memory entry, merging with an existing near-duplicate if found.
@@ -1153,8 +1204,10 @@ async def add_with_dedup(entry: str, source: str = "unknown", *, pool=None) -> s
     2. If a match is found and *pool* is provided, merge via LLM.
     3. Upsert the merged text under the existing entry_id.  Both
        LocalVectorBackend and QdrantBackend preserve metadata
-       (created_at, access_count, last_accessed, source) on upsert.
-    4. If no match, fall back to plain ``add()``.
+       (created_at, access_count, last_accessed) on upsert.
+    4. Promote the source tag if the new entry's source has higher
+       priority (e.g. ``user_explicit`` > ``harvest``).
+    5. If no match, fall back to plain ``add()``.
 
     Returns the entry_id of the new/merged entry.
     """
@@ -1184,10 +1237,13 @@ async def add_with_dedup(entry: str, source: str = "unknown", *, pool=None) -> s
             if merged:
                 # Upsert under the existing entry_id.  Both backends'
                 # ON CONFLICT / upsert logic preserves created_at,
-                # access_count, last_accessed, and source — no delete needed.
+                # access_count, and last_accessed — no delete needed.
                 new_id = await asyncio.to_thread(
                     add, merged, entry_id=existing_id, source=source
                 )
+                # Promote source if the new entry has higher priority
+                # (e.g. user_explicit merged into a harvest entry).
+                await asyncio.to_thread(_promote_source, existing_id, source)
                 logger.info(
                     "Memory dedup: merged existing %s (%.0f%% sim) → %s",
                     existing_id, hits[0].get("score", 0) * 100, new_id,
