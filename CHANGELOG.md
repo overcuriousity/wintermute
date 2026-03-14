@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.2-alpha](https://github.com/overcuriousity/wintermute/compare/v0.11.1-alpha...v0.11.2-alpha) (2026-03-14)
+
+
+### Bug Fixes
+
+* address race conditions, missing timeouts, and resource leaks ([4a77daf](https://github.com/overcuriousity/wintermute/commit/4a77dafd07def9e1f8ffa370da032ae4df696030))
+
 ## [0.11.1-alpha](https://github.com/overcuriousity/wintermute/compare/v0.11.0-alpha...v0.11.1-alpha) (2026-03-14)
 
 
