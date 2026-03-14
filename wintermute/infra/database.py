@@ -574,8 +574,14 @@ def get_interaction_log(limit: int = 200, offset: int = 0,
         conditions.append("session=?")
         params.append(session_filter)
     if action_filter:
-        conditions.append("action=?")
-        params.append(action_filter)
+        # Also match legacy turing_* action names for convergence_* filters.
+        legacy = action_filter.replace("convergence_", "turing_", 1) if action_filter.startswith("convergence_") else None
+        if legacy and legacy != action_filter:
+            conditions.append("action IN (?, ?)")
+            params.extend([action_filter, legacy])
+        else:
+            conditions.append("action=?")
+            params.append(action_filter)
     if before_id is not None:
         conditions.append("id < ?")
         params.append(before_id)
@@ -621,8 +627,13 @@ def count_interaction_log(session_filter: Optional[str] = None,
         conditions.append("session=?")
         params.append(session_filter)
     if action_filter:
-        conditions.append("action=?")
-        params.append(action_filter)
+        legacy = action_filter.replace("convergence_", "turing_", 1) if action_filter.startswith("convergence_") else None
+        if legacy and legacy != action_filter:
+            conditions.append("action IN (?, ?)")
+            params.extend([action_filter, legacy])
+        else:
+            conditions.append("action=?")
+            params.append(action_filter)
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     with _connect() as conn:
         row = conn.execute(
