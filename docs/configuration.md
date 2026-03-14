@@ -208,15 +208,14 @@ Hooks are **scoped** to run in `main` (user-facing thread), `sub_session`
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `backends` | no | — | **Deprecated** — use `llm.convergence_protocol` instead. Still supported for backwards compatibility |
+| `backends` | no | — | **Removed** — use `llm.convergence_protocol` instead |
 | `validators` | no | all enabled | Per-hook enable/disable overrides (see below) |
 
 **Disabling:** Set `llm.convergence_protocol: []` to disable entirely, or set individual
 validators to `false` to suppress specific checks.
 
-**Default behavior:** If the `convergence_protocol:` section is omitted entirely,
-the protocol defaults to using the base model backends with all validators
-enabled.
+**Default behavior:** If `llm.convergence_protocol` is omitted or set to `[]`,
+the protocol is disabled. To enable it, list one or more backend names.
 
 Currently available validators:
 

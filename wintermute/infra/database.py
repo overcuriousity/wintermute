@@ -191,6 +191,11 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     conn.commit()
     # Inline migrations: add columns that may not exist in older DBs.
     _add_column(conn, "sub_session_outcomes", "task_id", "TEXT")
+    # Rename turing_verdict → convergence_verdict for existing databases.
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(sub_session_outcomes)")}
+    if "turing_verdict" in existing_cols and "convergence_verdict" not in existing_cols:
+        conn.execute("ALTER TABLE sub_session_outcomes RENAME COLUMN turing_verdict TO convergence_verdict")
+        conn.commit()
 
 
 def init_db() -> None:
@@ -876,7 +881,7 @@ def get_cp_violation_stats() -> dict:
         rows = conn.execute(
             "SELECT llm, COUNT(*) as cnt "
             "FROM interaction_log "
-            "WHERE action = 'convergence_validation' AND status = 'violation_detected' "
+            "WHERE action IN ('convergence_validation', 'turing_validation') AND status = 'violation_detected' "
             "GROUP BY llm"
         ).fetchall()
         confirmed_by_backend = {r["llm"]: r["cnt"] for r in rows}
@@ -885,7 +890,7 @@ def get_cp_violation_stats() -> dict:
         correction_rows = conn.execute(
             "SELECT llm, COUNT(*) as cnt "
             "FROM interaction_log "
-            "WHERE action = 'convergence_correction' "
+            "WHERE action IN ('convergence_correction', 'turing_correction') "
             "GROUP BY llm"
         ).fetchall()
         corrections_by_backend = {r["llm"]: r["cnt"] for r in correction_rows}
@@ -896,14 +901,14 @@ def get_cp_violation_stats() -> dict:
             "SUM(CASE WHEN status = 'violation_detected' THEN 1 ELSE 0 END) as detected, "
             "COUNT(*) as total_checks "
             "FROM interaction_log "
-            "WHERE action = 'convergence_detection' "
+            "WHERE action IN ('convergence_detection', 'turing_detection') "
             "GROUP BY llm"
         ).fetchall()
 
         # Violation type breakdown from convergence_validation output JSON
         type_rows = conn.execute(
             "SELECT llm, output FROM interaction_log "
-            "WHERE action = 'convergence_validation' AND status = 'violation_detected'"
+            "WHERE action IN ('convergence_validation', 'turing_validation') AND status = 'violation_detected'"
         ).fetchall()
 
     # Parse violation types per backend

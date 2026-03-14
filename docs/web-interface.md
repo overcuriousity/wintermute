@@ -23,27 +23,27 @@ The debug panel is backed by a REST API:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/debug/sessions` | List all sessions with token budgets |
-| GET | `/api/debug/sessions/{thread_id}/messages` | Get messages for a session |
-| POST | `/api/debug/sessions/{thread_id}/send` | Inject a message into a session |
-| POST | `/api/debug/sessions/{thread_id}/delete` | Archive and clear a session |
-| POST | `/api/debug/sessions/{thread_id}/compact` | Force context compaction |
-| GET | `/api/debug/subsessions` | List all sub-sessions |
-| GET | `/api/debug/subsessions/{id}/messages` | Get full message history for a sub-session |
-| GET | `/api/debug/workflows` | List all workflows |
-| GET | `/api/debug/jobs` | List all scheduler jobs |
-| GET | `/api/debug/config` | Dump the current (sanitised) runtime config |
-| GET | `/api/debug/system-prompt` | Get the assembled system prompt + tool schemas with token counts |
-| GET | `/api/debug/tasks` | List all tasks |
-| POST | `/api/debug/tasks` | Create a new task |
-| PUT | `/api/debug/tasks/{task_id}` | Update a task |
-| DELETE | `/api/debug/tasks/{task_id}` | Delete a task |
-| GET | `/api/debug/interaction-log` | List interaction log entries (Convergence Protocol, dreaming, embedding calls, Qdrant operations) |
-| GET | `/api/debug/interaction-log/{id}` | Get a specific interaction log entry |
-| GET | `/api/debug/memory` | Get memory store stats and search results (query: `q`, `k`) |
-| GET | `/api/debug/outcomes` | List sub-session outcomes with aggregate stats (supports `status`, `limit`, `offset` query params) |
-| GET | `/api/debug/stream` | Server-sent events stream for live panel updates |
-| GET | `/api/debug/thread-config` | List all per-thread config overrides and available backends |
-| GET | `/api/debug/thread-config/{thread_id}` | Get resolved config for a thread (values + sources) |
-| POST | `/api/debug/thread-config/{thread_id}` | Set per-thread config overrides (JSON body with keys to set; `null` removes an override) |
-| DELETE | `/api/debug/thread-config/{thread_id}` | Remove all per-thread config overrides |
+| GET | `/api/sessions` | List all sessions with token budgets |
+| GET | `/api/sessions/{thread_id}/messages` | Get messages for a session |
+| POST | `/api/sessions/{thread_id}/send` | Inject a message into a session |
+| POST | `/api/sessions/{thread_id}/delete` | Archive and clear a session |
+| POST | `/api/sessions/{thread_id}/compact` | Force context compaction |
+| GET | `/api/subsessions` | List all sub-sessions |
+| GET | `/api/subsessions/{id}/messages` | Get full message history for a sub-session |
+| GET | `/api/workflows` | List all workflows |
+| GET | `/api/jobs` | List all scheduler jobs |
+| GET | `/api/config` | Dump the current (sanitised) runtime config |
+| GET | `/api/system-prompt` | Get the assembled system prompt + tool schemas with token counts |
+| GET | `/api/tasks` | List all tasks |
+| POST | `/api/tasks` | Create a new task |
+| PUT | `/api/tasks/{task_id}` | Update a task |
+| DELETE | `/api/tasks/{task_id}` | Delete a task |
+| GET | `/api/interaction-log` | List interaction log entries (Convergence Protocol, dreaming, embedding calls, Qdrant operations) |
+| GET | `/api/interaction-log/{id}` | Get a specific interaction log entry |
+| GET | `/api/memory` | Get memory store stats and search results (query: `q`, `k`) |
+| GET | `/api/outcomes` | List sub-session outcomes with aggregate stats (supports `status`, `limit`, `offset` query params) |
+| GET | `/api/stream` | Server-sent events stream for live panel updates |
+| GET | `/api/thread-config` | List all per-thread config overrides and available backends |
+| GET | `/api/thread-config/{thread_id}` | Get resolved config for a thread (values + sources) |
+| POST | `/api/thread-config/{thread_id}` | Set per-thread config overrides (JSON body with keys to set; `null` removes an override) |
+| DELETE | `/api/thread-config/{thread_id}` | Remove all per-thread config overrides |

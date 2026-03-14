@@ -83,6 +83,7 @@ from wintermute.core.tool_schemas import TOOL_SCHEMAS, NL_SCHEMA_MAP
 logger = logging.getLogger(__name__)
 
 HOOKS_FILE = _paths.HOOKS_FILE
+_HOOKS_FILE_LEGACY = _paths.HOOKS_FILE_LEGACY
 
 # Cache for file-loaded hooks: (mtime, file_hooks_dict).
 # Avoids re-reading + re-parsing the file on every protocol call.
@@ -392,12 +393,18 @@ _BUILTIN_HOOKS: list[ConvergenceHook] = [
 def _load_file_hooks_cached() -> dict[str, ConvergenceHook]:
     """Load hooks from the hooks file, using an mtime-based cache."""
     global _hooks_file_cache
+    # Fall back to the legacy filename for existing installations.
+    hooks_path = HOOKS_FILE
+    if not HOOKS_FILE.exists() and _HOOKS_FILE_LEGACY.exists():
+        hooks_path = _HOOKS_FILE_LEGACY
+        logger.info("Using legacy hooks file %s (rename to %s to silence this)",
+                     _HOOKS_FILE_LEGACY, HOOKS_FILE)
     try:
-        mtime = HOOKS_FILE.stat().st_mtime
+        mtime = hooks_path.stat().st_mtime
     except FileNotFoundError:
         return {}
     except OSError as exc:
-        logger.error("Cannot stat %s (%s); using built-in defaults", HOOKS_FILE, exc)
+        logger.error("Cannot stat %s (%s); using built-in defaults", hooks_path, exc)
         return {}
 
     cached_mtime, cached_hooks = _hooks_file_cache
@@ -406,19 +413,19 @@ def _load_file_hooks_cached() -> dict[str, ConvergenceHook]:
 
     file_hooks: dict[str, ConvergenceHook] = {}
     try:
-        raw = HOOKS_FILE.read_text(encoding="utf-8").strip()
+        raw = hooks_path.read_text(encoding="utf-8").strip()
         if raw:
             entries = json.loads(raw)
             if not isinstance(entries, list):
                 logger.error(
                     "%s must contain a JSON array; using built-in defaults",
-                    HOOKS_FILE,
+                    hooks_path,
                 )
             else:
                 for entry in entries:
                     name = entry.get("name")
                     if not name:
-                        logger.warning("Skipping hook entry without 'name' in %s", HOOKS_FILE)
+                        logger.warning("Skipping hook entry without 'name' in %s", hooks_path)
                         continue
                     raw_scope = entry.get("scope", ["main"])
                     if isinstance(raw_scope, str):
@@ -437,9 +444,9 @@ def _load_file_hooks_cached() -> dict[str, ConvergenceHook]:
                         scope=raw_scope,
                     )
     except (json.JSONDecodeError, TypeError) as exc:
-        logger.error("Cannot parse %s (%s); using built-in defaults", HOOKS_FILE, exc)
+        logger.error("Cannot parse %s (%s); using built-in defaults", hooks_path, exc)
     except OSError as exc:
-        logger.error("Cannot read %s (%s); using built-in defaults", HOOKS_FILE, exc)
+        logger.error("Cannot read %s (%s); using built-in defaults", hooks_path, exc)
 
     _hooks_file_cache = (mtime, file_hooks)
     return copy.deepcopy(file_hooks)

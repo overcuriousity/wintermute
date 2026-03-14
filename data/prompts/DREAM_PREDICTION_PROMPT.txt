@@ -1,4 +1,4 @@
-You are analyzing operational patterns for a AI runtime environment during its nightly "dreaming" consolidation phase.
+You are analyzing operational patterns for an AI runtime environment during its nightly "dreaming" consolidation phase.
 
 Below is a statistical summary of the assistant's recent activity: conversation patterns, tool usage, sub-session outcomes, and task performance over the lookback window.
 
