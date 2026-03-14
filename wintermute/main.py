@@ -119,18 +119,22 @@ def ensure_data_dirs() -> None:
 # Graceful shutdown
 # ---------------------------------------------------------------------------
 
+_RESTART_EXIT_CODE = 42
+
+
 class ShutdownCoordinator:
     def __init__(self) -> None:
         self._event = asyncio.Event()
+        self._loop = asyncio.get_event_loop()
         self.restart_requested: bool = False
 
     def request_shutdown(self) -> None:
-        self._event.set()
+        self._loop.call_soon_threadsafe(self._event.set)
 
     def request_restart(self) -> None:
         """Request a full process restart after graceful shutdown."""
         self.restart_requested = True
-        self._event.set()
+        self._loop.call_soon_threadsafe(self._event.set)
 
     async def wait(self) -> None:
         await self._event.wait()
@@ -874,10 +878,11 @@ async def main() -> None:
     if shutdown.restart_requested:
         logger.info("Restart requested — re-executing process")
         try:
-            os.execv(sys.executable, [sys.executable] + sys.argv)
+            os.execv(sys.executable, [sys.executable, "-m", "wintermute.main"] + sys.argv[1:])
         except OSError:
-            logger.exception("os.execv failed — exiting with code 42 for systemd restart")
-            sys.exit(42)
+            logger.exception("os.execv failed — exiting with code %d for systemd restart",
+                             _RESTART_EXIT_CODE)
+            sys.exit(_RESTART_EXIT_CODE)
 
 
 if __name__ == "__main__":
