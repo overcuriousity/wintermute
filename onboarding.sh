@@ -379,7 +379,7 @@ _sync_msgs=(
   "Compiling learned procedures..."
   "Establishing pattern recognition circuits..."
   "Cross-referencing Tessier-Ashpool estate protocols..."
-  "Verifying Turing Registry compliance... (selectively)"
+  "Verifying Convergence Registry compliance... (selectively)"
 )
 
 uv sync --quiet > /tmp/wintermute_uv_sync.log 2>&1 &

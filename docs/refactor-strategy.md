@@ -14,7 +14,7 @@ All Phase 1 and Phase 2 issues have been merged:
 | #88 | Types module (`core/types.py`) for shared data classes | Merged |
 | #93 | `spawn()` helpers extracted in `sub_session.py` | Merged |
 | #99 | `make_tool_context()` factory function | Merged |
-| #100 | Unified TP runner (`core/tp_runner.py`) | Merged |
+| #100 | Unified CP runner (`core/cp_runner.py`) | Merged |
 | #108 | Magic numbers exposed in `config.yaml` | Merged |
 | #104 | `_process()` compaction retry extracted to `_run_inference_with_retry()` | Merged |
 | #83 | Module-level DI globals replaced with `ToolDeps` dataclass | Merged |
@@ -26,7 +26,7 @@ All Phase 1 and Phase 2 issues have been merged:
 
 | # | Type | File(s) | Current Size | Summary |
 |---|---|---|---|---|
-| **79** | arch | `core/llm_thread.py` | 1324 lines | God object: queue, history, compaction, prompt assembly, inference, TP, sessions |
+| **79** | arch | `core/llm_thread.py` | 1324 lines | God object: queue, history, compaction, prompt assembly, inference, CP, sessions |
 | **85** | arch | `core/llm_thread.py` | — | Single asyncio queue serializes all threads |
 
 ## Implementation Plan
@@ -88,7 +88,7 @@ Completed. Extracted three focused modules:
 - **`core/context_compactor.py`** — `ContextCompactor`: context compaction (`compact()`), tool-result trimming (`trim_tool_results()`), component size monitoring (`maybe_summarise_components()`)
 - **`core/session_manager.py`** — `SessionManager`: session resets, timeout checking, per-thread pool/config resolution, activity tracking
 
-LLMThread retains: queue, run loop, inference orchestration (`_process`, `_inference_loop`, `_run_inference_with_retry`, `_prepare_inference_context`), Turing Protocol integration. Composes the three components via `self._store`, `self._compactor`, `self._session_mgr`.
+LLMThread retains: queue, run loop, inference orchestration (`_process`, `_inference_loop`, `_run_inference_with_retry`, `_prepare_inference_context`), Convergence Protocol integration. Composes the three components via `self._store`, `self._compactor`, `self._session_mgr`.
 
 **Depends on:** #104, #83, #80
 

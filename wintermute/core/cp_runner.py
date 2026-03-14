@@ -1,12 +1,12 @@
 """
-Turing Protocol Runner — unified entry point for all TP phase checks.
+Convergence Protocol Runner — unified entry point for all CP phase checks.
 
 Replaces three near-identical methods:
   - ``LLMThread._run_phase_check``
-  - ``LLMThread._run_turing_check``  (post_inference for main thread)
-  - ``SubSessionManager._run_tp_phase``
+  - ``LLMThread._run_convergence_check``  (post_inference for main thread)
+  - ``SubSessionManager._run_cp_phase``
 
-A ``TuringProtocolRunner`` binds ``pool``, ``scope``, and
+A ``ConvergenceProtocolRunner`` binds ``pool``, ``scope``, and
 ``enabled_validators`` at construction time so callers only need to pass
 the per-turn arguments (phase, messages, tool info, etc.).
 """
@@ -19,19 +19,19 @@ from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from wintermute.core.types import BackendPool
 
-from wintermute.core import turing_protocol as turing_protocol_module
+from wintermute.core import convergence_protocol as convergence_protocol_module
 
 logger = logging.getLogger(__name__)
 
 
-class TuringProtocolRunner:
-    """Bound TP executor for a specific pool + scope.
+class ConvergenceProtocolRunner:
+    """Bound CP executor for a specific pool + scope.
 
     Parameters
     ----------
     pool : BackendPool | None
-        The LLM pool used for TP validation calls; may be ``None`` when
-        TP is not configured or disabled.
+        The LLM pool used for CP validation calls; may be ``None`` when
+        CP is not configured or disabled.
     scope : str
         ``"main"`` or ``"sub_session"``.
     enabled_validators : dict | None
@@ -69,21 +69,21 @@ class TuringProtocolRunner:
         prior_assistant_message: Optional[str] = None,
         prior_tool_calls_made: Optional[list[str]] = None,
         recent_assistant_messages: Optional[list[str]] = None,
-    ) -> Optional[turing_protocol_module.TuringResult]:
-        """Run TP hooks for *phase* in the bound scope.
+    ) -> Optional[convergence_protocol_module.ConvergenceResult]:
+        """Run CP hooks for *phase* in the bound scope.
 
-        Returns the full ``TuringResult`` produced by
-        :func:`turing_protocol.run_turing_protocol`, which may have
+        Returns the full ``ConvergenceResult`` produced by
+        :func:`convergence_protocol.run_convergence_protocol`, which may have
         ``correction=None`` when no violation was confirmed or when no
         hooks are registered for this phase/scope.
-        Returns ``None`` only when TP is disabled or an internal error
+        Returns ``None`` only when CP is disabled or an internal error
         occurred (errors are logged as non-fatal).
         """
         if not self.enabled:
             return None
 
         try:
-            return await turing_protocol_module.run_turing_protocol(
+            return await convergence_protocol_module.run_convergence_protocol(
                 pool=self._pool,
                 user_message=user_message,
                 assistant_response=assistant_response,
@@ -104,7 +104,7 @@ class TuringProtocolRunner:
             )
         except Exception:  # noqa: BLE001
             logger.exception(
-                "Turing Protocol %s/%s (thread_id=%s) check raised (non-fatal)",
+                "Convergence Protocol %s/%s (thread_id=%s) check raised (non-fatal)",
                 phase, self._scope, thread_id or "<unknown>",
             )
             return None

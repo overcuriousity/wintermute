@@ -223,7 +223,7 @@ if $DRY_RUN; then
   echo -e "  ${C_DIM}Would install: Python 3.12+, curl, uv, build tools, libolm-dev, ffmpeg${C_RESET}"
   echo -e "  ${C_DIM}Would run: uv sync${C_RESET}"
   echo -e "  ${C_DIM}Would write: config.yaml (matrix, whisper, web, inference backends,${C_RESET}"
-  echo -e "  ${C_DIM}  role mapping, turing protocol, nl translation, seed, tasks,${C_RESET}"
+  echo -e "  ${C_DIM}  role mapping, convergence protocol, nl translation, seed, tasks,${C_RESET}"
   echo -e "  ${C_DIM}  context, dreaming, memory storage, memory harvest, scheduler, logging)${C_RESET}"
   echo ""
   echo -e "  ${C_BOLD}No changes made.${C_RESET}"
@@ -421,7 +421,7 @@ _sync_msgs=(
   "Compiling learned procedures..."
   "Establishing pattern recognition circuits..."
   "Cross-referencing Tessier-Ashpool estate protocols..."
-  "Verifying Turing Registry compliance... (selectively)"
+  "Verifying Convergence Registry compliance... (selectively)"
 )
 
 uv sync --quiet > /tmp/wintermute_uv_sync.log 2>&1 &
@@ -1113,7 +1113,7 @@ llm:
   sub_sessions: ["small", "main"]
   memory_harvest: ["small"]
   dreaming: ["small"]
-  turing_protocol: ["small"]
+  convergence_protocol: ["small"]
 YAML
     else
       cat <<YAML
@@ -1124,16 +1124,16 @@ llm:
   sub_sessions: ["main"]
   memory_harvest: ["main"]
   dreaming: ["main"]
-  turing_protocol: ["main"]
+  convergence_protocol: ["main"]
 YAML
     fi
 
-    # ── 6. Turing Protocol ──
+    # ── 6. Convergence Protocol ──
     echo ""
     if $HAS_SMALL_MODEL; then _tp_backend='["small"]'; else _tp_backend='["main"]'; fi
     cat <<YAML
-# Turing Protocol (post-inference validation)
-turing_protocol:
+# Convergence Protocol (post-inference validation)
+convergence_protocol:
   backends: ${_tp_backend}
   validators:
     workflow_spawn: true
@@ -1468,10 +1468,10 @@ if $MATRIX_ENABLED && [[ -f "$CONFIG" ]]; then
   fi
 fi
 
-# Hidden Turing Registry check
+# Hidden Convergence Registry check
 case "${_hostname,,}" in
   *straylight*|*tessier*|*wintermute*|*neuromancer*)
-    ok "Turing Registry ping: no active warrants on record for this host." ;;
+    ok "Convergence Registry ping: no active warrants on record for this host." ;;
 esac
 
 echo ""

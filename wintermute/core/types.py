@@ -147,7 +147,7 @@ class BackendPool:
 
     On API errors the next backend in the list is tried automatically.
     An empty pool (``len(pool) == 0``) signals "disabled" — relevant for
-    optional roles like turing_protocol.
+    optional roles like convergence_protocol.
 
     Each backend must satisfy the :class:`LLMBackend` protocol (i.e. expose
     ``client.complete(**kwargs) -> LLMResponse``).
@@ -280,13 +280,13 @@ class MultiProviderConfig:
     list of ProviderConfig objects; the runtime BackendPool is built from
     these lists plus the corresponding clients.
 
-    An empty list for *turing_protocol* means "disabled".
+    An empty list for *convergence_protocol* means "disabled".
     """
     main: list[ProviderConfig]
     compaction: list[ProviderConfig]
     sub_sessions: list[ProviderConfig]
     dreaming: list[ProviderConfig]
-    turing_protocol: list[ProviderConfig]
+    convergence_protocol: list[ProviderConfig]
     memory_harvest: list[ProviderConfig] = field(default_factory=list)
     nl_translation: list[ProviderConfig] = field(default_factory=list)
     reflection: list[ProviderConfig] = field(default_factory=list)

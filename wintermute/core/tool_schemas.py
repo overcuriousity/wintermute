@@ -1,7 +1,7 @@
 """
 Tool schema definitions (OpenAI function-calling format).
 
-Separated from tools.py so that core modules (e.g. turing_protocol) can
+Separated from tools.py so that core modules (e.g. convergence_protocol) can
 access schema data without importing the tool implementations and their
 heavyweight dependencies.
 """

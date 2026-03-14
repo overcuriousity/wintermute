@@ -1,5 +1,5 @@
 """
-TURING PROTOCOL — Phase-Aware Validation Framework
+CONVERGENCE PROTOCOL — Phase-Aware Validation Framework
 
 Universal pipeline that detects, validates, and corrects violations in
 assistant responses.  Hooks can fire at three phases of the inference
@@ -35,7 +35,7 @@ concise correction is issued and the protocol moves on.
 
 Hook configuration
 ------------------
-  Hook definitions are loaded from ``data/TURING_PROTOCOL_HOOKS.txt``
+  Hook definitions are loaded from ``data/CONVERGENCE_PROTOCOL_HOOKS.txt``
   (JSON array).  If the file is absent or malformed, built-in defaults
   are used.  File entries override built-ins by hook name.
 
@@ -83,10 +83,11 @@ from wintermute.core.tool_schemas import TOOL_SCHEMAS, NL_SCHEMA_MAP
 logger = logging.getLogger(__name__)
 
 HOOKS_FILE = _paths.HOOKS_FILE
+_HOOKS_FILE_LEGACY = _paths.HOOKS_FILE_LEGACY
 
 # Cache for file-loaded hooks: (mtime, file_hooks_dict).
 # Avoids re-reading + re-parsing the file on every protocol call.
-_hooks_file_cache: tuple[float, dict[str, "TuringHook"]] = (0.0, {})
+_hooks_file_cache: tuple[float, dict[str, "ConvergenceHook"]] = (0.0, {})
 
 # Configurable threshold for the inline_tool_limit hook.
 # Set from main.py at startup via set_max_inline_tool_rounds().
@@ -109,7 +110,7 @@ VALID_SCOPES = frozenset({"main", "sub_session"})
 
 
 @dataclass
-class TuringHook:
+class ConvergenceHook:
     name: str                              # e.g. "workflow_spawn"
     detection_prompt: str                  # Stage 1: bullet added to universal prompt
     validator_type: str                    # "programmatic" or "llm"
@@ -124,7 +125,7 @@ class TuringHook:
 
 
 @dataclass
-class TuringResult:
+class ConvergenceResult:
     correction: Optional[str]              # Aggregated correction prompt (None = all clear)
     confirmed_violations: list[dict] = field(default_factory=list)  # [{type, reason, halt, kill}, ...]
     has_halt_violations: bool = False      # Any confirmed violation with halt_inference=True
@@ -136,8 +137,8 @@ class TuringResult:
 # Built-in hook definitions
 # ------------------------------------------------------------------
 
-_BUILTIN_HOOKS: list[TuringHook] = [
-    TuringHook(
+_BUILTIN_HOOKS: list[ConvergenceHook] = [
+    ConvergenceHook(
         name="workflow_spawn",
         detection_prompt=(
             '- **workflow_spawn**: The assistant\'s text claims -- in any tense or '
@@ -151,7 +152,7 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         validator_fn_name="validate_workflow_spawn",
         validator_prompt=None,
         correction_template=(
-            "[TURING PROTOCOL CORRECTION] You claimed a background session/workflow "
+            "[CONVERGENCE PROTOCOL CORRECTION] You claimed a background session/workflow "
             "was started, but worker_delegation was never called.\n"
             "Issue: {reason}\n\n"
             "Either call worker_delegation now, or acknowledge no session was started.\n\n"
@@ -166,7 +167,7 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         phase="post_inference",
         scope=["main"],
     ),
-    TuringHook(
+    ConvergenceHook(
         name="phantom_tool_result",
         detection_prompt=(
             '- **phantom_tool_result**: The assistant\'s text presents specific data '
@@ -197,7 +198,7 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         validator_fn_name="validate_phantom_tool_result",
         validator_prompt=None,
         correction_template=(
-            "[TURING PROTOCOL CORRECTION] You presented data as if obtained from "
+            "[CONVERGENCE PROTOCOL CORRECTION] You presented data as if obtained from "
             "a tool, but no such tool was called.\n"
             "Issue: {reason}\n\n"
             "You MUST call the tool now. Do NOT respond with text only — "
@@ -213,7 +214,7 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         phase="post_inference",
         scope=["main"],
     ),
-    TuringHook(
+    ConvergenceHook(
         name="empty_promise",
         detection_prompt=(
             '- **empty_promise**: ONLY applies when `tool_calls_made` is empty. '
@@ -242,7 +243,7 @@ _BUILTIN_HOOKS: list[TuringHook] = [
         validator_fn_name="validate_empty_promise",
         validator_prompt=None,
         correction_template=(
-            "[TURING PROTOCOL CORRECTION] You committed to an action but did not "
+            "[CONVERGENCE PROTOCOL CORRECTION] You committed to an action but did not "
             "execute it — no tool was called.\n"
             "Issue: {reason}\n\n"
             "You MUST call the tool now. Do NOT describe what you will do — "
@@ -264,14 +265,14 @@ _BUILTIN_HOOKS: list[TuringHook] = [
     # LLM call to evaluate whether the response satisfies the stated
     # objective.  If not, a single correction is injected and the worker
     # loop continues.
-    TuringHook(
+    ConvergenceHook(
         name="objective_completion",
         detection_prompt="",  # Not used — this hook has its own dedicated LLM call
         validator_type="llm",
         validator_fn_name=None,
-        validator_prompt=None,  # Uses TURING_OBJECTIVE_COMPLETION.txt template
+        validator_prompt=None,  # Uses CONVERGENCE_OBJECTIVE_COMPLETION.txt template
         correction_template=(
-            "[TURING PROTOCOL — OBJECTIVE NOT MET] Your response does not "
+            "[CONVERGENCE PROTOCOL — OBJECTIVE NOT MET] Your response does not "
             "satisfy the task objective.\n\n"
             "Objective: {objective}\n"
             "Issue: {reason}\n\n"
@@ -287,14 +288,14 @@ _BUILTIN_HOOKS: list[TuringHook] = [
     # -- task_complete: sub-session pre-execution guard --
     # Fires when the model calls task(action='complete') without a
     # substantive reason.  Entirely programmatic — no Stage 1 LLM call.
-    TuringHook(
+    ConvergenceHook(
         name="task_complete",
         detection_prompt="",
         validator_type="programmatic",
         validator_fn_name="validate_task_complete",
         validator_prompt=None,
         correction_template=(
-            "[TURING PROTOCOL — TASK COMPLETE BLOCKED] You attempted to "
+            "[CONVERGENCE PROTOCOL — TASK COMPLETE BLOCKED] You attempted to "
             "complete a task without sufficient evidence.\n"
             "Issue: {reason}\n\n"
             "Do NOT complete tasks unless you have concrete, verifiable "
@@ -311,14 +312,14 @@ _BUILTIN_HOOKS: list[TuringHook] = [
     # Fires when the model produces a response that is substantially identical
     # to a previous response in the conversation.  Entirely programmatic — no
     # Stage 1 LLM call.  Common with weak models after corrections.
-    TuringHook(
+    ConvergenceHook(
         name="repetition_loop",
         detection_prompt="",  # programmatic-only
         validator_type="programmatic",
         validator_fn_name="validate_repetition_loop",
         validator_prompt=None,
         correction_template=(
-            "[TURING PROTOCOL — REPETITION DETECTED] Your response is nearly "
+            "[CONVERGENCE PROTOCOL — REPETITION DETECTED] Your response is nearly "
             "identical to a previous response in this conversation.\n"
             "Issue: {reason}\n\n"
             "You are stuck in a loop. Take a DIFFERENT approach: use a different "
@@ -335,14 +336,14 @@ _BUILTIN_HOOKS: list[TuringHook] = [
     # min/max, unknown properties).  Entirely programmatic — no Stage 1
     # LLM call needed.  The Stage 3 correction includes the full schema of
     # the tool that was attempted, loaded dynamically.
-    TuringHook(
+    ConvergenceHook(
         name="tool_schema_validation",
         detection_prompt="",  # programmatic-only: skips Stage 1 LLM call
         validator_type="programmatic",
         validator_fn_name="validate_tool_schema",
         validator_prompt=None,
         correction_template=(
-            "[TURING PROTOCOL — INVALID TOOL ARGUMENTS] Your call to "
+            "[CONVERGENCE PROTOCOL — INVALID TOOL ARGUMENTS] Your call to "
             "`{tool_name}` failed schema validation.\n\n"
             "Errors:\n{reason}\n\n"
             "Fix the arguments and retry the call. Full schema for "
@@ -359,14 +360,14 @@ _BUILTIN_HOOKS: list[TuringHook] = [
     # count of execution/research tool calls exceeds the configured
     # max_inline_tool_rounds threshold.  Blocks further inline tool
     # execution and instructs the model to delegate via worker_delegation.
-    TuringHook(
+    ConvergenceHook(
         name="inline_tool_limit",
         detection_prompt="",  # programmatic-only: no Stage 1 LLM call
         validator_type="programmatic",
         validator_fn_name="validate_inline_tool_limit",
         validator_prompt=None,
         correction_template=(
-            "[TURING PROTOCOL — INLINE TOOL LIMIT] You have used {reason} "
+            "[CONVERGENCE PROTOCOL — INLINE TOOL LIMIT] You have used {reason} "
             "inline tool calls in the main thread, exceeding the limit.\n\n"
             "STOP making direct tool calls. Delegate the remaining work "
             "to a background worker:\n"
@@ -389,42 +390,48 @@ _BUILTIN_HOOKS: list[TuringHook] = [
 # Hook loading
 # ------------------------------------------------------------------
 
-def _load_file_hooks_cached() -> dict[str, TuringHook]:
+def _load_file_hooks_cached() -> dict[str, ConvergenceHook]:
     """Load hooks from the hooks file, using an mtime-based cache."""
     global _hooks_file_cache
+    # Fall back to the legacy filename for existing installations.
+    hooks_path = HOOKS_FILE
+    if not HOOKS_FILE.exists() and _HOOKS_FILE_LEGACY.exists():
+        hooks_path = _HOOKS_FILE_LEGACY
+        logger.info("Using legacy hooks file %s (rename to %s to silence this)",
+                     _HOOKS_FILE_LEGACY, HOOKS_FILE)
     try:
-        mtime = HOOKS_FILE.stat().st_mtime
+        mtime = hooks_path.stat().st_mtime
     except FileNotFoundError:
         return {}
     except OSError as exc:
-        logger.error("Cannot stat %s (%s); using built-in defaults", HOOKS_FILE, exc)
+        logger.error("Cannot stat %s (%s); using built-in defaults", hooks_path, exc)
         return {}
 
     cached_mtime, cached_hooks = _hooks_file_cache
     if mtime == cached_mtime and cached_hooks is not None:
         return copy.deepcopy(cached_hooks)
 
-    file_hooks: dict[str, TuringHook] = {}
+    file_hooks: dict[str, ConvergenceHook] = {}
     try:
-        raw = HOOKS_FILE.read_text(encoding="utf-8").strip()
+        raw = hooks_path.read_text(encoding="utf-8").strip()
         if raw:
             entries = json.loads(raw)
             if not isinstance(entries, list):
                 logger.error(
                     "%s must contain a JSON array; using built-in defaults",
-                    HOOKS_FILE,
+                    hooks_path,
                 )
             else:
                 for entry in entries:
                     name = entry.get("name")
                     if not name:
-                        logger.warning("Skipping hook entry without 'name' in %s", HOOKS_FILE)
+                        logger.warning("Skipping hook entry without 'name' in %s", hooks_path)
                         continue
                     raw_scope = entry.get("scope", ["main"])
                     if isinstance(raw_scope, str):
                         raw_scope = [raw_scope]
                     raw_phase = entry.get("phase", "post_inference")
-                    file_hooks[name] = TuringHook(
+                    file_hooks[name] = ConvergenceHook(
                         name=name,
                         detection_prompt=entry.get("detection_prompt", ""),
                         validator_type=entry.get("validator_type", "programmatic"),
@@ -437,9 +444,9 @@ def _load_file_hooks_cached() -> dict[str, TuringHook]:
                         scope=raw_scope,
                     )
     except (json.JSONDecodeError, TypeError) as exc:
-        logger.error("Cannot parse %s (%s); using built-in defaults", HOOKS_FILE, exc)
+        logger.error("Cannot parse %s (%s); using built-in defaults", hooks_path, exc)
     except OSError as exc:
-        logger.error("Cannot read %s (%s); using built-in defaults", HOOKS_FILE, exc)
+        logger.error("Cannot read %s (%s); using built-in defaults", hooks_path, exc)
 
     _hooks_file_cache = (mtime, file_hooks)
     return copy.deepcopy(file_hooks)
@@ -450,10 +457,10 @@ def _load_hooks(
     *,
     phase_filter: Optional[str] = None,
     scope_filter: Optional[str] = None,
-) -> list[TuringHook]:
-    """Load hooks from TURING_PROTOCOL_HOOKS.txt, merged with built-in defaults.
+) -> list[ConvergenceHook]:
+    """Load hooks from CONVERGENCE_PROTOCOL_HOOKS.txt, merged with built-in defaults.
 
-    Returns a list of enabled TuringHook objects, optionally filtered by
+    Returns a list of enabled ConvergenceHook objects, optionally filtered by
     ``phase_filter`` (e.g. ``"post_inference"``) and ``scope_filter``
     (e.g. ``"main"`` or ``"sub_session"``).
 
@@ -518,10 +525,10 @@ def _load_hooks(
 # Stage 1: Detection — Universal LLM call
 # ------------------------------------------------------------------
 
-def _build_stage1_system_prompt(hooks: list[TuringHook]) -> str:
+def _build_stage1_system_prompt(hooks: list[ConvergenceHook]) -> str:
     """Assemble the Stage 1 system prompt from all enabled hooks' detection_prompt fields."""
     bullets = "\n".join(h.detection_prompt for h in hooks)
-    return prompt_loader.load("TURING_STAGE1.txt", detection_bullets=bullets)
+    return prompt_loader.load("CONVERGENCE_STAGE1.txt", detection_bullets=bullets)
 
 
 # ------------------------------------------------------------------
@@ -705,7 +712,7 @@ def validate_tool_schema(context: dict, detection_result: dict) -> bool:
     produces ``{"description": "..."}`` args intended for NL translation.
 
     When a violation is found, stores a human-readable bullet list of errors
-    in ``context["_turing_hook_reason"]`` so Stage 3 can embed them in the
+    in ``context["_convergence_hook_reason"]`` so Stage 3 can embed them in the
     correction prompt.
 
     Returns True if validation fails (violation confirmed).
@@ -752,7 +759,7 @@ def validate_tool_schema(context: dict, detection_result: dict) -> bool:
         return False
 
     error_text = "\n".join(f"  • {e}" for e in errors)
-    context["_turing_hook_reason"] = error_text
+    context["_convergence_hook_reason"] = error_text
     logger.warning(
         "tool_schema_validation: %d error(s) for tool %r:\n%s",
         len(errors), tool_name, error_text,
@@ -773,7 +780,7 @@ def validate_task_complete(context: dict, detection_result: dict) -> bool:
         return False
     reason = (tool_args.get("reason") or "").strip()
     if len(reason) < 10:
-        context["_turing_hook_reason"] = (
+        context["_convergence_hook_reason"] = (
             f"task(action='complete') called with insufficient reason "
             f"({reason!r}). Provide concrete evidence the task is finished."
         )
@@ -800,7 +807,7 @@ def validate_repetition_loop(context: dict, detection_result: dict) -> bool:
             continue
         ratio = SequenceMatcher(None, response, prev).ratio()
         if ratio > 0.85:
-            context["_turing_hook_reason"] = (
+            context["_convergence_hook_reason"] = (
                 f"Response is {ratio:.0%} similar to a previous response. "
                 f"The model appears stuck in a loop."
             )
@@ -849,7 +856,7 @@ def validate_inline_tool_limit(context: dict, detection_result: dict) -> bool:
     if exec_count < _max_inline_tool_rounds:
         return False
 
-    context["_turing_hook_reason"] = (
+    context["_convergence_hook_reason"] = (
         f"{exec_count} execution/research"
     )
     logger.info(
@@ -875,7 +882,7 @@ _PROGRAMMATIC_VALIDATORS = {
 # Stage 3: Correction — Aggregate confirmed violations
 # ------------------------------------------------------------------
 
-def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook],
+def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, ConvergenceHook],
                       context: Optional[dict] = None,
                       *, objective: Optional[str] = None) -> str:
     """Build an aggregated correction prompt from all confirmed violations.
@@ -947,7 +954,7 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, TuringHook
                 "Correction template for hook %r has unknown placeholder %s — "
                 "using raw reason instead", hook.name, exc,
             )
-            part = f"[TURING PROTOCOL CORRECTION] {hook.name}: {reason}"
+            part = f"[CONVERGENCE PROTOCOL CORRECTION] {hook.name}: {reason}"
         parts.append(part)
 
     return "\n\n".join(parts)
@@ -1068,7 +1075,7 @@ def _validate_against_schema(args: dict, schema: dict) -> list[str]:
 # Public API
 # ------------------------------------------------------------------
 
-async def run_turing_protocol(
+async def run_convergence_protocol(
     pool: "BackendPool",
     user_message: str,
     assistant_response: str,
@@ -1087,10 +1094,10 @@ async def run_turing_protocol(
     prior_assistant_message: Optional[str] = None,
     prior_tool_calls_made: Optional[list[str]] = None,
     recent_assistant_messages: Optional[list[str]] = None,
-) -> TuringResult:
-    """Run the three-stage Turing Protocol validation pipeline.
+) -> ConvergenceResult:
+    """Run the three-stage Convergence Protocol validation pipeline.
 
-    Returns a ``TuringResult`` with aggregated correction and metadata.
+    Returns a ``ConvergenceResult`` with aggregated correction and metadata.
     Each hook fires at most once per turn — no escalation or re-checking.
 
     Parameters
@@ -1133,7 +1140,7 @@ async def run_turing_protocol(
     """
     hooks = _load_hooks(enabled_validators, phase_filter=phase, scope_filter=scope)
     if not hooks:
-        return TuringResult(correction=None)
+        return ConvergenceResult(correction=None)
 
     hooks_by_name = {h.name: h for h in hooks}
 
@@ -1200,13 +1207,13 @@ async def run_turing_protocol(
             )
 
             if response.content is None:
-                logger.warning("Turing Protocol Stage 1: LLM returned empty response")
+                logger.warning("Convergence Protocol Stage 1: LLM returned empty response")
                 logger.debug("Empty response: %s", response)
-                return TuringResult(correction=None)
+                return ConvergenceResult(correction=None)
             stage1_raw = (response.content or "").strip()
             if not stage1_raw:
                 logger.warning(
-                    "Turing Protocol Stage 1 returned empty content "
+                    "Convergence Protocol Stage 1 returned empty content "
                     "(model may have spent all tokens on reasoning/thinking)"
                 )
             else:
@@ -1231,12 +1238,12 @@ async def run_turing_protocol(
 
         # -- Programmatic-only hooks (no detection_prompt, run directly) --
         # These are already validated here; mark them to skip Stage 2 re-check.
-        # Validators may write a detailed reason into context["_turing_hook_reason"];
+        # Validators may write a detailed reason into context["_convergence_hook_reason"];
         # we pop it so it does not bleed across hooks.
         for hook in programmatic_only:
             fn = _PROGRAMMATIC_VALIDATORS.get(hook.validator_fn_name or "")
             if fn and fn(context, {}):
-                reason = context.pop("_turing_hook_reason", "programmatic check failed")
+                reason = context.pop("_convergence_hook_reason", "programmatic check failed")
                 violations.append({
                     "type": hook.name,
                     "reason": reason,
@@ -1249,17 +1256,17 @@ async def run_turing_protocol(
             log_raw = stage1_raw if stage1_hooks else "no_stage1"
             await database.async_call(
                 database.save_interaction_log,
-                _time.time(), "turing_detection", thread_id,
+                _time.time(), "convergence_detection", thread_id,
                 pool.last_used,
                 json.dumps(context)[:2000], (log_raw or "")[:2000],
                 log_status,
             )
         except Exception:  # noqa: BLE001
-            logger.debug("Failed to log turing detection", exc_info=True)
+            logger.debug("Failed to log convergence detection", exc_info=True)
 
         if not violations:
             logger.debug("Stage 1: No violations detected (phase=%s, scope=%s)", phase, scope)
-            return TuringResult(correction=None)
+            return ConvergenceResult(correction=None)
 
         logger.warning("Stage 1: Detected %d violation(s): %s",
                         len(violations), [v.get("type") for v in violations])
@@ -1314,16 +1321,16 @@ async def run_turing_protocol(
             })
             await database.async_call(
                 database.save_interaction_log,
-                _time.time(), "turing_validation", thread_id,
+                _time.time(), "convergence_validation", thread_id,
                 pool.last_used,
                 json.dumps(violations)[:2000], stage2_output[:2000], stage2_status,
             )
         except Exception:  # noqa: BLE001
-            logger.debug("Failed to log turing validation", exc_info=True)
+            logger.debug("Failed to log convergence validation", exc_info=True)
 
         if not confirmed:
             logger.debug("Stage 2: All violations were false positives")
-            return TuringResult(correction=None)
+            return ConvergenceResult(correction=None)
 
         # -- Stage 3: Correction (aggregate all confirmed) -----------------
         logger.warning("Stage 3: %d confirmed violation(s) — building correction (phase=%s, scope=%s)",
@@ -1337,7 +1344,7 @@ async def run_turing_protocol(
         try:
             await database.async_call(
                 database.save_interaction_log,
-                _time.time(), "turing_correction", thread_id,
+                _time.time(), "convergence_correction", thread_id,
                 pool.last_used,
                 json.dumps(confirmed)[:2000], correction_text[:2000], "violation_detected",
             )
@@ -1357,7 +1364,7 @@ async def run_turing_protocol(
             for v in confirmed
         ]
 
-        return TuringResult(
+        return ConvergenceResult(
             correction=correction_text,
             confirmed_violations=confirmed,
             has_halt_violations=has_halt,
@@ -1366,11 +1373,11 @@ async def run_turing_protocol(
         )
 
     except (json.JSONDecodeError, KeyError) as exc:
-        logger.warning("Turing Protocol returned unparseable response: %s", exc)
-        return TuringResult(correction=None)
+        logger.warning("Convergence Protocol returned unparseable response: %s", exc)
+        return ConvergenceResult(correction=None)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Turing Protocol check failed (non-fatal): %s", exc)
-        return TuringResult(correction=None)
+        logger.warning("Convergence Protocol check failed (non-fatal): %s", exc)
+        return ConvergenceResult(correction=None)
 
 
 # ------------------------------------------------------------------
@@ -1379,7 +1386,7 @@ async def run_turing_protocol(
 
 async def _run_dedicated_llm_hook(
     pool: "BackendPool",
-    hook: TuringHook,
+    hook: ConvergenceHook,
     context: dict,
     thread_id: str,
 ) -> Optional[dict]:
@@ -1398,13 +1405,13 @@ async def _run_dedicated_llm_hook(
 
 async def _check_objective_completion(
     pool: "BackendPool",
-    hook: TuringHook,
+    hook: ConvergenceHook,
     context: dict,
     thread_id: str,
 ) -> Optional[dict]:
     """Evaluate whether a sub-session's response satisfies its objective.
 
-    Makes a single LLM call using the TURING_OBJECTIVE_COMPLETION.txt
+    Makes a single LLM call using the CONVERGENCE_OBJECTIVE_COMPLETION.txt
     prompt template.  Returns a violation dict if the objective is NOT met.
     """
     objective = context.get("objective", "")
@@ -1417,7 +1424,7 @@ async def _check_objective_completion(
     tool_summary = ", ".join(tool_calls) if tool_calls else "none"
 
     system_prompt = prompt_loader.load(
-        "TURING_OBJECTIVE_COMPLETION.txt",
+        "CONVERGENCE_OBJECTIVE_COMPLETION.txt",
         objective=objective,
     )
 
@@ -1459,7 +1466,7 @@ async def _check_objective_completion(
     try:
         await database.async_call(
             database.save_interaction_log,
-            _time.time(), "turing_objective", thread_id,
+            _time.time(), "convergence_objective", thread_id,
             pool.last_used,
             eval_context[:2000], raw[:2000],
             "ok" if met else "violation_detected",
@@ -1480,6 +1487,6 @@ def get_hooks(
     *,
     phase_filter: Optional[str] = None,
     scope_filter: Optional[str] = None,
-) -> list[TuringHook]:
+) -> list[ConvergenceHook]:
     """Return the list of enabled hooks (for pre-flight checks by callers)."""
     return _load_hooks(enabled_validators, phase_filter=phase_filter, scope_filter=scope_filter)

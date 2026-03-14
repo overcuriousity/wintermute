@@ -7,11 +7,11 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | Component | Module | Role |
 |-----------|--------|------|
 | **LLMThread** | `llm_thread.py` | Owns conversation history, runs inference loops; delegates per-tool-call execution to InferenceEngine |
-| **InferenceEngine** | `inference_engine.py` | Shared tool-call pipeline (JSON parse, NL translation, Turing Protocol gates, tool dispatch, logging) used by LLMThread and SubSessionManager |
+| **InferenceEngine** | `inference_engine.py` | Shared tool-call pipeline (JSON parse, NL translation, Convergence Protocol gates, tool dispatch, logging) used by LLMThread and SubSessionManager |
 | **WebInterface** | `web_interface.py` | aiohttp HTTP server; debug/admin panel at `/debug`, REST API at `/api/debug/*` |
 | **MatrixThread** | `matrix_thread.py` | Matrix client with E2E encryption (optional) |
 | **SubSessionManager** | `sub_session.py` | Manages background worker sub-sessions and workflow DAGs |
-| **Turing Protocol** | `turing_protocol.py` | Three-stage post-inference validation framework (detect, validate, correct) |
+| **Convergence Protocol** | `convergence_protocol.py` | Three-stage post-inference validation framework (detect, validate, correct) |
 | **SchedulerThread** | `scheduler_thread.py` | APScheduler-based scheduled task execution |
 | **DreamingLoop** | `dreaming.py` | Biologically-inspired multi-phase memory consolidation (housekeeping + creative phases) |
 | **ReflectionLoop** | `reflection.py` | Event-driven feedback loop: rule engine + LLM analysis + skill mutations |
@@ -93,7 +93,7 @@ SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + s
    - If NL translation is enabled and the call uses a simplified schema, the translator LLM expands the description into structured arguments
    - Tools are executed and inference continues
 8. Final response is saved to the DB and broadcast back to the user
-9. Turing Protocol fires asynchronously (if enabled): runs a three-stage
+9. Convergence Protocol fires asynchronously (if enabled): runs a three-stage
    pipeline (detect → validate → correct) against the response, scoped by
    phase (`post_inference`, `pre_execution`, `post_execution`) and context
    (`main` thread or `sub_session`). If violations are confirmed (e.g. the
@@ -117,7 +117,7 @@ SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + s
    - **Direct children** (depth 1): result enters the parent thread via `enqueue_system_event`
    - **Nested children** (depth 2): individual reports are suppressed; when all siblings finish, an aggregated result is delivered to the root (user-facing) thread
 10. If the worker times out, a continuation is auto-spawned (up to 3 hops)
-11. Outcome metadata (duration, tool calls, TP verdict, status) is persisted to `sub_session_outcomes` for historical feedback on future spawns
+11. Outcome metadata (duration, tool calls, CP verdict, status) is persisted to `sub_session_outcomes` for historical feedback on future spawns
 
 ## Workflow DAG
 
@@ -158,7 +158,7 @@ But we anticipate a future where local llms get smart enough to reliably make ev
 
 These are some architectural choices, which should make it better for local LLMs:
 
-**Turing Protocol.** A three-stage (detect → validate → correct) post-inference validation pipeline that catches the hallucination patterns small models are most prone to — claiming to have done things they didn't, fabricating tool output, or making promises without acting. Rather than requiring a stronger model, corrections are injected automatically so the model can self-correct. See [turing-protocol.md](turing-protocol.md) for the full reference.
+**Convergence Protocol.** A three-stage (detect → validate → correct) post-inference validation pipeline that catches the hallucination patterns small models are most prone to — claiming to have done things they didn't, fabricating tool output, or making promises without acting. Rather than requiring a stronger model, corrections are injected automatically so the model can self-correct. See [convergence-protocol.md](convergence-protocol.md) for the full reference.
 
 **NL Translation (optional).** For models that struggle with multi-field structured JSON schemas, complex tool calls (`task`, `worker_delegation`, `skill`) can be exposed as a single plain-English `description` field. A dedicated small translator LLM expands the description into structured arguments. See [tools.md — NL Translation Mode](tools.md#nl-translation-mode).
 
@@ -170,7 +170,7 @@ These are some architectural choices, which should make it better for local LLMs
 
 **Context compaction.** When conversation history approaches the context window, older messages are summarised via a chained rolling summary rather than truncated. This keeps the model oriented without requiring a large context window.
 
-**Role-segregated backends.** Heavy tasks (compaction, dreaming, Turing Protocol detection) can be routed to different, purpose-sized backends. A small 3B model can serve as the Turing Protocol validator while a 7B model handles the main conversation.
+**Role-segregated backends.** Heavy tasks (compaction, dreaming, Convergence Protocol detection) can be routed to different, purpose-sized backends. A small 3B model can serve as the Convergence Protocol validator while a 7B model handles the main conversation.
 
 ## Memory Structure
 
@@ -180,7 +180,7 @@ data/
   BASE_PROMPT.txt            -- Immutable core instructions
   local_vectors.db           -- SQLite vector store with metadata (only when backend=local_vector)
   conversation.db (tasks)     -- Active goals / working memory (managed via task tool, stored in SQLite)
-  conversation.db (outcomes)  -- Sub-session outcome tracking (duration, status, TP verdict; used for historical feedback)
+  conversation.db (outcomes)  -- Sub-session outcome tracking (duration, status, CP verdict; used for historical feedback)
   scratchpad/                -- Ephemeral per-workflow directories for parallel worker communication (auto-cleaned)
   skills/                    -- Learned procedures (vector-indexed via skill tool; legacy *.md files migrated at first startup)
   DREAM_DEDUP_PROMPT.txt     -- Dreaming deduplication merge prompt

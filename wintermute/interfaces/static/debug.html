@@ -200,7 +200,7 @@
   .badge-web      { background: rgba(99,102,241,.2); color: #a5b4fc; }
   .badge-matrix   { background: rgba(168,85,247,.2); color: #d8b4fe; }
   .badge-system   { background: rgba(52,211,153,.15); color: #6ee7b7; }
-  .badge-turing   { background: rgba(168,85,247,.25); color: #e9d5ff; }
+  .badge-convergence   { background: rgba(168,85,247,.25); color: #e9d5ff; }
   .badge-tool     { background: rgba(99,130,255,.12); color: #93a3f8; }
   .badge-live     { background: rgba(52,211,153,.15); color: var(--success); }
   .badge-running  { background: rgba(99,102,241,.2); color: #a5b4fc; }
@@ -588,11 +588,11 @@
             <option value="tool_call">tool_call</option>
             <option value="nl_translation">nl_translation</option>
             <option value="sub_session">sub_session</option>
-            <option value="turing_detection">turing_detection</option>
-            <option value="turing_validation">turing_validation</option>
-            <option value="turing_correction">turing_correction</option>
-            <option value="turing_objective">turing_objective</option>
-            <option value="turing_response">turing_response</option>
+            <option value="convergence_detection">convergence_detection</option>
+            <option value="convergence_validation">convergence_validation</option>
+            <option value="convergence_correction">convergence_correction</option>
+            <option value="convergence_objective">convergence_objective</option>
+            <option value="convergence_response">convergence_response</option>
             <option value="compaction">compaction</option>
             <option value="dreaming">dreaming</option>
             <option value="embedding">embedding</option>
@@ -1411,7 +1411,7 @@ function _makeILRow(e) {
   const outputPreview = (e.output || '').length > 120 ? e.output.slice(0, 117) + '\u2026' : (e.output || '');
   const statusCls = e.status === 'ok' ? 'completed' : (e.status === 'error' ? 'failed' : 'pending');
   const sessionShort = (e.session || '').length > 24 ? e.session.slice(0, 22) + '\u2026' : (e.session || '');
-  const actionStyle = e.action.startsWith('turing') ? 'turing' : (e.action === 'tool_call' ? 'tool' : (e.action === 'chat' ? 'web' : (e.action === 'inference_round' ? 'pending' : (e.action === 'error' ? 'failed' : 'system'))));
+  const actionStyle = e.action.startsWith('convergence') ? 'convergence' : (e.action === 'tool_call' ? 'tool' : (e.action === 'chat' ? 'web' : (e.action === 'inference_round' ? 'pending' : (e.action === 'error' ? 'failed' : 'system'))));
   const _rowBg = e.action === 'tool_call' ? ';background:#0a0f1a' : (e.action === 'inference_round' ? ';background:#0a1020' : '');
   return (
     '<tr style="cursor:pointer' + _rowBg + '" onclick="toggleILDetail(this, ' + e.id + ')">' +
@@ -1630,7 +1630,7 @@ async function loadOutcomes() {
   try {
     const [r, tpR] = await Promise.all([
       fetch('/api/outcomes?' + params),
-      fetch('/api/tp-violations'),
+      fetch('/api/cp-violations'),
     ]);
     const d = await r.json();
     const tpData = await tpR.json();
@@ -1677,7 +1677,7 @@ async function loadOutcomes() {
     const tpBackends = tpData.per_backend || {};
     if (Object.keys(tpBackends).length > 0 || tpData.total_confirmed_violations > 0) {
       tpEl.style.display = '';
-      tpEl.innerHTML = '<div style="margin-bottom:.3rem;color:#f87171;font-weight:600">Turing Protocol violations: ' +
+      tpEl.innerHTML = '<div style="margin-bottom:.3rem;color:#f87171;font-weight:600">Convergence Protocol violations: ' +
         '<strong>' + (tpData.total_confirmed_violations || 0) + '</strong> confirmed · ' +
         '<strong>' + (tpData.total_corrections_applied || 0) + '</strong> corrections</div>' +
         '<div style="display:flex;gap:1.5rem;flex-wrap:wrap">' +
@@ -1713,7 +1713,7 @@ async function loadOutcomes() {
       const tc = o.tool_call_count != null ? o.tool_call_count : '-';
       let toolsUsed = '-';
       try { toolsUsed = o.tools_used ? JSON.parse(o.tools_used).join(', ') || '-' : '-'; } catch(e) {}
-      const verdict = o.turing_verdict || '-';
+      const verdict = o.convergence_verdict || '-';
       const verdictColor = verdict === 'pass' ? '#6fe06f' : verdict === 'fail' ? '#e06f6f' : '#888';
       const statusColor = o.status === 'completed' ? '#6fe06f' : o.status === 'timeout' ? '#f0c040' : '#e06f6f';
       const backend = o.backend_used || '-';

@@ -20,7 +20,7 @@ The `sub_session_outcomes` table in `data/conversation.db`:
 | `tool_call_count` | INTEGER | Total number of tool calls made |
 | `duration_seconds` | REAL | Wall-clock duration |
 | `timeout_value` | INTEGER | Configured timeout in seconds |
-| `turing_verdict` | TEXT | pass / fail / skipped |
+| `convergence_verdict` | TEXT | pass / fail / skipped |
 | `status` | TEXT | completed / timeout / failed |
 | `result_length` | INTEGER | Character length of result |
 | `nesting_depth` | INTEGER | 1 = direct child, 2 = grandchild |
@@ -32,11 +32,11 @@ The `sub_session_outcomes` table in `data/conversation.db`:
 
 Outcomes are persisted at three exit points in the sub-session lifecycle:
 
-1. **Completed** — Worker produced a final response (and passed TP validation if enabled)
+1. **Completed** — Worker produced a final response (and passed CP validation if enabled)
 2. **Timeout** — Worker exceeded its timeout budget (before continuation spawning)
 3. **Failed** — Worker raised an unhandled exception
 
-The Turing Protocol verdict (`pass`/`fail`/`skipped`) is captured from the `post_inference` phase evaluation.
+The Convergence Protocol verdict (`pass`/`fail`/`skipped`) is captured from the `post_inference` phase evaluation.
 
 ## Historical Feedback
 

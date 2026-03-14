@@ -169,7 +169,7 @@ class SlashCommandHandler:
 
         lines.append(_fmt_pool("Main", self._llm.main_pool))
         lines.append(_fmt_pool("Compaction", self._llm.compaction_pool))
-        lines.append(_fmt_pool("Turing Protocol", self._llm.turing_protocol_pool))
+        lines.append(_fmt_pool("Convergence Protocol", self._llm.convergence_protocol_pool))
         lines.append(_fmt_pool("NL Translation", self._llm.nl_translation_pool))
         if self._sub_sessions:
             lines.append(_fmt_pool("Sub-sessions", self._sub_sessions._pool))

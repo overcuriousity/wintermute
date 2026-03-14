@@ -7,8 +7,8 @@ This module presents those tools as single-field "describe in English"
 schemas to the main LLM, then uses a dedicated translator LLM to expand
 the description into structured arguments.
 
-Complementary to the existing ``tool_schema_validation`` Turing Protocol
-hook — the Turing hook validates the *translated* args, not the raw
+Complementary to the existing ``tool_schema_validation`` Convergence Protocol
+hook — the Convergence hook validates the *translated* args, not the raw
 description.
 """
 

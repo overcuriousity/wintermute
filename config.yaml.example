@@ -205,7 +205,7 @@ inference_backends:
 #                  Defaults to sub_sessions backends when omitted.
 #   dreaming       Nightly memory consolidation. Runs once per day, not latency-
 #                  sensitive. A small model works well here.
-#   turing_protocol  Post-inference validation pipeline. A small/fast model is
+#   convergence_protocol  Post-inference validation pipeline. A small/fast model is
 #                    recommended — it only checks for hallucinations, not generates.
 #
 # Omitted roles default to the "base" backends.
@@ -217,11 +217,11 @@ llm:
   sub_sessions: ["local_large"]
   memory_harvest: ["local_small"]
   dreaming: ["local_small"]
-  turing_protocol: ["local_small"]
+  convergence_protocol: ["local_small"]
   # reflection: ["local_small"]           # LLM for reflection analysis. Defaults to compaction.
 
 
-# ── Turing Protocol (Post-Inference Validation) ─────────────────────
+# ── Convergence Protocol (Post-Inference Validation) ─────────────────────
 # A 3-stage pipeline that catches LLM hallucinations and bad behavior
 # AFTER inference, BEFORE the response reaches the user.
 #
@@ -233,7 +233,7 @@ llm:
 # (< 30B parameters). For strong models (GPT-4, Claude, 70B+), you can
 # disable some validators to reduce latency.
 #
-turing_protocol:
+convergence_protocol:
   validators:
     workflow_spawn: true                   # Detects when the LLM claims it spawned a
                                            # background worker but didn't actually call
@@ -372,7 +372,7 @@ tuning:
   max_blob_chars: 60000               # Max chars in memory-harvest conversation blob (~15k tokens)
   max_completed_workflows: 50         # Completed workflows kept in memory for the debug UI
   max_inline_tool_rounds: 3           # Max execution/research tool calls the main thread can
-                                      # make inline per turn before the Turing Protocol
+                                      # make inline per turn before the Convergence Protocol
                                       # enforces delegation to a sub-session. Only counts
                                       # execution+research tools (execute_shell, read_file,
                                       # write_file, search_web, fetch_url). Orchestration

@@ -29,7 +29,7 @@ from typing import Callable, Optional, TYPE_CHECKING
 from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
-from wintermute.core import turing_protocol as turing_protocol_module
+from wintermute.core import convergence_protocol as convergence_protocol_module
 from wintermute.core.inference_engine import (
     ToolCallContext, extract_content_text, make_tool_context,
     process_tool_call,
@@ -85,7 +85,7 @@ class _QueueItem:
     thread_id: str = "default"
     is_system_event: bool = False
     future: Optional[asyncio.Future] = field(default=None, compare=False)
-    turing_depth: int = 0  # 0=normal, 1=first correction, 2=re-check correction (max)
+    convergence_depth: int = 0  # 0=normal, 1=first correction, 2=re-check correction (max)
     content: Optional[list] = None  # multimodal content parts (OpenAI vision format)
     # Sequence number of the user-message turn this correction was issued for.
     # If the thread has advanced past this number by the time the correction is
@@ -97,9 +97,9 @@ class LLMThread:
     """Runs as an asyncio task within the shared event loop."""
 
     def __init__(self, main_pool: BackendPool, compaction_pool: BackendPool,
-                 turing_protocol_pool: BackendPool, broadcast_fn,
+                 convergence_protocol_pool: BackendPool, broadcast_fn,
                  sub_session_getter: "Optional[Callable[[], Optional[SubSessionManager]]]" = None,
-                 turing_protocol_validators: "Optional[dict[str, bool]]" = None,
+                 convergence_protocol_validators: "Optional[dict[str, bool]]" = None,
                  nl_translation_pool: "Optional[BackendPool]" = None,
                  nl_translation_config: "Optional[dict]" = None,
                  seed_language: str = "en",
@@ -109,12 +109,12 @@ class LLMThread:
                  compaction_keep_recent: int = COMPACTION_KEEP_RECENT,
                  tool_deps: "Optional[ToolDeps]" = None) -> None:
         self._main_pool = main_pool
-        self._turing_protocol_pool = turing_protocol_pool
-        from wintermute.core.tp_runner import TuringProtocolRunner
-        self._tp_runner = TuringProtocolRunner(
-            pool=turing_protocol_pool,
+        self._convergence_protocol_pool = convergence_protocol_pool
+        from wintermute.core.cp_runner import ConvergenceProtocolRunner
+        self._cp_runner = ConvergenceProtocolRunner(
+            pool=convergence_protocol_pool,
             scope="main",
-            enabled_validators=turing_protocol_validators,
+            enabled_validators=convergence_protocol_validators,
         )
         self._nl_translation_pool = nl_translation_pool
         self._nl_translation_config = nl_translation_config or {}
@@ -175,8 +175,8 @@ class LLMThread:
         return self._compactor.pool
 
     @property
-    def turing_protocol_pool(self) -> BackendPool:
-        return self._turing_protocol_pool
+    def convergence_protocol_pool(self) -> BackendPool:
+        return self._convergence_protocol_pool
 
     @property
     def nl_translation_pool(self) -> "Optional[BackendPool]":
@@ -300,10 +300,10 @@ class LLMThread:
         await self._store.load_summaries()
         self._ready.set()
         logger.info("LLM thread started (endpoint=%s model=%s)", self._cfg.base_url, self._cfg.model)
-        if self._turing_protocol_pool.enabled:
-            logger.info("Turing Protocol enabled (model=%s)", self._turing_protocol_pool.primary.model)
+        if self._convergence_protocol_pool.enabled:
+            logger.info("Convergence Protocol enabled (model=%s)", self._convergence_protocol_pool.primary.model)
         else:
-            logger.info("Turing Protocol disabled")
+            logger.info("Convergence Protocol disabled")
 
         # The run loop waits for shutdown.  Per-thread workers are spawned
         # on demand by _dispatch() when messages arrive.
@@ -349,19 +349,19 @@ class LLMThread:
                         return  # cleanup succeeded, exit without finally cleanup
                     continue  # new items in queue — keep processing
 
-                # Drop stale Turing Protocol corrections.
-                if item.turing_depth > 0 and item.correction_for_seq is not None:
+                # Drop stale Convergence Protocol corrections.
+                if item.convergence_depth > 0 and item.correction_for_seq is not None:
                     current_seq = self._store.thread_seq.get(thread_id, 0)
                     if current_seq > item.correction_for_seq:
                         logger.warning(
-                            "Dropping stale Turing Protocol correction for thread %s "
+                            "Dropping stale Convergence Protocol correction for thread %s "
                             "(issued at seq=%d, current seq=%d)",
                             thread_id, item.correction_for_seq, current_seq,
                         )
                         try:
                             await database.async_call(
                                 database.save_interaction_log,
-                                _time.time(), "turing_stale_drop", thread_id,
+                                _time.time(), "convergence_stale_drop", thread_id,
                                 self._main_pool.last_used,
                                 item.text[:2000], "", "stale",
                             )
@@ -371,7 +371,7 @@ class LLMThread:
                         continue
 
                 # Advance per-thread sequence counter.
-                if not item.is_system_event or item.turing_depth > 0:
+                if not item.is_system_event or item.convergence_depth > 0:
                     self._store.thread_seq[thread_id] = (
                         self._store.thread_seq.get(thread_id, 0) + 1
                     )
@@ -439,7 +439,7 @@ class LLMThread:
 
                 if item.future and not item.future.done():
                     item.future.set_result(reply)
-                elif item.is_system_event and not item.future and item.turing_depth == 0:
+                elif item.is_system_event and not item.future and item.convergence_depth == 0:
                     text_to_send = reply.text or item.text
                     logger.info(
                         "Broadcasting system-event reply for thread %s (%d chars, reply_empty=%s)",
@@ -451,43 +451,43 @@ class LLMThread:
                     except Exception:  # noqa: BLE001
                         logger.exception("Failed to broadcast system-event reply for thread %s",
                                          thread_id)
-                elif item.turing_depth > 0 and reply.text:
+                elif item.convergence_depth > 0 and reply.text:
                     logger.info(
-                        "Broadcasting Turing correction response for thread %s "
+                        "Broadcasting Convergence correction response for thread %s "
                         "(depth=%d, tools=%s)",
-                        thread_id, item.turing_depth,
+                        thread_id, item.convergence_depth,
                         reply.tool_calls_made or "none",
                     )
                     try:
                         await self._broadcast(reply.text, thread_id,
                                               reasoning=reply.reasoning)
                     except Exception:  # noqa: BLE001
-                        logger.exception("Failed to broadcast Turing correction response")
+                        logger.exception("Failed to broadcast Convergence correction response")
 
-                # -- Turing Protocol validation --
+                # -- Convergence Protocol validation --
                 if (
                     not thread_id.startswith("sub_")
                     and reply.text
-                    and item.turing_depth < 2
+                    and item.convergence_depth < 2
                 ):
                     seq_at_fire = self._store.thread_seq.get(thread_id, 0)
                     _prior_tc = self._session_mgr.prior_tool_calls.get(thread_id, [])
-                    _tp_task = asyncio.create_task(
-                        self._run_turing_check(
+                    _cp_task = asyncio.create_task(
+                        self._run_convergence_check(
                             user_message=item.text,
                             assistant_response=reply.text,
                             tool_calls_made=reply.tool_calls_made,
                             thread_id=thread_id,
                             issued_for_seq=seq_at_fire,
-                            turing_depth=item.turing_depth,
+                            convergence_depth=item.convergence_depth,
                             prior_assistant_message=_prior_assistant,
                             prior_tool_calls_made=_prior_tc,
                             recent_assistant_messages=_recent_assistant,
                         ),
-                        name=f"turing_{thread_id}",
+                        name=f"convergence_{thread_id}",
                     )
-                    self._background_tasks.add(_tp_task)
-                    _tp_task.add_done_callback(self._background_tasks.discard)
+                    self._background_tasks.add(_cp_task)
+                    _cp_task.add_done_callback(self._background_tasks.discard)
 
                 # Update prior-turn tool calls.
                 self._session_mgr.prior_tool_calls[thread_id] = reply.tool_calls_made or []
@@ -528,7 +528,7 @@ class LLMThread:
                 if (
                     not thread_id.startswith("sub_")
                     and not item.is_system_event
-                    and item.turing_depth == 0
+                    and item.convergence_depth == 0
                 ):
                     _had_error = "[Error" in (reply.text or "")
                     try:
@@ -561,22 +561,22 @@ class LLMThread:
         self._running = False
 
     # ------------------------------------------------------------------
-    # Turing Protocol validation
+    # Convergence Protocol validation
     # ------------------------------------------------------------------
 
-    async def _run_turing_check(
+    async def _run_convergence_check(
         self,
         user_message: str,
         assistant_response: str,
         tool_calls_made: list[str],
         thread_id: str,
         issued_for_seq: int = 0,
-        turing_depth: int = 0,
+        convergence_depth: int = 0,
         prior_assistant_message: Optional[str] = None,
         prior_tool_calls_made: Optional[list[str]] = None,
         recent_assistant_messages: Optional[list[str]] = None,
     ) -> None:
-        """Fire the Turing Protocol pipeline to detect violations.
+        """Fire the Convergence Protocol pipeline to detect violations.
 
         Runs asynchronously after the main reply has already been delivered.
         If violations are confirmed, a corrective system event is enqueued.
@@ -591,7 +591,7 @@ class LLMThread:
         stale (the user has already sent a follow-up and the context has moved
         on).
         """
-        if not self._tp_runner.enabled:
+        if not self._cp_runner.enabled:
             return
 
         ssm = self._get_sub_sessions() if self._get_sub_sessions else None
@@ -600,7 +600,7 @@ class LLMThread:
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
 
-        result = await self._tp_runner.run_phase(
+        result = await self._cp_runner.run_phase(
             "post_inference",
             thread_id=thread_id,
             user_message=user_message,
@@ -616,15 +616,15 @@ class LLMThread:
             return
 
         if result.correction:
-            new_depth = turing_depth + 1
+            new_depth = convergence_depth + 1
             # At depth >= 2, the model already failed to comply with a
             # correction once.  Repeating the same demanding prompt won't
             # help — the model is likely incapable of making the tool call
             # in this context.  Switch to a graceful fallback that tells
             # the model to stop trying and explain the limitation instead.
-            if turing_depth >= 1:
+            if convergence_depth >= 1:
                 correction_text = (
-                    "[TURING PROTOCOL — UNABLE TO COMPLY] "
+                    "[CONVERGENCE PROTOCOL — UNABLE TO COMPLY] "
                     "The previous correction could not be fulfilled. "
                     "Simply continue the conversation naturally. "
                     "Do NOT claim tools are blocked or unavailable. "
@@ -634,7 +634,7 @@ class LLMThread:
             else:
                 correction_text = result.correction
             logger.info(
-                "Turing Protocol injecting correction into thread %s (depth=%d, hooks=%s)",
+                "Convergence Protocol injecting correction into thread %s (depth=%d, hooks=%s)",
                 thread_id, new_depth,
                 [m["hook"] for m in result.correction_metadata],
             )
@@ -642,7 +642,7 @@ class LLMThread:
                 text=correction_text,
                 thread_id=thread_id,
                 is_system_event=True,
-                turing_depth=new_depth,
+                convergence_depth=new_depth,
                 correction_for_seq=issued_for_seq,
             ))
 
@@ -766,7 +766,7 @@ class LLMThread:
             text=item.text, thread_id=item.thread_id,
             is_system_event=item.is_system_event,
             is_sub_session_result=is_sub_session_result,
-            turing_depth=item.turing_depth,
+            convergence_depth=item.convergence_depth,
             content=item.content, model=pool_cfg.model,
         )
 
@@ -779,8 +779,8 @@ class LLMThread:
         thread_id = item.thread_id
 
         # Determine action type for interaction log.
-        if item.turing_depth > 0:
-            _action = "turing_response"
+        if item.convergence_depth > 0:
+            _action = "convergence_response"
         elif thread_id.startswith("sub_"):
             _action = "sub_session"
         elif item.is_system_event:
@@ -919,10 +919,10 @@ class LLMThread:
         *pool* overrides the default main_pool when a per-thread backend
         override is active.
 
-        Turing Protocol hooks are fired at three phases:
+        Convergence Protocol hooks are fired at three phases:
           - pre_execution:  before each tool call (can block execution)
           - post_execution: after each tool call (can flag results)
-          - post_inference:  handled by the caller (_run_turing_check)
+          - post_inference:  handled by the caller (_run_convergence_check)
         """
         active_pool = pool or self._main_pool
         active_cfg = active_pool.primary if active_pool.enabled else self._cfg
@@ -941,10 +941,10 @@ class LLMThread:
         tool_calls_made: list[str] = []
         tool_call_details: list[dict] = []
 
-        tp_enabled = self._turing_protocol_pool.enabled
+        cp_enabled = self._convergence_protocol_pool.enabled
 
         # Build a shared context for tool-call processing.
-        async def _tp_check_main(phase, *, tool_name=None, tool_args=None,
+        async def _cp_check_main(phase, *, tool_name=None, tool_args=None,
                                  tool_result=None, assistant_response="",
                                  tool_calls_made=None, nl_tools=None):
             return await self._run_phase_check(
@@ -964,8 +964,8 @@ class LLMThread:
             nl_tools=nl_tools,
             nl_translation_pool=getattr(self, "_nl_translation_pool", None),
             timezone_str=prompt_assembler.get_timezone(),
-            tp_enabled=tp_enabled,
-            tp_check=_tp_check_main if tp_enabled else None,
+            cp_enabled=cp_enabled,
+            cp_check=_cp_check_main if cp_enabled else None,
             max_tool_output_chars=active_cfg.context_size * 4,  # tokens → approx chars
             tool_deps=self._tool_deps,
         )
@@ -1117,13 +1117,13 @@ class LLMThread:
         tool_args: Optional[dict] = None,
         tool_result: Optional[str] = None,
         nl_tools: "set[str] | None" = None,
-    ) -> Optional["turing_protocol_module.TuringResult"]:
-        """Run Turing Protocol hooks for a specific phase.
+    ) -> Optional["convergence_protocol_module.ConvergenceResult"]:
+        """Run Convergence Protocol hooks for a specific phase.
 
-        Delegates to the bound ``TuringProtocolRunner`` (scope is fixed
+        Delegates to the bound ``ConvergenceProtocolRunner`` (scope is fixed
         at construction time to ``"main"``).
         """
-        return await self._tp_runner.run_phase(
+        return await self._cp_runner.run_phase(
             phase,
             thread_id=thread_id,
             tool_calls_made=tool_calls_made,
