@@ -1970,6 +1970,16 @@ class SubSessionManager:
                 f"{scratchpad_dir}/"
             )
 
+        # Include skills TOC for all modes except "full" (which already has it
+        # via prompt_assembler.assemble) and "none".
+        if mode not in ("full", "none"):
+            try:
+                skills_toc = prompt_assembler._read_skills_toc(query=objective)
+                if skills_toc:
+                    parts.append(f"# Skills\n\n{skills_toc}")
+            except Exception:
+                pass  # Non-critical; skip if skill store unavailable
+
         parts.append(prompt_loader.load("WORKER_OBJECTIVE.txt", objective=objective))
 
         return "\n\n---\n\n".join(parts)

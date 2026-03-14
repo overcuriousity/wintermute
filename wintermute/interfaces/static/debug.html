@@ -1088,7 +1088,7 @@ function _workerSessionRow(s, indent) {
     <td class="mono dim" title="${esc(deps.join(', '))}">${depsStr}</td>
     <td>${badge(s.status, s.status)}</td>
     <td class="dim">${tcCount}</td>
-    <td class="trunc" title="${esc(s.objective)}">${esc(s.objective.slice(0, 60))}${s.objective.length > 60 ? '\u2026' : ''}</td>
+    <td class="trunc" title="${esc(s.objective)}">${esc(s.objective)}</td>
     <td class="dim">${esc(s.system_prompt_mode)}</td>
     <td class="dim" style="white-space:nowrap">${fmtTime(s.created_at)}</td>
     <td class="dim" style="white-space:nowrap">${duration}</td>
@@ -1251,8 +1251,8 @@ async function fetchWorkerDetail(sid) {
     let html = '<div style="margin-bottom:.5rem"><strong style="color:#a8d8ea">Messages (' + msgs.length + ')</strong></div>';
     html += '<div style="max-height:400px;overflow-y:auto;border:1px solid #0f3460;border-radius:.4rem;padding:.4rem">';
     msgs.forEach(m => {
-      const roleColor = m.role === 'assistant' ? '#a8d8ea' : m.role === 'user' ? '#90ee90' : m.role === 'tool' ? '#c9b0ff' : '#888';
-      const content = (m.content || '').slice(0, 500) + ((m.content || '').length > 500 ? '\u2026' : '');
+      const roleColor = m.role === 'assistant' ? '#a8d8ea' : m.role === 'user' ? '#90ee90' : m.role === 'tool' ? '#c9b0ff' : m.role === 'system' ? '#ffcc66' : '#888';
+      const content = m.content || '';
       html += '<div style="margin-bottom:.4rem;padding:.3rem .5rem;border-left:2px solid ' + roleColor + '">';
       html += '<span style="color:' + roleColor + ';font-weight:600;font-size:.72rem;text-transform:uppercase">' + esc(m.role) + '</span>';
       if (m.tool_call_id) html += ' <span class="mono dim" style="font-size:.68rem">' + esc(m.tool_call_id) + '</span>';
@@ -1261,7 +1261,14 @@ async function fetchWorkerDetail(sid) {
           html += ' <span class="badge badge-system" style="font-size:.62rem">' + esc(tc.name) + '</span>';
         });
       }
-      html += '<div style="white-space:pre-wrap;word-break:break-word;margin-top:.2rem;font-size:.78rem;color:#ccc">' + esc(content) + '</div>';
+      if (m.role === 'system') {
+        const sysId = 'sysprompt-' + sid + '-' + Math.random().toString(36).slice(2, 8);
+        html += '<details style="margin-top:.2rem"><summary style="cursor:pointer;font-size:.72rem;color:#ffcc66">Show system prompt (' + content.length + ' chars)</summary>';
+        html += '<div style="white-space:pre-wrap;word-break:break-word;margin-top:.2rem;font-size:.78rem;color:#ccc;max-height:600px;overflow-y:auto">' + esc(content) + '</div>';
+        html += '</details>';
+      } else {
+        html += '<div style="white-space:pre-wrap;word-break:break-word;margin-top:.2rem;font-size:.78rem;color:#ccc">' + esc(content) + '</div>';
+      }
       html += '</div>';
     });
     html += '</div>';
