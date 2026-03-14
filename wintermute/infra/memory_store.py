@@ -1028,6 +1028,7 @@ def init(config: dict) -> None:
         _backend = LocalVectorBackend(config)
     elif backend_name == "qdrant":
         _backend = QdrantBackend(config)
+    _backend.init()
 
     logger.info("Memory backend initialized: %s (%d entries)", backend_name, _backend.count())
 
@@ -1145,54 +1146,14 @@ def create_snapshot() -> str:
 _DEDUP_SIMILARITY_THRESHOLD = 0.80
 
 
-_SOURCE_PRIORITY = ("user_explicit", "dreaming_schema", "harvest", "unknown")
-
-
-def _pick_protective_source(a: str, b: str) -> str:
-    """Return whichever source has higher protection priority."""
-    def _rank(s: str) -> int:
-        try:
-            return _SOURCE_PRIORITY.index(s)
-        except ValueError:
-            return len(_SOURCE_PRIORITY)
-    return a if _rank(a) <= _rank(b) else b
-
-
-def _get_source_for_entry(entry_id: str) -> str:
-    """Look up the source tag for a given entry_id (backend-agnostic)."""
-    if _backend is None:
-        return "unknown"
-    # LocalVectorBackend stores source in local_vectors table.
-    if isinstance(_backend, LocalVectorBackend):
-        try:
-            conn = _backend._connect()
-            row = conn.execute(
-                "SELECT source FROM local_vectors WHERE entry_id = ?", (entry_id,)
-            ).fetchone()
-            conn.close()
-            return row[0] if row else "unknown"
-        except Exception:
-            return "unknown"
-    if isinstance(_backend, QdrantBackend):
-        try:
-            points = _backend._client.retrieve(
-                collection_name=_backend._collection,
-                ids=[entry_id],
-                with_payload=True,
-            )
-            if points:
-                return points[0].payload.get("source", "unknown")
-        except Exception:
-            pass
-    return "unknown"
-
-
 async def add_with_dedup(entry: str, source: str = "unknown", *, pool=None) -> str:
     """Add a memory entry, merging with an existing near-duplicate if found.
 
     1. Search for similar entries above ``_DEDUP_SIMILARITY_THRESHOLD``.
     2. If a match is found and *pool* is provided, merge via LLM.
-    3. Update the existing entry with the merged text (preserving its id/metadata).
+    3. Upsert the merged text under the existing entry_id.  Both
+       LocalVectorBackend and QdrantBackend preserve metadata
+       (created_at, access_count, last_accessed, source) on upsert.
     4. If no match, fall back to plain ``add()``.
 
     Returns the entry_id of the new/merged entry.
@@ -1218,18 +1179,11 @@ async def add_with_dedup(entry: str, source: str = "unknown", *, pool=None) -> s
             )
             merged = (response.content or "").strip()
             if merged:
-                # Preserve the existing entry_id and pick the more
-                # protective source to avoid accidental stale pruning.
-                existing_source = await asyncio.to_thread(
-                    _get_source_for_entry, existing_id
-                )
-                kept_source = _pick_protective_source(existing_source, source)
-                # Delete old, re-add under the *same* entry_id so that
-                # access metadata (created_at, access_count) is reset but
-                # the logical identity is preserved.
-                await asyncio.to_thread(delete, existing_id)
+                # Upsert under the existing entry_id.  Both backends'
+                # ON CONFLICT / upsert logic preserves created_at,
+                # access_count, last_accessed, and source — no delete needed.
                 new_id = await asyncio.to_thread(
-                    add, merged, entry_id=existing_id, source=kept_source
+                    add, merged, entry_id=existing_id, source=source
                 )
                 logger.info(
                     "Memory dedup: merged existing %s (%.0f%% sim) → %s",

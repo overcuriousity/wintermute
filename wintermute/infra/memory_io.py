@@ -37,13 +37,14 @@ def append_memory(entry: str, source: str = "unknown", *, pool=None, loop=None) 
 
     if pool is not None and loop is not None:
         import asyncio
+        import concurrent.futures
         try:
             future = asyncio.run_coroutine_threadsafe(
                 memory_store.add_with_dedup(entry.strip(), source=source, pool=pool),
                 loop,
             )
             future.result(timeout=30)
-        except TimeoutError:
+        except (concurrent.futures.TimeoutError, TimeoutError):
             # The coroutine is still running on the event loop — cancel it
             # to avoid a duplicate add if we fall back.
             future.cancel()
@@ -53,7 +54,7 @@ def append_memory(entry: str, source: str = "unknown", *, pool=None, loop=None) 
             try:
                 future.result(timeout=2)
                 # Completed successfully despite the earlier timeout — no fallback needed.
-            except (asyncio.CancelledError, TimeoutError):
+            except (asyncio.CancelledError, concurrent.futures.TimeoutError, TimeoutError):
                 memory_store.add(entry.strip(), source=source)
             except Exception:
                 memory_store.add(entry.strip(), source=source)

@@ -163,7 +163,7 @@ Append a new fact to the memory store. Preferred for day-to-day memory storage â
 | `entry` | string | yes | The fact or note to append (one logical entry) |
 | `source` | string | no | Origin tag for this memory. Default: `"user_explicit"`. Other values: `"harvest"` (memory harvest workers). Used by dreaming to protect user-explicit memories from stale pruning. |
 
-Returns: `status`, `total_chars`
+Returns: `status`, `total_entries`, `total_chars`
 
 #### `skill`
 

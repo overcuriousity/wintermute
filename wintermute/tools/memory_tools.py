@@ -23,7 +23,7 @@ def tool_append_memory(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw
         )
         if deps.event_bus:
             deps.event_bus.emit("memory.appended", entry=inputs["entry"][:200])
-        return json.dumps({"status": "ok", "total_entries": total})
+        return json.dumps({"status": "ok", "total_entries": total, "total_chars": total})
     except Exception as exc:  # noqa: BLE001
         logger.exception("append_memory failed")
         return json.dumps({"error": str(exc)})

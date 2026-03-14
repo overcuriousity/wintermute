@@ -542,7 +542,7 @@ memory:
     dedup_similarity_threshold: 0.80  # Cosine similarity threshold for dedup clustering
     stale_days: 90                    # Prune memories not accessed in this many days
     stale_min_access: 3               # ...and accessed fewer than this many times
-    working_set_size: 50              # Top-N memories used for prompt assembly
+    working_set_size: 50              # Reserved for future use (not currently wired into prompt assembly)
 
     # ── Associative Discovery (REM-inspired) ──
     # Finds non-obvious cross-domain connections between memories.
