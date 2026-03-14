@@ -382,7 +382,7 @@ TOOL_CATEGORIES: dict[str, str] = {
     "worker_delegation":  "orchestration",
     "task":               "orchestration",
     "append_memory":      "orchestration",
-    "skill":              "orchestration",
+    "skill":              "research",
     "query_telemetry":    "orchestration",
 }
 
