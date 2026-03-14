@@ -33,7 +33,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 | Module | Purpose |
 |---|---|
 | `llm_thread.py` | Conversation history, context compaction, Convergence Protocol dispatch; delegates per-tool-call execution to `inference_engine` |
-| `inference_engine.py` | Shared tool-call pipeline (`process_tool_call`): JSON parse, NL translation, CP pre/post execution gates, syscall dispatch, interaction logging — used by both `llm_thread` and `sub_session` |
+| `inference_engine.py` | Shared tool-call pipeline (`process_tool_call`): JSON parse, NL translation, CP pre/post execution gates, tool dispatch, interaction logging — used by both `llm_thread` and `sub_session` |
 | `tools.py` | Tool definitions (OpenAI function-calling schemas) + `execute_tool()` dispatcher |
 | `sub_session.py` | Background worker DAG: `TaskNode`/`Workflow` with `depends_on` edges, nested workers (depth 2), timeout continuation |
 | `prompt_assembler.py` | Assembles system prompt per-turn: BASE_PROMPT + datetime + memories (vector search) + tasks + skills TOC (full skills loaded on demand via read_file) |

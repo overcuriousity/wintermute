@@ -871,13 +871,14 @@ def get_outcome_stats() -> dict:
 def get_cp_violation_stats() -> dict:
     """Return Convergence Protocol violation statistics grouped by LLM backend.
 
-    Queries the interaction_log for confirmed CP violations (convergence_validation
-    and convergence_correction entries with status='violation_detected') and groups
-    them by the responsible LLM backend.
+    Queries the interaction_log for confirmed CP violations and groups them
+    by the responsible LLM backend.  Both current action names
+    (``convergence_*``) and legacy names (``turing_*``) are included so
+    that historical data from before the rename remains visible.
     """
     with _connect() as conn:
         conn.row_factory = sqlite3.Row
-        # Confirmed violations from Stage 2 (convergence_validation with violation_detected)
+        # Confirmed violations from Stage 2 (convergence_validation + legacy turing_validation)
         rows = conn.execute(
             "SELECT llm, COUNT(*) as cnt "
             "FROM interaction_log "

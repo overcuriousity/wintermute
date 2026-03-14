@@ -119,13 +119,15 @@ Wintermute's role-based backend routing (see [Configuration](configuration.md)) 
 
 Enable the Convergence Protocol from the start, especially with smaller models. The three failure modes it catches — hallucinated actions, phantom tool results, and empty promises — become more frequent as model size decreases, and they silently corrupt conversation state if uncorrected.
 
-**Use a plain instruct model for the Convergence Protocol backend, not a reasoning model.** Reasoning models (those that emit a chain-of-thought scratchpad before responding) intro reduce significant latency on every validation pass and can produce verbose, unpredictable output that interferes with the structured detection pipeline. A small, fast instruct model — the same one you might use for compaction — is the correct choice here. The Convergence Protocol does not require deep reasoning; it requires reliable instruction-following and consistent output format.  
+**Use a plain instruct model for the Convergence Protocol backend, not a reasoning model.** Reasoning models (those that emit a chain-of-thought scratchpad before responding) introduce significant latency on every validation pass and can produce verbose, unpredictable output that interferes with the structured detection pipeline. A small, fast instruct model — the same one you might use for compaction — is the correct choice here. The Convergence Protocol does not require deep reasoning; it requires reliable instruction-following and consistent output format.  
 
 Recommended minimal config:
 
 ```yaml
+llm:
+  convergence_protocol: ["your_small_model"]
+
 convergence_protocol:
-  backends: ["your_small_model"]
   validators:
     workflow_spawn: true
     phantom_tool_result: true

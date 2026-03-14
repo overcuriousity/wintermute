@@ -90,7 +90,6 @@ llm:
   convergence_protocol: ["ollama_small"]
 
 convergence_protocol:
-  backends: ["ollama_small"]
   validators:
     workflow_spawn: true
     phantom_tool_result: true
@@ -235,7 +234,6 @@ For a detailed explanation of each hook, phases, scopes, and how to write custom
 
 ```yaml
 convergence_protocol:
-  backends: ["local_small"]
   validators:
     workflow_spawn: true
     phantom_tool_result: true
