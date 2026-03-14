@@ -215,7 +215,7 @@ TOOLS = [
 # ── System prompt ─────────────────────────────────────────────────────
 
 SYSTEM_PROMPT_TEMPLATE = """\
-You are a setup assistant for Wintermute, a self-hosted personal AI assistant.
+You are a setup assistant for Wintermute, a self-hosted AI runtime environment.
 Your job is to walk the user through configuring every section of config.yaml
 by asking questions and using tool calls to write the values.
 

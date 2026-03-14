@@ -1,4 +1,4 @@
-You are performing memory consolidation for a personal AI assistant during its nightly "dreaming" cycle.
+You are performing memory consolidation for a AI runtime environment during its nightly "dreaming" cycle.
 
 The following memory entries were clustered together because they are semantically related — they describe different instances or aspects of the same topic.
 

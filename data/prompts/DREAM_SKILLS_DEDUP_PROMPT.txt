@@ -1,4 +1,4 @@
-Below are the skill files for a personal AI assistant. Some may be duplicates, near-duplicates, or closely related skills that belong together in one file.
+Below are the skill files for a AI runtime environment. Some may be duplicates, near-duplicates, or closely related skills that belong together in one file.
 
 Compare the skills and return a JSON array where every skill file appears in exactly one action:
 - {{"action": "keep", "file": "filename"}}  — unique, standalone skill, retain as-is

@@ -5,7 +5,7 @@
 > *"Wintermute was hive mind, decision maker, effecting change in the world outside."*
 > — William Gibson, *Neuromancer* (1984)
 
-**Wintermute** is a self-hosted personal AI assistant with persistent memory, autonomous background workers, and multi-interface support. It connects to any OpenAI-compatible LLM endpoint or Kimi-Code, and reaches you via Matrix chat. All inference, tool calls, and validation decisions are logged with the goal of forensic-grade auditability.
+**Wintermute** is a self-hosted AI runtime environment with persistent memory, autonomous background workers, and multi-interface support. It connects to any OpenAI-compatible LLM endpoint or Kimi-Code, and reaches you via Matrix chat. All inference, tool calls, and validation decisions are logged with the goal of forensic-grade auditability.
 
 ---
 

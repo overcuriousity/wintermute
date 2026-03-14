@@ -1,4 +1,4 @@
-Below are the active tasks (tracked goals and scheduled actions) for a personal AI assistant.
+Below are the active tasks (tracked goals and scheduled actions) for a AI runtime environment.
 
 Review each item and return a JSON array of actions to take. Valid actions:
 - {{"action": "keep", "id": "<task_id>"}} — task is still relevant, no change

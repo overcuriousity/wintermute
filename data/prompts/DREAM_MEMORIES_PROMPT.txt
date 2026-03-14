@@ -1,4 +1,4 @@
-Below is the current long-term memory store for a personal AI assistant ({source}). Memories are appended throughout the day and may contain duplicates or near-duplicates.
+Below is the current long-term memory store for a AI runtime environment ({source}). Memories are appended throughout the day and may contain duplicates or near-duplicates.
 
 Your task is to consolidate it:
 - Merge duplicate and near-duplicate entries into single concise statements.

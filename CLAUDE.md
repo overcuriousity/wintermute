@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is Wintermute
 
-A self-hosted personal AI assistant (named after Neuromancer's AI) with persistent memory, autonomous background workers, and multi-interface support (Matrix with E2E encryption + web UI). Connects to any OpenAI-compatible LLM endpoint. Single-process Python asyncio architecture.
+A self-hosted AI runtime environment (named after Neuromancer's AI) with persistent memory, autonomous background workers, and multi-interface support (Matrix with E2E encryption + web UI). Connects to any OpenAI-compatible LLM endpoint. Single-process Python asyncio architecture.
 
 ## Commands
 

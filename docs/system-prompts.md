@@ -12,7 +12,7 @@ The foundation of every prompt. Shipped with the repository and editable by the 
 
 Content covers:
 
-- Role definition (personal AI assistant via Matrix chat)
+- Role definition (AI runtime environment via Matrix chat)
 - Memory system: clear boundary between MEMORIES (long-term facts) and TASKS (active working memory)
 - Background process awareness (scheduled tasks, nightly dreaming, context compaction)
 - Tool usage patterns and categories

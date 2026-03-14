@@ -1,1 +1,1 @@
-"""Wintermute – multi-interface personal AI assistant."""
+"""Wintermute – multi-interface AI runtime environment."""
