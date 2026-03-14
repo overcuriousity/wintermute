@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1-alpha](https://github.com/overcuriousity/wintermute/compare/v0.11.0-alpha...v0.11.1-alpha) (2026-03-14)
+
+
+### Bug Fixes
+
+* address multiple bugs found during code review ([75836c8](https://github.com/overcuriousity/wintermute/commit/75836c80a866640d9dad1a7b0f9392ab42f8d4d4))
+
 ## [0.11.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.10.0-alpha...v0.11.0-alpha) (2026-03-14)
 
 
