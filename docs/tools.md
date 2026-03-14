@@ -1,6 +1,6 @@
 # Tools
 
-Wintermute exposes 10 tools as OpenAI-compatible function-calling schemas, compatible with any OpenAI-compatible endpoint (llama-server, vLLM, LM Studio, OpenAI, etc.).
+Wintermute exposes 11 tools as OpenAI-compatible function-calling schemas, compatible with any OpenAI-compatible endpoint (llama-server, vLLM, LM Studio, OpenAI, etc.).
 
 ## Tool Categories
 
@@ -8,7 +8,7 @@ Tools are grouped into three categories that control which tools are available i
 
 | Category | Available To | Tools |
 |----------|-------------|-------|
-| **execution** | All agents | `execute_shell`, `read_file`, `write_file` |
+| **execution** | All agents | `execute_shell`, `read_file`, `write_file`, `send_file` |
 | **research** | All agents | `search_web`, `fetch_url`, `skill` |
 | **orchestration** | Main agent + `full`-mode sub-sessions | `worker_delegation`, `task`, `append_memory`, `query_telemetry` |
 
@@ -82,6 +82,17 @@ Write content to a file, creating parent directories as needed.
 |-----------|------|----------|-------------|
 | `path` | string | yes | Absolute or relative file path |
 | `content` | string | yes | Text content to write |
+
+#### `send_file`
+
+Send a file to the user. Images are sent inline; other files as downloads. Frontend-agnostic: emits a `send_file` event on the EventBus; each frontend (Matrix, web) subscribes and handles delivery independently.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `path` | string | yes | Absolute or relative path to the file |
+| `caption` | string | no | Optional caption or description |
+
+Returns: `status`, `path`, `filename`, `mime_type`, `file_size`
 
 ### Research Tools
 

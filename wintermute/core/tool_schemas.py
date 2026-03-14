@@ -349,6 +349,25 @@ TOOL_SCHEMAS = [
         },
     ),
     _fn(
+        "send_file",
+        "Send a file to the user. The file must exist on disk. "
+        "Images are sent inline; other files as downloads.",
+        {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute or relative path to the file to send.",
+                },
+                "caption": {
+                    "type": "string",
+                    "description": "Optional caption or description for the file.",
+                },
+            },
+            "required": ["path"],
+        },
+    ),
+    _fn(
         "fetch_url",
         "Fetch a web page and return it as plain text (HTML stripped).",
         {
@@ -378,6 +397,7 @@ TOOL_CATEGORIES: dict[str, str] = {
     "read_file":          "execution",
     "write_file":         "execution",
     "search_web":         "research",
+    "send_file":          "execution",
     "fetch_url":          "research",
     "worker_delegation":  "orchestration",
     "task":               "orchestration",

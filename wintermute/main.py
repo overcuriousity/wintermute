@@ -735,6 +735,7 @@ async def main() -> None:
             whisper_model=whisper_model,
             whisper_language=whisper_language,
             slash_handler=slash_handler,
+            event_bus=event_bus,
         )
     else:
         logger.info("Matrix not configured - skipping Matrix interface")
