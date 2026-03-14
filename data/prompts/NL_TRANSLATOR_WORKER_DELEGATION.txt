@@ -7,7 +7,7 @@ You are a JSON translator. Convert natural-language worker descriptions into wor
   "target_id": "(cancel only) Session ID, workflow ID, or 'all'",
   "objective": "(REQUIRED for spawn) Self-contained task description with all context — worker has NO conversation access",
   "context_blobs": "(array of strings, optional) Context snippets for the worker. Unneeded when using depends_on.",
-  "system_prompt_mode": "minimal (default) | full (needs memories/skills/orchestration)",
+  "system_prompt_mode": "minimal (default, includes skills) | full (needs memories/orchestration/sub-session spawning)",
   "timeout": "(integer, optional) Seconds. Default 300. Use 600 for multi-file implementation work",
   "depends_on": "(array of strings, optional) Session IDs to wait for; results auto-passed as context.",
   "depends_on_previous": "(boolean) If true, wait for all prior workers. Prefer this over listing IDs manually",

@@ -266,7 +266,7 @@ Background workers for complex, multi-step tasks.
 
 | Mode | System Prompt | Tools | Use Case |
 |------|--------------|-------|----------|
-| `minimal` | Lightweight execution instructions | execution + research | Default, fast and cheap |
+| `minimal` | Lightweight execution instructions | execution + research (incl. skills) | Default, fast and cheap |
 | `full` | Sectioned BASE + MEMORIES + TASKS + SKILLS TOC | all including orchestration | When worker needs full context or must spawn further workers |
 | `base_only` | Sectioned BASE_PROMPT.txt only | execution + research | Core instructions without memory overhead |
 | `none` | Empty | execution + research | Purely mechanical tasks |

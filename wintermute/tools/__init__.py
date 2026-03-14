@@ -8,8 +8,8 @@ The dispatcher ``execute_tool`` is the single entry point used by the LLM thread
 Tool categories
 ---------------
   "execution"     – shell, file I/O (available to all sub-session modes)
-  "research"      – web search, URL fetching (available to all sub-session modes)
-  "orchestration" – memory, tasks, skills, sub-session spawning (main agent
+  "research"      – web search, URL fetching, skills (available to all sub-session modes)
+  "orchestration" – memory, tasks, sub-session spawning (main agent
                     and "full"-mode sub-sessions only)
 """
 
