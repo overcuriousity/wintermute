@@ -1257,10 +1257,12 @@ def _source_rank(s: str) -> int:
 def _promote_source(entry_id: str, new_source: str) -> None:
     """Promote the source tag on *entry_id* if *new_source* has higher priority.
 
-    Delegates to the backend's ``promote_source()`` method which handles
-    locking and storage-specific logic internally.
+    If the active backend implements a ``promote_source(entry_id, new_source)``
+    method, this function delegates to it so that locking and storage-specific
+    logic are handled internally. Backends that do not implement this method
+    simply skip source promotion.
     """
-    if _backend is not None:
+    if _backend is not None and hasattr(_backend, "promote_source"):
         _backend.promote_source(entry_id, new_source)
 
 
