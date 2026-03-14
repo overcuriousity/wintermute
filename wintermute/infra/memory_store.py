@@ -1143,7 +1143,7 @@ def search(query: str, top_k: int | None = None, threshold: float | None = None,
     if threshold is None:
         threshold = get_threshold()
     try:
-        return _backend.search(query, top_k, threshold)
+        return _backend.search(query, top_k, threshold, bump_access=bump_access)
     except Exception as exc:
         logger.warning("memory_store.search failed, returning empty results: %s", exc)
         return []
