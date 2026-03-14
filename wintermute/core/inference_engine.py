@@ -13,7 +13,7 @@ Pipeline per tool call
 1. Parse JSON arguments (→ error on failure)
 2. NL translation expansion (single-item or multi-item)
 3. Convergence Protocol ``pre_execution`` gate
-4. Tool execution via ``execute_syscall`` + ``run_in_executor``
+4. Tool execution via ``run_in_executor``
 5. NL translation summary prefix
 6. Convergence Protocol ``post_execution`` annotation
 7. Interaction logging + event-bus emission
@@ -33,7 +33,6 @@ from wintermute.core import nl_translator
 from wintermute.core.tool_deps import ToolDeps
 from wintermute.infra import database
 from wintermute import tools as tool_module
-from wintermute.tools.syscall import SyscallRequest
 
 logger = logging.getLogger(__name__)
 
@@ -251,17 +250,15 @@ async def _execute_multi_item(
     call_details: list[dict] = []
 
     for i, item_args in enumerate(items):
-        req = SyscallRequest(
-            name=name, inputs=item_args,
-            thread_id=ctx.thread_id,
-            nesting_depth=ctx.nesting_depth,
-            parent_thread_id=ctx.parent_thread_id,
-            tool_deps=ctx.tool_deps,
+        item_result = await asyncio.get_running_loop().run_in_executor(
+            None, lambda _n=name, _a=item_args: tool_module.execute_tool(
+                _n, _a,
+                thread_id=ctx.thread_id,
+                nesting_depth=ctx.nesting_depth,
+                parent_thread_id=ctx.parent_thread_id,
+                tool_deps=ctx.tool_deps,
+            ),
         )
-        sc_result = await asyncio.get_running_loop().run_in_executor(
-            None, lambda _r=req: tool_module.execute_syscall(_r),
-        )
-        item_result = sc_result.data
         # Truncate individual item results (same logic as Step 4b).
         if ctx.max_tool_output_chars and len(item_result) > ctx.max_tool_output_chars:
             orig = len(item_result)
@@ -418,18 +415,16 @@ async def process_tool_call(
                 executed=False,
             )
 
-    # -- Step 4: Execute tool (syscall) --------------------------------
-    req = SyscallRequest(
-        name=name, inputs=inputs,
-        thread_id=ctx.thread_id,
-        nesting_depth=ctx.nesting_depth,
-        parent_thread_id=ctx.parent_thread_id,
-        tool_deps=ctx.tool_deps,
+    # -- Step 4: Execute tool ----------------------------------------
+    result = await asyncio.get_running_loop().run_in_executor(
+        None, lambda _n=name, _i=inputs: tool_module.execute_tool(
+            _n, _i,
+            thread_id=ctx.thread_id,
+            nesting_depth=ctx.nesting_depth,
+            parent_thread_id=ctx.parent_thread_id,
+            tool_deps=ctx.tool_deps,
+        ),
     )
-    sc_result = await asyncio.get_running_loop().run_in_executor(
-        None, lambda _r=req: tool_module.execute_syscall(_r),
-    )
-    result = sc_result.data
     tool_calls_made.append(name)
 
     # -- Step 4b: Truncate oversized output ---------------------------
