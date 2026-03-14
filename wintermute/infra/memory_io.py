@@ -37,8 +37,7 @@ def append_memory(
     ``memory.appended`` event is emitted upon eventual completion.
 
     Returns ``(total_entry_count, status)`` where *status* is one of
-    ``"ok"``, ``"pending"`` (timeout — coroutine still in-flight), or
-    ``"fallback"`` (dedup failed, plain add used).
+    ``"ok"`` or ``"fallback"`` (dedup failed, plain add used).
     """
     from wintermute.infra import memory_store
 
@@ -57,7 +56,8 @@ def append_memory(
             # merge call).  Do NOT fall back to a plain add — that risks
             # duplicates if add_with_dedup eventually completes.
             logger.warning("add_with_dedup timed out; coroutine still in progress, skipping fallback")
-            status = "pending"
+            # Status remains "ok" here: the write has been accepted and is
+            # still in-flight; callers should not retry purely due to timeout.
             # Attach done-callback so errors are logged and deferred events
             # fire once the coroutine eventually completes.
             _entry_preview = entry[:200]
