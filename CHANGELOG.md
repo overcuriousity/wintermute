@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.11.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.10.0-alpha...v0.11.0-alpha) (2026-03-14)
+
+
+### Features
+
+* add restart_self tool for self-initiated process restart ([df7d2cb](https://github.com/overcuriousity/wintermute/commit/df7d2cbf59ce1316ff6960f36602495dbcbb7a26))
+* add restart_self tool for self-initiated process restart ([7375484](https://github.com/overcuriousity/wintermute/commit/737548472a50a04909addc127d316a2446246efb))
+* add send_file tool, replace [send_file:] text parsing ([35524dc](https://github.com/overcuriousity/wintermute/commit/35524dc13287202d6246caeca365e2e249fdeea5))
+* add send_file tool, replace text-marker parsing ([e6b8f61](https://github.com/overcuriousity/wintermute/commit/e6b8f61f24822f8b26e95198418f00cca7344f84))
+* formalize execute_tool() into a syscall-like interface ([2ee5487](https://github.com/overcuriousity/wintermute/commit/2ee5487a7c4338df59ce00e637f99fb523bef58c))
+
+
+### Bug Fixes
+
+* address Copilot review findings ([44b31a4](https://github.com/overcuriousity/wintermute/commit/44b31a499525f835e96a412c198dcd5b20a03638))
+* address Copilot review findings on memory store PR ([b206d5c](https://github.com/overcuriousity/wintermute/commit/b206d5cf8cc8e5a97d0a84a1758fe66d385878ac))
+* address eighth round of Copilot review findings ([c252f4f](https://github.com/overcuriousity/wintermute/commit/c252f4fba24059ac60279d5065989bfde1126f37))
+* address fifth round of Copilot review findings ([cc8d45b](https://github.com/overcuriousity/wintermute/commit/cc8d45bbbea8d438513052a10e6b7659336006ce))
+* address fifth round of Copilot review findings ([594faf2](https://github.com/overcuriousity/wintermute/commit/594faf233658ddef3708ede44267895be6187710))
+* address fourth round of Copilot review findings ([3e59081](https://github.com/overcuriousity/wintermute/commit/3e590814cf0b4f3c25419631910f9880207e6d88))
+* address fourth round of Copilot review findings ([a0d6b3c](https://github.com/overcuriousity/wintermute/commit/a0d6b3caa625f837c4ff5ef1e9e41ed93c58646c))
+* address PR review — thread safety, execv args, named constant ([1040bd2](https://github.com/overcuriousity/wintermute/commit/1040bd226bd4913f5dc62e360fe9b9ab96c9e3dd))
+* address second round of Copilot review findings ([934838b](https://github.com/overcuriousity/wintermute/commit/934838b146764e6a372f9d3629f6f34d9136d715))
+* address second round of Copilot review findings ([af70cbb](https://github.com/overcuriousity/wintermute/commit/af70cbb44fa1e1c5ebbbd4727eb699b37ed54c16))
+* address second round of Copilot review findings ([9cd0961](https://github.com/overcuriousity/wintermute/commit/9cd0961dae52306b3512af74a3a361fe63030963))
+* address seventh round of Copilot review findings ([844fd2a](https://github.com/overcuriousity/wintermute/commit/844fd2a500224df9a82b181140ebce3d45c9bafb))
+* address sixth round of Copilot review findings ([e564d87](https://github.com/overcuriousity/wintermute/commit/e564d876759513c3ae0500d04b44cff3ab5ba5df))
+* address third round of Copilot review findings ([0a77b95](https://github.com/overcuriousity/wintermute/commit/0a77b95150f683d91866ec9626fb2c2a84cbef18))
+* address third round of Copilot review findings ([d848c51](https://github.com/overcuriousity/wintermute/commit/d848c51fccd9eb635a677be8a13314122a397b19))
+* ensure legacy turing_* actions get convergence color coding in d… ([44e2c7a](https://github.com/overcuriousity/wintermute/commit/44e2c7a9129150c64ce3f2eb0f4ab1e2c0e004a7))
+* ensure legacy turing_* actions get convergence color coding in debug UI ([c66bfd1](https://github.com/overcuriousity/wintermute/commit/c66bfd1f6774c23bb450ff0e3889db0f370b7d05))
+* make embeddings endpoint mandatory in setup and onboarding scripts ([4033f2b](https://github.com/overcuriousity/wintermute/commit/4033f2bc1ef9c2a9d0db0cb30174081d4a9e2ed6))
+* memory dedup overhaul — remove MEMORIES.txt, add add-time dedup ([868e963](https://github.com/overcuriousity/wintermute/commit/868e96365040829fd65f4fb44ceb7424f320e8fb))
+* recategorize skill tool from orchestration to research ([b86055d](https://github.com/overcuriousity/wintermute/commit/b86055de9809239e2dc0acacf3baa76875da898b))
+* remove MEMORIES.txt, add similarity-based dedup to memory store ([0e8f6e2](https://github.com/overcuriousity/wintermute/commit/0e8f6e2ec98515e52155dee7a476f9dd1dc620d1))
+* remove redundant RestartForceExitStatus, clarify fallback naming ([cbfd464](https://github.com/overcuriousity/wintermute/commit/cbfd4645c2576c4a7a25297880e7f35af21e917d))
+* restore bump_access forwarding in module-level search() ([4f8e286](https://github.com/overcuriousity/wintermute/commit/4f8e2866a86b9aad27278f7f95e3a2a6876a73f0))
+* single-source event emission to prevent double-emit ([cccac6a](https://github.com/overcuriousity/wintermute/commit/cccac6aa381421e98154672b094ceff1d46ae24b))
+
+
+### Reverts
+
+* remove syscall interface (not requested) ([752529c](https://github.com/overcuriousity/wintermute/commit/752529c1be0a84cf2d839a02527b84d103307ddf))
+
+
+### Documentation
+
+* update tool category references after skill recategorization ([6a346c5](https://github.com/overcuriousity/wintermute/commit/6a346c5b4c0ebc22da88e1d073600ea300be93af))
+
 ## [Unreleased]
 
 ### Breaking Changes
