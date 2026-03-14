@@ -20,6 +20,7 @@ Startup sequence:
 import asyncio
 import logging
 import logging.handlers
+import os
 import signal
 import sys
 from pathlib import Path
@@ -121,8 +122,14 @@ def ensure_data_dirs() -> None:
 class ShutdownCoordinator:
     def __init__(self) -> None:
         self._event = asyncio.Event()
+        self.restart_requested: bool = False
 
     def request_shutdown(self) -> None:
+        self._event.set()
+
+    def request_restart(self) -> None:
+        """Request a full process restart after graceful shutdown."""
+        self.restart_requested = True
         self._event.set()
 
     async def wait(self) -> None:
@@ -542,6 +549,7 @@ async def main() -> None:
         event_bus=event_bus,
         memory_pool=sub_sessions_pool,
         event_loop=asyncio.get_running_loop(),
+        shutdown_coordinator=shutdown,
     )
 
     llm = LLMThread(main_pool=main_pool, compaction_pool=compaction_pool,
@@ -862,6 +870,14 @@ async def main() -> None:
         logger.warning("data_versioning: drain timed out after 30 s — commits may be incomplete")
 
     logger.info("Wintermute shutdown complete")
+
+    if shutdown.restart_requested:
+        logger.info("Restart requested — re-executing process")
+        try:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except OSError:
+            logger.exception("os.execv failed — exiting with code 42 for systemd restart")
+            sys.exit(42)
 
 
 if __name__ == "__main__":
