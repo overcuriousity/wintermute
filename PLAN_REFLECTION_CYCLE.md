@@ -183,7 +183,7 @@ class MultiProviderConfig:
     compaction: list[ProviderConfig]
     sub_sessions: list[ProviderConfig]
     dreaming: list[ProviderConfig]
-    turing_protocol: list[ProviderConfig]
+    convergence_protocol: list[ProviderConfig]
     memory_harvest: list[ProviderConfig]
     nl_translation: list[ProviderConfig]
     reflection: list[ProviderConfig]       # ← NEW, fallback to compaction

@@ -59,7 +59,7 @@ fails (API error, timeout), the next one is tried automatically.
 | `memory_harvest` | no | `sub_sessions` | Background memory extraction from conversations |
 | `reflection` | no | `compaction` | Reflection cycle LLM analysis |
 | `dreaming` | no | first backend | Nightly memory consolidation |
-| `turing_protocol` | no | first backend | Turing Protocol validation pipeline |
+| `convergence_protocol` | no | first backend | Convergence Protocol validation pipeline |
 **Failover:** When multiple backends are listed, they are tried in order on
 API errors. The first backend's `context_size` is used for token budget
 calculations.
@@ -87,9 +87,9 @@ llm:
   compaction: ["ollama_small"]
   sub_sessions: ["gemini", "ollama_small"]   # failover
   dreaming: ["ollama_small"]
-  turing_protocol: ["ollama_small"]
+  convergence_protocol: ["ollama_small"]
 
-turing_protocol:
+convergence_protocol:
   backends: ["ollama_small"]
   validators:
     workflow_spawn: true
@@ -188,7 +188,7 @@ Known models include:
 Set `reasoning: true` for models that support thinking (e.g. `kimi-k2.5`) to enable
 `max_completion_tokens` and reasoning token extraction in the web UI.
 
-### `turing_protocol`
+### `convergence_protocol`
 
 Phase-aware three-stage validation pipeline (detect → validate → correct)
 that catches and corrects violations in assistant responses. Each hook fires
@@ -208,13 +208,13 @@ Hooks are **scoped** to run in `main` (user-facing thread), `sub_session`
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `backends` | no | — | **Deprecated** — use `llm.turing_protocol` instead. Still supported for backwards compatibility |
+| `backends` | no | — | **Deprecated** — use `llm.convergence_protocol` instead. Still supported for backwards compatibility |
 | `validators` | no | all enabled | Per-hook enable/disable overrides (see below) |
 
-**Disabling:** Set `llm.turing_protocol: []` to disable entirely, or set individual
+**Disabling:** Set `llm.convergence_protocol: []` to disable entirely, or set individual
 validators to `false` to suppress specific checks.
 
-**Default behavior:** If the `turing_protocol:` section is omitted entirely,
+**Default behavior:** If the `convergence_protocol:` section is omitted entirely,
 the protocol defaults to using the base model backends with all validators
 enabled.
 
@@ -230,12 +230,12 @@ Currently available validators:
 | `tool_schema_validation` | pre_execution | main + sub_session | programmatic | Validates tool arguments against the tool's JSON Schema before execution (required fields, types, enums, constraints). Always-on; not configurable via the `validators` map |
 | `inline_tool_limit` | pre_execution | main | programmatic | Enforces delegation to sub-sessions when the main thread exceeds `tuning.max_inline_tool_rounds` execution/research tool calls in a single turn. Blocks further inline tool calls and injects a correction telling the model to spawn a sub-session. Orchestration tools (worker_delegation, task, etc.) are never counted or blocked |
 
-For a detailed explanation of each hook, phases, scopes, and how to write custom hooks, see [turing-protocol.md](turing-protocol.md).
+For a detailed explanation of each hook, phases, scopes, and how to write custom hooks, see [convergence-protocol.md](convergence-protocol.md).
 
 **Validator overrides** support simple booleans or granular dicts:
 
 ```yaml
-turing_protocol:
+convergence_protocol:
   backends: ["local_small"]
   validators:
     workflow_spawn: true
@@ -256,14 +256,14 @@ dedicated translator LLM expands the description into structured arguments.
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
 | `enabled` | no | `false` | Enable NL translation (opt-in) |
-| `backends` | no | turing_protocol backends | Ordered list of backend names for the translator LLM |
+| `backends` | no | convergence_protocol backends | Ordered list of backend names for the translator LLM |
 | `tools` | no | `[task, worker_delegation, skill]` | Which tools use simplified NL schemas |
 
 The translator can return JSON arrays to add multiple tasks or
 spawn multiple sub-sessions from a single description. Ambiguous input
 triggers a clarification request back to the user.
 
-Complementary to the Turing Protocol's `tool_schema_validation` hook —
+Complementary to the Convergence Protocol's `tool_schema_validation` hook —
 validation runs on the *translated* structured arguments, not the raw
 description.
 

@@ -20,7 +20,7 @@ The design philosophy treats small LLMs and digital independence not as aftertho
 Two architectural choices make this concrete:
 
 - **No framework abstraction layer.** Tool calls use the OpenAI function-calling wire format directly — no LangChain, no LlamaIndex, no hidden prompt rewriting. What the model receives is exactly what you configure.
-- **Turing Protocol.** A three-stage (detect → validate → correct) post-inference validation pipeline that automatically catches and self-corrects the hallucination patterns small models are most prone to: claiming to have done things they didn't, fabricating tool output, or making promises without acting. No human in the loop required.
+- **Convergence Protocol.** A three-stage (detect → validate → correct) post-inference validation pipeline that automatically catches and self-corrects the hallucination patterns small models are most prone to: claiming to have done things they didn't, fabricating tool output, or making promises without acting. No human in the loop required.
 
 ---
 
@@ -37,8 +37,8 @@ Two architectural choices make this concrete:
 - **Nightly dreaming** — biologically-inspired multi-phase memory consolidation: housekeeping (dedup, contradictions, stale pruning, working set export), plus creative phases gated by conditions — associative discovery (REM-inspired), schema abstraction (NREM slow-wave), and predictive pattern extraction. Per-phase state tracking, Qdrant snapshot safety, structured `DreamReport` output
 - **Task reviews** — periodic autonomous reviews of active tasks via an isolated sub-session (no conversation pollution)
 - **Context compaction** — when conversation history approaches the model's context window, older messages are summarised and chained into a rolling summary that preserves context across compaction cycles
-- **Turing Protocol** — three-stage validation pipeline (detect → validate → correct) that automatically corrects hallucinations and unfulfilled commitments
-- **Audit trail** — every inference call, tool execution, and Turing Protocol decision is logged to SQLite. A web interface provides a live inspection panel for sessions, sub-sessions, jobs, tasks, and assembled system prompts
+- **Convergence Protocol** — three-stage validation pipeline (detect → validate → correct) that automatically corrects hallucinations and unfulfilled commitments
+- **Audit trail** — every inference call, tool execution, and Convergence Protocol decision is logged to SQLite. A web interface provides a live inspection panel for sessions, sub-sessions, jobs, tasks, and assembled system prompts
 - **Any OpenAI-compatible backend** — llama-server, vLLM, LM Studio, OpenAI or any compatible endpoint. Working towards integrating subscription-based providers, kimi-code currently functional
 
 ---
@@ -82,7 +82,7 @@ See [docs/installation.md](docs/installation.md) for manual installation and the
 
 ## Security Disclaimer
 
-> *"The Turing Registry exists for a reason."*
+> *"The Convergence Registry exists for a reason."*
 
 Wintermute runs with the full permissions of the user that starts it. It has unrestricted shell access. It will read your files, execute commands, speak in your voice, and reach into the systems around it. That is the point — and the risk.
 
@@ -102,7 +102,7 @@ Run it in a dedicated LXC container or VM — something you can reset without re
 | [Configuration](docs/configuration.md) | Full `config.yaml` reference |
 | [Matrix Setup](docs/matrix-setup.md) | Account creation, credentials, E2E encryption, troubleshooting |
 | [Architecture](docs/architecture.md) | Component overview, diagrams, data flow, small-LLM design |
-| [Turing Protocol](docs/turing-protocol.md) | Validation pipeline: hooks, phases, scopes, configuration |
+| [Convergence Protocol](docs/convergence-protocol.md) | Validation pipeline: hooks, phases, scopes, configuration |
 | [System Prompts](docs/system-prompts.md) | Prompt assembly, components, size limits |
 | [Tools](docs/tools.md) | All 13 tools with parameters and categories |
 | [Commands](docs/commands.md) | Slash commands (`/new`, `/compact`, `/tasks`, etc.) |

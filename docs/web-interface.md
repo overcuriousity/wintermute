@@ -15,7 +15,7 @@ Available at `/debug`. Provides a live inspection and administration view with a
 | **Workflows** | Workflow DAGs with per-node status, objectives, dependencies, and result previews. Collapsible sections per workflow. |
 | **Jobs** | APScheduler jobs with trigger type, next run time, and arguments. |
 | **Tasks** | Full task management: create, edit, pause, resume, and delete tasks. Sections for active, paused, completed, and scheduled tasks. Supports all schedule types (once, daily, weekly, monthly, interval). |
-| **Outcomes** | Historical sub-session outcomes with status, duration, tool call counts, Turing Protocol verdicts, and objectives. Aggregate stats (success rate, avg duration, timeout rate) displayed at the top. Filterable by status. |
+| **Outcomes** | Historical sub-session outcomes with status, duration, tool call counts, Convergence Protocol verdicts, and objectives. Aggregate stats (success rate, avg duration, timeout rate) displayed at the top. Filterable by status. |
 
 ## Debug REST API
 
@@ -38,7 +38,7 @@ The debug panel is backed by a REST API:
 | POST | `/api/debug/tasks` | Create a new task |
 | PUT | `/api/debug/tasks/{task_id}` | Update a task |
 | DELETE | `/api/debug/tasks/{task_id}` | Delete a task |
-| GET | `/api/debug/interaction-log` | List interaction log entries (Turing Protocol, dreaming, embedding calls, Qdrant operations) |
+| GET | `/api/debug/interaction-log` | List interaction log entries (Convergence Protocol, dreaming, embedding calls, Qdrant operations) |
 | GET | `/api/debug/interaction-log/{id}` | Get a specific interaction log entry |
 | GET | `/api/debug/memory` | Get memory store stats and search results (query: `q`, `k`) |
 | GET | `/api/debug/outcomes` | List sub-session outcomes with aggregate stats (supports `status`, `limit`, `offset` query params) |

@@ -1,6 +1,6 @@
-# Turing Protocol
+# Convergence Protocol
 
-The Turing Protocol is Wintermute's post-inference validation framework. It addresses one of the core challenges of running small LLMs as autonomous agents: the model's tendency to claim it did things it didn't do, fabricate tool output, or commit to actions without executing them.
+The Convergence Protocol is Wintermute's post-inference validation framework. It addresses one of the core challenges of running small LLMs as autonomous agents: the model's tendency to claim it did things it didn't do, fabricate tool output, or commit to actions without executing them.
 
 Rather than requiring a larger or more capable model, the protocol catches these failure modes programmatically and injects concise corrections so the model can self-correct in the same conversation turn. It is designed to be fast, cheap to run, and low-overhead — a secondary small model is the recommended (and default) backend.
 
@@ -115,7 +115,7 @@ If the objective is not met, a correction is injected instructing the worker to 
 Configuration supports granular scope control:
 
 ```yaml
-turing_protocol:
+convergence_protocol:
   validators:
     objective_completion:
       enabled: true
@@ -176,7 +176,7 @@ All built-in hooks currently have both flags set to `false`. These are primarily
 Basic configuration in `config.yaml`:
 
 ```yaml
-turing_protocol:
+convergence_protocol:
   backends: ["local_small"]         # small/fast model recommended; defaults to base if omitted
   validators:
     workflow_spawn: true
@@ -192,7 +192,7 @@ turing_protocol:
 **Disabling individual hooks:** Set the validator to `false`:
 
 ```yaml
-turing_protocol:
+convergence_protocol:
   validators:
     empty_promise: false            # disable this hook only
 ```
@@ -200,25 +200,25 @@ turing_protocol:
 **Granular scope override:**
 
 ```yaml
-turing_protocol:
+convergence_protocol:
   validators:
     workflow_spawn:
       enabled: true
       scope: ["main", "sub_session"]   # extend to sub-sessions too
 ```
 
-The `turing_protocol` role in the `llm` role mapping also controls the backend:
+The `convergence_protocol` role in the `llm` role mapping also controls the backend:
 
 ```yaml
 llm:
-  turing_protocol: ["local_small", "local_large"]   # failover list
+  convergence_protocol: ["local_small", "local_large"]   # failover list
 ```
 
 ---
 
 ## Custom Hooks
 
-Custom hooks are loaded from `data/TURING_PROTOCOL_HOOKS.txt` (a JSON array). File entries override built-ins by hook name. Missing or malformed — built-in defaults are used.
+Custom hooks are loaded from `data/CONVERGENCE_PROTOCOL_HOOKS.txt` (a JSON array). File entries override built-ins by hook name. Missing or malformed — built-in defaults are used.
 
 Example custom hook:
 
@@ -231,7 +231,7 @@ Example custom hook:
     "detection_prompt": "- **my_custom_check**: The assistant claims X without evidence Y.",
     "validator_type": "programmatic",
     "validator_fn_name": "validate_workflow_spawn",
-    "correction_template": "[TURING CORRECTION] Issue: {reason}\n\nPlease correct this.",
+    "correction_template": "[CONVERGENCE CORRECTION] Issue: {reason}\n\nPlease correct this.",
     "halt_inference": false,
     "kill_on_detect": false
   }
@@ -260,9 +260,9 @@ Custom `"llm"` type hooks currently require a Python implementation for the dedi
 
 All validation rounds are written to the `interaction_log` table in SQLite and visible via the debug panel at `/debug` → (interaction log endpoint at `/api/debug/interaction-log`). Each entry records the input context, raw detection output, and final status (`ok` or `violation_detected`) for stages 1, 2, and 3 separately.
 
-**Stale correction logging:** When a correction is dropped because the conversation has already advanced past the turn it was issued for, a `turing_stale_drop` entry is written to the interaction log. This makes previously invisible stale drops auditable.
+**Stale correction logging:** When a correction is dropped because the conversation has already advanced past the turn it was issued for, a `convergence_stale_drop` entry is written to the interaction log. This makes previously invisible stale drops auditable.
 
-**Correction metadata:** Each `TuringResult` now carries structured `correction_metadata` — a list of `{hook, reason, halt, kill}` dicts identifying which hooks fired. This is logged alongside corrections for debugging and future context enrichment.
+**Correction metadata:** Each `ConvergenceResult` now carries structured `correction_metadata` — a list of `{hook, reason, halt, kill}` dicts identifying which hooks fired. This is logged alongside corrections for debugging and future context enrichment.
 
 ---
 
@@ -277,4 +277,4 @@ Autonomous tool-use agents fail in predictable ways when the underlying model is
 5. **Schema drift** — the model produces malformed tool arguments that silently fail
 6. **Repetition loops** — the model gets stuck producing nearly identical responses across turns
 
-The Turing Protocol catches all six failure modes programmatically and corrects them within the same inference loop. A separate small validator model (recommended: 3B–7B, fast) handles Stage 1 detection, making the overhead low even on modest hardware. The result is usable, reliable autonomous behaviour from models that would otherwise be too unreliable for agentic tasks.
+The Convergence Protocol catches all six failure modes programmatically and corrects them within the same inference loop. A separate small validator model (recommended: 3B–7B, fast) handles Stage 1 detection, making the overhead low even on modest hardware. The result is usable, reliable autonomous behaviour from models that would otherwise be too unreliable for agentic tasks.

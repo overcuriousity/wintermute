@@ -1694,7 +1694,7 @@ wheels = [
 
 [[package]]
 name = "wintermute"
-version = "0.7.0a0"
+version = "0.10.0a0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },

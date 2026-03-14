@@ -54,7 +54,7 @@ Wintermute's role-based backend routing (see [Configuration](configuration.md)) 
 
 ### Tier 1 — Reasoning Core (`base`, `sub_sessions`)
 
-**Responsibilities:** Main conversation loop, Turing Protocol evaluation, autonomous objective generation, sub-session orchestration.
+**Responsibilities:** Main conversation loop, Convergence Protocol evaluation, autonomous objective generation, sub-session orchestration.
 
 **Requirement:** Deep reasoning, reliable multi-step planning, strong instruction adherence, and consistent persona retention across long sessions.
 
@@ -68,15 +68,15 @@ Wintermute's role-based backend routing (see [Configuration](configuration.md)) 
 
 **Notes:**
 
-- Claude Sonnet 4.6 is the reference implementation. Anthropic's models lead on stateful agentic planning and persona retention; the Turing Protocol runs most reliably against them.
+- Claude Sonnet 4.6 is the reference implementation. Anthropic's models lead on stateful agentic planning and persona retention; the Convergence Protocol runs most reliably against them.
 - Llama 3.3 70B and GLM-4 offer strong reasoning at substantially lower cost and are well-suited to driving the main loop without Anthropic pricing.
 - For fully local deployments: Nanbeige-4.1-3B is an outlier — dual-stage RL training gives it reasoning performance disproportionate to its parameter count. Ministral-3-8B Reasoning is the alternative if you prefer a Mistral-family architecture.
 
 ---
 
-### Tier 2 — Tool Execution (`sub_sessions` for mechanical tasks, `turing_protocol`)
+### Tier 2 — Tool Execution (`sub_sessions` for mechanical tasks, `convergence_protocol`)
 
-**Responsibilities:** Function-calling loops, JSON schema adherence, tool dispatch, Turing Protocol detection passes.
+**Responsibilities:** Function-calling loops, JSON schema adherence, tool dispatch, Convergence Protocol detection passes.
 
 **Requirement:** Strict JSON output, reliable schema compliance, fast inference. Reasoning depth matters less than syntax precision.
 
@@ -115,16 +115,16 @@ Wintermute's role-based backend routing (see [Configuration](configuration.md)) 
 
 ---
 
-## Turing Protocol: Enable It
+## Convergence Protocol: Enable It
 
-Enable the Turing Protocol from the start, especially with smaller models. The three failure modes it catches — hallucinated actions, phantom tool results, and empty promises — become more frequent as model size decreases, and they silently corrupt conversation state if uncorrected.
+Enable the Convergence Protocol from the start, especially with smaller models. The three failure modes it catches — hallucinated actions, phantom tool results, and empty promises — become more frequent as model size decreases, and they silently corrupt conversation state if uncorrected.
 
-**Use a plain instruct model for the Turing Protocol backend, not a reasoning model.** Reasoning models (those that emit a chain-of-thought scratchpad before responding) intro reduce significant latency on every validation pass and can produce verbose, unpredictable output that interferes with the structured detection pipeline. A small, fast instruct model — the same one you might use for compaction — is the correct choice here. The Turing Protocol does not require deep reasoning; it requires reliable instruction-following and consistent output format.  
+**Use a plain instruct model for the Convergence Protocol backend, not a reasoning model.** Reasoning models (those that emit a chain-of-thought scratchpad before responding) intro reduce significant latency on every validation pass and can produce verbose, unpredictable output that interferes with the structured detection pipeline. A small, fast instruct model — the same one you might use for compaction — is the correct choice here. The Convergence Protocol does not require deep reasoning; it requires reliable instruction-following and consistent output format.  
 
 Recommended minimal config:
 
 ```yaml
-turing_protocol:
+convergence_protocol:
   backends: ["your_small_model"]
   validators:
     workflow_spawn: true

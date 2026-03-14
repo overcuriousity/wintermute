@@ -157,7 +157,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             tool_call_count     INTEGER,
             duration_seconds    REAL,
             timeout_value       INTEGER,
-            turing_verdict      TEXT,
+            convergence_verdict      TEXT,
             status              TEXT NOT NULL,
             result_length       INTEGER,
             nesting_depth       INTEGER,
@@ -664,7 +664,7 @@ def save_sub_session_outcome(**fields) -> int:
             "INSERT INTO sub_session_outcomes "
             "(session_id, workflow_id, timestamp, objective, system_prompt_mode, "
             "tools_available, tools_used, tool_call_count, duration_seconds, "
-            "timeout_value, turing_verdict, status, result_length, nesting_depth, "
+            "timeout_value, convergence_verdict, status, result_length, nesting_depth, "
             "continuation_count, backend_used, objective_embedding, task_id) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
@@ -678,7 +678,7 @@ def save_sub_session_outcome(**fields) -> int:
                 fields.get("tool_call_count"),
                 fields.get("duration_seconds"),
                 fields.get("timeout_value"),
-                fields.get("turing_verdict"),
+                fields.get("convergence_verdict"),
                 fields.get("status", "unknown"),
                 fields.get("result_length"),
                 fields.get("nesting_depth"),
@@ -864,19 +864,19 @@ def get_outcome_stats() -> dict:
 
 
 def get_tp_violation_stats() -> dict:
-    """Return Turing Protocol violation statistics grouped by LLM backend.
+    """Return Convergence Protocol violation statistics grouped by LLM backend.
 
-    Queries the interaction_log for confirmed TP violations (turing_validation
-    and turing_correction entries with status='violation_detected') and groups
+    Queries the interaction_log for confirmed TP violations (convergence_validation
+    and convergence_correction entries with status='violation_detected') and groups
     them by the responsible LLM backend.
     """
     with _connect() as conn:
         conn.row_factory = sqlite3.Row
-        # Confirmed violations from Stage 2 (turing_validation with violation_detected)
+        # Confirmed violations from Stage 2 (convergence_validation with violation_detected)
         rows = conn.execute(
             "SELECT llm, COUNT(*) as cnt "
             "FROM interaction_log "
-            "WHERE action = 'turing_validation' AND status = 'violation_detected' "
+            "WHERE action = 'convergence_validation' AND status = 'violation_detected' "
             "GROUP BY llm"
         ).fetchall()
         confirmed_by_backend = {r["llm"]: r["cnt"] for r in rows}
@@ -885,7 +885,7 @@ def get_tp_violation_stats() -> dict:
         correction_rows = conn.execute(
             "SELECT llm, COUNT(*) as cnt "
             "FROM interaction_log "
-            "WHERE action = 'turing_correction' "
+            "WHERE action = 'convergence_correction' "
             "GROUP BY llm"
         ).fetchall()
         corrections_by_backend = {r["llm"]: r["cnt"] for r in correction_rows}
@@ -896,14 +896,14 @@ def get_tp_violation_stats() -> dict:
             "SUM(CASE WHEN status = 'violation_detected' THEN 1 ELSE 0 END) as detected, "
             "COUNT(*) as total_checks "
             "FROM interaction_log "
-            "WHERE action = 'turing_detection' "
+            "WHERE action = 'convergence_detection' "
             "GROUP BY llm"
         ).fetchall()
 
-        # Violation type breakdown from turing_validation output JSON
+        # Violation type breakdown from convergence_validation output JSON
         type_rows = conn.execute(
             "SELECT llm, output FROM interaction_log "
-            "WHERE action = 'turing_validation' AND status = 'violation_detected'"
+            "WHERE action = 'convergence_validation' AND status = 'violation_detected'"
         ).fetchall()
 
     # Parse violation types per backend
@@ -965,7 +965,7 @@ def get_outcomes_since(
         rows = conn.execute(
             f"SELECT id, session_id, workflow_id, timestamp, objective, "
             f"system_prompt_mode, tools_used, tool_call_count, duration_seconds, "
-            f"timeout_value, turing_verdict, status, result_length, nesting_depth, "
+            f"timeout_value, convergence_verdict, status, result_length, nesting_depth, "
             f"continuation_count, backend_used, task_id "
             f"FROM sub_session_outcomes {where} "
             f"ORDER BY timestamp DESC LIMIT ?",
@@ -1025,7 +1025,7 @@ def get_outcomes_page(
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             f"SELECT id, session_id, workflow_id, timestamp, objective, system_prompt_mode, "
-            f"tools_used, tool_call_count, duration_seconds, timeout_value, turing_verdict, "
+            f"tools_used, tool_call_count, duration_seconds, timeout_value, convergence_verdict, "
             f"status, result_length, nesting_depth, continuation_count, backend_used "
             f"FROM sub_session_outcomes {where} "
             f"ORDER BY timestamp DESC LIMIT ? OFFSET ?",

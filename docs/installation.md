@@ -28,7 +28,7 @@ The script works in two phases:
 - Web interface settings
 - Matrix integration (with live credential testing and test message delivery)
 - Whisper voice transcription
-- Turing Protocol validators
+- Convergence Protocol validators
 - NL Translation
 - Tasks, dreaming, memory harvest, scheduler, logging
 - Systemd service installation

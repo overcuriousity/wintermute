@@ -22,7 +22,7 @@ OpenClaw (formerly Clawdbot, by Peter Steinberger) is the current reference poin
 | Capability | Wintermute | OpenClaw |
 |---|---|---|
 | **Weak LLM optimization** | NL tool schemas, prompt assembly tuned for small models, tool profiles to limit cognitive load | "Recommends Anthropic Pro/Max + Opus 4.6 for long-context strength" — designed for frontier models |
-| **Quality assurance** | Turing Protocol: 3-stage detect→validate→correct pipeline with 7 built-in hooks | AGENTS.md safety rules are static guidelines, not runtime enforcement |
+| **Quality assurance** | Convergence Protocol: 3-stage detect→validate→correct pipeline with 7 built-in hooks | AGENTS.md safety rules are static guidelines, not runtime enforcement |
 | **Sub-session DAG** | Full dependency graph with `depends_on`, time gates, timeout continuation, nested workers | Flat task execution; no structured dependency resolution |
 | **Context compaction** | Rolling summaries with chained compaction, 30-day archival, token budget awareness | Session-based; no documented compaction strategy |
 | **Memory consolidation** | Nightly dreaming cycle: memory dedup, agenda review, skill condensation | Persistent markdown files; no automated consolidation |
@@ -34,7 +34,7 @@ OpenClaw (formerly Clawdbot, by Peter Steinberger) is the current reference poin
 
 OpenClaw's autonomy is **broad but shallow**: many integrations, cron triggers, skill discovery — but no feedback loops, no self-evaluation, no learning from outcomes. It is a sophisticated tool-use agent that can be scheduled.
 
-Wintermute's autonomy is **narrow but deeper**: fewer interfaces, but the Turing Protocol, outcome tracking, dreaming cycle, and DAG sub-sessions provide the substrate for genuine self-improvement. The missing pieces are architectural, not capability gaps.
+Wintermute's autonomy is **narrow but deeper**: fewer interfaces, but the Convergence Protocol, outcome tracking, dreaming cycle, and DAG sub-sessions provide the substrate for genuine self-improvement. The missing pieces are architectural, not capability gaps.
 
 **The strategic bet:** OpenClaw scales by adding integrations and relying on frontier models. Wintermute scales by making weak models smarter through architectural scaffolding — feedback loops, structured self-reflection, and progressive skill evolution. This is a fundamentally different (and more defensible) approach.
 
@@ -84,14 +84,14 @@ The `interaction_log` table comprehensively records every autonomous action post
 
 - Every LLM inference call (action, session, model, input, output, status, raw tool_calls)
 - Every tool execution (tool name, arguments, result)
-- Every Turing Protocol verdict (detection, validation, correction stages)
+- Every Convergence Protocol verdict (detection, validation, correction stages)
 - Every sub-session round, dreaming cycle, memory harvest, compaction
 
-The `sub_session_outcomes` table provides structured metrics per sub-session: status, tools_used, tool_call_count, duration, turing_verdict, continuation_count, backend_used, objective embedding for similarity search.
+The `sub_session_outcomes` table provides structured metrics per sub-session: status, tools_used, tool_call_count, duration, convergence_verdict, continuation_count, backend_used, objective embedding for similarity search.
 
 The `/debug` web panel surfaces sub-sessions, jobs, tasks, interaction log, and an SSE stream.
 
-Pre-execution approval gating, if ever needed, is covered by extending the Turing Protocol (which already has `pre_execution` phase and scope-based filtering).
+Pre-execution approval gating, if ever needed, is covered by extending the Convergence Protocol (which already has `pre_execution` phase and scope-based filtering).
 
 ### ~~Phase 1: Reflection Cycle~~ ✅ DONE
 

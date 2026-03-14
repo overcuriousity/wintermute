@@ -88,7 +88,7 @@ Completed. Extracted three focused modules:
 - **`core/context_compactor.py`** — `ContextCompactor`: context compaction (`compact()`), tool-result trimming (`trim_tool_results()`), component size monitoring (`maybe_summarise_components()`)
 - **`core/session_manager.py`** — `SessionManager`: session resets, timeout checking, per-thread pool/config resolution, activity tracking
 
-LLMThread retains: queue, run loop, inference orchestration (`_process`, `_inference_loop`, `_run_inference_with_retry`, `_prepare_inference_context`), Turing Protocol integration. Composes the three components via `self._store`, `self._compactor`, `self._session_mgr`.
+LLMThread retains: queue, run loop, inference orchestration (`_process`, `_inference_loop`, `_run_inference_with_retry`, `_prepare_inference_context`), Convergence Protocol integration. Composes the three components via `self._store`, `self._compactor`, `self._session_mgr`.
 
 **Depends on:** #104, #83, #80
 

@@ -71,7 +71,7 @@ from typing import Callable, Coroutine, Optional
 from wintermute.infra import database
 from wintermute.infra import prompt_assembler
 from wintermute.infra import prompt_loader
-from wintermute.core import turing_protocol as turing_protocol_module
+from wintermute.core import convergence_protocol as convergence_protocol_module
 from wintermute.core.inference_engine import (
     ToolCallContext, extract_content_text, make_tool_context,
     process_tool_call,
@@ -79,7 +79,7 @@ from wintermute.core.inference_engine import (
 from wintermute.core.tool_call_rescue import rescue_tool_calls
 from wintermute import tools as tool_module
 from wintermute.core.tool_deps import ToolDeps
-from wintermute.core.tp_runner import TuringProtocolRunner
+from wintermute.core.tp_runner import ConvergenceProtocolRunner
 from wintermute.core.types import BackendPool, ContextTooLargeError
 
 from typing import TYPE_CHECKING as _TYPE_CHECKING
@@ -254,16 +254,16 @@ class SubSessionManager:
     pool                       – BackendPool for the sub_sessions role (handles failover)
     enqueue_system_event       – async callable(text: str, thread_id: str) that injects
                                  a result back into a parent thread's queue
-    turing_protocol_pool       – BackendPool for the Turing Protocol's own LLM calls
-    turing_protocol_validators – per-hook enable/disable overrides from config
+    convergence_protocol_pool       – BackendPool for the Convergence Protocol's own LLM calls
+    convergence_protocol_validators – per-hook enable/disable overrides from config
     """
 
     def __init__(
         self,
         pool: BackendPool,
         enqueue_system_event: Callable[..., Coroutine],
-        turing_protocol_pool: Optional[BackendPool] = None,
-        turing_protocol_validators: Optional[dict] = None,
+        convergence_protocol_pool: Optional[BackendPool] = None,
+        convergence_protocol_validators: Optional[dict] = None,
         nl_translation_pool: Optional[BackendPool] = None,
         nl_translation_config: Optional[dict] = None,
         event_bus: "Optional[EventBus]" = None,
@@ -278,9 +278,9 @@ class SubSessionManager:
         self._pool = pool
         self._cfg = pool.primary
         self._enqueue = enqueue_system_event
-        self._tp_pool = turing_protocol_pool
-        self._tp_runner = TuringProtocolRunner(
-            turing_protocol_pool, "sub_session", turing_protocol_validators,
+        self._tp_pool = convergence_protocol_pool
+        self._tp_runner = ConvergenceProtocolRunner(
+            convergence_protocol_pool, "sub_session", convergence_protocol_validators,
         )
         self._nl_translation_pool = nl_translation_pool
         self._nl_translation_config = nl_translation_config or {}
@@ -1292,7 +1292,7 @@ class SubSessionManager:
                 tool_call_count=len(state.tool_calls_log),
                 duration_seconds=round(duration, 2),
                 timeout_value=state.timeout_value,
-                turing_verdict=state.tp_verdict,
+                convergence_verdict=state.tp_verdict,
                 status=status,
                 result_length=len(state.result or ""),
                 nesting_depth=state.nesting_depth,
@@ -1530,7 +1530,7 @@ class SubSessionManager:
         state.messages is used directly (not a local copy) so that the timeout
         handler always has access to the latest message history for continuation.
 
-        Turing Protocol hooks are fired at three phases:
+        Convergence Protocol hooks are fired at three phases:
           - post_inference:  after the model produces a text-only (final)
             response — the ``objective_completion`` validator decides whether
             the sub-session may exit or must keep working.
@@ -1813,7 +1813,7 @@ class SubSessionManager:
             # -- Terminal response: model produced text without tool calls --
             final_text = msg_content
 
-            # -- Turing Protocol: post_inference phase (objective gatekeeper) --
+            # -- Convergence Protocol: post_inference phase (objective gatekeeper) --
             # skip_tp_on_exit: when the model produces a text-only response,
             # return immediately without running TP post_inference hooks.
             # Depth-2 re-check: after first correction, re-check once more.
@@ -1858,7 +1858,7 @@ class SubSessionManager:
                     # At depth >= 1 (already corrected once), use graceful fallback.
                     if tp_correction_depth >= 2:
                         correction_text = (
-                            "[TURING PROTOCOL — UNABLE TO COMPLY] "
+                            "[CONVERGENCE PROTOCOL — UNABLE TO COMPLY] "
                             "You were corrected but could not comply. Stop attempting the "
                             "action. Produce your best-effort final answer with whatever "
                             "information you have. Be concise."
@@ -1882,7 +1882,7 @@ class SubSessionManager:
             return final_text
 
     # ------------------------------------------------------------------
-    # Turing Protocol helper for sub-session phases
+    # Convergence Protocol helper for sub-session phases
     # ------------------------------------------------------------------
 
     async def _run_tp_phase(
@@ -1897,10 +1897,10 @@ class SubSessionManager:
         nl_tools: "set[str] | None" = None,
         prior_assistant_message: Optional[str] = None,
         recent_assistant_messages: Optional[list[str]] = None,
-    ) -> Optional[turing_protocol_module.TuringResult]:
-        """Run Turing Protocol hooks for a specific phase in sub-session scope.
+    ) -> Optional[convergence_protocol_module.ConvergenceResult]:
+        """Run Convergence Protocol hooks for a specific phase in sub-session scope.
 
-        Delegates to :class:`TuringProtocolRunner`.
+        Delegates to :class:`ConvergenceProtocolRunner`.
         """
         return await self._tp_runner.run_phase(
             phase,

@@ -224,5 +224,5 @@ is executed separately and results are combined.
 If the description is ambiguous, the translator returns a clarification
 request that the main LLM relays to the user.
 
-This feature is complementary to the Turing Protocol's validation hooks,
+This feature is complementary to the Convergence Protocol's validation hooks,
 which validate the *translated* structured arguments.

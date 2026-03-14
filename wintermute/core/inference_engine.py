@@ -12,10 +12,10 @@ Pipeline per tool call
 ----------------------
 1. Parse JSON arguments (→ error on failure)
 2. NL translation expansion (single-item or multi-item)
-3. Turing Protocol ``pre_execution`` gate
+3. Convergence Protocol ``pre_execution`` gate
 4. Tool execution via ``run_in_executor``
 5. NL translation summary prefix
-6. Turing Protocol ``post_execution`` annotation
+6. Convergence Protocol ``post_execution`` annotation
 7. Interaction logging + event-bus emission
 """
 
@@ -79,7 +79,7 @@ def extract_content_text(msg: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Callback type for Turing Protocol pre/post-execution checks.
+# Callback type for Convergence Protocol pre/post-execution checks.
 #
 # Callers provide a closure that delegates to their own TP runner.
 # Signature:
@@ -111,7 +111,7 @@ class ToolCallContext:
     nl_translation_pool: Optional[Any] = None
     timezone_str: str = ""
 
-    # Turing Protocol
+    # Convergence Protocol
     tp_enabled: bool = False
     tp_check: Optional[TPCheckFn] = None
 
@@ -392,7 +392,7 @@ async def process_tool_call(
             inputs = nl_result.translated
             nl_was_translated = True
 
-    # -- Step 3: Turing Protocol pre_execution -----------------------
+    # -- Step 3: Convergence Protocol pre_execution -----------------------
     if ctx.tp_enabled and ctx.tp_check:
         pre_result = await ctx.tp_check(
             "pre_execution",
@@ -409,7 +409,7 @@ async def process_tool_call(
                 ctx.thread_id, name, pre_result.correction[:200],
             )
             return ToolCallOutcome(
-                content=f"[BLOCKED BY TURING PROTOCOL] {pre_result.correction}",
+                content=f"[BLOCKED BY CONVERGENCE PROTOCOL] {pre_result.correction}",
                 tool_name=name,
                 raw_arguments=raw_args,
                 executed=False,
@@ -446,7 +446,7 @@ async def process_tool_call(
         summary = ", ".join(f"{k}={v!r}" for k, v in inputs.items())
         result = f"[Translated to: {summary}] {result}"
 
-    # -- Step 6: Turing Protocol post_execution ----------------------
+    # -- Step 6: Convergence Protocol post_execution ----------------------
     if ctx.tp_enabled and ctx.tp_check:
         post_result = await ctx.tp_check(
             "post_execution",
@@ -458,7 +458,7 @@ async def process_tool_call(
             nl_tools=ctx.nl_tools,
         )
         if post_result and post_result.correction:
-            result += f"\n\n[TURING PROTOCOL WARNING] {post_result.correction}"
+            result += f"\n\n[CONVERGENCE PROTOCOL WARNING] {post_result.correction}"
 
     # -- Step 7: Logging & events ------------------------------------
     if ctx.event_bus:

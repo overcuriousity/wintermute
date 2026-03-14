@@ -256,7 +256,7 @@ your main one? For example, a local Ollama/llama-server, or a smaller model
 on the same endpoint?" Then configure based on their answer.
 
 AFTER BACKENDS ARE SET UP, immediately write ALL role mappings (llm.base,
-llm.compaction, llm.sub_sessions, llm.dreaming, llm.turing_protocol) in one
+llm.compaction, llm.sub_sessions, llm.dreaming, llm.convergence_protocol) in one
 go based on the tiers. Don't ask the user to map roles individually — that's
 confusing. Just tell them what you're setting and why.
 
@@ -278,7 +278,7 @@ IMPORTANT RULES:
   4. Matrix integration (ask "Do you want to connect Wintermute to Matrix
      chat?" — if yes, collect credentials and test them)
   5. Whisper voice transcription (only ask if Matrix is enabled)
-  6. Turing Protocol validators (explain briefly, recommend enabling all
+  6. Convergence Protocol validators (explain briefly, recommend enabling all
      if using a small/mid model, suggest defaults)
   7. NL Translation (only mention if main model is small, <14B — otherwise skip)
   8. Scheduler timezone (auto-detect from system if possible, confirm)

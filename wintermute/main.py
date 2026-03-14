@@ -211,8 +211,8 @@ def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
         print(f"ERROR: llm.{name} must be a list of backend names (got {type(raw).__name__})")
         sys.exit(1)
 
-    # -- Turing Protocol backends --
-    tp_configs = _get_role("turing_protocol", allow_empty=True)
+    # -- Convergence Protocol backends --
+    tp_configs = _get_role("convergence_protocol", allow_empty=True)
 
     # -- NL Translation backends --
     nl_raw = cfg.get("nl_translation", {}) or {}
@@ -220,7 +220,7 @@ def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
     if nl_enabled:
         nl_backends_raw = nl_raw.get("backends")
         if nl_backends_raw is None:
-            # Default to turing_protocol backends if omitted.
+            # Default to convergence_protocol backends if omitted.
             nl_configs = list(tp_configs) if tp_configs else _resolve_role(
                 "nl_translation", default_list, backends,
                 config_path="nl_translation.backends",
@@ -248,7 +248,7 @@ def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
         compaction=compaction_configs,
         sub_sessions=sub_sessions_configs,
         dreaming=_get_role("dreaming"),
-        turing_protocol=tp_configs,
+        convergence_protocol=tp_configs,
         memory_harvest=mh_configs,
         nl_translation=nl_configs,
         reflection=refl_configs,
@@ -384,7 +384,7 @@ async def main() -> None:
     compaction_pool = _build_pool(multi_cfg.compaction, client_cache)
     sub_sessions_pool = _build_pool(multi_cfg.sub_sessions, client_cache)
     dreaming_pool = _build_pool(multi_cfg.dreaming, client_cache)
-    turing_protocol_pool = _build_pool(multi_cfg.turing_protocol, client_cache)
+    convergence_protocol_pool = _build_pool(multi_cfg.convergence_protocol, client_cache)
     memory_harvest_pool = _build_pool(multi_cfg.memory_harvest, client_cache)
     nl_translation_pool = _build_pool(multi_cfg.nl_translation, client_cache)
     reflection_pool = _build_pool(multi_cfg.reflection, client_cache)
@@ -397,7 +397,7 @@ async def main() -> None:
     backends_by_name = _parse_inference_backends(cfg.get("inference_backends", []))
     _used_backend_names: set[str] = set()
     for cfgs in (multi_cfg.main, multi_cfg.compaction, multi_cfg.sub_sessions,
-                 multi_cfg.dreaming, multi_cfg.turing_protocol,
+                 multi_cfg.dreaming, multi_cfg.convergence_protocol,
                  multi_cfg.memory_harvest, multi_cfg.nl_translation,
                  multi_cfg.reflection):
         for pc in cfgs:
@@ -467,8 +467,8 @@ async def main() -> None:
     max_completed_workflows = _tuning_int("max_completed_workflows", 50, minimum=1)
     max_inline_tool_rounds = _tuning_int("max_inline_tool_rounds", 3, minimum=0)
 
-    # Push the inline tool limit into the Turing Protocol module.
-    from wintermute.core.turing_protocol import set_max_inline_tool_rounds
+    # Push the inline tool limit into the Convergence Protocol module.
+    from wintermute.core.convergence_protocol import set_max_inline_tool_rounds
     set_max_inline_tool_rounds(max_inline_tool_rounds)
 
     harvest_cfg_raw = cfg.get("memory_harvest", {})
@@ -527,7 +527,7 @@ async def main() -> None:
 
     # 2. LLMThread — uses a lazy getter for SubSessionManager (breaks cycle).
     seed_language = cfg.get("seed", {}).get("language", "en") if cfg.get("seed") else "en"
-    tp_validators = (cfg.get("turing_protocol", {}) or {}).get("validators")
+    tp_validators = (cfg.get("convergence_protocol", {}) or {}).get("validators")
 
     # Lazy holder: SubSessionManager is appended after construction.
     _ssm_holder: list[SubSessionManager] = []
@@ -545,9 +545,9 @@ async def main() -> None:
     )
 
     llm = LLMThread(main_pool=main_pool, compaction_pool=compaction_pool,
-                    turing_protocol_pool=turing_protocol_pool, broadcast_fn=broadcast,
+                    convergence_protocol_pool=convergence_protocol_pool, broadcast_fn=broadcast,
                     sub_session_getter=lambda: _ssm_holder[0] if _ssm_holder else None,
-                    turing_protocol_validators=tp_validators,
+                    convergence_protocol_validators=tp_validators,
                     nl_translation_pool=nl_translation_pool,
                     nl_translation_config=nl_translation_config,
                     seed_language=seed_language,
@@ -562,8 +562,8 @@ async def main() -> None:
     sub_sessions = SubSessionManager(
         pool=sub_sessions_pool,
         enqueue_system_event=llm.enqueue_system_event,
-        turing_protocol_pool=turing_protocol_pool,
-        turing_protocol_validators=tp_validators,
+        convergence_protocol_pool=convergence_protocol_pool,
+        convergence_protocol_validators=tp_validators,
         nl_translation_pool=nl_translation_pool,
         nl_translation_config=nl_translation_config,
         event_bus=event_bus,

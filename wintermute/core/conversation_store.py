@@ -139,7 +139,7 @@ class ConversationStore:
 
     async def save_user_message(
         self, text: str, thread_id: str, is_system_event: bool,
-        is_sub_session_result: bool, turing_depth: int,
+        is_sub_session_result: bool, convergence_depth: int,
         content: Optional[list], model: str,
     ) -> None:
         """Persist the incoming user/system message to DB and emit events."""
@@ -157,7 +157,7 @@ class ConversationStore:
             await database.async_call(
                 database.save_message, "user", _se_text, thread_id,
                 token_count=count_tokens(_se_text, model))
-        elif turing_depth > 0:
+        elif convergence_depth > 0:
             await database.async_call(
                 database.save_message, "user", text, thread_id,
                 token_count=count_tokens(text, model))
