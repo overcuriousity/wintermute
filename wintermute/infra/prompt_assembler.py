@@ -4,7 +4,7 @@ Assembles the complete system prompt from individual file components.
 Order:
   1. BASE_PROMPT.txt          – immutable core
   2. Current datetime          – local time + timezone
-  3. MEMORIES.txt             – long-term user facts
+  3. Memories (vector store)   – long-term user facts
   4. Tasks (from DB)           – active goals, reminders, scheduled actions
   5. System Observations      – runtime diagnostics (main thread only)
   6. Predictions & Patterns   – dreaming predictions + promoted schemas (main thread only)
@@ -340,7 +340,7 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     sections are included (backward compatible).
 
     ``query``, when provided, triggers relevance-ranked memory retrieval
-    (works with any backend including fts5) instead of loading the full file.
+    (works with any backend) instead of loading the full file.
 
     ``memory_results``, when provided, uses pre-fetched memory search results
     instead of calling memory_store.search() synchronously. Callers in async

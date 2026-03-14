@@ -677,8 +677,6 @@ class WebInterface:
             backend = "qdrant"
         elif skill_store.is_vector_enabled():
             backend = "local_vector"
-        else:
-            backend = "fts5"
         return self._json({
             "backend": backend,
             "vector_enabled": skill_store.is_vector_enabled(),

@@ -3,7 +3,7 @@ Memory Harvest – Periodic Conversation Mining
 
 Periodically scans user-facing threads for unharvested messages and spawns
 sub-session workers to extract personal facts, preferences, and interaction
-patterns into MEMORIES.txt.
+patterns into the memory store.
 
 Trigger logic: a thread is eligible for harvest when EITHER:
   - It has accumulated >= message_threshold new user messages since last harvest
@@ -278,7 +278,7 @@ class MemoryHarvestLoop:
             objective=prompt,
             parent_thread_id=None,      # fire-and-forget: no chat delivery
             system_prompt_mode="none",   # all instructions in the objective
-            tool_names=["append_memory", "read_file"],
+            tool_names=["append_memory"],
             timeout=600, # generous timeout for slow workers and large conversations
             pool=self._pool,
             max_rounds=5,               # hard cap: prevent runaway tool-call loops

@@ -6,16 +6,14 @@ Skills are learned, reusable procedures that the AI assistant can create, retrie
 
 | Backend | Description | When to use |
 | --- | --- | --- |
-| `fts5` | SQLite FTS5 full-text search | Default / low-resource setups |
-| `local_vector` | SQLite + numpy cosine similarity | Local embeddings without external services |
+| `local_vector` | SQLite + numpy cosine similarity | Default — local embeddings without external services |
 | `qdrant` | Qdrant vector database | Production / large skill libraries |
 
-The backend is **auto-selected** based on the available embeddings configuration unless explicitly overridden in the `skills` section. When no `skills.backend` is set:
+An OpenAI-compatible embeddings endpoint is **required** (configured via `memory.embeddings.endpoint`).
 
-- If an embeddings endpoint is configured (`memory.embeddings.endpoint`), defaults to `local_vector`
-- Otherwise defaults to `fts5` (no embedding endpoint required)
+When no `skills.backend` is set, the value is inherited from `memory.backend` (defaults to `local_vector`).
 
-> **Note:** The skills backend is configured independently via `skills.backend`. When `skills.backend` is not set, startup inherits `memory.backend` only for vector backends (`local_vector` or `qdrant`); `fts5` is not inherited — instead, skill_store auto-selects based on whether `memory.embeddings.endpoint` is present. You can always override with an explicit `skills.backend`.
+> **Migration note:** The legacy `fts5` backend has been removed. If your config still has `skills.backend: "fts5"`, remove it or change it to `"local_vector"`.
 
 ```yaml
 # config.yaml
@@ -24,14 +22,11 @@ The backend is **auto-selected** based on the available embeddings configuration
 skills:
   backend: "local_vector"
 
-# Or rely on auto-detection from embeddings + memory config:
-# When skills.backend is not set, startup inherits memory.backend
-# and then further defaults to local_vector when
-# memory.embeddings.endpoint is present, or fts5 otherwise.
+# Or rely on auto-detection from memory config:
 memory:
   backend: "local_vector"
   embeddings:
-    endpoint: "http://localhost:11434/v1"   # presence triggers local_vector default for skills
+    endpoint: "http://localhost:11434/v1"
     model: "nomic-embed-text"
 ```
 
@@ -92,14 +87,14 @@ The `skill` tool replaces the former `add_skill` tool and supports three actions
 }
 ```
 
-The search action uses vector similarity (with `local_vector` / `qdrant`) or full-text search (with `fts5`).
+The search action uses vector similarity (cosine similarity with `local_vector`, or Qdrant's native search with `qdrant`).
 
 ## System Prompt Integration (Query-Ranked TOC)
 
 The skills TOC injected into the system prompt mirrors the memory ranking pattern:
 
 - **Vector backend active + user query available**: Skills are ranked by cosine similarity to the query. Only the top-k most relevant skills appear in the TOC, with relevance scores.
-- **Non-vector backend or no query**: All skills are listed alphabetically.
+- **No query available**: All skills are listed alphabetically.
 
 This ensures the LLM sees the most relevant skills for the current conversation without consuming context window on unrelated entries.
 

@@ -1,10 +1,11 @@
 """
 Ranked memory retrieval for Wintermute.
 
-Provides three backends for memory storage and retrieval:
-  - fts5         — SQLite FTS5 keyword search with BM25 ranking (zero-config)
-  - local_vector — SQLite + numpy cosine similarity (default when embeddings.endpoint is configured)
+Provides two embedding-based backends for memory storage and retrieval:
+  - local_vector — SQLite + numpy cosine similarity (default)
   - qdrant       — Qdrant vector DB with embedding-based semantic search
+
+An OpenAI-compatible embeddings endpoint is **required**.
 
 Module-level singleton pattern (like database.py, prompt_assembler.py).
 Call ``init(config)`` once at startup; all other functions use the active backend.
@@ -26,7 +27,7 @@ from wintermute.infra.llm_utils import (
     make_content_id as _make_id,
 )
 
-from wintermute.infra.paths import DATA_DIR, MEMORIES_FILE, FTS5_DB_PATH
+from wintermute.infra.paths import DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,8 @@ _config: dict = {}
 class MemoryBackend(Protocol):
     def init(self) -> None: ...
     def add(self, entry: str, entry_id: str | None = None, source: str = "unknown") -> str: ...
-    def search(self, query: str, top_k: int, threshold: float) -> list[dict]: ...
+    def search(self, query: str, top_k: int, threshold: float,
+               *, bump_access: bool = True) -> list[dict]: ...
     def get_all(self) -> list[dict]: ...
     def replace_all(self, entries: list[str]) -> None: ...
     def delete(self, entry_id: str) -> bool: ...
@@ -56,296 +58,7 @@ class MemoryBackend(Protocol):
     def get_top_accessed(self, limit: int) -> list[dict]: ...
     def get_by_source(self, source: str, limit: int = 50, bump_access: bool = True) -> list[dict]: ...
     def track_access(self, entry_ids: list[str]) -> None: ...
-
-
-# ---------------------------------------------------------------------------
-# FTS5 backend (SQLite keyword search with BM25)
-# ---------------------------------------------------------------------------
-
-class FTS5Backend:
-    """SQLite FTS5 full-text search with BM25 scoring."""
-
-    def __init__(self) -> None:
-        self._db_path = FTS5_DB_PATH
-        self._lock = threading.Lock()
-
-    def init(self) -> None:
-        with self._lock:
-            conn = self._connect()
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS memories_meta ("
-                "  entry_id TEXT PRIMARY KEY,"
-                "  text TEXT NOT NULL,"
-                "  created_at REAL NOT NULL"
-                ")"
-            )
-            conn.execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts "
-                "USING fts5(entry_id, text, content=memories_meta, content_rowid=rowid)"
-            )
-            # Triggers to keep FTS in sync with meta table.
-            conn.executescript("""
-                CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories_meta BEGIN
-                    INSERT INTO memories_fts(rowid, entry_id, text)
-                    VALUES (new.rowid, new.entry_id, new.text);
-                END;
-                CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories_meta BEGIN
-                    INSERT INTO memories_fts(memories_fts, rowid, entry_id, text)
-                    VALUES ('delete', old.rowid, old.entry_id, old.text);
-                END;
-                CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories_meta BEGIN
-                    INSERT INTO memories_fts(memories_fts, rowid, entry_id, text)
-                    VALUES ('delete', old.rowid, old.entry_id, old.text);
-                    INSERT INTO memories_fts(rowid, entry_id, text)
-                    VALUES (new.rowid, new.entry_id, new.text);
-                END;
-            """)
-            # Inline migrations for metadata columns.
-            for col, default in [
-                ("last_accessed REAL", "0"),
-                ("access_count INTEGER", "0"),
-                ("source TEXT", "'unknown'"),
-            ]:
-                try:
-                    conn.execute(f"ALTER TABLE memories_meta ADD COLUMN {col} DEFAULT {default}")
-                except sqlite3.OperationalError:
-                    pass  # Column already exists.
-            conn.commit()
-            conn.close()
-        logger.info("Memory backend: fts5 (SQLite FTS5 at %s)", self._db_path)
-
-    def _connect(self) -> sqlite3.Connection:
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(self._db_path), timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
-        return conn
-
-    def add(self, entry: str, entry_id: str | None = None, source: str = "unknown") -> str:
-        eid = entry_id or _make_id(entry)
-        now = time.time()
-        with self._lock:
-            conn = self._connect()
-            try:
-                conn.execute(
-                    "INSERT INTO memories_meta "
-                    "(entry_id, text, created_at, last_accessed, access_count, source) "
-                    "VALUES (?, ?, ?, ?, 0, ?) "
-                    "ON CONFLICT(entry_id) DO UPDATE SET text = excluded.text",
-                    (eid, entry.strip(), now, now, source),
-                )
-                conn.commit()
-            finally:
-                conn.close()
-        return eid
-
-    def search(self, query: str, top_k: int, threshold: float) -> list[dict]:
-        if not query.strip():
-            return self.get_all()[:top_k]
-        # Escape FTS5 special chars and build simple OR query.
-        tokens = query.split()
-        fts_query = " OR ".join(f'"{t}"' for t in tokens[:20] if t.strip())
-        if not fts_query:
-            return self.get_all()[:top_k]
-        with self._lock:
-            conn = self._connect()
-            try:
-                rows = conn.execute(
-                    "SELECT m.entry_id, m.text, bm25(memories_fts) AS score "
-                    "FROM memories_fts f "
-                    "JOIN memories_meta m ON f.rowid = m.rowid "
-                    "WHERE memories_fts MATCH ? "
-                    "ORDER BY score "
-                    "LIMIT ?",
-                    (fts_query, top_k),
-                ).fetchall()
-            except sqlite3.OperationalError:
-                logger.debug("FTS5 query failed, returning all memories")
-                rows = []
-            finally:
-                conn.close()
-        if not rows:
-            return self.get_all()[:top_k]
-        hits = [
-            {"id": r[0], "text": r[1], "score": -r[2]}
-            for r in rows
-        ]
-        # Track access for returned results.
-        self._track_access([h["id"] for h in hits])
-        return hits
-
-    def _track_access(self, entry_ids: list[str]) -> None:
-        if not entry_ids:
-            return
-        now = time.time()
-        with self._lock:
-            conn = self._connect()
-            try:
-                conn.executemany(
-                    "UPDATE memories_meta SET last_accessed = ?, access_count = access_count + 1 "
-                    "WHERE entry_id = ?",
-                    [(now, eid) for eid in entry_ids],
-                )
-                conn.commit()
-            finally:
-                conn.close()
-
-    def get_all(self) -> list[dict]:
-        with self._lock:
-            conn = self._connect()
-            try:
-                rows = conn.execute(
-                    "SELECT entry_id, text FROM memories_meta ORDER BY created_at"
-                ).fetchall()
-            finally:
-                conn.close()
-        return [{"id": r[0], "text": r[1], "score": 1.0} for r in rows]
-
-    def replace_all(self, entries: list[str]) -> None:
-        now = time.time()
-        cleaned = [(e.strip(), _make_id(e)) for e in entries if e.strip()]
-        new_ids = [eid for _, eid in cleaned]
-        with self._lock:
-            conn = self._connect()
-            try:
-                # Delete entries no longer present.
-                # Use SET-DIFFERENCE delete in batches to stay under SQLite's
-                # parameter limit (~999 variables per statement).
-                if new_ids:
-                    cur = conn.execute("SELECT entry_id FROM memories_meta")
-                    existing_ids = [row[0] for row in cur.fetchall()]
-                    new_ids_set = set(new_ids)
-                    to_delete = [eid for eid in existing_ids if eid not in new_ids_set]
-                    for i in range(0, len(to_delete), 900):
-                        batch = to_delete[i : i + 900]
-                        placeholders = ",".join("?" for _ in batch)
-                        conn.execute(
-                            f"DELETE FROM memories_meta WHERE entry_id IN ({placeholders})",
-                            batch,
-                        )
-                else:
-                    conn.execute("DELETE FROM memories_meta")
-                # Upsert: insert new entries, update text for existing (preserve metadata).
-                conn.executemany(
-                    "INSERT INTO memories_meta "
-                    "(entry_id, text, created_at, last_accessed, access_count, source) "
-                    "VALUES (?, ?, ?, ?, 0, 'dreaming') "
-                    "ON CONFLICT(entry_id) DO UPDATE SET text = excluded.text",
-                    [(eid, text, now, now) for text, eid in cleaned],
-                )
-                conn.commit()
-            finally:
-                conn.close()
-        logger.info("FTS5: replaced all entries (%d)", len(entries))
-
-    def delete(self, entry_id: str) -> bool:
-        with self._lock:
-            conn = self._connect()
-            try:
-                cur = conn.execute(
-                    "DELETE FROM memories_meta WHERE entry_id = ?", (entry_id,)
-                )
-                conn.commit()
-                return cur.rowcount > 0
-            finally:
-                conn.close()
-
-    def count(self) -> int:
-        with self._lock:
-            conn = self._connect()
-            try:
-                return conn.execute("SELECT COUNT(*) FROM memories_meta").fetchone()[0]
-            finally:
-                conn.close()
-
-    def stats(self) -> dict:
-        return {
-            "backend": "fts5",
-            "count": self.count(),
-            "db_path": str(self._db_path),
-        }
-
-    def rebuild(self) -> None:
-        """Drop and re-import from MEMORIES.txt."""
-        try:
-            text = MEMORIES_FILE.read_text(encoding="utf-8").strip()
-        except FileNotFoundError:
-            text = ""
-        entries = [l.strip() for l in text.splitlines() if l.strip()] if text else []
-        self.replace_all(entries)
-        logger.info("FTS5: rebuilt index from MEMORIES.txt (%d entries)", len(entries))
-
-    def get_all_with_vectors(self) -> list[dict]:
-        return []  # FTS5 has no vectors.
-
-    def get_stale(self, max_age_days: int, min_access: int) -> list[dict]:
-        cutoff = time.time() - (max_age_days * 86400)
-        with self._lock:
-            conn = self._connect()
-            try:
-                rows = conn.execute(
-                    "SELECT entry_id, text, created_at, last_accessed, access_count, source "
-                    "FROM memories_meta WHERE last_accessed < ? AND access_count < ?",
-                    (cutoff, min_access),
-                ).fetchall()
-            finally:
-                conn.close()
-        return [
-            {"id": r[0], "text": r[1], "created_at": r[2],
-             "last_accessed": r[3], "access_count": r[4], "source": r[5]}
-            for r in rows
-        ]
-
-    def bulk_delete(self, entry_ids: list[str]) -> int:
-        if not entry_ids:
-            return 0
-        placeholders = ",".join("?" for _ in entry_ids)
-        with self._lock:
-            conn = self._connect()
-            try:
-                cur = conn.execute(
-                    f"DELETE FROM memories_meta WHERE entry_id IN ({placeholders})",
-                    entry_ids,
-                )
-                conn.commit()
-                return cur.rowcount
-            finally:
-                conn.close()
-
-    def get_top_accessed(self, limit: int) -> list[dict]:
-        with self._lock:
-            conn = self._connect()
-            try:
-                rows = conn.execute(
-                    "SELECT entry_id, text FROM memories_meta "
-                    "ORDER BY access_count DESC, last_accessed DESC LIMIT ?",
-                    (limit,),
-                ).fetchall()
-            finally:
-                conn.close()
-        return [{"id": r[0], "text": r[1], "score": 1.0} for r in rows]
-
-    def get_by_source(self, source: str, limit: int = 50, bump_access: bool = True) -> list[dict]:
-        with self._lock:
-            conn = self._connect()
-            try:
-                rows = conn.execute(
-                    "SELECT entry_id, text, created_at, last_accessed, access_count, source "
-                    "FROM memories_meta WHERE source = ? ORDER BY created_at DESC LIMIT ?",
-                    (source, limit),
-                ).fetchall()
-            finally:
-                conn.close()
-        hits = [
-            {"id": r[0], "text": r[1], "created_at": r[2],
-             "last_accessed": r[3], "access_count": r[4], "source": r[5]}
-            for r in rows
-        ]
-        if bump_access:
-            self._track_access([h["id"] for h in hits])
-        return hits
-
-    def track_access(self, entry_ids: list[str]) -> None:
-        self._track_access(entry_ids)
+    def promote_source(self, entry_id: str, new_source: str) -> None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +141,8 @@ class LocalVectorBackend:
         _log_interaction(t0, "local_vector_add", entry[:200], f"id={eid}", llm="local_vector")
         return eid
 
-    def search(self, query: str, top_k: int, threshold: float) -> list[dict]:
+    def search(self, query: str, top_k: int, threshold: float,
+               *, bump_access: bool = True) -> list[dict]:
         import numpy as np
 
         t0 = time.time()
@@ -466,8 +180,8 @@ class LocalVectorBackend:
 
         results.sort(key=lambda x: x["score"], reverse=True)
         hits = results[:top_k]
-        # Track access for returned results.
-        self._track_access([h["id"] for h in hits])
+        if bump_access:
+            self._track_access([h["id"] for h in hits])
         _log_interaction(
             t0, "local_vector_search", query[:200],
             f"{len(hits)} hits (top_k={top_k}, threshold={threshold})",
@@ -595,14 +309,33 @@ class LocalVectorBackend:
         }
 
     def rebuild(self) -> None:
-        """Drop and re-embed from MEMORIES.txt."""
-        try:
-            text = MEMORIES_FILE.read_text(encoding="utf-8").strip()
-        except FileNotFoundError:
-            text = ""
-        entries = [l.strip() for l in text.splitlines() if l.strip()] if text else []
-        self.replace_all(entries)
-        logger.info("LocalVector: rebuilt index from MEMORIES.txt (%d entries)", len(entries))
+        """Re-embed all entries, preserving entry_id and metadata."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT entry_id, text FROM local_vectors"
+                ).fetchall()
+            finally:
+                conn.close()
+        if not rows:
+            return
+        texts = [r[1] for r in rows]
+        vectors = _embed(texts, self._embed_cfg)
+        if not vectors or len(vectors) != len(rows):
+            raise RuntimeError("Embedding mismatch during rebuild")
+        with self._lock:
+            conn = self._connect()
+            try:
+                for (eid, _text), vec in zip(rows, vectors):
+                    conn.execute(
+                        "UPDATE local_vectors SET vector = ? WHERE entry_id = ?",
+                        (self._vec_to_blob(vec), eid),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+        logger.info("LocalVector: rebuilt vectors in place (%d entries)", len(rows))
 
     def get_all_with_vectors(self) -> list[dict]:
         import numpy as np
@@ -693,6 +426,27 @@ class LocalVectorBackend:
 
     def track_access(self, entry_ids: list[str]) -> None:
         self._track_access(entry_ids)
+
+    def promote_source(self, entry_id: str, new_source: str) -> None:
+        """Upgrade source tag on *entry_id* if *new_source* has higher priority."""
+        try:
+            with self._lock:
+                conn = self._connect()
+                try:
+                    row = conn.execute(
+                        "SELECT source FROM local_vectors WHERE entry_id = ?",
+                        (entry_id,),
+                    ).fetchone()
+                    if row and _source_rank(new_source) < _source_rank(row[0]):
+                        conn.execute(
+                            "UPDATE local_vectors SET source = ? WHERE entry_id = ?",
+                            (new_source, entry_id),
+                        )
+                        conn.commit()
+                finally:
+                    conn.close()
+        except Exception:
+            logger.debug("Source promotion failed for %s", entry_id, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -922,7 +676,8 @@ class QdrantBackend:
         _log_interaction(t0, "qdrant_add", entry[:200], f"id={eid}", llm="qdrant")
         return eid
 
-    def search(self, query: str, top_k: int, threshold: float) -> list[dict]:
+    def search(self, query: str, top_k: int, threshold: float,
+               *, bump_access: bool = True) -> list[dict]:
         vectors = _embed([query], self._embed_cfg, task="query")
         if not vectors:
             logger.warning("Qdrant: embedding failed for query, falling back to get_all")
@@ -939,8 +694,8 @@ class QdrantBackend:
             {"id": str(r.id), "text": r.payload.get("text", ""), "score": r.score}
             for r in results
         ]
-        # Track access for returned results.
-        self._track_access([h["id"] for h in hits])
+        if bump_access:
+            self._track_access([h["id"] for h in hits])
         _log_interaction(
             t0, "qdrant_search", query[:200],
             f"{len(hits)} hits (top_k={top_k}, threshold={threshold})",
@@ -1115,14 +870,38 @@ class QdrantBackend:
         }
 
     def rebuild(self) -> None:
-        """Drop collection and re-import from MEMORIES.txt."""
-        try:
-            text = MEMORIES_FILE.read_text(encoding="utf-8").strip()
-        except FileNotFoundError:
-            text = ""
-        entries = [l.strip() for l in text.splitlines() if l.strip()] if text else []
-        self.replace_all(entries)
-        logger.info("Qdrant: rebuilt index from MEMORIES.txt (%d entries)", len(entries))
+        """Re-embed all entries, preserving point IDs and metadata."""
+        from qdrant_client.models import PointStruct
+
+        all_entries = self.get_all_with_vectors()
+        if not all_entries:
+            return
+        texts = [e["text"] for e in all_entries]
+        vectors = _embed(texts, self._embed_cfg)
+        if not vectors or len(vectors) != len(all_entries):
+            raise RuntimeError("Embedding mismatch during rebuild")
+        # Upsert with new vectors but preserve all existing payload.
+        points = [
+            PointStruct(
+                id=e["id"],
+                vector=vec,
+                payload={
+                    "text": e["text"],
+                    "created_at": e.get("created_at", 0),
+                    "last_accessed": e.get("last_accessed", 0),
+                    "access_count": e.get("access_count", 0),
+                    "source": e.get("source", "unknown"),
+                },
+            )
+            for e, vec in zip(all_entries, vectors)
+        ]
+        with self._lock:
+            for i in range(0, len(points), 100):
+                self._client.upsert(
+                    collection_name=self._collection,
+                    points=points[i : i + 100],
+                )
+        logger.info("Qdrant: rebuilt vectors in place (%d entries)", len(all_entries))
 
     def get_all_with_vectors(self) -> list[dict]:
         points = []
@@ -1260,6 +1039,25 @@ class QdrantBackend:
     def track_access(self, entry_ids: list[str]) -> None:
         self._track_access(entry_ids)
 
+    def promote_source(self, entry_id: str, new_source: str) -> None:
+        """Upgrade source tag on *entry_id* if *new_source* has higher priority."""
+        try:
+            with self._lock:
+                pts = self._client.retrieve(
+                    collection_name=self._collection,
+                    ids=[entry_id], with_payload=True, with_vectors=False,
+                )
+                if pts:
+                    existing_source = pts[0].payload.get("source", "unknown")
+                    if _source_rank(new_source) < _source_rank(existing_source):
+                        self._client.set_payload(
+                            collection_name=self._collection,
+                            payload={"source": new_source},
+                            points=[entry_id],
+                        )
+        except Exception:
+            logger.debug("Source promotion failed for %s", entry_id, exc_info=True)
+
 
 # ---------------------------------------------------------------------------
 # Helpers — thin wrappers around llm_utils shared functions
@@ -1280,57 +1078,62 @@ def _log_interaction(timestamp: float, action: str, input_text: str,
 def init(config: dict) -> None:
     """Select and initialize the memory backend.
 
-    If the configured backend fails to init, falls back to fts5.
-    On first run, imports MEMORIES.txt into the index if the store is empty.
+    Requires an OpenAI-compatible embeddings endpoint.  The legacy ``fts5``
+    backend has been removed — if ``backend: "fts5"`` is still present in
+    ``config.yaml``, startup will fail with a clear migration message.
     """
     global _backend, _config
     _config = dict(config)
-    # Default to fts5 (zero-config) unless embeddings endpoint is configured.
+
     embeddings_cfg = config.get("embeddings", {})
     has_embeddings = bool(embeddings_cfg.get("endpoint"))
-    default_backend = "local_vector" if has_embeddings else "fts5"
-    backend_name = config.get("backend", default_backend)
+    backend_name = config.get("backend", "local_vector")
 
-    if backend_name not in ("fts5", "local_vector", "qdrant"):
+    # ── Fail-fast for removed FTS5 backend ──────────────────────────────
+    if backend_name == "fts5":
         raise ValueError(
-            f"Unknown memory backend {backend_name!r}. "
-            f"Supported backends: fts5, local_vector, qdrant"
+            "The 'fts5' memory backend has been removed. "
+            "An embedding-based backend (local_vector or qdrant) is now required.\n"
+            "  1. Configure memory.embeddings.endpoint in config.yaml "
+            "(any OpenAI-compatible /v1/embeddings endpoint).\n"
+            "  2. Set memory.backend to 'local_vector' (default) or 'qdrant'.\n"
+            "  Existing FTS5 memories will NOT be lost — the old "
+            "data/memory_index.db file is preserved and can be exported manually."
         )
 
-    try:
-        if backend_name == "fts5":
-            _backend = FTS5Backend()
-        elif backend_name == "local_vector":
-            _backend = LocalVectorBackend(config)
-        elif backend_name == "qdrant":
-            _backend = QdrantBackend(config)
-        _backend.init()
-    except Exception as exc:
-        logger.error("Memory backend %r failed to init: %s — falling back to fts5",
-                      backend_name, exc)
-        _backend = FTS5Backend()
-        _backend.init()
-        backend_name = "fts5"
+    if backend_name not in ("local_vector", "qdrant"):
+        raise ValueError(
+            f"Unknown memory backend {backend_name!r}. "
+            f"Supported backends: local_vector, qdrant"
+        )
 
-    # Cold-boot: if backend is empty and MEMORIES.txt has content, import.
-    if backend_name in ("fts5", "local_vector", "qdrant"):
-        try:
-            if _backend.count() == 0:
-                text = MEMORIES_FILE.read_text(encoding="utf-8").strip()
-                if text:
-                    entries = [l.strip() for l in text.splitlines() if l.strip()]
-                    if entries:
-                        logger.info("Cold-boot: importing %d memories from MEMORIES.txt into %s",
-                                     len(entries), backend_name)
-                        _backend.replace_all(entries)
-        except FileNotFoundError:
-            pass
-        except Exception as exc:
-            logger.error("Cold-boot import failed: %s", exc)
+    if not has_embeddings:
+        raise ValueError(
+            "memory.embeddings.endpoint is required. "
+            "Configure an OpenAI-compatible /v1/embeddings endpoint in config.yaml.\n"
+            "  Example:\n"
+            "    memory:\n"
+            "      embeddings:\n"
+            "        endpoint: \"http://localhost:8080/v1\"\n"
+            "        model: \"text-embedding-3-small\"\n"
+            "        dimensions: 1536"
+        )
+
+    if backend_name == "local_vector":
+        _backend = LocalVectorBackend(config)
+    elif backend_name == "qdrant":
+        _backend = QdrantBackend(config)
+    _backend.init()
+
+    logger.info("Memory backend initialized: %s (%d entries)", backend_name, _backend.count())
 
 
-def search(query: str, top_k: int | None = None, threshold: float | None = None) -> list[dict]:
+def search(query: str, top_k: int | None = None, threshold: float | None = None,
+           *, bump_access: bool = True) -> list[dict]:
     """Search memories by relevance.  Uses configured defaults for top_k/threshold.
+
+    Set *bump_access* to False for internal lookups (e.g. dedup) that should
+    not inflate access statistics.
 
     Returns an empty list on transient errors (network, embedding failures)
     so callers can degrade gracefully.
@@ -1340,7 +1143,7 @@ def search(query: str, top_k: int | None = None, threshold: float | None = None)
     if threshold is None:
         threshold = get_threshold()
     try:
-        return _backend.search(query, top_k, threshold)
+        return _backend.search(query, top_k, threshold, bump_access=bump_access)
     except Exception as exc:
         logger.warning("memory_store.search failed, returning empty results: %s", exc)
         return []
@@ -1435,6 +1238,95 @@ def create_snapshot() -> str:
     return ""
 
 
+# ---------------------------------------------------------------------------
+# Async dedup-aware add
+# ---------------------------------------------------------------------------
+
+_DEDUP_SIMILARITY_THRESHOLD = 0.80
+
+# Source priority for merge promotion — lower index = higher protection.
+_SOURCE_PRIORITY = ("user_explicit", "dreaming_schema", "harvest", "unknown")
+
+
+def _source_rank(s: str) -> int:
+    """Return priority rank for a source tag (lower = higher priority)."""
+    try:
+        return _SOURCE_PRIORITY.index(s)
+    except ValueError:
+        return len(_SOURCE_PRIORITY)
+
+
+def _promote_source(entry_id: str, new_source: str) -> None:
+    """Promote the source tag on *entry_id* if *new_source* has higher priority.
+
+    If the active backend implements a ``promote_source(entry_id, new_source)``
+    method, this function delegates to it so that locking and storage-specific
+    logic are handled internally. Backends that do not implement this method
+    simply skip source promotion.
+    """
+    if _backend is not None and hasattr(_backend, "promote_source"):
+        _backend.promote_source(entry_id, new_source)
+
+
+async def add_with_dedup(entry: str, source: str = "unknown", *, pool=None) -> str:
+    """Add a memory entry, merging with an existing near-duplicate if found.
+
+    1. Search for similar entries above ``_DEDUP_SIMILARITY_THRESHOLD``.
+    2. If a match is found and *pool* is provided, merge via LLM.
+    3. Upsert the merged text under the existing entry_id.  Both
+       LocalVectorBackend and QdrantBackend preserve metadata
+       (created_at, access_count, last_accessed) on upsert.
+    4. Promote the source tag if the new entry's source has higher
+       priority (e.g. ``user_explicit`` > ``harvest``).
+    5. If no match, fall back to plain ``add()``.
+
+    Returns the entry_id of the new/merged entry.
+    """
+    import asyncio
+    from wintermute.infra import prompt_loader
+
+    hits = await asyncio.to_thread(
+        search, entry, top_k=1, threshold=_DEDUP_SIMILARITY_THRESHOLD,
+        bump_access=False,
+    )
+    if hits and pool is not None and pool.enabled:
+        existing = hits[0]
+        existing_text = existing.get("text", "")
+        existing_id = existing.get("id", "")
+
+        try:
+            merge_prompt = prompt_loader.load(
+                "MEMORY_MERGE_PROMPT.txt",
+                entry_1=existing_text,
+                entry_2=entry,
+            )
+            response = await pool.call(
+                messages=[{"role": "user", "content": merge_prompt}],
+                max_tokens_override=512,
+            )
+            merged = (response.content or "").strip()
+            if merged:
+                # Upsert under the existing entry_id.  Both backends'
+                # ON CONFLICT / upsert logic preserves created_at,
+                # access_count, and last_accessed — no delete needed.
+                new_id = await asyncio.to_thread(
+                    add, merged, entry_id=existing_id, source=source
+                )
+                # Promote source if the new entry has higher priority
+                # (e.g. user_explicit merged into a harvest entry).
+                await asyncio.to_thread(_promote_source, existing_id, source)
+                logger.info(
+                    "Memory dedup: merged existing %s (%.0f%% sim) → %s",
+                    existing_id, hits[0].get("score", 0) * 100, new_id,
+                )
+                return new_id
+        except Exception as exc:
+            logger.warning("Memory dedup merge failed, adding as new: %s", exc)
+
+    # No duplicate or merge failed — plain add.
+    return await asyncio.to_thread(add, entry, source=source)
+
+
 def search_neighbors_batch(
     entry_ids: list[str],
     limit: int = 20,
@@ -1449,14 +1341,15 @@ def search_neighbors_batch(
 def is_vector_enabled() -> bool:
     """True when an embedding-based vector backend is active.
 
-    Returns True only for backends that use embedding-based vector
-    search (local_vector or qdrant), and False for pure keyword/FTS backends.
+    Returns False before ``init()`` or if initialization failed.
+    After successful init, always True since all supported backends
+    are embedding-based (FTS5 has been removed).
     """
-    return isinstance(_backend, (LocalVectorBackend, QdrantBackend))
+    return _backend is not None
 
 
 def is_memory_backend_initialized() -> bool:
-    """True when any memory backend has been initialized (fts5, local_vector, qdrant)."""
+    """True when a memory backend has been initialized (local_vector or qdrant)."""
     return _backend is not None
 
 

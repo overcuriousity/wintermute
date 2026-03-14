@@ -42,13 +42,13 @@ Each section declares which tool(s) it requires. When a sub-session is spawned w
 
 This reduces effective prompt size for minimal sub-sessions by ~800 tokens — significant for weak/small models where every token counts.
 
-### 2. MEMORIES.txt / Vector Memory — Long-Term Facts
+### 2. Vector Memory Store — Long-Term Facts
 
-Stores persistent facts about the user — preferences, biographical details, established decisions. Updated day-to-day via `append_memory` (preferred). Each entry is tagged with its `source` (`user_explicit`, `harvest`, `dreaming_merge`, `dreaming_association`, `dreaming_schema`). Consolidated nightly by the dreaming loop — vector backends use a multi-phase pipeline: housekeeping (dedup clustering, contradiction detection, stale pruning, working set export) plus gated creative phases (associative discovery, schema abstraction, predictive patterns); flat-file uses LLM consolidation.
+Stores persistent facts about the user — preferences, biographical details, established decisions. Updated day-to-day via `append_memory` (preferred). Each entry is tagged with its `source` (`user_explicit`, `harvest`, `dreaming_merge`, `dreaming_association`, `dreaming_schema`). New entries are automatically deduplicated at add-time (similarity > 0.80 triggers LLM-based merge). Consolidated nightly by the dreaming loop via a multi-phase pipeline: housekeeping (dedup clustering, contradiction detection, stale pruning) plus gated creative phases (associative discovery, schema abstraction, predictive patterns).
 
-Key rule: if information would still matter in a month with no active project around it, it belongs in MEMORIES.
+Key rule: if information would still matter in a month with no active project around it, it belongs in memories.
 
-**Vector-indexed retrieval (optional):** When a vector memory backend (`fts5`, `local_vector`, or `qdrant`) is configured, only the top-K most relevant memories are injected per turn based on the current user message and last assistant reply. The vector store is the **primary unbounded memory**; MEMORIES.txt is a derived working-set export of the top-N most-accessed entries. See [configuration.md — memory](configuration.md#memory) for setup.
+Only the top-K most relevant memories are injected per turn based on the current user message and last assistant reply. See [configuration.md — memory](configuration.md#memory) for setup.
 
 ### 3. Tasks (SQLite) — Working Memory
 
@@ -95,10 +95,7 @@ The `prompt_assembler.assemble()` function builds the final system prompt. It ac
 
 ---
 
-# User Memories                          (flat-file mode)
-{MEMORIES.txt content}
-  — OR —
-# User Memories (relevance-ranked)       (vector mode)
+# User Memories (relevance-ranked)
 {top-K memories from vector search}
 
 ---
@@ -152,7 +149,7 @@ Each component has a configurable character limit (set in `config.yaml` under `c
 
 | Component | Default Limit | Action When Exceeded |
 |-----------|---------------|---------------------|
-| MEMORIES.txt | 10,000 chars | AI is asked to condense and prioritise |
+| Memories | 10,000 chars | AI is asked to condense and prioritise |
 | Tasks (DB) | 5,000 chars | AI is asked to condense and prioritise |
 | skills/ (TOC) | 2,000 chars | AI is asked to reorganise |
 
@@ -166,7 +163,7 @@ The following prompt templates are stored as editable files in `data/` and shipp
 
 | File | Used By | Placeholder | Purpose |
 |------|---------|-------------|---------|
-| `DREAM_MEMORIES_PROMPT.txt` | Dreaming loop (flat-file path) | `{content}` | Instructions for consolidating MEMORIES.txt overnight |
+| `MEMORY_MERGE_PROMPT.txt` | Memory add-time dedup | `{entry_1}`, `{entry_2}` | Instructions for merging two semantically similar memory entries |
 | `DREAM_DEDUP_PROMPT.txt` | Dreaming loop (vector-native) | `{content}` | Instructions for merging a cluster of semantically similar memory entries |
 | `DREAM_CONTRADICTION_PROMPT.txt` | Dreaming loop (vector-native) | `{entry_1}`, `{entry_2}` | Instructions for resolving contradictions between two entries (returns JSON: keep_first/keep_second/merge) |
 | `DREAM_ASSOCIATION_PROMPT.txt` | Dreaming loop (creative, REM) | `{seed_memories}`, `{candidate_memories}` | Instructions for discovering non-obvious connections between distant memories (returns JSON insights) |

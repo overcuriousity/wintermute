@@ -30,14 +30,12 @@ A biologically-inspired multi-phase memory consolidation system that runs nightl
 
 **Housekeeping phases** (vector backends):
 
-1. **Deduplication clustering:** Computes similarity data (Qdrant-native `search_batch` O(n·k) or numpy O(n²) fallback), clusters entries above a configurable threshold (default: 0.85) using union-find, and asks the LLM to merge each cluster into a single concise entry (`DREAM_DEDUP_PROMPT.txt`). Originals are bulk-deleted and replaced with the merged entry.
+1. **Deduplication clustering:** Computes similarity data (Qdrant-native `search_batch` O(n·k) or numpy O(n²) fallback), clusters entries above a configurable threshold (default: 0.80) using union-find, and asks the LLM to merge each cluster into a single concise entry (`DREAM_DEDUP_PROMPT.txt`). Originals are bulk-deleted and replaced with the merged entry.
 2. **Contradiction detection:** Finds pairs in the "suspicious" similarity range (0.5–threshold), caps at 20 pairs, and asks the LLM to resolve each (`DREAM_CONTRADICTION_PROMPT.txt`). The LLM returns a JSON decision: keep_first, keep_second, or merge.
 3. **Stale pruning:** Removes entries not accessed in `stale_days` (default: 90) with fewer than `stale_min_access` (default: 3) accesses. Entries with `source="user_explicit"` or `source="dreaming_schema"` are protected from pruning.
-4. **Working set export:** The top-N most-accessed entries (default: 50) are written to `MEMORIES.txt` as a derived working set for flat-file fallback and git versioning. The vector store is **not** replaced — it remains the primary unbounded memory.
-
 **Shared phases** (all backends):
 
-5. **Task consolidation:** LLM returns JSON actions (complete, update, keep) applied via DB; completed tasks older than 30 days are purged.
+4. **Task consolidation:** LLM returns JSON actions (complete, update, keep) applied via DB; completed tasks older than 30 days are purged.
 6. **Skill consolidation:** Auto-retires skills unused for 90+ days (deleted from the skill store), then deduplicates overlapping skills, then condenses skills with >600 chars documentation while preserving the first-line summary.
 
 **Creative phases** (vector backends only, gated):
@@ -60,7 +58,7 @@ The dreaming loop generates predictions (phase 9) but their value depends on run
 
 ### Source-Filtered Retrieval
 
-`memory_store.get_by_source("dreaming_prediction")` fetches all entries tagged with a specific source. Access counts are bumped on retrieval, feeding the promotion pipeline (≥5 accesses → promoted to `dreaming_schema`). This source-filtered retrieval (and thus prediction consumption) requires a backend that stores metadata (FTS5/local_vector/Qdrant); with the flat-file backend, `get_by_source()` returns an empty list and predictions will not be consumed.
+`memory_store.get_by_source("dreaming_prediction")` fetches all entries tagged with a specific source. Access counts are bumped on retrieval, feeding the promotion pipeline (≥5 accesses → promoted to `dreaming_schema`). This source-filtered retrieval (and thus prediction consumption) requires a backend that stores metadata (local_vector/Qdrant).
 
 ### Prompt Injection
 
@@ -106,11 +104,11 @@ Predictions flow through a complete lifecycle: **generation** (dreaming) → **i
 
 **Module:** `wintermute/workers/memory_harvest.py`
 
-Periodic background extraction of personal facts and preferences from conversation history into MEMORIES.txt (and the vector store, if active).
+Periodic background extraction of personal facts and preferences from conversation history into the memory store.
 
 **Problem:** The `append_memory` tool exists but weak/small models rarely call it proactively. Conversations contain valuable personal details that are lost when history is compacted or archived.
 
-**Solution:** A polling loop spawns sub-session workers that mine recent conversation history and call `append_memory` for each new fact discovered. Workers first read MEMORIES.txt to avoid duplicating existing entries.
+**Solution:** A polling loop spawns sub-session workers that mine recent conversation history and call `append_memory` for each new fact discovered. Deduplication is handled automatically at add-time by the memory store (similarity > 0.80 triggers LLM-based merge).
 
 **Trigger conditions (per thread, OR logic):**
 - **Message threshold:** N or more new user messages since the last harvest (default: 20)
@@ -119,7 +117,7 @@ Periodic background extraction of personal facts and preferences from conversati
 **Scope:**
 - Harvests from user-facing threads only (Matrix rooms, web sessions, "default")
 - Sub-session threads (`sub_*`) are excluded
-- Memories are written to the unified MEMORIES.txt (shared across all threads)
+- Memories are written to the unified memory store (shared across all threads)
 - Results are fire-and-forget (no messages delivered to chat)
 - Visibility via logs and the debug panel (`/debug` → interaction_log, action=`memory_harvest`)
 
@@ -399,7 +397,7 @@ After every inference, Wintermute checks if any memory component exceeds its siz
 
 | Component | Default Limit |
 |-----------|---------------|
-| MEMORIES.txt | 10,000 chars |
+| Memories | 10,000 chars |
 | Tasks (DB) | 5,000 chars |
 | skills/ (TOC) | 2,000 chars |
 

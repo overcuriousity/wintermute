@@ -155,7 +155,7 @@ SearXNG can run in a separate container on the same host and is reachable via `h
 
 The system auto-summarises memory components when they exceed their size limits, but deliberate maintenance keeps the model better oriented:
 
-- **MEMORIES.txt**: Keep entries factual and specific. Avoid storing transient state here — use Tasks for that. The nightly dreaming pass deduplicates and merges, but only as well as the model can reason about your entries.
+- **Memories**: Keep entries factual and specific. Avoid storing transient state — use Tasks for that. Add-time dedup and nightly dreaming handle merging, but entries should still be concise and non-redundant.
 - **Tasks**: Complete tasks promptly when done. Stale tasks consume prompt tokens on every turn and confuse the model about what is still active.
 - **Skills**: Keep skill files focused on one procedure. The first line of each skill file is used as a summary in the system prompt's TOC — make it clear and descriptive so the model knows when to load the full skill via `read_file`.
 

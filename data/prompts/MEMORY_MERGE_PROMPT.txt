@@ -1,0 +1,10 @@
+Two memory entries are semantically similar. Merge them into a single concise entry.
+Be concise — keep the result under 300 characters if possible. Discard redundant phrasing.
+
+Entry 1:
+{entry_1}
+
+Entry 2:
+{entry_2}
+
+Return ONLY the merged text.

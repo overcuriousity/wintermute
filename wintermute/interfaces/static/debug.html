@@ -1759,8 +1759,7 @@ async function loadSkills() {
     const totalSuccess = skills.reduce((a, s) => a + (s.success_count || 0), 0);
     const avgRate = totalSessions > 0 ? Math.round(totalSuccess / totalSessions * 100) : 0;
     const backendLabel = _skillBackend === 'local_vector' ? '🧠 local_vector'
-      : _skillBackend === 'qdrant' ? '🧠 qdrant'
-      : _skillBackend === 'fts5' ? '🔍 fts5' : _skillBackend;
+      : _skillBackend === 'qdrant' ? '🧠 qdrant' : _skillBackend;
     statsBar.innerHTML = [
       '<span>Backend: <strong>' + backendLabel + '</strong></span>',
       '<span>Skills: <strong>' + skills.length + '</strong></span>',

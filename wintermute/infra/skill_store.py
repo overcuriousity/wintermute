@@ -1,12 +1,11 @@
 """
 Vector-indexed skill storage for Wintermute.
 
-Mirrors the ``memory_store`` architecture with three backends:
-  - fts5         — SQLite FTS5 keyword search with BM25 ranking
+Mirrors the ``memory_store`` architecture with two embedding-based backends:
   - local_vector — SQLite + numpy cosine similarity (default)
   - qdrant       — Qdrant vector DB with embedding-based semantic search
 
-Skills use the same backend architecture as memory_store.
+An OpenAI-compatible embeddings endpoint is **required**.
 
 Module-level singleton pattern (like memory_store.py).
 Call ``init(config, embed_cfg)`` once at startup; all other functions use
@@ -33,7 +32,6 @@ from wintermute.infra.llm_utils import (
 )
 from wintermute.infra.paths import (
     SKILLS_DIR,
-    SKILLS_FTS5_DB_PATH,
     SKILLS_VECTOR_DB_PATH,
 )
 
@@ -80,319 +78,6 @@ class SkillBackend(Protocol):
 def _build_full_text(summary: str, documentation: str) -> str:
     """Combine summary + documentation for embedding / FTS indexing."""
     return f"{summary.strip()}\n\n{documentation.strip()}" if summary else documentation.strip()
-
-
-# ---------------------------------------------------------------------------
-# FTS5 backend (SQLite keyword search with BM25)
-# ---------------------------------------------------------------------------
-
-class FTS5SkillBackend:
-    """SQLite FTS5 full-text search with BM25 scoring for skills."""
-
-    def __init__(self) -> None:
-        self._db_path = SKILLS_FTS5_DB_PATH
-        self._lock = threading.Lock()
-
-    def init(self) -> None:
-        with self._lock:
-            conn = self._connect()
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS skills_meta ("
-                "  skill_id TEXT PRIMARY KEY,"
-                "  name TEXT NOT NULL UNIQUE,"
-                "  summary TEXT NOT NULL DEFAULT '',"
-                "  documentation TEXT NOT NULL DEFAULT '',"
-                "  full_text TEXT NOT NULL DEFAULT '',"
-                "  created_at REAL NOT NULL,"
-                "  last_accessed REAL NOT NULL DEFAULT 0,"
-                "  access_count INTEGER NOT NULL DEFAULT 0,"
-                "  version INTEGER NOT NULL DEFAULT 1,"
-                "  changelog TEXT NOT NULL DEFAULT ''"
-                ")"
-            )
-            conn.execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS skills_fts "
-                "USING fts5(name, full_text, content=skills_meta, content_rowid=rowid)"
-            )
-            conn.executescript("""
-                CREATE TRIGGER IF NOT EXISTS skills_ai AFTER INSERT ON skills_meta BEGIN
-                    INSERT INTO skills_fts(rowid, name, full_text)
-                    VALUES (new.rowid, new.name, new.full_text);
-                END;
-                CREATE TRIGGER IF NOT EXISTS skills_ad AFTER DELETE ON skills_meta BEGIN
-                    INSERT INTO skills_fts(skills_fts, rowid, name, full_text)
-                    VALUES ('delete', old.rowid, old.name, old.full_text);
-                END;
-                CREATE TRIGGER IF NOT EXISTS skills_au AFTER UPDATE ON skills_meta BEGIN
-                    INSERT INTO skills_fts(skills_fts, rowid, name, full_text)
-                    VALUES ('delete', old.rowid, old.name, old.full_text);
-                    INSERT INTO skills_fts(rowid, name, full_text)
-                    VALUES (new.rowid, new.name, new.full_text);
-                END;
-            """)
-            conn.commit()
-            conn.close()
-        logger.info("Skill backend: fts5 (SQLite FTS5 at %s)", self._db_path)
-
-    def _connect(self) -> sqlite3.Connection:
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(self._db_path), timeout=10)
-        conn.execute("PRAGMA journal_mode=WAL")
-        return conn
-
-    def add(self, name: str, summary: str, documentation: str,
-            changelog: str = "") -> str:
-        sid = _make_id(name)
-        full_text = _build_full_text(summary, documentation)
-        now = time.time()
-        with self._lock:
-            conn = self._connect()
-            try:
-                # Check if exists (for version increment).
-                row = conn.execute(
-                    "SELECT version, changelog FROM skills_meta WHERE name = ?",
-                    (name,),
-                ).fetchone()
-                if row:
-                    version = row[0] + 1
-                    old_changelog = row[1] or ""
-                    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                    if changelog:
-                        new_changelog = changelog
-                    elif old_changelog:
-                        new_changelog = f"{old_changelog}\n- {date_str}: updated"
-                    else:
-                        new_changelog = f"## Changelog\n- {date_str}: updated"
-                    conn.execute(
-                        "UPDATE skills_meta SET summary=?, documentation=?, "
-                        "full_text=?, version=?, changelog=?, last_accessed=? "
-                        "WHERE name=?",
-                        (summary, documentation, full_text, version,
-                         new_changelog, now, name),
-                    )
-                else:
-                    version = 1
-                    conn.execute(
-                        "INSERT INTO skills_meta "
-                        "(skill_id, name, summary, documentation, full_text, "
-                        "created_at, last_accessed, access_count, version, changelog) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
-                        (sid, name, summary, documentation, full_text,
-                         now, now, version, changelog),
-                    )
-                conn.commit()
-            finally:
-                conn.close()
-        logger.info("Skill '%s' saved (v%d) via fts5", name, version)
-        return sid
-
-    def exists(self, name: str) -> bool:
-        with self._lock:
-            conn = self._connect()
-            try:
-                row = conn.execute(
-                    "SELECT 1 FROM skills_meta WHERE name = ?", (name,),
-                ).fetchone()
-            finally:
-                conn.close()
-        return row is not None
-
-    def get(self, name: str) -> dict | None:
-        with self._lock:
-            conn = self._connect()
-            try:
-                row = conn.execute(
-                    "SELECT skill_id, name, summary, documentation, "
-                    "created_at, last_accessed, access_count, version, changelog "
-                    "FROM skills_meta WHERE name = ?",
-                    (name,),
-                ).fetchone()
-                if not row:
-                    return None
-                # Track access.
-                now = time.time()
-                conn.execute(
-                    "UPDATE skills_meta SET last_accessed = ?, "
-                    "access_count = access_count + 1 WHERE name = ?",
-                    (now, name),
-                )
-                conn.commit()
-            finally:
-                conn.close()
-        return {
-            "id": row[0], "name": row[1], "summary": row[2],
-            "documentation": row[3], "created_at": row[4],
-            "last_accessed": row[5], "access_count": row[6],
-            "version": row[7], "changelog": row[8],
-        }
-
-    def search(self, query: str, top_k: int, threshold: float) -> list[dict]:
-        if not query.strip():
-            return self.get_all()[:top_k]
-        tokens = query.split()
-        fts_query = " OR ".join(f'"{t}"' for t in tokens[:20] if t.strip())
-        if not fts_query:
-            return self.get_all()[:top_k]
-        with self._lock:
-            conn = self._connect()
-            try:
-                rows = conn.execute(
-                    "SELECT m.skill_id, m.name, m.summary, m.documentation, "
-                    "m.created_at, m.last_accessed, m.access_count, m.version, "
-                    "m.changelog, bm25(skills_fts) AS score "
-                    "FROM skills_fts f "
-                    "JOIN skills_meta m ON f.rowid = m.rowid "
-                    "WHERE skills_fts MATCH ? "
-                    "ORDER BY score "
-                    "LIMIT ?",
-                    (fts_query, top_k),
-                ).fetchall()
-            except sqlite3.OperationalError:
-                logger.debug("FTS5 skill query failed, returning empty results")
-                rows = []
-            finally:
-                conn.close()
-        if not rows:
-            return []
-        return [
-            {"id": r[0], "name": r[1], "summary": r[2], "documentation": r[3],
-             "created_at": r[4], "last_accessed": r[5], "access_count": r[6],
-             "version": r[7], "changelog": r[8], "score": -r[9]}
-            for r in rows
-        ]
-
-    def get_all(self) -> list[dict]:
-        with self._lock:
-            conn = self._connect()
-            try:
-                rows = conn.execute(
-                    "SELECT skill_id, name, summary, documentation, "
-                    "created_at, last_accessed, access_count, version, changelog "
-                    "FROM skills_meta ORDER BY name"
-                ).fetchall()
-            finally:
-                conn.close()
-        return [
-            {"id": r[0], "name": r[1], "summary": r[2], "documentation": r[3],
-             "created_at": r[4], "last_accessed": r[5], "access_count": r[6],
-             "version": r[7], "changelog": r[8], "score": 1.0}
-            for r in rows
-        ]
-
-    def delete(self, name: str) -> bool:
-        with self._lock:
-            conn = self._connect()
-            try:
-                cur = conn.execute("DELETE FROM skills_meta WHERE name = ?", (name,))
-                conn.commit()
-                return cur.rowcount > 0
-            finally:
-                conn.close()
-
-    def update(self, name: str, summary: str | None = None,
-               documentation: str | None = None,
-               changelog: str | None = None) -> bool:
-        with self._lock:
-            conn = self._connect()
-            try:
-                row = conn.execute(
-                    "SELECT summary, documentation, version, changelog "
-                    "FROM skills_meta WHERE name = ?",
-                    (name,),
-                ).fetchone()
-                if not row:
-                    return False
-                new_summary = summary if summary is not None else row[0]
-                new_doc = documentation if documentation is not None else row[1]
-                new_version = row[2] + 1
-                if changelog is not None:
-                    new_changelog = changelog
-                else:
-                    old_cl = row[3] or ""
-                    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                    if old_cl:
-                        new_changelog = f"{old_cl}\n- {date_str}: updated"
-                    else:
-                        new_changelog = f"## Changelog\n- {date_str}: updated"
-                full_text = _build_full_text(new_summary, new_doc)
-                conn.execute(
-                    "UPDATE skills_meta SET summary=?, documentation=?, "
-                    "full_text=?, version=?, changelog=?, last_accessed=? "
-                    "WHERE name=?",
-                    (new_summary, new_doc, full_text, new_version,
-                     new_changelog, time.time(), name),
-                )
-                conn.commit()
-            finally:
-                conn.close()
-        logger.info("Skill '%s' updated (v%d) via fts5", name, new_version)
-        return True
-
-    def count(self) -> int:
-        with self._lock:
-            conn = self._connect()
-            try:
-                return conn.execute("SELECT COUNT(*) FROM skills_meta").fetchone()[0]
-            finally:
-                conn.close()
-
-    def stats(self) -> dict:
-        with self._lock:
-            conn = self._connect()
-            try:
-                rows = conn.execute(
-                    "SELECT name, created_at, last_accessed, access_count, "
-                    "version FROM skills_meta ORDER BY name"
-                ).fetchall()
-            finally:
-                conn.close()
-        result: dict[str, dict] = {}
-        for r in rows:
-            result[r[0]] = {
-                "created": r[1], "last_read": r[2], "read_count": r[3],
-                "sessions_loaded": r[3],  # alias for compat
-                "version": r[4],
-                "success_count": 0, "failure_count": 0,  # not currently persisted; always 0
-            }
-        return result
-
-    def get_stale(self, max_age_days: int, min_access: int) -> list[dict]:
-        cutoff = time.time() - (max_age_days * 86400)
-        with self._lock:
-            conn = self._connect()
-            try:
-                rows = conn.execute(
-                    "SELECT name, summary, last_accessed, access_count "
-                    "FROM skills_meta WHERE last_accessed < ? AND access_count < ?",
-                    (cutoff, min_access),
-                ).fetchall()
-            finally:
-                conn.close()
-        return [
-            {"name": r[0], "summary": r[1], "last_accessed": r[2],
-             "access_count": r[3]}
-            for r in rows
-        ]
-
-    def get_all_with_vectors(self) -> list[dict]:
-        # FTS5 has no vectors — return entries without vector field.
-        return self.get_all()
-
-    def bulk_delete(self, names: list[str]) -> int:
-        if not names:
-            return 0
-        placeholders = ",".join("?" for _ in names)
-        with self._lock:
-            conn = self._connect()
-            try:
-                cur = conn.execute(
-                    f"DELETE FROM skills_meta WHERE name IN ({placeholders})",
-                    names,
-                )
-                conn.commit()
-                return cur.rowcount
-            finally:
-                conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1281,44 +966,42 @@ def init(config: dict, embed_cfg: dict | None = None) -> None:
     ``config`` is the ``skills`` section from config.yaml.
     ``embed_cfg`` is the shared ``memory.embeddings`` config (inherited).
 
-    If the configured backend fails to init, falls back to fts5.
+    Requires an OpenAI-compatible embeddings endpoint.  The legacy ``fts5``
+    backend has been removed.
     On first run with existing skill files, performs one-time migration.
     """
     global _backend, _config, _embed_cfg
     _config = dict(config)
     _embed_cfg = dict(embed_cfg or {})
 
-    # Derive default backend: use local_vector only when embeddings are
-    # configured; otherwise default to fts5 to avoid failures on installs
-    # without an embedding endpoint.
-    backend_name = config.get("backend")
-    if not backend_name:
-        backend_name = "local_vector" if _embed_cfg.get("endpoint") else "fts5"
+    backend_name = config.get("backend", "local_vector")
 
-    try:
-        if backend_name == "fts5":
-            _backend = FTS5SkillBackend()
-        elif backend_name == "local_vector":
-            if not _embed_cfg.get("endpoint"):
-                raise RuntimeError(
-                    "skills.backend 'local_vector' requires embeddings.endpoint to be configured"
-                )
-            _backend = LocalVectorSkillBackend(_embed_cfg)
-        elif backend_name == "qdrant":
-            if not _embed_cfg.get("endpoint"):
-                raise RuntimeError(
-                    "skills.backend 'qdrant' requires embeddings.endpoint to be configured"
-                )
-            _backend = QdrantSkillBackend(config, _embed_cfg)
-        else:
-            logger.warning("Unknown skill backend %r, falling back to fts5", backend_name)
-            _backend = FTS5SkillBackend()
-        _backend.init()
-    except Exception as exc:
-        logger.error("Skill backend %r failed to init: %s — falling back to fts5",
-                      backend_name, exc)
-        _backend = FTS5SkillBackend()
-        _backend.init()
+    # ── Fail-fast for removed FTS5 backend ──────────────────────────────
+    if backend_name == "fts5":
+        raise ValueError(
+            "The 'fts5' skill backend has been removed. "
+            "An embedding-based backend (local_vector or qdrant) is now required.\n"
+            "  Configure memory.embeddings.endpoint in config.yaml and set "
+            "skills.backend to 'local_vector' (default) or 'qdrant'."
+        )
+
+    if backend_name not in ("local_vector", "qdrant"):
+        raise ValueError(
+            f"Unknown skill backend {backend_name!r}. "
+            f"Supported backends: local_vector, qdrant"
+        )
+
+    if not _embed_cfg.get("endpoint"):
+        raise ValueError(
+            "memory.embeddings.endpoint is required for the skill store. "
+            "Configure an OpenAI-compatible /v1/embeddings endpoint in config.yaml."
+        )
+
+    if backend_name == "local_vector":
+        _backend = LocalVectorSkillBackend(_embed_cfg)
+    elif backend_name == "qdrant":
+        _backend = QdrantSkillBackend(config, _embed_cfg)
+    _backend.init()
 
     # One-time migration from flat files.
     try:

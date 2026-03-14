@@ -8,7 +8,6 @@ Phases:
     - dedup: Merge near-duplicate memory entries
     - contradiction: Resolve conflicting memory entries
     - stale_pruning: Remove old/unaccessed entries
-    - working_set_export: Export top entries to MEMORIES.txt
     - task_consolidation: Review/clean task items
     - skill_consolidation: Deduplicate and condense skill files
 
@@ -41,8 +40,7 @@ from wintermute.infra import data_versioning
 from wintermute.infra import memory_store
 from wintermute.infra import prompt_loader
 from wintermute.infra.llm_utils import parse_json_from_llm
-from wintermute.infra.memory_io import merge_consolidated_memories, read_text_safe, write_memories_raw
-from wintermute.infra.paths import MEMORIES_FILE
+from wintermute.infra.memory_io import read_text_safe
 
 if TYPE_CHECKING:
     from wintermute.core.types import BackendPool
@@ -139,7 +137,7 @@ def _load_dreaming_config() -> dict:
     """Load dreaming-specific config from config.yaml with defaults."""
     defaults = {
         # Housekeeping
-        "dedup_similarity_threshold": 0.85,
+        "dedup_similarity_threshold": 0.80,
         "stale_days": 90,
         "stale_min_access": 3,
         "working_set_size": 50,
@@ -211,7 +209,7 @@ async def _compute_similarity_data(cfg: dict) -> SimilarityData:
 
     When Qdrant is the backend, uses search_batch for O(n*k) neighbor
     lookups instead of computing the full O(n^2) pairwise matrix in Python.
-    Falls back to the numpy matrix for local_vector / fts5 backends.
+    Falls back to the numpy matrix for local_vector backends.
 
     Returns a SimilarityData with:
       - dedup_pairs: (i, j, sim) where sim >= dedup threshold
@@ -451,24 +449,6 @@ async def _phase_stale_pruning(pool: "BackendPool", cfg: dict,
     logger.info("Dreaming phase stale_pruning: %s", result.summary)
     return result
 
-
-async def _phase_working_set_export(pool: "BackendPool", cfg: dict,
-                                    sim_data: SimilarityData) -> PhaseResult:
-    """Phase: export top-accessed entries to MEMORIES.txt for prompt assembly."""
-    result = PhaseResult(phase_name="working_set_export")
-    top = await asyncio.to_thread(
-        memory_store.get_top_accessed, cfg["working_set_size"]
-    )
-    if top:
-        working_set = "\n".join(e["text"] for e in top if e.get("text"))
-        write_memories_raw(working_set)
-        data_versioning.commit_async("dreaming: working set export")
-        result.items_processed = len(top)
-        result.summary = f"exported {len(top)} entries to MEMORIES.txt"
-    else:
-        result.summary = "no entries to export"
-    logger.info("Dreaming phase working_set_export: %s", result.summary)
-    return result
 
 
 async def _phase_task_consolidation(pool: "BackendPool", cfg: dict,
@@ -1220,9 +1200,6 @@ async def run_dream_cycle(
                     lambda: _phase_contradiction(pool, cfg, sim_data)))
     phases.append(("stale_pruning",
                     lambda: _phase_stale_pruning(pool, cfg, sim_data)))
-    phases.append(("working_set_export",
-                    lambda: _phase_working_set_export(pool, cfg, sim_data)))
-
     phases.append(("task_consolidation",
                     lambda: _phase_task_consolidation(pool, cfg, sim_data)))
     phases.append(("skill_consolidation",

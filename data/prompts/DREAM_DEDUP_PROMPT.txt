@@ -1,5 +1,5 @@
 The following memory entries are semantically similar and likely redundant.
-Merge them into a single concise entry that preserves ALL unique information.
-Return ONLY the merged text, nothing else.
+Merge them into a single concise entry. Be brief — discard redundant phrasing,
+keep only distinct facts. Return ONLY the merged text.
 
 {content}

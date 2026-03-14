@@ -331,7 +331,9 @@ docker run -d --name qdrant -p 6333:6333 qdrant/qdrant
 
 See the [Qdrant documentation](https://qdrant.tech/documentation/quick-start/) for more options.
 
-If no embeddings endpoint is configured, Wintermute falls back to `fts5` (SQLite keyword search with BM25 ranking, no external services needed).
+An embeddings endpoint is **required** — without it, Wintermute will refuse to start. Any OpenAI-compatible `/v1/embeddings` endpoint works (local: `text-embeddings-inference`, `llama.cpp`, `Infinity`; cloud: OpenAI, Together, Fireworks).
+
+> **Migration note:** The legacy `fts5` (SQLite keyword search) backend has been removed. If upgrading from an older version, update your `config.yaml`: set `memory.backend` to `"local_vector"` and configure `memory.embeddings.endpoint`.
 
 ## Timezone Configuration
 

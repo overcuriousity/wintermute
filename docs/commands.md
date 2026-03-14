@@ -11,7 +11,7 @@ All commands are available in both Matrix and the web UI.
 | `/dream` | Manually trigger the dreaming cycle. Runs all phases (housekeeping + creative) and shows per-phase results with ✓/✗ status, before/after counts for memories, tasks, and skills. |
 | `/reflect` | Manually trigger the reflection cycle (rule engine + LLM analysis + self-model update). Reports findings and any auto-tuning changes inline. |
 | `/memory-stats` | Show memory store status: backend type, entry count, and backend-specific details (Qdrant URL, collection, dimensions, status). |
-| `/rebuild-index` | Rebuild the vector memory index from MEMORIES.txt. Only available when a vector backend (`fts5` or `qdrant`) is active. Reports stats after completion. |
+| `/rebuild-index` | Rebuild the vector memory index. Reports stats after completion. |
 | `/config` | Show the resolved configuration for the current thread, including which values are overridden vs. defaults. |
 | `/config <key> <value>` | Set a per-thread configuration override. Keys: `backend_name`, `session_timeout_minutes`, `sub_sessions_enabled`, `system_prompt_mode`. |
 | `/config reset` | Remove all per-thread configuration overrides for the current thread. |

@@ -881,10 +881,15 @@ print(json.dumps({
 
   # ── Memory (vector storage) ────────────────────────────────────
   echo ""
-  echo -e "  ${C_BOLD}── Memory storage ──${C_RESET}"
-  echo -e "  ${C_DIM}  Wintermute can use vector embeddings for semantic memory search.${C_RESET}"
-  echo -e "  ${C_DIM}  Requires an OpenAI-compatible /v1/embeddings endpoint.${C_RESET}"
-  echo -e "  ${C_DIM}  Without it, memories are stored as a flat text file.${C_RESET}"
+  echo -e "  ${C_BOLD}── Memory storage (REQUIRED) ──${C_RESET}"
+  echo -e "  ${C_DIM}  Wintermute requires an OpenAI-compatible /v1/embeddings endpoint${C_RESET}"
+  echo -e "  ${C_DIM}  for semantic memory and skill search. Without it, Wintermute${C_RESET}"
+  echo -e "  ${C_DIM}  will refuse to start.${C_RESET}"
+  echo ""
+  echo -e "  ${C_DIM}  Options:${C_RESET}"
+  echo -e "  ${C_DIM}    • Local: llama-server, text-embeddings-inference, Infinity${C_RESET}"
+  echo -e "  ${C_DIM}    • Cloud: OpenAI, Together, Fireworks${C_RESET}"
+  echo -e "  ${C_DIM}    • Same server as your LLM (many local servers serve both)${C_RESET}"
   echo ""
 
   MEMORY_EMBEDDINGS_ENDPOINT=""
@@ -896,41 +901,51 @@ print(json.dumps({
   MEMORY_QDRANT_KEY=""
   MEMORY_QDRANT_COLLECTION="wintermute_memories"
 
-  ask MEMORY_EMBEDDINGS_ENDPOINT "Embeddings endpoint URL (empty to skip)" ""
-  if [[ -n "$MEMORY_EMBEDDINGS_ENDPOINT" ]]; then
-    ask_secret MEMORY_EMBEDDINGS_KEY "Embeddings API key (empty for unauthenticated)"
-    [[ -z "$MEMORY_EMBEDDINGS_KEY" ]] && MEMORY_EMBEDDINGS_KEY=""
-    ask MEMORY_EMBEDDINGS_MODEL "Embedding model name" "text-embedding-3-small"
-    ask MEMORY_EMBEDDINGS_DIMS "Embedding dimensions" "1536"
-
-    # One-shot test
-    info "Testing embeddings endpoint..."
-    _embed_headers=""
-    [[ -n "$MEMORY_EMBEDDINGS_KEY" ]] && _embed_headers="-H \"Authorization: Bearer ${MEMORY_EMBEDDINGS_KEY}\""
-    if curl -sf --connect-timeout 10 -X POST "${MEMORY_EMBEDDINGS_ENDPOINT}/embeddings" \
-         -H "Content-Type: application/json" \
-         ${_embed_headers:+-H "Authorization: Bearer ${MEMORY_EMBEDDINGS_KEY}"} \
-         -d "{\"input\":\"test\",\"model\":\"${MEMORY_EMBEDDINGS_MODEL}\"}" \
-         2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'data' in d" 2>/dev/null; then
-      ok "Embeddings endpoint responding."
-    else
-      warn "Embeddings endpoint test failed — check the URL and credentials."
-      warn "Continuing anyway. Memory will fall back to flat_file if embedding fails at startup."
+  # Embeddings endpoint is mandatory — loop until provided.
+  while [[ -z "$MEMORY_EMBEDDINGS_ENDPOINT" ]]; do
+    ask MEMORY_EMBEDDINGS_ENDPOINT "Embeddings endpoint URL (e.g. http://localhost:8080/v1)" ""
+    if [[ -z "$MEMORY_EMBEDDINGS_ENDPOINT" ]]; then
+      warn "An embeddings endpoint is required. Wintermute cannot start without one."
+      if ! ask_yn "Try again?" "y"; then
+        die "Embeddings endpoint is required. Re-run setup when you have one available."
+      fi
     fi
+  done
 
-    echo ""
-    if ask_yn "Do you have a Qdrant instance for vector storage?" "n"; then
-      MEMORY_BACKEND="qdrant"
-      ask MEMORY_QDRANT_URL "Qdrant URL" "http://localhost:6333"
-      ask_secret MEMORY_QDRANT_KEY "Qdrant API key (empty for unauthenticated)"
-      [[ -z "$MEMORY_QDRANT_KEY" ]] && MEMORY_QDRANT_KEY=""
-      ask MEMORY_QDRANT_COLLECTION "Qdrant collection name" "wintermute_memories"
-      ok "Qdrant backend configured."
-    else
-      ok "Using local_vector backend (SQLite + numpy, no external services)."
-    fi
+  ask_secret MEMORY_EMBEDDINGS_KEY "Embeddings API key (empty for unauthenticated)"
+  [[ -z "$MEMORY_EMBEDDINGS_KEY" ]] && MEMORY_EMBEDDINGS_KEY=""
+  ask MEMORY_EMBEDDINGS_MODEL "Embedding model name" "text-embedding-3-small"
+  ask MEMORY_EMBEDDINGS_DIMS "Embedding dimensions" "1536"
+
+  # One-shot test
+  info "Testing embeddings endpoint..."
+  curl_args=(-sf --connect-timeout 10 -X POST "${MEMORY_EMBEDDINGS_ENDPOINT}/embeddings"
+                   -H "Content-Type: application/json")
+  if [[ -n "${MEMORY_EMBEDDINGS_KEY}" ]]; then
+    curl_args+=(-H "Authorization: Bearer ${MEMORY_EMBEDDINGS_KEY}")
+  fi
+  curl_args+=(-d "{\"input\":\"test\",\"model\":\"${MEMORY_EMBEDDINGS_MODEL}\"}")
+  if curl "${curl_args[@]}" \
+       2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'data' in d" 2>/dev/null; then
+    ok "Embeddings endpoint responding."
   else
-    info "No embeddings endpoint — memory will use flat_file backend."
+    warn "Embeddings endpoint test failed — check the URL and credentials."
+    warn "Wintermute will fail to start if the endpoint is unreachable."
+    if ! ask_yn "Continue with this endpoint anyway?" "y"; then
+      die "Fix the embeddings endpoint and re-run setup."
+    fi
+  fi
+
+  echo ""
+  if ask_yn "Do you have a Qdrant instance for vector storage?" "n"; then
+    MEMORY_BACKEND="qdrant"
+    ask MEMORY_QDRANT_URL "Qdrant URL" "http://localhost:6333"
+    ask_secret MEMORY_QDRANT_KEY "Qdrant API key (empty for unauthenticated)"
+    [[ -z "$MEMORY_QDRANT_KEY" ]] && MEMORY_QDRANT_KEY=""
+    ask MEMORY_QDRANT_COLLECTION "Qdrant collection name" "wintermute_memories"
+    ok "Qdrant backend configured."
+  else
+    ok "Using local_vector backend (SQLite + numpy, no external services)."
   fi
 
   # ── write config.yaml ────────────────────────────────────────
@@ -1214,20 +1229,8 @@ memory:
 YAML
       fi
     else
-      cat <<YAML
-# Memory vector storage (disabled — no embeddings endpoint configured)
-# Falling back to flat_file. Configure an embeddings endpoint to enable
-# semantic memory search (local_vector or qdrant backend).
-# memory:
-#   backend: "local_vector"
-#   top_k: 10
-#   score_threshold: 0.3
-#   embeddings:
-#     endpoint: "http://localhost:8080/v1"
-#     api_key: ""
-#     model: "text-embedding-3-small"
-#     dimensions: 1536
-YAML
+      # This branch should not be reachable — embeddings are mandatory.
+      die "BUG: reached config generation without embeddings endpoint."
     fi
 
     # ── 13. Memory Harvest (was 12) ──

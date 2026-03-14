@@ -1,21 +1,14 @@
 """
-Read / write operations for MEMORIES.txt (long-term user facts).
+Read / write operations for long-term memory.
 
-Extracted from ``prompt_assembler`` (#81) so that prompt assembly and
-persistent memory I/O live in separate modules.
+Memory entries are stored exclusively in the vector memory store.
+The deprecated MEMORIES.txt flat file has been removed.
 """
 
 import logging
-import threading
 from pathlib import Path
 
-from wintermute.infra import data_versioning
-from wintermute.infra.paths import DATA_DIR, MEMORIES_FILE
-
 logger = logging.getLogger(__name__)
-
-# Lock guarding read-modify-write operations on MEMORIES.txt.
-_memories_lock = threading.Lock()
 
 
 def read_text_safe(path: Path, default: str = "") -> str:
@@ -29,92 +22,69 @@ def read_text_safe(path: Path, default: str = "") -> str:
         return default
 
 
-def update_memories(content: str) -> None:
-    """Overwrite MEMORIES.txt with *content* and sync any initialized memory backend."""
-    from wintermute.infra import memory_store
+def append_memory(
+    entry: str, source: str = "unknown", *, pool=None, loop=None,
+    event_bus=None,
+) -> tuple[int, str]:
+    """Add a memory entry to the vector store.
 
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with _memories_lock:
-        MEMORIES_FILE.write_text(content, encoding="utf-8")
-    logger.info("MEMORIES.txt updated (%d chars)", len(content))
-    if memory_store.is_memory_backend_initialized():
-        try:
-            entries = [l.strip() for l in content.strip().splitlines() if l.strip()]
-            memory_store.replace_all(entries)
-        except Exception as exc:
-            logger.error("Failed to sync memory backend on update_memories: %s", exc)
-    data_versioning.commit_async("memory: consolidation")
+    When *pool* and *loop* are provided, uses similarity-based dedup
+    (``add_with_dedup``) to merge near-duplicates via LLM.  Otherwise
+    falls back to a plain ``add()``.
 
+    Event emission is handled here (single source of truth):
+    - Immediate ``memory.appended`` on synchronous success or fallback.
+    - Deferred ``memory.appended`` via done-callback on timeout.
 
-def append_memory(entry: str, source: str = "unknown") -> int:
-    """Append a memory entry to MEMORIES.txt. Returns the new total length."""
-    from wintermute.infra import memory_store
-
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with _memories_lock:
-        existing = read_text_safe(MEMORIES_FILE)
-        if existing:
-            new_content = existing + "\n" + entry.strip()
-        else:
-            new_content = entry.strip()
-        MEMORIES_FILE.write_text(new_content, encoding="utf-8")
-    logger.info("MEMORIES.txt appended (%d chars total)", len(new_content))
-    if memory_store.is_memory_backend_initialized():
-        try:
-            memory_store.add(entry.strip(), source=source)
-        except Exception as exc:
-            logger.error("Failed to add memory to backend: %s", exc)
-    data_versioning.commit_async("memory: append")
-    return len(new_content)
-
-
-def merge_consolidated_memories(snapshot: str, consolidated: str) -> None:
-    """Atomically write *consolidated* memories while preserving any lines
-    that were appended to MEMORIES.txt after *snapshot* was taken.
-
-    This solves the race condition where ``append_memory()`` is called while
-    the dreaming consolidation LLM call is in flight: the snapshot (taken
-    before the LLM call) is diffed against the current file content, and any
-    newly appended lines are tacked onto the consolidated result before
-    writing.
-
-    The entire read-diff-write cycle runs under ``_memories_lock`` so no
-    appends can slip through.
+    Returns ``(total_entry_count, status)`` where *status* is one of
+    ``"ok"``, ``"pending"`` (timeout — coroutine still in-flight), or
+    ``"fallback"`` (dedup failed, plain add used).
     """
     from wintermute.infra import memory_store
 
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    snapshot_lines = set(snapshot.strip().splitlines())
-    with _memories_lock:
-        current = read_text_safe(MEMORIES_FILE)
-        new_lines = [
-            line for line in current.strip().splitlines()
-            if line not in snapshot_lines
-        ]
-        merged = consolidated.strip()
-        if new_lines:
-            merged = merged + "\n" + "\n".join(new_lines)
-            logger.info(
-                "merge_consolidated_memories: preserved %d appended line(s)",
-                len(new_lines),
+    status = "ok"
+    _entry_preview = entry[:200]
+
+    if pool is not None and loop is not None:
+        import asyncio
+        import concurrent.futures
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                memory_store.add_with_dedup(entry.strip(), source=source, pool=pool),
+                loop,
             )
-        MEMORIES_FILE.write_text(merged, encoding="utf-8")
-    logger.info("MEMORIES.txt merged-write (%d chars)", len(merged))
-    if memory_store.is_memory_backend_initialized():
-        try:
-            entries = [l.strip() for l in merged.splitlines() if l.strip()]
-            memory_store.replace_all(entries)
+            future.result(timeout=30)
+        except (concurrent.futures.TimeoutError, TimeoutError):
+            # The coroutine may still be running (e.g. blocked in the LLM
+            # merge call).  Do NOT fall back to a plain add — that risks
+            # duplicates if add_with_dedup eventually completes.
+            logger.warning("add_with_dedup timed out; coroutine still in progress, skipping fallback")
+            status = "pending"
+            # Attach done-callback so errors are logged and deferred event
+            # fires once the coroutine eventually completes.
+            _eb = event_bus
+
+            def _on_done(fut):
+                try:
+                    fut.result()
+                    logger.info("add_with_dedup completed after timeout")
+                    if _eb:
+                        _eb.emit("memory.appended", entry=_entry_preview)
+                except Exception as exc:
+                    logger.error("add_with_dedup failed after timeout: %s", exc)
+
+            future.add_done_callback(_on_done)
         except Exception as exc:
-            logger.error("Failed to sync memory backend on merge_consolidated: %s", exc)
+            logger.error("add_with_dedup failed, falling back to plain add: %s", exc)
+            memory_store.add(entry.strip(), source=source)
+            status = "fallback"
+    else:
+        memory_store.add(entry.strip(), source=source)
 
+    # Emit event immediately for non-pending completions.
+    if status != "pending" and event_bus:
+        event_bus.emit("memory.appended", entry=_entry_preview)
 
-def write_memories_raw(content: str) -> None:
-    """Write raw content to MEMORIES.txt under the memories lock.
-
-    Unlike ``update_memories``, this does **not** sync the memory backend or
-    trigger a data-versioning commit — the caller is responsible for those
-    side-effects.  Used by the dreaming working-set export phase.
-    """
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with _memories_lock:
-        MEMORIES_FILE.write_text(content, encoding="utf-8")
+    # No data_versioning commit here — memory is stored in SQLite binary
+    # files (local_vectors.db / Qdrant) which are gitignored.
+    return memory_store.count(), status

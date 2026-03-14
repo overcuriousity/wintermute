@@ -26,7 +26,7 @@ Two architectural choices make this concrete:
 
 ## Features
 
-- **Persistent memory** — vector-indexed memory store (FTS5 / local_vector / Qdrant backends) with `MEMORIES.txt` as git-versioned export, tasks in SQLite (active goals / working memory with priorities and optional schedules), and vector-indexed skills survive restarts and are injected into every prompt
+- **Persistent memory** — vector-indexed memory store (local_vector / Qdrant backends) with add-time dedup, tasks in SQLite (active goals / working memory with priorities and optional schedules), and vector-indexed skills survive restarts and are injected into every prompt
 - **Sub-session workers** — long-running tasks are delegated to autonomous background agents that report back when done; the main agent stays responsive during execution; workers auto-resume after timeouts (nesting possible)
 - **Workflow DAG** — multi-step tasks are expressed as dependency graphs via `depends_on`; downstream tasks auto-start when their dependencies complete, with results passed as context
 - **Tool-filtered workers** — minimal workers receive only execution + research tools; `full`-mode workers get orchestration tools too. Named tool profiles (`researcher`, `file_worker`, etc.) and conditional system prompt sections keep context lean
