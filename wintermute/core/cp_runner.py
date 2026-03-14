@@ -13,6 +13,7 @@ the per-turn arguments (phase, messages, tool info, etc.).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional, TYPE_CHECKING
 
@@ -83,7 +84,7 @@ class ConvergenceProtocolRunner:
             return None
 
         try:
-            return await convergence_protocol_module.run_convergence_protocol(
+            return await asyncio.wait_for(convergence_protocol_module.run_convergence_protocol(
                 pool=self._pool,
                 user_message=user_message,
                 assistant_response=assistant_response,
@@ -101,7 +102,13 @@ class ConvergenceProtocolRunner:
                 prior_assistant_message=prior_assistant_message,
                 prior_tool_calls_made=prior_tool_calls_made,
                 recent_assistant_messages=recent_assistant_messages,
+            ), timeout=60.0)  # 60s hard ceiling prevents CP from blocking inference
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Convergence Protocol %s/%s (thread_id=%s) timed out after 60s — skipping",
+                phase, self._scope, thread_id or "<unknown>",
             )
+            return None
         except Exception:  # noqa: BLE001
             logger.exception(
                 "Convergence Protocol %s/%s (thread_id=%s) check raised (non-fatal)",

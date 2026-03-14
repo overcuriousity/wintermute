@@ -307,6 +307,8 @@ class SubSessionManager:
         self._default_timeout: int = DEFAULT_TIMEOUT
         self._states: dict[str, SubSessionState] = {}
         self._tasks: dict[str, asyncio.Task] = {}
+        # Lock guarding _states, _workflows, _aggregated_parents mutations.
+        self._state_lock = asyncio.Lock()
         # DAG workflow tracking
         self._workflows: dict[str, Workflow] = {}
         self._session_to_workflow: dict[str, str] = {}  # session_id -> workflow_id
@@ -843,82 +845,96 @@ class SubSessionManager:
 
     async def _resolve_dependents(self, session_id: str) -> None:
         """Check if any pending nodes can now be started after *session_id* finished."""
-        workflow_id = self._session_to_workflow.get(session_id)
-        if not workflow_id:
-            return
-        wf = self._workflows.get(workflow_id)
-        if not wf:
-            return
+        async with self._state_lock:
+            workflow_id = self._session_to_workflow.get(session_id)
+            if not workflow_id:
+                return
+            wf = self._workflows.get(workflow_id)
+            if not wf:
+                return
 
-        # Sync the node's status from SubSessionState.
-        state = self._states.get(session_id)
-        node = wf.nodes.get(session_id)
-        if node and state:
-            node.status = state.status
-            node.result = state.result
-            node.error = state.error
+            # Sync the node's status from SubSessionState.
+            state = self._states.get(session_id)
+            node = wf.nodes.get(session_id)
+            if node and state:
+                node.status = state.status
+                node.result = state.result
+                node.error = state.error
 
-        completed = sum(1 for n in wf.nodes.values() if n.status == "completed")
-        total = len(wf.nodes)
+            completed = sum(1 for n in wf.nodes.values() if n.status == "completed")
+            total = len(wf.nodes)
 
-        for nid, n in list(wf.nodes.items()):
-            if n.status != "pending":
-                continue
+            # Collect nodes to start or fail (release lock before heavy I/O).
+            nodes_to_start: list[TaskNode] = []
+            nodes_to_fail: list[tuple[TaskNode, SubSessionState | None]] = []
 
-            dep_states = {d: self._states.get(d) for d in n.depends_on}
-            any_failed = any(
-                s and s.status == "failed" for s in dep_states.values()
-            )
-            all_done = all(
-                s and s.status in ("completed", "timeout") for s in dep_states.values()
-            )
-
-            if any_failed:
-                n.status = "failed"
-                n.error = "dependency failed"
-                # Update the placeholder SubSessionState too.
-                placeholder = self._states.get(nid)
-                if placeholder:
-                    placeholder.status = "failed"
-                    placeholder.error = n.error
-                    placeholder.completed_at = datetime.now(timezone.utc).isoformat()
-                await self._report(
-                    placeholder or SubSessionState(
-                        session_id=nid, objective=n.objective,
-                        parent_thread_id=n.parent_thread_id,
-                        system_prompt_mode=n.system_prompt_mode,
-                        status="failed", created_at="",
-                        error=n.error,
-                    ),
-                    f"[SUB-SESSION {nid} FAILED] dependency failed",
-                )
-                # Recursively resolve anything depending on this now-failed node.
-                await self._resolve_dependents(nid)
-
-            elif all_done:
-                # Check time gate before starting.
-                if n.not_before and not self._time_gate_met(n.not_before):
-                    self._schedule_time_gate(nid, n.not_before)
-                    logger.info(
-                        "Deps ready for %s but time gate not met (not_before=%s)",
-                        nid, n.not_before.isoformat(),
-                    )
+            for nid, n in list(wf.nodes.items()):
+                if n.status != "pending":
                     continue
-                n.context_blobs = self._collect_dep_results(n.depends_on) + n.context_blobs
-                logger.info(
-                    "All deps ready for %s — auto-starting (workflow=%s, %d/%d done)",
-                    nid, workflow_id, completed, total,
+
+                dep_states = {d: self._states.get(d) for d in n.depends_on}
+                any_failed = any(
+                    s and s.status == "failed" for s in dep_states.values()
                 )
-                self._start_node(n)
+                all_done = all(
+                    s and s.status in ("completed", "timeout") for s in dep_states.values()
+                )
+
+                if any_failed:
+                    n.status = "failed"
+                    n.error = "dependency failed"
+                    placeholder = self._states.get(nid)
+                    if placeholder:
+                        placeholder.status = "failed"
+                        placeholder.error = n.error
+                        placeholder.completed_at = datetime.now(timezone.utc).isoformat()
+                    nodes_to_fail.append((n, placeholder))
+
+                elif all_done:
+                    if n.not_before and not self._time_gate_met(n.not_before):
+                        self._schedule_time_gate(nid, n.not_before)
+                        logger.info(
+                            "Deps ready for %s but time gate not met (not_before=%s)",
+                            nid, n.not_before.isoformat(),
+                        )
+                        continue
+                    n.context_blobs = self._collect_dep_results(n.depends_on) + n.context_blobs
+                    logger.info(
+                        "All deps ready for %s — auto-starting (workflow=%s, %d/%d done)",
+                        nid, workflow_id, completed, total,
+                    )
+                    nodes_to_start.append(n)
+
+        # Outside lock: perform I/O-heavy operations.
+        for n, placeholder in nodes_to_fail:
+            await self._report(
+                placeholder or SubSessionState(
+                    session_id=n.node_id, objective=n.objective,
+                    parent_thread_id=n.parent_thread_id,
+                    system_prompt_mode=n.system_prompt_mode,
+                    status="failed", created_at="",
+                    error=n.error,
+                ),
+                f"[SUB-SESSION {n.node_id} FAILED] dependency failed",
+            )
+            await self._resolve_dependents(n.node_id)
+
+        for n in nodes_to_start:
+            self._start_node(n)
 
         # Check if the whole workflow is terminal.
-        all_terminal = all(
-            n.status in ("completed", "failed", "timeout") for n in wf.nodes.values()
-        )
-        if all_terminal:
-            any_fail = any(n.status == "failed" for n in wf.nodes.values())
-            wf.status = "failed" if any_fail else "completed"
-            logger.info("Workflow %s %s (%d nodes)", workflow_id, wf.status, total)
+        async with self._state_lock:
+            wf = self._workflows.get(workflow_id)
+            if not wf:
+                return
+            all_terminal = all(
+                n.status in ("completed", "failed", "timeout") for n in wf.nodes.values()
+            )
+            if all_terminal:
+                total = len(wf.nodes)
+                any_fail = any(n.status == "failed" for n in wf.nodes.values())
+                wf.status = "failed" if any_fail else "completed"
+                logger.info("Workflow %s %s (%d nodes)", workflow_id, wf.status, total)
             self._cleanup_workflow(workflow_id)
 
     async def cancel_for_thread(self, thread_id: str) -> int:
@@ -1053,10 +1069,10 @@ class SubSessionManager:
                 self._aggregated_parents.discard(s.parent_thread_id)
         self._workflow_reports.pop(workflow_id, None)
 
-        # Count how many completed workflows already exist (excluding this one).
+        # Count how many terminal workflows already exist (excluding this one).
         completed_wfs = [
             wid for wid, w in self._workflows.items()
-            if w.status in ("completed", "failed") and wid != workflow_id
+            if w.status in ("completed", "failed", "timeout") and wid != workflow_id
         ]
         if len(completed_wfs) >= self._max_completed_workflows:
             # Remove the oldest completed workflows to stay within budget.
@@ -1083,6 +1099,31 @@ class SubSessionManager:
                         self._aggregated_parents.discard(nid)
                     self._workflow_reports.pop(old_wid, None)
                     logger.debug("Purged completed workflow %s from memory", old_wid)
+
+        # Purge stale "running" workflows older than 24h (likely orphaned).
+        _STALE_THRESHOLD_S = 86400
+        now_ts = _time.time()
+        for wid in list(self._workflows):
+            w = self._workflows.get(wid)
+            if w and w.status == "running" and w.created_at:
+                try:
+                    created_ts = datetime.fromisoformat(w.created_at).timestamp()
+                except (ValueError, TypeError):
+                    continue
+                if now_ts - created_ts > _STALE_THRESHOLD_S:
+                    logger.warning("Purging stale workflow %s (created %s, still running)", wid, w.created_at)
+                    old_wf = self._workflows.pop(wid, None)
+                    if old_wf:
+                        for nid in old_wf.nodes:
+                            self._states.pop(nid, None)
+                            self._tasks.pop(nid, None)
+                            self._session_to_workflow.pop(nid, None)
+                            tg_handle = self._time_gate_handles.pop(nid, None)
+                            if tg_handle is not None:
+                                tg_handle.cancel()
+                            self._worker_spawned.pop(nid, None)
+                            self._aggregated_parents.discard(nid)
+                        self._workflow_reports.pop(wid, None)
 
     def list_active(self, thread_id: Optional[str] = None) -> list[dict]:
         """Return serialisable state dicts for active sub-sessions.
@@ -1491,29 +1532,30 @@ class SubSessionManager:
             )
             return
 
-        # Already delivered for this parent?
-        if parent_sid in self._aggregated_parents:
-            return
+        # Atomically check + mark as aggregated under lock to prevent duplicates.
+        async with self._state_lock:
+            if parent_sid in self._aggregated_parents:
+                return
 
-        # Find all children of the same parent sub-session.
-        siblings = [
-            s for s in self._states.values()
-            if s.parent_thread_id == parent_sid
-        ]
+            # Find all children of the same parent sub-session.
+            siblings = [
+                s for s in self._states.values()
+                if s.parent_thread_id == parent_sid
+            ]
 
-        all_terminal = all(
-            s.status in ("completed", "failed", "timeout") for s in siblings
-        )
-        if not all_terminal:
-            logger.debug(
-                "Nested aggregation: %d/%d children of %s are terminal",
-                sum(1 for s in siblings if s.status in ("completed", "failed", "timeout")),
-                len(siblings), parent_sid,
+            all_terminal = all(
+                s.status in ("completed", "failed", "timeout") for s in siblings
             )
-            return
+            if not all_terminal:
+                logger.debug(
+                    "Nested aggregation: %d/%d children of %s are terminal",
+                    sum(1 for s in siblings if s.status in ("completed", "failed", "timeout")),
+                    len(siblings), parent_sid,
+                )
+                return
 
-        # Mark as aggregated BEFORE the await to prevent duplicate delivery.
-        self._aggregated_parents.add(parent_sid)
+            # Mark as aggregated BEFORE the await to prevent duplicate delivery.
+            self._aggregated_parents.add(parent_sid)
 
         # Build aggregated report.
         parts = []

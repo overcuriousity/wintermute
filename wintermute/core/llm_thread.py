@@ -975,10 +975,19 @@ class LLMThread:
             # Trim oldest tool results if accumulated context exceeds budget.
             self._compactor.trim_tool_results(full_messages, token_budget, active_cfg.model)
 
-            response = await active_pool.call(
-                messages=full_messages,
-                tools=tools,
-            )
+            try:
+                response = await asyncio.wait_for(
+                    active_pool.call(
+                        messages=full_messages,
+                        tools=tools,
+                    ),
+                    timeout=300.0,  # 5 min hard ceiling per LLM call
+                )
+            except asyncio.TimeoutError:
+                raise RuntimeError(
+                    "LLM API call timed out after 300 seconds — backend may be "
+                    "unresponsive. Aborting inference loop."
+                )
 
             if response.content is None and not response.tool_calls:
                 empty_retries += 1

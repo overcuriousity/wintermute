@@ -875,6 +875,7 @@ async def main() -> None:
     except asyncio.TimeoutError:
         logger.warning("data_versioning: drain timed out after 30 s — commits may be incomplete")
 
+    database.close_all_connections()
     logger.info("Wintermute shutdown complete")
 
     if shutdown.restart_requested:

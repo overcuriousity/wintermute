@@ -206,7 +206,7 @@ async def _translate_nl(
             "ok" if translated is not None else "error",
         )
     except Exception:  # noqa: BLE001
-        logger.debug("Failed to log NL translation", exc_info=True)
+        logger.warning("Failed to log NL translation", exc_info=True)
 
     if translated is None:
         return _NLResult(error=(
@@ -311,7 +311,7 @@ async def _execute_multi_item(
             combined_content[:500], "ok",
         )
     except Exception:  # noqa: BLE001
-        logger.debug("Failed to log multi-item tool call", exc_info=True)
+        logger.warning("Failed to log multi-item tool call", exc_info=True)
 
     return ToolCallOutcome(
         content=combined_content,
@@ -340,14 +340,24 @@ async def process_tool_call(
     message placement in their own way.
     """
     # Support both Pydantic objects (legacy) and plain dicts (normalized).
-    if isinstance(tc, dict):
-        name = tc["function"]["name"]
-        raw_args = tc["function"]["arguments"]
-        tc_id = tc["id"]
-    else:
-        name = tc.function.name
-        raw_args = tc.function.arguments
-        tc_id = tc.id
+    try:
+        if isinstance(tc, dict):
+            func = tc["function"]
+            name = func["name"]
+            raw_args = func["arguments"]
+            tc_id = tc.get("id", "")
+        else:
+            name = tc.function.name
+            raw_args = tc.function.arguments
+            tc_id = getattr(tc, "id", "")
+    except (KeyError, AttributeError) as exc:
+        logger.warning("Malformed tool call object: %s — %s", exc, str(tc)[:200])
+        return ToolCallOutcome(
+            content=f"[ERROR] Malformed tool call: {exc}. Please retry.",
+            tool_name="unknown",
+            raw_arguments="",
+            executed=False,
+        )
 
     # -- Step 1: Parse JSON arguments --------------------------------
     try:
@@ -475,7 +485,7 @@ async def process_tool_call(
             result[:500], "ok",
         )
     except Exception:  # noqa: BLE001
-        logger.debug("Failed to log tool call %s", name, exc_info=True)
+        logger.warning("Failed to log tool call %s", name, exc_info=True)
 
     logger.debug("[%s] Tool %s -> %s", ctx.thread_id, name, result[:200])
 

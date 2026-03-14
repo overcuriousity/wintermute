@@ -34,6 +34,9 @@ CONVERSATION_DB = Path("data/conversation.db")
 
 # Per-thread cached connection — avoids reopening on every call.
 _local = threading.local()
+# Registry of all open connections (for cleanup at shutdown).
+_all_connections: list[sqlite3.Connection] = []
+_all_connections_lock = threading.Lock()
 
 
 async def async_call(fn: Callable, *args: Any, **kwargs: Any) -> Any:
@@ -81,11 +84,25 @@ def _connect() -> sqlite3.Connection:
                 pass
             _local.conn = None
 
-    conn = sqlite3.connect(CONVERSATION_DB)
+    conn = sqlite3.connect(CONVERSATION_DB, timeout=10.0)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     _local.conn = conn
+    with _all_connections_lock:
+        _all_connections.append(conn)
     return conn
+
+
+def close_all_connections() -> None:
+    """Close all cached per-thread connections (call during shutdown)."""
+    with _all_connections_lock:
+        for conn in _all_connections:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        _all_connections.clear()
+    _local.conn = None
 
 
 def _add_column(conn: sqlite3.Connection, table: str, column: str, col_type: str) -> None:

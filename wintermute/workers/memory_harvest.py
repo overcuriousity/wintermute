@@ -71,6 +71,7 @@ class MemoryHarvestLoop:
         self._last_harvested_id: dict[str, int] = database.load_harvest_state()
         # Threads currently being harvested (prevent overlapping runs)
         self._in_flight: set[str] = set()
+        self._in_flight_lock = asyncio.Lock()
         # Per-thread message counter (incremented by event bus, reset on harvest)
         self._msg_counts: dict[str, int] = {}
         self._event_bus_subs: list[str] = []
@@ -172,8 +173,9 @@ class MemoryHarvestLoop:
             if thread_id.startswith("sub_"):
                 continue
             # Skip threads already being harvested.
-            if thread_id in self._in_flight:
-                continue
+            async with self._in_flight_lock:
+                if thread_id in self._in_flight:
+                    continue
 
             messages = await database.async_call(database.load_active_messages, thread_id)
             if self._should_harvest(thread_id, messages):
@@ -267,7 +269,8 @@ class MemoryHarvestLoop:
             if m["id"] > last_id and m["role"] == "user"
         )
 
-        self._in_flight.add(thread_id)
+        async with self._in_flight_lock:
+            self._in_flight.add(thread_id)
         # Reset event-bus message counter for this thread.
         self._msg_counts.pop(thread_id, None)
 
@@ -303,14 +306,25 @@ class MemoryHarvestLoop:
         """Poll sub-session status; commit harvest state only on success."""
         try:
             # Poll until terminal (completed/failed/timeout).
-            while True:
+            # Hard ceiling: give up after 15 minutes to prevent infinite polling
+            # if the sub-session state is GC'd before we see a terminal status.
+            _MAX_POLL_SECONDS = 900
+            _poll_elapsed = 0.0
+            while _poll_elapsed < _MAX_POLL_SECONDS:
                 await asyncio.sleep(5)
+                _poll_elapsed += 5
                 state = self._sub_sessions._states.get(session_id)
                 if state is None:
                     logger.warning("Memory harvest %s: state vanished", session_id)
                     break
                 if state.status in ("completed", "failed", "timeout"):
                     break
+            else:
+                logger.warning(
+                    "Memory harvest %s: poll timeout after %ds — treating as failed",
+                    session_id, _MAX_POLL_SECONDS,
+                )
+                state = None
 
             status = state.status if state else "unknown"
 
@@ -351,4 +365,5 @@ class MemoryHarvestLoop:
         except Exception:  # noqa: BLE001
             logger.exception("Memory harvest monitor for %s failed", session_id)
         finally:
-            self._in_flight.discard(thread_id)
+            async with self._in_flight_lock:
+                self._in_flight.discard(thread_id)
