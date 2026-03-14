@@ -32,16 +32,19 @@ def append_memory(
     (``add_with_dedup``) to merge near-duplicates via LLM.  Otherwise
     falls back to a plain ``add()``.
 
-    When the dedup coroutine times out, a done-callback is attached to
-    the in-flight future so that errors are logged and the
-    ``memory.appended`` event is emitted upon eventual completion.
+    Event emission is handled here (single source of truth):
+    - Immediate ``memory.appended`` on synchronous success or fallback.
+    - Deferred ``memory.appended`` via done-callback on timeout.
 
     Returns ``(total_entry_count, status)`` where *status* is one of
-    ``"ok"`` or ``"fallback"`` (dedup failed, plain add used).
+    ``"ok"``, ``"pending"`` (timeout — coroutine still in-flight), or
+    ``"fallback"`` (dedup failed, plain add used).
     """
     from wintermute.infra import memory_store
 
     status = "ok"
+    _entry_preview = entry[:200]
+
     if pool is not None and loop is not None:
         import asyncio
         import concurrent.futures
@@ -56,19 +59,17 @@ def append_memory(
             # merge call).  Do NOT fall back to a plain add — that risks
             # duplicates if add_with_dedup eventually completes.
             logger.warning("add_with_dedup timed out; coroutine still in progress, skipping fallback")
-            # Status remains "ok" here: the write has been accepted and is
-            # still in-flight; callers should not retry purely due to timeout.
-            # Attach done-callback so errors are logged and deferred events
-            # fire once the coroutine eventually completes.
-            _entry_preview = entry[:200]
-            _event_bus = event_bus
+            status = "pending"
+            # Attach done-callback so errors are logged and deferred event
+            # fires once the coroutine eventually completes.
+            _eb = event_bus
 
             def _on_done(fut):
                 try:
-                    fut.result()  # surfaces any exception
+                    fut.result()
                     logger.info("add_with_dedup completed after timeout")
-                    if _event_bus:
-                        _event_bus.emit("memory.appended", entry=_entry_preview)
+                    if _eb:
+                        _eb.emit("memory.appended", entry=_entry_preview)
                 except Exception as exc:
                     logger.error("add_with_dedup failed after timeout: %s", exc)
 
@@ -79,6 +80,10 @@ def append_memory(
             status = "fallback"
     else:
         memory_store.add(entry.strip(), source=source)
+
+    # Emit event immediately for non-pending completions.
+    if status != "pending" and event_bus:
+        event_bus.emit("memory.appended", entry=_entry_preview)
 
     # No data_versioning commit here — memory is stored in SQLite binary
     # files (local_vectors.db / Qdrant) which are gitignored.
