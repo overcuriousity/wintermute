@@ -20,6 +20,7 @@ def tool_append_memory(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw
             source=source,
             pool=deps.memory_pool,
             loop=deps.event_loop,
+            event_bus=deps.event_bus,
         )
         if status != "pending" and deps.event_bus:
             deps.event_bus.emit("memory.appended", entry=inputs["entry"][:200])

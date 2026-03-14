@@ -139,7 +139,8 @@ class LocalVectorBackend:
         _log_interaction(t0, "local_vector_add", entry[:200], f"id={eid}", llm="local_vector")
         return eid
 
-    def search(self, query: str, top_k: int, threshold: float) -> list[dict]:
+    def search(self, query: str, top_k: int, threshold: float,
+               *, bump_access: bool = True) -> list[dict]:
         import numpy as np
 
         t0 = time.time()
@@ -177,8 +178,8 @@ class LocalVectorBackend:
 
         results.sort(key=lambda x: x["score"], reverse=True)
         hits = results[:top_k]
-        # Track access for returned results.
-        self._track_access([h["id"] for h in hits])
+        if bump_access:
+            self._track_access([h["id"] for h in hits])
         _log_interaction(
             t0, "local_vector_search", query[:200],
             f"{len(hits)} hits (top_k={top_k}, threshold={threshold})",
@@ -673,7 +674,8 @@ class QdrantBackend:
         _log_interaction(t0, "qdrant_add", entry[:200], f"id={eid}", llm="qdrant")
         return eid
 
-    def search(self, query: str, top_k: int, threshold: float) -> list[dict]:
+    def search(self, query: str, top_k: int, threshold: float,
+               *, bump_access: bool = True) -> list[dict]:
         vectors = _embed([query], self._embed_cfg, task="query")
         if not vectors:
             logger.warning("Qdrant: embedding failed for query, falling back to get_all")
@@ -690,8 +692,8 @@ class QdrantBackend:
             {"id": str(r.id), "text": r.payload.get("text", ""), "score": r.score}
             for r in results
         ]
-        # Track access for returned results.
-        self._track_access([h["id"] for h in hits])
+        if bump_access:
+            self._track_access([h["id"] for h in hits])
         _log_interaction(
             t0, "qdrant_search", query[:200],
             f"{len(hits)} hits (top_k={top_k}, threshold={threshold})",
@@ -1124,8 +1126,12 @@ def init(config: dict) -> None:
     logger.info("Memory backend initialized: %s (%d entries)", backend_name, _backend.count())
 
 
-def search(query: str, top_k: int | None = None, threshold: float | None = None) -> list[dict]:
+def search(query: str, top_k: int | None = None, threshold: float | None = None,
+           *, bump_access: bool = True) -> list[dict]:
     """Search memories by relevance.  Uses configured defaults for top_k/threshold.
+
+    Set *bump_access* to False for internal lookups (e.g. dedup) that should
+    not inflate access statistics.
 
     Returns an empty list on transient errors (network, embedding failures)
     so callers can degrade gracefully.
@@ -1135,7 +1141,7 @@ def search(query: str, top_k: int | None = None, threshold: float | None = None)
     if threshold is None:
         threshold = get_threshold()
     try:
-        return _backend.search(query, top_k, threshold)
+        return _backend.search(query, top_k, threshold, bump_access=bump_access)
     except Exception as exc:
         logger.warning("memory_store.search failed, returning empty results: %s", exc)
         return []
@@ -1275,10 +1281,10 @@ async def add_with_dedup(entry: str, source: str = "unknown", *, pool=None) -> s
     import asyncio
     from wintermute.infra import prompt_loader
 
-    # NOTE: search() bumps access_count for returned hits.  For dedup we
-    # only fetch top_k=1, so the access inflation is negligible and does
-    # not warrant adding a non-tracking search path to the backend protocol.
-    hits = await asyncio.to_thread(search, entry, top_k=1, threshold=_DEDUP_SIMILARITY_THRESHOLD)
+    hits = await asyncio.to_thread(
+        search, entry, top_k=1, threshold=_DEDUP_SIMILARITY_THRESHOLD,
+        bump_access=False,
+    )
     if hits and pool is not None and pool.enabled:
         existing = hits[0]
         existing_text = existing.get("text", "")
