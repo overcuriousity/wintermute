@@ -56,7 +56,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 
 - `data/` has its own local git repo for auto-versioning; mutations to memories and skills are auto-committed for rollback (`cd data && git log`)
 - `data/prompts/*.txt` — All prompt templates (externalized, not hardcoded); seed prompts are per-language (`SEED_en.txt`, `SEED_de.txt`, ...)
-- Memory store (vector-indexed) — long-term user facts stored in the configured backend (fts5/local_vector/qdrant)
+- Memory store (vector-indexed) — long-term user facts stored in the configured backend (local_vector/qdrant); embeddings endpoint required
 - `data/conversation.db` — SQLite: messages, summaries, tasks, interaction_log
 - `data/skills/` — Learned procedures (vector-indexed via skill store; legacy `*.md` files migrated at first startup)
 - `data/scratchpad/{workflow_id}/` — Per-workflow directories for parallel worker communication (preserved after completion for later reference; overwritten if a new workflow reuses the same ID)

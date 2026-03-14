@@ -340,7 +340,7 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     sections are included (backward compatible).
 
     ``query``, when provided, triggers relevance-ranked memory retrieval
-    (works with any backend including fts5) instead of loading the full file.
+    (works with any backend) instead of loading the full file.
 
     ``memory_results``, when provided, uses pre-fetched memory search results
     instead of calling memory_store.search() synchronously. Callers in async

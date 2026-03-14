@@ -15,11 +15,11 @@ Wintermute runs as a single Python asyncio process with several concurrent tasks
 | **SchedulerThread** | `scheduler_thread.py` | APScheduler-based scheduled task execution |
 | **DreamingLoop** | `dreaming.py` | Biologically-inspired multi-phase memory consolidation (housekeeping + creative phases) |
 | **ReflectionLoop** | `reflection.py` | Event-driven feedback loop: rule engine + LLM analysis + skill mutations |
-| **SkillStore** | `skill_store.py` | Vector-indexed skill storage with three backends (FTS5 / local_vector / Qdrant), access tracking, and staleness detection |
+| **SkillStore** | `skill_store.py` | Vector-indexed skill storage with two backends (local_vector / Qdrant), access tracking, and staleness detection |
 | **SelfModelProfiler** | `self_model.py` | Operational metrics aggregator and parameter auto-tuner (runs inside reflection cycle) |
 | **GeminiCloudClient** | `gemini_client.py` | AsyncOpenAI-compatible wrapper for Google Cloud Code Assist API (duck-typed drop-in replacement) |
 | **NL Translator** | `nl_translator.py` | Expands natural-language tool descriptions into structured arguments via a translator LLM |
-| **MemoryStore** | `memory_store.py` | Ranked memory retrieval (FTS5 / local_vector / Qdrant backends) with access tracking and source tagging |
+| **MemoryStore** | `memory_store.py` | Ranked memory retrieval (local_vector / Qdrant backends) with access tracking and source tagging |
 | **PromptAssembler** | `prompt_assembler.py` | Builds system prompts from file components; injects predictions & patterns for main thread |
 | **Database** | `database.py` | SQLite message persistence (per-thread cached connections), thread management, task storage, sub-session outcome tracking, and prediction accuracy tracking |
 
@@ -66,7 +66,7 @@ SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + s
 1. Load `config.yaml`
 2. Configure logging (console + rotating file)
 3. Initialise SQLite databases
-4. Initialise memory store (vector backend with fts5 fallback; cold-boot import if needed)
+4. Initialise memory store (embedding-based vector backend; cold-boot import if needed)
 5. Initialise skill store (vector backend with one-time migration from flat files)
 6. Bootstrap `data/` directories (skills/, scripts/, archive/)
 7. Build BackendPools and per-thread config manager
@@ -178,7 +178,6 @@ These are some architectural choices, which should make it better for local LLMs
 data/
   .git/                      -- Local git repo for auto-versioning (rollback via git log / git revert)
   BASE_PROMPT.txt            -- Immutable core instructions
-  memory_index.db            -- FTS5 keyword index (only when backend=fts5)
   local_vectors.db           -- SQLite vector store with metadata (only when backend=local_vector)
   conversation.db (tasks)     -- Active goals / working memory (managed via task tool, stored in SQLite)
   conversation.db (outcomes)  -- Sub-session outcome tracking (duration, status, TP verdict; used for historical feedback)
@@ -191,7 +190,6 @@ data/
   DREAM_PREDICTION_PROMPT.txt -- Predictive pattern extraction prompt (creative phase)
   DREAM_TASKS_PROMPT.txt      -- Customisable dreaming prompt for task consolidation
   COMPACTION_PROMPT.txt      -- Customisable prompt for context compaction summarisation
-  skill_index.db             -- FTS5 keyword index for skills (only when skills backend=fts5)
   skill_vectors.db           -- SQLite vector store for skills (only when skills backend=local_vector)
   self_model.yaml            -- Persisted self-model state: metrics, summary, last tuning changes
   SELF_MODEL_SUMMARY.txt     -- Prompt template for generating the self-assessment prose summary

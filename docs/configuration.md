@@ -325,23 +325,24 @@ Notifications are sent to the Matrix rooms listed in `matrix.allowed_rooms` (or 
 
 Controls how memories are injected into the system prompt. Only the top-K most relevant memories are injected each turn via ranked retrieval from the memory backend. When no query context is available (e.g. first turn), no memories are injected.
 
-Three backends are available:
+Two embedding-based backends are available (an OpenAI-compatible embeddings endpoint is **required**):
 
 | Backend | Dependencies | Description |
 |---------|-------------|-------------|
-| `fts5` | none | SQLite FTS5 keyword search with BM25 ranking. Creates `data/memory_index.db`. Zero-config minimum. |
 | `local_vector` | embeddings endpoint | Semantic vector search with numpy cosine similarity. Vectors stored in `data/local_vectors.db`. No external vector service required. Default. |
 | `qdrant` | Qdrant instance + embeddings endpoint | Semantic vector search via Qdrant. Requires a running Qdrant instance and an OpenAI-compatible embeddings endpoint. |
 
-Memories are stored exclusively in the vector backend. New entries are automatically deduplicated at add-time (similarity > 0.80 triggers LLM-based merge). If the configured backend fails to initialize at startup, Wintermute warns and falls back to `fts5` automatically.
+> **Migration note:** The legacy `fts5` backend has been removed. If your `config.yaml` still has `backend: "fts5"`, change it to `"local_vector"` and configure `memory.embeddings.endpoint`. Existing FTS5 data in `data/memory_index.db` is preserved and can be exported manually.
+
+Memories are stored exclusively in the vector backend. New entries are automatically deduplicated at add-time (similarity > 0.80 triggers LLM-based merge).
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `backend` | no | `"local_vector"` if `embeddings.endpoint` is configured, otherwise `"fts5"` | `"fts5"`, `"local_vector"`, or `"qdrant"` |
+| `backend` | no | `"local_vector"` | `"local_vector"` or `"qdrant"` |
 | `top_k` | no | `10` | Maximum memories to inject per turn |
-| `score_threshold` | no | `0.3` | Minimum relevance score (vector backends only) |
+| `score_threshold` | no | `0.3` | Minimum relevance score |
 
-#### `memory.embeddings` (local_vector and qdrant only)
+#### `memory.embeddings` (required)
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
@@ -363,7 +364,7 @@ Memories are stored exclusively in the vector backend. New entries are automatic
 
 #### `memory.dreaming`
 
-Controls the dreaming pipeline parameters. The dedup, contradiction, schema, and association phases rely on vector similarity data and are effectively no-ops when `backend: fts5` is active. The stale_pruning, task_consolidation, skill_consolidation, prediction, and working_set_export phases work with all backends.
+Controls the dreaming pipeline parameters.
 
 **Housekeeping settings:**
 
@@ -372,7 +373,7 @@ Controls the dreaming pipeline parameters. The dedup, contradiction, schema, and
 | `dedup_similarity_threshold` | no | `0.80` | Cosine similarity threshold for deduplication clustering |
 | `stale_days` | no | `90` | Prune memories not accessed in this many days |
 | `stale_min_access` | no | `3` | ...and accessed fewer than this many times |
-| `working_set_size` | no | `50` | Top-N most-accessed memories used for prompt assembly |
+| `working_set_size` | no | `50` | Reserved for future use (not currently wired into prompt assembly) |
 
 **Association (REM-inspired) settings:**
 

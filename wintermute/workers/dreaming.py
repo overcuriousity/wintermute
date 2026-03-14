@@ -209,7 +209,7 @@ async def _compute_similarity_data(cfg: dict) -> SimilarityData:
 
     When Qdrant is the backend, uses search_batch for O(n*k) neighbor
     lookups instead of computing the full O(n^2) pairwise matrix in Python.
-    Falls back to the numpy matrix for local_vector / fts5 backends.
+    Falls back to the numpy matrix for local_vector backends.
 
     Returns a SimilarityData with:
       - dedup_pairs: (i, j, sim) where sim >= dedup threshold

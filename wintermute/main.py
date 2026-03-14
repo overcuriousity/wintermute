@@ -343,36 +343,23 @@ async def main() -> None:
 
     # Initialize vector memory store (before pool construction).
     from wintermute.infra import memory_store
-    try:
-        memory_store.init(cfg.get("memory", {}))
-    except ValueError:
-        raise  # invalid config (unknown backend) — fail fast
-    except Exception:
-        logger.exception("Memory store init failed — falling back to fts5")
-        memory_store.init({"backend": "fts5"})
+    memory_store.init(cfg.get("memory", {}))
 
     # Initialize skill store (shares embedding + backend config from memory section).
     from wintermute.infra import skill_store
-    try:
-        memory_cfg = cfg.get("memory", {}) or {}
-        skills_cfg = (cfg.get("skills", {}) or {}).copy()
-        # Inherit memory.backend as skill backend default when not explicitly set,
-        # but only for vector backends. For other memory backends, let
-        # skill_store.init() auto-select based on embeddings config.
-        if not skills_cfg.get("backend"):
-            mem_backend = memory_cfg.get("backend", "")
-            if mem_backend in ("local_vector", "qdrant"):
-                skills_cfg["backend"] = mem_backend
-        # Expose memory Qdrant config for inheritance by the skill Qdrant backend.
-        if memory_cfg.get("backend") == "qdrant" or memory_cfg.get("qdrant"):
-            skills_cfg.setdefault("_memory_qdrant", memory_cfg.get("qdrant", {}))
-        skill_store.init(
-            skills_cfg,
-            memory_cfg.get("embeddings", {}),
-        )
-    except Exception:
-        logger.exception("Skill store init failed — falling back to fts5")
-        skill_store.init({"backend": "fts5"}, {})
+    memory_cfg = cfg.get("memory", {}) or {}
+    skills_cfg = (cfg.get("skills", {}) or {}).copy()
+    # Inherit memory.backend as skill backend default when not explicitly set.
+    if not skills_cfg.get("backend"):
+        mem_backend = memory_cfg.get("backend", "local_vector")
+        skills_cfg["backend"] = mem_backend
+    # Expose memory Qdrant config for inheritance by the skill Qdrant backend.
+    if memory_cfg.get("backend") == "qdrant" or memory_cfg.get("qdrant"):
+        skills_cfg.setdefault("_memory_qdrant", memory_cfg.get("qdrant", {}))
+    skill_store.init(
+        skills_cfg,
+        memory_cfg.get("embeddings", {}),
+    )
 
     # Set timezone for prompt assembler (used to inject current datetime).
     configured_tz = cfg.get("scheduler", {}).get("timezone", "UTC")

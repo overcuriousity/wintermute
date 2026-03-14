@@ -6,8 +6,9 @@ DATA_DIR = Path("data")
 
 SKILLS_DIR = DATA_DIR / "skills"
 PROMPTS_DIR = DATA_DIR / "prompts"
-FTS5_DB_PATH = DATA_DIR / "memory_index.db"
-SKILLS_FTS5_DB_PATH = DATA_DIR / "skill_index.db"
+# Legacy FTS5 paths — kept for reference; backends removed.
+# FTS5_DB_PATH = DATA_DIR / "memory_index.db"
+# SKILLS_FTS5_DB_PATH = DATA_DIR / "skill_index.db"
 SKILLS_VECTOR_DB_PATH = DATA_DIR / "skill_vectors.db"
 SCHEDULER_DB = DATA_DIR / "scheduler.db"
 HOOKS_FILE = DATA_DIR / "TURING_PROTOCOL_HOOKS.txt"
