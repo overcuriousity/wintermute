@@ -212,7 +212,7 @@ def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
         sys.exit(1)
 
     # -- Convergence Protocol backends --
-    tp_configs = _get_role("convergence_protocol", allow_empty=True)
+    cp_configs = _get_role("convergence_protocol", allow_empty=True)
 
     # -- NL Translation backends --
     nl_raw = cfg.get("nl_translation", {}) or {}
@@ -221,7 +221,7 @@ def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
         nl_backends_raw = nl_raw.get("backends")
         if nl_backends_raw is None:
             # Default to convergence_protocol backends if omitted.
-            nl_configs = list(tp_configs) if tp_configs else _resolve_role(
+            nl_configs = list(cp_configs) if cp_configs else _resolve_role(
                 "nl_translation", default_list, backends,
                 config_path="nl_translation.backends",
             )
@@ -248,7 +248,7 @@ def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
         compaction=compaction_configs,
         sub_sessions=sub_sessions_configs,
         dreaming=_get_role("dreaming"),
-        convergence_protocol=tp_configs,
+        convergence_protocol=cp_configs,
         memory_harvest=mh_configs,
         nl_translation=nl_configs,
         reflection=refl_configs,
@@ -527,7 +527,7 @@ async def main() -> None:
 
     # 2. LLMThread — uses a lazy getter for SubSessionManager (breaks cycle).
     seed_language = cfg.get("seed", {}).get("language", "en") if cfg.get("seed") else "en"
-    tp_validators = (cfg.get("convergence_protocol", {}) or {}).get("validators")
+    cp_validators = (cfg.get("convergence_protocol", {}) or {}).get("validators")
 
     # Lazy holder: SubSessionManager is appended after construction.
     _ssm_holder: list[SubSessionManager] = []
@@ -547,7 +547,7 @@ async def main() -> None:
     llm = LLMThread(main_pool=main_pool, compaction_pool=compaction_pool,
                     convergence_protocol_pool=convergence_protocol_pool, broadcast_fn=broadcast,
                     sub_session_getter=lambda: _ssm_holder[0] if _ssm_holder else None,
-                    convergence_protocol_validators=tp_validators,
+                    convergence_protocol_validators=cp_validators,
                     nl_translation_pool=nl_translation_pool,
                     nl_translation_config=nl_translation_config,
                     seed_language=seed_language,
@@ -563,7 +563,7 @@ async def main() -> None:
         pool=sub_sessions_pool,
         enqueue_system_event=llm.enqueue_system_event,
         convergence_protocol_pool=convergence_protocol_pool,
-        convergence_protocol_validators=tp_validators,
+        convergence_protocol_validators=cp_validators,
         nl_translation_pool=nl_translation_pool,
         nl_translation_config=nl_translation_config,
         event_bus=event_bus,

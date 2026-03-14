@@ -545,4 +545,4 @@ Behavioral constants that control core limits. Defaults work well for most setup
 | `max_nesting_depth` | no | `2` | Maximum sub-session nesting (0=main, 1=sub, 2=sub-sub) |
 | `max_blob_chars` | no | `60000` | Max chars in memory-harvest conversation blob |
 | `max_completed_workflows` | no | `50` | Completed workflows kept in memory for the debug UI |
-| `max_inline_tool_rounds` | no | `3` | Max execution/research tool calls the main thread can make inline per turn before the `inline_tool_limit` TP hook enforces delegation to a sub-session. Only counts execution+research tools (`execute_shell`, `read_file`, `write_file`, `search_web`, `fetch_url`). Orchestration tools are never counted or blocked. Set `0` to disable |
+| `max_inline_tool_rounds` | no | `3` | Max execution/research tool calls the main thread can make inline per turn before the `inline_tool_limit` CP hook enforces delegation to a sub-session. Only counts execution+research tools (`execute_shell`, `read_file`, `write_file`, `search_web`, `fetch_url`). Orchestration tools are never counted or blocked. Set `0` to disable |

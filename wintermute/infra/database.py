@@ -863,10 +863,10 @@ def get_outcome_stats() -> dict:
     }
 
 
-def get_tp_violation_stats() -> dict:
+def get_cp_violation_stats() -> dict:
     """Return Convergence Protocol violation statistics grouped by LLM backend.
 
-    Queries the interaction_log for confirmed TP violations (convergence_validation
+    Queries the interaction_log for confirmed CP violations (convergence_validation
     and convergence_correction entries with status='violation_detected') and groups
     them by the responsible LLM backend.
     """

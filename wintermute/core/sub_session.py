@@ -79,7 +79,7 @@ from wintermute.core.inference_engine import (
 from wintermute.core.tool_call_rescue import rescue_tool_calls
 from wintermute import tools as tool_module
 from wintermute.core.tool_deps import ToolDeps
-from wintermute.core.tp_runner import ConvergenceProtocolRunner
+from wintermute.core.cp_runner import ConvergenceProtocolRunner
 from wintermute.core.types import BackendPool, ContextTooLargeError
 
 from typing import TYPE_CHECKING as _TYPE_CHECKING
@@ -198,9 +198,9 @@ class SubSessionState:
     tool_names: Optional[list[str]] = None  # explicit tool whitelist (bypasses category filter)
     pool_override: Optional[object] = None   # per-session BackendPool override
     max_rounds: Optional[int] = None        # None = unlimited inference rounds
-    skip_tp_on_exit: bool = False           # skip TP post_inference on terminal response
+    skip_cp_on_exit: bool = False           # skip CP post_inference on terminal response
     timeout_value: int = DEFAULT_TIMEOUT    # configured timeout for this session
-    tp_verdict: str = "skipped"             # TP verdict: 'pass' | 'fail' | 'skipped'
+    cp_verdict: str = "skipped"             # CP verdict: 'pass' | 'fail' | 'skipped'
     task_id: Optional[str] = None          # originating scheduled task id (for reflection)
 
 
@@ -223,7 +223,7 @@ class TaskNode:
     tool_names: Optional[list[str]] = None  # explicit tool whitelist (bypasses category filter)
     pool_override: Optional[object] = None   # per-session BackendPool override
     max_rounds: Optional[int] = None        # None = unlimited inference rounds
-    skip_tp_on_exit: bool = False           # skip TP post_inference on terminal response
+    skip_cp_on_exit: bool = False           # skip CP post_inference on terminal response
     task_id: Optional[str] = None          # originating scheduled task id (for reflection)
 
 
@@ -278,8 +278,8 @@ class SubSessionManager:
         self._pool = pool
         self._cfg = pool.primary
         self._enqueue = enqueue_system_event
-        self._tp_pool = convergence_protocol_pool
-        self._tp_runner = ConvergenceProtocolRunner(
+        self._cp_pool = convergence_protocol_pool
+        self._cp_runner = ConvergenceProtocolRunner(
             convergence_protocol_pool, "sub_session", convergence_protocol_validators,
         )
         self._nl_translation_pool = nl_translation_pool
@@ -357,7 +357,7 @@ class SubSessionManager:
         tool_names: Optional[list[str]] = None,
         pool: Optional[object] = None,
         max_rounds: Optional[int] = None,
-        skip_tp_on_exit: bool = False,
+        skip_cp_on_exit: bool = False,
         profile: Optional[str] = None,
         task_id: Optional[str] = None,
     ) -> str:
@@ -439,7 +439,7 @@ class SubSessionManager:
             tool_names=tool_names,
             pool_override=pool,
             max_rounds=max_rounds,
-            skip_tp_on_exit=skip_tp_on_exit,
+            skip_cp_on_exit=skip_cp_on_exit,
             task_id=task_id,
         )
 
@@ -774,7 +774,7 @@ class SubSessionManager:
             tool_names=node.tool_names,
             pool_override=node.pool_override,
             max_rounds=node.max_rounds,
-            skip_tp_on_exit=node.skip_tp_on_exit,
+            skip_cp_on_exit=node.skip_cp_on_exit,
             timeout_value=node.timeout,
             task_id=node.task_id,
         )
@@ -1292,7 +1292,7 @@ class SubSessionManager:
                 tool_call_count=len(state.tool_calls_log),
                 duration_seconds=round(duration, 2),
                 timeout_value=state.timeout_value,
-                convergence_verdict=state.tp_verdict,
+                convergence_verdict=state.cp_verdict,
                 status=status,
                 result_length=len(state.result or ""),
                 nesting_depth=state.nesting_depth,
@@ -1556,15 +1556,15 @@ class SubSessionManager:
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
             )
 
-        tp_enabled = bool(self._tp_pool and self._tp_pool.enabled)
-        tp_correction_depth = 0  # depth-2 re-check: 0=unchecked, 1=corrected once, >=2=graceful fallback
+        cp_enabled = bool(self._cp_pool and self._cp_pool.enabled)
+        cp_correction_depth = 0  # depth-2 re-check: 0=unchecked, 1=corrected once, >=2=graceful fallback
         tool_calls_made: list[str] = []  # accumulated across the session
 
         # Build shared tool-call context for the inference engine.
-        async def _tp_check_sub(phase, *, tool_name=None, tool_args=None,
+        async def _cp_check_sub(phase, *, tool_name=None, tool_args=None,
                                 tool_result=None, assistant_response="",
                                 tool_calls_made=None, nl_tools=None):
-            return await self._tp_runner.run_phase(
+            return await self._cp_runner.run_phase(
                 phase,
                 thread_id=state.session_id,
                 tool_calls_made=tool_calls_made or [],
@@ -1587,8 +1587,8 @@ class SubSessionManager:
             nl_tools=nl_tools,
             nl_translation_pool=self._nl_translation_pool,
             timezone_str=get_timezone(),
-            tp_enabled=tp_enabled,
-            tp_check=_tp_check_sub if tp_enabled else None,
+            cp_enabled=cp_enabled,
+            cp_check=_cp_check_sub if cp_enabled else None,
             max_tool_output_chars=self._cfg.context_size * 4,  # tokens → approx chars
             tool_deps=self._tool_deps,
         )
@@ -1614,7 +1614,7 @@ class SubSessionManager:
                     continuation_depth=state.continuation_depth,
                 ),
             })
-            tp_correction_depth = 0  # fresh TP budget for the resumed session
+            cp_correction_depth = 0  # fresh CP budget for the resumed session
         else:
             # Fresh start — build the initial conversation.
             # Determine scratchpad path for multi-node workflows.
@@ -1814,12 +1814,12 @@ class SubSessionManager:
             final_text = msg_content
 
             # -- Convergence Protocol: post_inference phase (objective gatekeeper) --
-            # skip_tp_on_exit: when the model produces a text-only response,
-            # return immediately without running TP post_inference hooks.
+            # skip_cp_on_exit: when the model produces a text-only response,
+            # return immediately without running CP post_inference hooks.
             # Depth-2 re-check: after first correction, re-check once more.
             # At depth >= 2, switch to graceful fallback.
-            if tp_enabled and tp_correction_depth < 2 and not state.skip_tp_on_exit:
-                # Extract prior assistant message and recent messages for TP context.
+            if cp_enabled and cp_correction_depth < 2 and not state.skip_cp_on_exit:
+                # Extract prior assistant message and recent messages for CP context.
                 _prior_assistant = None
                 _recent_assistant: list[str] = []
                 for m in reversed(state.messages):
@@ -1834,7 +1834,7 @@ class SubSessionManager:
                                 break
                 _recent_assistant.reverse()
 
-                pi_result = await self._tp_runner.run_phase(
+                pi_result = await self._cp_runner.run_phase(
                     "post_inference",
                     thread_id=state.session_id,
                     tool_calls_made=tool_calls_made,
@@ -1847,16 +1847,16 @@ class SubSessionManager:
                     recent_assistant_messages=_recent_assistant,
                 )
                 if pi_result and pi_result.correction:
-                    state.tp_verdict = "fail"
-                    tp_correction_depth += 1
+                    state.cp_verdict = "fail"
+                    cp_correction_depth += 1
                     logger.info(
                         "Sub-session %s: objective not met — injecting "
                         "correction and resuming loop (depth=%d, hooks=%s)",
-                        state.session_id, tp_correction_depth,
+                        state.session_id, cp_correction_depth,
                         [m["hook"] for m in pi_result.correction_metadata],
                     )
                     # At depth >= 1 (already corrected once), use graceful fallback.
-                    if tp_correction_depth >= 2:
+                    if cp_correction_depth >= 2:
                         correction_text = (
                             "[CONVERGENCE PROTOCOL — UNABLE TO COMPLY] "
                             "You were corrected but could not comply. Stop attempting the "
@@ -1877,15 +1877,15 @@ class SubSessionManager:
                     })
                     continue  # back to while True → next inference call
 
-            if tp_enabled and not state.skip_tp_on_exit:
-                state.tp_verdict = "pass"
+            if cp_enabled and not state.skip_cp_on_exit:
+                state.cp_verdict = "pass"
             return final_text
 
     # ------------------------------------------------------------------
     # Convergence Protocol helper for sub-session phases
     # ------------------------------------------------------------------
 
-    async def _run_tp_phase(
+    async def _run_cp_phase(
         self,
         phase: str,
         state: SubSessionState,
@@ -1902,7 +1902,7 @@ class SubSessionManager:
 
         Delegates to :class:`ConvergenceProtocolRunner`.
         """
-        return await self._tp_runner.run_phase(
+        return await self._cp_runner.run_phase(
             phase,
             thread_id=state.session_id,
             tool_calls_made=tool_calls_made,

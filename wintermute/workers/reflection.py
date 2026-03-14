@@ -933,7 +933,7 @@ class ReflectionLoop:
                 system_prompt_mode="none",
                 pool=self._pool,
                 parent_thread_id=None,   # fire-and-forget
-                skip_tp_on_exit=True,
+                skip_cp_on_exit=True,
                 max_rounds=5,
             )
             logger.info("[reflection] Skill mutation sub-session spawned: %s", session_id)

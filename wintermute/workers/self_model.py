@@ -186,12 +186,12 @@ class SelfModelProfiler:
         except Exception:
             logger.debug("[self_model] Failed to collect outcome stats", exc_info=True)
 
-        # TP violation stats.
+        # CP violation stats.
         try:
-            tp_stats = await database.async_call(database.get_tp_violation_stats)
-            metrics["tp_violations"] = tp_stats
+            cp_stats = await database.async_call(database.get_cp_violation_stats)
+            metrics["cp_violations"] = cp_stats
         except Exception:
-            logger.debug("[self_model] Failed to collect TP violation stats", exc_info=True)
+            logger.debug("[self_model] Failed to collect CP violation stats", exc_info=True)
 
         # Top tools used.
         try:

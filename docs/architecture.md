@@ -117,7 +117,7 @@ SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + s
    - **Direct children** (depth 1): result enters the parent thread via `enqueue_system_event`
    - **Nested children** (depth 2): individual reports are suppressed; when all siblings finish, an aggregated result is delivered to the root (user-facing) thread
 10. If the worker times out, a continuation is auto-spawned (up to 3 hops)
-11. Outcome metadata (duration, tool calls, TP verdict, status) is persisted to `sub_session_outcomes` for historical feedback on future spawns
+11. Outcome metadata (duration, tool calls, CP verdict, status) is persisted to `sub_session_outcomes` for historical feedback on future spawns
 
 ## Workflow DAG
 
@@ -180,7 +180,7 @@ data/
   BASE_PROMPT.txt            -- Immutable core instructions
   local_vectors.db           -- SQLite vector store with metadata (only when backend=local_vector)
   conversation.db (tasks)     -- Active goals / working memory (managed via task tool, stored in SQLite)
-  conversation.db (outcomes)  -- Sub-session outcome tracking (duration, status, TP verdict; used for historical feedback)
+  conversation.db (outcomes)  -- Sub-session outcome tracking (duration, status, CP verdict; used for historical feedback)
   scratchpad/                -- Ephemeral per-workflow directories for parallel worker communication (auto-cleaned)
   skills/                    -- Learned procedures (vector-indexed via skill tool; legacy *.md files migrated at first startup)
   DREAM_DEDUP_PROMPT.txt     -- Dreaming deduplication merge prompt

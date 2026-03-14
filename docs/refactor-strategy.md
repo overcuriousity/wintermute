@@ -14,7 +14,7 @@ All Phase 1 and Phase 2 issues have been merged:
 | #88 | Types module (`core/types.py`) for shared data classes | Merged |
 | #93 | `spawn()` helpers extracted in `sub_session.py` | Merged |
 | #99 | `make_tool_context()` factory function | Merged |
-| #100 | Unified TP runner (`core/tp_runner.py`) | Merged |
+| #100 | Unified CP runner (`core/cp_runner.py`) | Merged |
 | #108 | Magic numbers exposed in `config.yaml` | Merged |
 | #104 | `_process()` compaction retry extracted to `_run_inference_with_retry()` | Merged |
 | #83 | Module-level DI globals replaced with `ToolDeps` dataclass | Merged |
@@ -26,7 +26,7 @@ All Phase 1 and Phase 2 issues have been merged:
 
 | # | Type | File(s) | Current Size | Summary |
 |---|---|---|---|---|
-| **79** | arch | `core/llm_thread.py` | 1324 lines | God object: queue, history, compaction, prompt assembly, inference, TP, sessions |
+| **79** | arch | `core/llm_thread.py` | 1324 lines | God object: queue, history, compaction, prompt assembly, inference, CP, sessions |
 | **85** | arch | `core/llm_thread.py` | — | Single asyncio queue serializes all threads |
 
 ## Implementation Plan

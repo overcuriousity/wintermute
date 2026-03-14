@@ -603,7 +603,7 @@ class TaskScheduler:
                 # Clear the last-activity marker so this thread is not
                 # repeatedly treated as expired on subsequent checks.
                 self._session_manager.last_activity.pop(tid, None)
-                # Clear any per-thread tool-call history so cross-turn TP
+                # Clear any per-thread tool-call history so cross-turn CP
                 # checks don't see pre-reset tool usage after a timeout reset.
                 prior_tool_calls = getattr(self._session_manager, "prior_tool_calls", None)
                 if isinstance(prior_tool_calls, dict):

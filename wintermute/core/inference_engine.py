@@ -82,12 +82,12 @@ def extract_content_text(msg: dict) -> str:
 # ---------------------------------------------------------------------------
 # Callback type for Convergence Protocol pre/post-execution checks.
 #
-# Callers provide a closure that delegates to their own TP runner.
+# Callers provide a closure that delegates to their own CP runner.
 # Signature:
 #   async (phase, tool_name, tool_args, tool_result,
 #          assistant_response, tool_calls_made, nl_tools) -> result | None
 # ---------------------------------------------------------------------------
-TPCheckFn = Callable[..., Awaitable[Any]]
+CPCheckFn = Callable[..., Awaitable[Any]]
 
 
 # ---------------------------------------------------------------------------
@@ -113,8 +113,8 @@ class ToolCallContext:
     timezone_str: str = ""
 
     # Convergence Protocol
-    tp_enabled: bool = False
-    tp_check: Optional[TPCheckFn] = None
+    cp_enabled: bool = False
+    cp_check: Optional[CPCheckFn] = None
 
     # Per-result tool output truncation (0 = no limit)
     max_tool_output_chars: int = 0
@@ -135,8 +135,8 @@ def make_tool_context(
     nl_tools: set[str] | None = None,
     nl_translation_pool: Any = None,
     timezone_str: str = "",
-    tp_enabled: bool = False,
-    tp_check: Optional[TPCheckFn] = None,
+    cp_enabled: bool = False,
+    cp_check: Optional[CPCheckFn] = None,
     max_tool_output_chars: int = 0,
     tool_deps: Optional[ToolDeps] = None,
 ) -> ToolCallContext:
@@ -152,8 +152,8 @@ def make_tool_context(
         nl_tools=nl_tools,
         nl_translation_pool=nl_translation_pool,
         timezone_str=timezone_str,
-        tp_enabled=tp_enabled,
-        tp_check=tp_check,
+        cp_enabled=cp_enabled,
+        cp_check=cp_check,
         max_tool_output_chars=max_tool_output_chars,
         tool_deps=tool_deps,
     )
@@ -166,7 +166,7 @@ class ToolCallOutcome:
     content: str                                            # tool result text for messages
     tool_name: str
     raw_arguments: str                                      # original JSON from the model
-    executed: bool = True                                   # False → parse/NL/TP error
+    executed: bool = True                                   # False → parse/NL/CP error
     calls_made: list[str] = field(default_factory=list)     # tool names actually executed
     call_details: list[dict] = field(default_factory=list)  # [{name, arguments, result}]
 
@@ -396,8 +396,8 @@ async def process_tool_call(
             nl_was_translated = True
 
     # -- Step 3: Convergence Protocol pre_execution -----------------------
-    if ctx.tp_enabled and ctx.tp_check:
-        pre_result = await ctx.tp_check(
+    if ctx.cp_enabled and ctx.cp_check:
+        pre_result = await ctx.cp_check(
             "pre_execution",
             tool_name=name,
             tool_args=inputs,
@@ -452,8 +452,8 @@ async def process_tool_call(
         result = f"[Translated to: {summary}] {result}"
 
     # -- Step 6: Convergence Protocol post_execution ----------------------
-    if ctx.tp_enabled and ctx.tp_check:
-        post_result = await ctx.tp_check(
+    if ctx.cp_enabled and ctx.cp_check:
+        post_result = await ctx.cp_check(
             "post_execution",
             tool_name=name,
             tool_args=None,

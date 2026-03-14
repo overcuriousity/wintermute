@@ -1,10 +1,10 @@
 """
-Convergence Protocol Runner — unified entry point for all TP phase checks.
+Convergence Protocol Runner — unified entry point for all CP phase checks.
 
 Replaces three near-identical methods:
   - ``LLMThread._run_phase_check``
   - ``LLMThread._run_convergence_check``  (post_inference for main thread)
-  - ``SubSessionManager._run_tp_phase``
+  - ``SubSessionManager._run_cp_phase``
 
 A ``ConvergenceProtocolRunner`` binds ``pool``, ``scope``, and
 ``enabled_validators`` at construction time so callers only need to pass
@@ -25,13 +25,13 @@ logger = logging.getLogger(__name__)
 
 
 class ConvergenceProtocolRunner:
-    """Bound TP executor for a specific pool + scope.
+    """Bound CP executor for a specific pool + scope.
 
     Parameters
     ----------
     pool : BackendPool | None
-        The LLM pool used for TP validation calls; may be ``None`` when
-        TP is not configured or disabled.
+        The LLM pool used for CP validation calls; may be ``None`` when
+        CP is not configured or disabled.
     scope : str
         ``"main"`` or ``"sub_session"``.
     enabled_validators : dict | None
@@ -70,13 +70,13 @@ class ConvergenceProtocolRunner:
         prior_tool_calls_made: Optional[list[str]] = None,
         recent_assistant_messages: Optional[list[str]] = None,
     ) -> Optional[convergence_protocol_module.ConvergenceResult]:
-        """Run TP hooks for *phase* in the bound scope.
+        """Run CP hooks for *phase* in the bound scope.
 
         Returns the full ``ConvergenceResult`` produced by
         :func:`convergence_protocol.run_convergence_protocol`, which may have
         ``correction=None`` when no violation was confirmed or when no
         hooks are registered for this phase/scope.
-        Returns ``None`` only when TP is disabled or an internal error
+        Returns ``None`` only when CP is disabled or an internal error
         occurred (errors are logged as non-fatal).
         """
         if not self.enabled:

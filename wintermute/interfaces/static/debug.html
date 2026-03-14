@@ -1630,7 +1630,7 @@ async function loadOutcomes() {
   try {
     const [r, tpR] = await Promise.all([
       fetch('/api/outcomes?' + params),
-      fetch('/api/tp-violations'),
+      fetch('/api/cp-violations'),
     ]);
     const d = await r.json();
     const tpData = await tpR.json();

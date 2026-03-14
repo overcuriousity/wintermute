@@ -110,8 +110,8 @@ class LLMThread:
                  tool_deps: "Optional[ToolDeps]" = None) -> None:
         self._main_pool = main_pool
         self._convergence_protocol_pool = convergence_protocol_pool
-        from wintermute.core.tp_runner import ConvergenceProtocolRunner
-        self._tp_runner = ConvergenceProtocolRunner(
+        from wintermute.core.cp_runner import ConvergenceProtocolRunner
+        self._cp_runner = ConvergenceProtocolRunner(
             pool=convergence_protocol_pool,
             scope="main",
             enabled_validators=convergence_protocol_validators,
@@ -472,7 +472,7 @@ class LLMThread:
                 ):
                     seq_at_fire = self._store.thread_seq.get(thread_id, 0)
                     _prior_tc = self._session_mgr.prior_tool_calls.get(thread_id, [])
-                    _tp_task = asyncio.create_task(
+                    _cp_task = asyncio.create_task(
                         self._run_convergence_check(
                             user_message=item.text,
                             assistant_response=reply.text,
@@ -486,8 +486,8 @@ class LLMThread:
                         ),
                         name=f"convergence_{thread_id}",
                     )
-                    self._background_tasks.add(_tp_task)
-                    _tp_task.add_done_callback(self._background_tasks.discard)
+                    self._background_tasks.add(_cp_task)
+                    _cp_task.add_done_callback(self._background_tasks.discard)
 
                 # Update prior-turn tool calls.
                 self._session_mgr.prior_tool_calls[thread_id] = reply.tool_calls_made or []
@@ -591,7 +591,7 @@ class LLMThread:
         stale (the user has already sent a follow-up and the context has moved
         on).
         """
-        if not self._tp_runner.enabled:
+        if not self._cp_runner.enabled:
             return
 
         ssm = self._get_sub_sessions() if self._get_sub_sessions else None
@@ -600,7 +600,7 @@ class LLMThread:
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
 
-        result = await self._tp_runner.run_phase(
+        result = await self._cp_runner.run_phase(
             "post_inference",
             thread_id=thread_id,
             user_message=user_message,
@@ -941,10 +941,10 @@ class LLMThread:
         tool_calls_made: list[str] = []
         tool_call_details: list[dict] = []
 
-        tp_enabled = self._convergence_protocol_pool.enabled
+        cp_enabled = self._convergence_protocol_pool.enabled
 
         # Build a shared context for tool-call processing.
-        async def _tp_check_main(phase, *, tool_name=None, tool_args=None,
+        async def _cp_check_main(phase, *, tool_name=None, tool_args=None,
                                  tool_result=None, assistant_response="",
                                  tool_calls_made=None, nl_tools=None):
             return await self._run_phase_check(
@@ -964,8 +964,8 @@ class LLMThread:
             nl_tools=nl_tools,
             nl_translation_pool=getattr(self, "_nl_translation_pool", None),
             timezone_str=prompt_assembler.get_timezone(),
-            tp_enabled=tp_enabled,
-            tp_check=_tp_check_main if tp_enabled else None,
+            cp_enabled=cp_enabled,
+            cp_check=_cp_check_main if cp_enabled else None,
             max_tool_output_chars=active_cfg.context_size * 4,  # tokens → approx chars
             tool_deps=self._tool_deps,
         )
@@ -1123,7 +1123,7 @@ class LLMThread:
         Delegates to the bound ``ConvergenceProtocolRunner`` (scope is fixed
         at construction time to ``"main"``).
         """
-        return await self._tp_runner.run_phase(
+        return await self._cp_runner.run_phase(
             phase,
             thread_id=thread_id,
             tool_calls_made=tool_calls_made,

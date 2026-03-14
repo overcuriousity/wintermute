@@ -109,7 +109,7 @@ self._sub_sessions.spawn(
     system_prompt_mode="none",
     pool=self._pool,
     parent_thread_id=None,    # fire-and-forget, silent
-    skip_tp_on_exit=True,
+    skip_cp_on_exit=True,
     max_rounds=5,             # hard cap — skill edits shouldn't take many rounds
 )
 ```
