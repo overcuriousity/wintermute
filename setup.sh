@@ -919,10 +919,13 @@ print(json.dumps({
 
   # One-shot test
   info "Testing embeddings endpoint..."
-  if curl -sf --connect-timeout 10 -X POST "${MEMORY_EMBEDDINGS_ENDPOINT}/embeddings" \
-       -H "Content-Type: application/json" \
-       ${MEMORY_EMBEDDINGS_KEY:+-H "Authorization: Bearer ${MEMORY_EMBEDDINGS_KEY}"} \
-       -d "{\"input\":\"test\",\"model\":\"${MEMORY_EMBEDDINGS_MODEL}\"}" \
+  local curl_args=(-sf --connect-timeout 10 -X POST "${MEMORY_EMBEDDINGS_ENDPOINT}/embeddings"
+                   -H "Content-Type: application/json")
+  if [[ -n "${MEMORY_EMBEDDINGS_KEY}" ]]; then
+    curl_args+=(-H "Authorization: Bearer ${MEMORY_EMBEDDINGS_KEY}")
+  fi
+  curl_args+=(-d "{\"input\":\"test\",\"model\":\"${MEMORY_EMBEDDINGS_MODEL}\"}")
+  if curl "${curl_args[@]}" \
        2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); assert 'data' in d" 2>/dev/null; then
     ok "Embeddings endpoint responding."
   else
