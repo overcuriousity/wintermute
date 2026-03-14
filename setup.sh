@@ -919,7 +919,7 @@ print(json.dumps({
 
   # One-shot test
   info "Testing embeddings endpoint..."
-  local curl_args=(-sf --connect-timeout 10 -X POST "${MEMORY_EMBEDDINGS_ENDPOINT}/embeddings"
+  curl_args=(-sf --connect-timeout 10 -X POST "${MEMORY_EMBEDDINGS_ENDPOINT}/embeddings"
                    -H "Content-Type: application/json")
   if [[ -n "${MEMORY_EMBEDDINGS_KEY}" ]]; then
     curl_args+=(-H "Authorization: Bearer ${MEMORY_EMBEDDINGS_KEY}")

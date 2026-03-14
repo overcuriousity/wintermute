@@ -306,10 +306,33 @@ class LocalVectorBackend:
         }
 
     def rebuild(self) -> None:
-        """Re-embed all entries in place."""
-        entries = [e["text"] for e in self.get_all() if e.get("text")]
-        self.replace_all(entries)
-        logger.info("LocalVector: rebuilt index (%d entries)", len(entries))
+        """Re-embed all entries, preserving entry_id and metadata."""
+        with self._lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT entry_id, text FROM local_vectors"
+                ).fetchall()
+            finally:
+                conn.close()
+        if not rows:
+            return
+        texts = [r[1] for r in rows]
+        vectors = _embed(texts, self._embed_cfg)
+        if not vectors or len(vectors) != len(rows):
+            raise RuntimeError("Embedding mismatch during rebuild")
+        with self._lock:
+            conn = self._connect()
+            try:
+                for (eid, _text), vec in zip(rows, vectors):
+                    conn.execute(
+                        "UPDATE local_vectors SET vector = ? WHERE entry_id = ?",
+                        (self._vec_to_blob(vec), eid),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+        logger.info("LocalVector: rebuilt vectors in place (%d entries)", len(rows))
 
     def get_all_with_vectors(self) -> list[dict]:
         import numpy as np
@@ -843,10 +866,38 @@ class QdrantBackend:
         }
 
     def rebuild(self) -> None:
-        """Re-import all entries into a fresh collection."""
-        entries = [e["text"] for e in self.get_all() if e.get("text")]
-        self.replace_all(entries)
-        logger.info("Qdrant: rebuilt index (%d entries)", len(entries))
+        """Re-embed all entries, preserving point IDs and metadata."""
+        from qdrant_client.models import PointStruct
+
+        all_entries = self.get_all_with_vectors()
+        if not all_entries:
+            return
+        texts = [e["text"] for e in all_entries]
+        vectors = _embed(texts, self._embed_cfg)
+        if not vectors or len(vectors) != len(all_entries):
+            raise RuntimeError("Embedding mismatch during rebuild")
+        # Upsert with new vectors but preserve all existing payload.
+        points = [
+            PointStruct(
+                id=e["id"],
+                vector=vec,
+                payload={
+                    "text": e["text"],
+                    "created_at": e.get("created_at", 0),
+                    "last_accessed": e.get("last_accessed", 0),
+                    "access_count": e.get("access_count", 0),
+                    "source": e.get("source", "unknown"),
+                },
+            )
+            for e, vec in zip(all_entries, vectors)
+        ]
+        with self._lock:
+            for i in range(0, len(points), 100):
+                self._client.upsert(
+                    collection_name=self._collection,
+                    points=points[i : i + 100],
+                )
+        logger.info("Qdrant: rebuilt vectors in place (%d entries)", len(all_entries))
 
     def get_all_with_vectors(self) -> list[dict]:
         points = []
