@@ -29,6 +29,10 @@ _lock = threading.Lock()
 _GITIGNORE_CONTENT = """\
 conversation.db
 scheduler.db
+local_vectors.db
+skill_vectors.db
+memory_index.db
+skill_index.db
 routine_history.json
 task_history.json
 matrix_store/

@@ -8,8 +8,6 @@ The deprecated MEMORIES.txt flat file has been removed.
 import logging
 from pathlib import Path
 
-from wintermute.infra import data_versioning
-
 logger = logging.getLogger(__name__)
 
 
@@ -64,5 +62,6 @@ def append_memory(entry: str, source: str = "unknown", *, pool=None, loop=None) 
     else:
         memory_store.add(entry.strip(), source=source)
 
-    data_versioning.commit_async("memory: append")
+    # No data_versioning commit here — memory is stored in SQLite binary
+    # files (local_vectors.db / Qdrant) which are gitignored.
     return memory_store.count()

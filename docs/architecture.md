@@ -66,7 +66,7 @@ SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + s
 1. Load `config.yaml`
 2. Configure logging (console + rotating file)
 3. Initialise SQLite databases
-4. Initialise memory store (embedding-based vector backend; cold-boot import if needed)
+4. Initialise memory store (embedding-based vector backend)
 5. Initialise skill store (vector backend with one-time migration from flat files)
 6. Bootstrap `data/` directories (skills/, scripts/, archive/)
 7. Build BackendPools and per-thread config manager

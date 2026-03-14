@@ -1161,6 +1161,9 @@ async def add_with_dedup(entry: str, source: str = "unknown", *, pool=None) -> s
     import asyncio
     from wintermute.infra import prompt_loader
 
+    # NOTE: search() bumps access_count for returned hits.  For dedup we
+    # only fetch top_k=1, so the access inflation is negligible and does
+    # not warrant adding a non-tracking search path to the backend protocol.
     hits = await asyncio.to_thread(search, entry, top_k=1, threshold=_DEDUP_SIMILARITY_THRESHOLD)
     if hits and pool is not None and pool.enabled:
         existing = hits[0]
