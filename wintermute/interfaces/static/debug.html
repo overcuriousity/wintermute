@@ -1411,7 +1411,7 @@ function _makeILRow(e) {
   const outputPreview = (e.output || '').length > 120 ? e.output.slice(0, 117) + '\u2026' : (e.output || '');
   const statusCls = e.status === 'ok' ? 'completed' : (e.status === 'error' ? 'failed' : 'pending');
   const sessionShort = (e.session || '').length > 24 ? e.session.slice(0, 22) + '\u2026' : (e.session || '');
-  const actionStyle = e.action.startsWith('convergence') ? 'convergence' : (e.action === 'tool_call' ? 'tool' : (e.action === 'chat' ? 'web' : (e.action === 'inference_round' ? 'pending' : (e.action === 'error' ? 'failed' : 'system'))));
+  const actionStyle = (e.action.startsWith('convergence') || e.action.startsWith('turing')) ? 'convergence' : (e.action === 'tool_call' ? 'tool' : (e.action === 'chat' ? 'web' : (e.action === 'inference_round' ? 'pending' : (e.action === 'error' ? 'failed' : 'system'))));
   const _rowBg = e.action === 'tool_call' ? ';background:#0a0f1a' : (e.action === 'inference_round' ? ';background:#0a1020' : '');
   return (
     '<tr style="cursor:pointer' + _rowBg + '" onclick="toggleILDetail(this, ' + e.id + ')">' +
