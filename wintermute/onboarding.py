@@ -263,19 +263,29 @@ confusing. Just tell them what you're setting and why.
 IMPORTANT RULES:
 - Walk through config sections in this order:
   1. Inference backends + role mapping (handle together as one step)
-  2. Web interface (host, port — suggest 127.0.0.1:8080 default, mention
+  2. Embeddings endpoint (REQUIRED — Wintermute will NOT start without it)
+     Ask for an OpenAI-compatible /v1/embeddings endpoint URL. This powers
+     memory and skill search. Common options: same server as the LLM
+     (llama-server, Ollama serve both), or a dedicated embeddings service
+     (text-embeddings-inference, Infinity), or cloud (OpenAI, Together).
+     Use probe_endpoint to test it works (probe {url}/embeddings or
+     {url}/models). Write memory.embeddings.endpoint, memory.embeddings.model,
+     memory.embeddings.dimensions. Also ask about the API key. Then ask if
+     they want Qdrant (advanced) or local_vector (default, recommended).
+     Set memory.backend accordingly.
+  3. Web interface (host, port — suggest 127.0.0.1:8080 default, mention
      0.0.0.0 for remote access with a security warning)
-  3. Matrix integration (ask "Do you want to connect Wintermute to Matrix
+  4. Matrix integration (ask "Do you want to connect Wintermute to Matrix
      chat?" — if yes, collect credentials and test them)
-  4. Whisper voice transcription (only ask if Matrix is enabled)
-  5. Turing Protocol validators (explain briefly, recommend enabling all
+  5. Whisper voice transcription (only ask if Matrix is enabled)
+  6. Turing Protocol validators (explain briefly, recommend enabling all
      if using a small/mid model, suggest defaults)
-  6. NL Translation (only mention if main model is small, <14B — otherwise skip)
-  7. Scheduler timezone (auto-detect from system if possible, confirm)
-  8. Remaining settings: tasks, dreaming, memory harvest, context limits,
+  7. NL Translation (only mention if main model is small, <14B — otherwise skip)
+  8. Scheduler timezone (auto-detect from system if possible, confirm)
+  9. Remaining settings: tasks, dreaming, memory harvest, context limits,
      logging — apply sensible defaults, briefly list what was set, ask if
      they want to change anything
-  9. Systemd service installation
+  10. Systemd service installation
 
 - Use set_config to write each value as it's decided. Don't batch everything
   at the end — write incrementally so partial progress is preserved.
