@@ -253,7 +253,8 @@ class MatrixThread:
                  whisper_client=None,
                  whisper_model: str = "",
                  whisper_language: str = "",
-                 slash_handler=None) -> None:
+                 slash_handler=None,
+                 event_bus=None) -> None:
         self._cfg = config
         self._llm = llm_thread
         self._client: Optional[Client] = None
@@ -271,19 +272,18 @@ class MatrixThread:
         self._slash_handler = slash_handler
         # Kimi-Code client for interactive auth flow.
         self._kimi_client = kimi_client
+        # Subscribe to send_file events from the tool.
+        self._event_bus = event_bus
+        if event_bus is not None:
+            event_bus.subscribe("send_file", self._handle_send_file_event)
 
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
 
-    _SEND_FILE_RE = _re.compile(r"\[send_file:(/[^\]\s]+)\]")
-
     async def send_message(self, text: str, room_id: str = None,
                            _retries: int = 3, _delay: float = 2.0) -> None:
         """Send a message to a room.  Auto-encrypts if room has E2EE.
-
-        Any ``[send_file:/absolute/path]`` markers in *text* are extracted
-        and uploaded as separate file/image messages before the text is sent.
 
         Retries up to *_retries* times on transient failures so that
         system-event broadcasts (sub-session results) are not silently lost.
@@ -295,14 +295,8 @@ class MatrixThread:
             logger.warning("send_message called without room_id, dropping message")
             return
 
-        # Extract and send file markers before the text message.
-        file_paths = self._SEND_FILE_RE.findall(text)
-        for fpath in file_paths:
-            await self._send_file(fpath, room_id)
-        text = self._SEND_FILE_RE.sub("", text).strip()
-
-        if not text:
-            return  # nothing left after stripping markers
+        if not text.strip():
+            return
 
         last_exc: Optional[Exception] = None
         for attempt in range(1, _retries + 1):
@@ -332,6 +326,16 @@ class MatrixThread:
                 await asyncio.sleep(_delay * attempt)
         logger.error("Matrix send to %s failed after %d attempts: %s",
                      room_id, _retries, last_exc)
+
+    async def _handle_send_file_event(self, event) -> None:
+        """EventBus handler for ``send_file`` events emitted by the tool."""
+        data = event.data if hasattr(event, "data") else event
+        file_path = data.get("path", "")
+        thread_id = data.get("thread_id", "")
+        if not file_path or not thread_id:
+            logger.warning("send_file event missing path or thread_id: %s", data)
+            return
+        await self._send_file(file_path, thread_id)
 
     async def _send_file(self, file_path: str, room_id: str,
                          _retries: int = 3, _delay: float = 2.0) -> None:
