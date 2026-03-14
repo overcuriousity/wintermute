@@ -3,7 +3,7 @@ Git auto-versioning for the data/ directory.
 
 Initialises a local git repository inside data/ on first use and provides
 an ``auto_commit()`` helper that stages all unignored changes and commits
-them.  This gives a full change history for MEMORIES.txt, skills, and other
+them.  This gives a full change history for skills and other
 mutable data files so that any change can be manually rolled back.
 
 For fire-and-forget background commits use ``commit_async()``, which queues

@@ -405,13 +405,13 @@ tuning:
 #
 context:
   component_size_limits:
-    memories: 10000                       # MEMORIES.txt — long-term personal facts
+    memories: 10000                       # Memory store — long-term personal facts
     tasks: 5000                           # Active tasks from database
     skills_total: 3000                   # Skills TOC generated from skill store
 
 
 # ── Dreaming (Nightly Consolidation) ────────────────────────────────
-# Once per day, Wintermute reviews its memories (MEMORIES.txt) and
+# Once per day, Wintermute reviews its memories in the vector store and
 # consolidates them: removing duplicates, merging related facts, and
 # improving organisation. Uses a direct LLM call (no tool loop).
 #
@@ -473,12 +473,12 @@ self_model:
 
 # ── Memory Harvest (Automatic Memory Extraction) ────────────────────
 # Periodically mines recent conversation history for personal facts,
-# preferences, and important information, extracting them into
-# MEMORIES.txt via background sub-sessions.
+# preferences, and important information, extracting them into the
+# memory store via background sub-sessions.
 #
 # This complements the append_memory tool (which the AI can use directly
 # during conversation). Harvest catches facts the AI didn't explicitly
-# save in real-time.
+# save in real-time. Deduplication is handled at add-time by the memory store.
 #
 # Triggers when EITHER condition is met:
 #   - message_threshold new user messages accumulated
@@ -516,7 +516,7 @@ scheduler:
 #
 # Only the top_k most relevant memories are injected per turn via
 # ranked retrieval from the memory backend.
-# MEMORIES.txt is kept as a git-versioned export (dual-write on every mutation).
+# Memories are stored exclusively in the vector backend.
 #
 # If the configured backend fails to initialize at startup, Wintermute
 # warns and falls back to fts5 automatically.
@@ -547,10 +547,10 @@ memory:
   # Only used when backend is local_vector or qdrant.
   dreaming:
     # ── Housekeeping ──
-    dedup_similarity_threshold: 0.85  # Cosine similarity threshold for dedup clustering
+    dedup_similarity_threshold: 0.80  # Cosine similarity threshold for dedup clustering
     stale_days: 90                    # Prune memories not accessed in this many days
     stale_min_access: 3               # ...and accessed fewer than this many times
-    working_set_size: 50              # Top-N memories exported to MEMORIES.txt
+    working_set_size: 50              # Top-N memories used for prompt assembly
 
     # ── Associative Discovery (REM-inspired) ──
     # Finds non-obvious cross-domain connections between memories.

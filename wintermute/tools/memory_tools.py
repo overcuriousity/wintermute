@@ -15,10 +15,15 @@ def tool_append_memory(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw
     try:
         deps = tool_deps or ToolDeps()
         source = inputs.get("source", "user_explicit")
-        total_len = append_memory(inputs["entry"], source=source)
+        total = append_memory(
+            inputs["entry"],
+            source=source,
+            pool=deps.memory_pool,
+            loop=deps.event_loop,
+        )
         if deps.event_bus:
             deps.event_bus.emit("memory.appended", entry=inputs["entry"][:200])
-        return json.dumps({"status": "ok", "total_chars": total_len})
+        return json.dumps({"status": "ok", "total_entries": total})
     except Exception as exc:  # noqa: BLE001
         logger.exception("append_memory failed")
         return json.dumps({"error": str(exc)})

@@ -36,13 +36,13 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 | `inference_engine.py` | Shared tool-call pipeline (`process_tool_call`): JSON parse, NL translation, TP pre/post execution gates, tool dispatch, interaction logging — used by both `llm_thread` and `sub_session` |
 | `tools.py` | Tool definitions (OpenAI function-calling schemas) + `execute_tool()` dispatcher |
 | `sub_session.py` | Background worker DAG: `TaskNode`/`Workflow` with `depends_on` edges, nested workers (depth 2), timeout continuation |
-| `prompt_assembler.py` | Assembles system prompt per-turn: BASE_PROMPT + datetime + MEMORIES + tasks + skills TOC (full skills loaded on demand via read_file) |
+| `prompt_assembler.py` | Assembles system prompt per-turn: BASE_PROMPT + datetime + memories (vector search) + tasks + skills TOC (full skills loaded on demand via read_file) |
 | `prompt_loader.py` | Loads/validates prompt templates from `data/prompts/` (required files; missing = startup failure) |
 | `turing_protocol.py` | Phase-aware 3-stage pipeline: detect → validate → correct. Phases: `post_inference`, `pre_execution`, `post_execution`. Scoped to `main` and/or `sub_session`. |
 | `matrix_thread.py` | Matrix client (mautrix) with E2E encryption; voice messages transcribed via configurable Whisper endpoint |
 | `web_interface.py` | aiohttp server: WebSocket chat, debug panel (`/debug`), REST API |
 | `dreaming.py` | Nightly memory consolidation: 4-phase housekeeping pipeline (dedup, contradictions, stale pruning, working set export) + 3 creative phases |
-| `memory_harvest.py` | Periodic conversation mining → MEMORIES.txt extraction via sub-sessions |
+| `memory_harvest.py` | Periodic conversation mining → memory store extraction via sub-sessions |
 | `scheduler_thread.py` | APScheduler-based task scheduling; `ai_prompt` triggers sub-sessions |
 | `database.py` | SQLite ops (per-thread cached connections): messages, tasks, summaries, interaction_log |
 
@@ -56,7 +56,7 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 
 - `data/` has its own local git repo for auto-versioning; mutations to memories and skills are auto-committed for rollback (`cd data && git log`)
 - `data/prompts/*.txt` — All prompt templates (externalized, not hardcoded); seed prompts are per-language (`SEED_en.txt`, `SEED_de.txt`, ...)
-- `data/MEMORIES.txt` — Git-versioned working set export of top-accessed memories (written by dreaming + dual-write on append)
+- Memory store (vector-indexed) — long-term user facts stored in the configured backend (fts5/local_vector/qdrant)
 - `data/conversation.db` — SQLite: messages, summaries, tasks, interaction_log
 - `data/skills/` — Learned procedures (vector-indexed via skill store; legacy `*.md` files migrated at first startup)
 - `data/scratchpad/{workflow_id}/` — Per-workflow directories for parallel worker communication (preserved after completion for later reference; overwritten if a new workflow reuses the same ID)

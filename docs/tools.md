@@ -156,7 +156,7 @@ Returns vary by action. `add` returns `status`, `task_id`. `list` returns tasks 
 
 #### `append_memory`
 
-Append a new fact to MEMORIES.txt (and the vector store, if active). Preferred for day-to-day memory storage — no need to reproduce existing content. Nightly consolidation handles deduplication automatically.
+Append a new fact to the memory store. Preferred for day-to-day memory storage — no need to reproduce existing content. Deduplication is handled automatically at add-time (similar entries are merged via LLM). Nightly dreaming provides additional consolidation.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

@@ -16,11 +16,13 @@ dependency requires zero rewiring in ``main.py``.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager
+    from wintermute.core.types import BackendPool
     from wintermute.infra.event_bus import EventBus
     from wintermute.workers.scheduler_thread import TaskScheduler
     from wintermute.workers.self_model import SelfModelProfiler
@@ -59,3 +61,9 @@ class ToolDeps:
 
     # Tool profiles for sub-session spawning (injected into prompt assembly).
     tool_profiles: dict[str, dict] = field(default_factory=dict)
+
+    # Pool used for memory dedup merges (async LLM calls from tool context).
+    memory_pool: Optional["BackendPool"] = None
+
+    # Event loop reference for bridging sync tool calls to async dedup.
+    event_loop: Optional[asyncio.AbstractEventLoop] = None

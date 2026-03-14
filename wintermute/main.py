@@ -553,6 +553,8 @@ async def main() -> None:
         searxng_url=searxng_url,
         tool_profiles=_tool_profiles,
         event_bus=event_bus,
+        memory_pool=sub_sessions_pool,
+        event_loop=asyncio.get_running_loop(),
     )
 
     llm = LLMThread(main_pool=main_pool, compaction_pool=compaction_pool,

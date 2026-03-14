@@ -86,7 +86,7 @@ SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + s
 1. User sends a message via Matrix or WebSocket
 2. Message enters the LLMThread queue
 3. LLMThread builds the message list from the SQLite DB
-4. System prompt is assembled fresh (BASE + MEMORIES + TASKS + PREDICTIONS + SKILLS TOC + compaction summary). When a vector memory backend is active, only the top-K relevant memories are retrieved (via embedding search) instead of the full MEMORIES.txt
+4. System prompt is assembled fresh (BASE + MEMORIES + TASKS + PREDICTIONS + SKILLS TOC + compaction summary). Only the top-K most relevant memories are retrieved from the vector store (via embedding search) per turn
 5. If history tokens exceed the compaction threshold, context is compacted first
 6. Message is saved to the DB, then inference runs
 7. If the model returns tool calls:
@@ -162,7 +162,7 @@ These are some architectural choices, which should make it better for local LLMs
 
 **NL Translation (optional).** For models that struggle with multi-field structured JSON schemas, complex tool calls (`task`, `worker_delegation`, `skill`) can be exposed as a single plain-English `description` field. A dedicated small translator LLM expands the description into structured arguments. See [tools.md — NL Translation Mode](tools.md#nl-translation-mode).
 
-**Lean system prompt.** The system prompt is assembled from independent file-based components (`BASE_PROMPT.txt`, `MEMORIES.txt`, tasks, skills TOC). Skills inject only a one-line-per-skill table of contents; full procedures are loaded on demand via the `skill` tool (action `read`). Components have configurable character caps with auto-summarisation when exceeded. No framework boilerplate is injected — the prompt contains only what you wrote and what the model genuinely needs.
+**Lean system prompt.** The system prompt is assembled from independent components (`BASE_PROMPT.txt`, vector memory store, tasks, skills TOC). Skills inject only a one-line-per-skill table of contents; full procedures are loaded on demand via the `skill` tool (action `read`). Components have configurable character caps with auto-summarisation when exceeded. No framework boilerplate is injected — the prompt contains only what you wrote and what the model genuinely needs.
 
 **Sectioned system prompt.** BASE_PROMPT sections are conditionally included based on available tools. Sub-sessions with only execution tools don't receive instructions about delegation, tasks, or knowledge routing — saving ~800 tokens per worker invocation.
 
@@ -178,7 +178,6 @@ These are some architectural choices, which should make it better for local LLMs
 data/
   .git/                      -- Local git repo for auto-versioning (rollback via git log / git revert)
   BASE_PROMPT.txt            -- Immutable core instructions
-  MEMORIES.txt               -- Working set export of top-accessed memories (written by dreaming working_set_export phase and dual-write on append/update). Git-versioned.
   memory_index.db            -- FTS5 keyword index (only when backend=fts5)
   local_vectors.db           -- SQLite vector store with metadata (only when backend=local_vector)
   conversation.db (tasks)     -- Active goals / working memory (managed via task tool, stored in SQLite)
@@ -201,6 +200,6 @@ data/
   matrix_recovery.key        -- Cross-signing recovery key
 ```
 
-Changes to MEMORIES.txt, skills, and other data files are automatically committed to a local git repository inside `data/`. This provides a full change history so that any mutation (memory append, nightly consolidation, skill updates) can be inspected with `cd data && git log --oneline` and rolled back with `git revert`.
+Changes to skills and other data files are automatically committed to a local git repository inside `data/`. This provides a full change history so that any mutation (skill updates, nightly consolidation) can be inspected with `cd data && git log --oneline` and rolled back with `git revert`.
 
-The memory store (vector or FTS index) is the **primary unbounded memory**. Each memory entry is tagged with metadata: `source` (origin: `user_explicit`, `harvest`, `dreaming_merge`, `unknown`), `last_accessed` (timestamp of last search hit), and `access_count` (number of search hits). MEMORIES.txt serves as a derived, human-readable working-set export — during nightly dreaming, the top-N most-accessed entries are projected from the memory store into this file so that the current working set can be inspected, diffed, and versioned via git.
+The memory store (vector or FTS index) is the **primary memory**. Each memory entry is tagged with metadata: `source` (origin: `user_explicit`, `harvest`, `dreaming_merge`, `unknown`), `last_accessed` (timestamp of last search hit), and `access_count` (number of search hits). New entries are automatically deduplicated at add-time via similarity search — when a new entry is > 80% similar to an existing one, an LLM merges them into a single concise entry instead of creating a duplicate.

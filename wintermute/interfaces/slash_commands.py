@@ -153,8 +153,7 @@ class SlashCommandHandler:
 
     async def _cmd_status(self, thread_id: str, send_fn: SendFn) -> None:
         from wintermute.infra import database as db
-        from wintermute.infra.memory_io import read_text_safe
-        from wintermute.infra.paths import MEMORIES_FILE
+        from wintermute.infra import memory_store
 
         lines = ["**Wintermute Status**"]
 
@@ -197,17 +196,19 @@ class SlashCommandHandler:
         lines.append("\n**Memory & Knowledge**")
 
         def _read_memory_and_skills():
-            mem = read_text_safe(MEMORIES_FILE) or ""
+            try:
+                mem_count = memory_store.count()
+            except Exception:
+                mem_count = 0
             try:
                 from wintermute.infra import skill_store
                 all_skills = skill_store.get_all()
             except Exception:
                 all_skills = []
-            return mem, all_skills
+            return mem_count, all_skills
 
-        mem_text, all_skills = await asyncio.to_thread(_read_memory_and_skills)
-        mem_lines = mem_text.count("\n") + (1 if mem_text.strip() else 0)
-        lines.append(f"MEMORIES.txt: {mem_lines} lines ({len(mem_text):,} chars)")
+        mem_count, all_skills = await asyncio.to_thread(_read_memory_and_skills)
+        lines.append(f"Memory store: {mem_count} entries")
         if all_skills:
             lines.append(f"Skills ({len(all_skills)}):")
             for s in all_skills:
@@ -380,8 +381,7 @@ class SlashCommandHandler:
 
     async def _cmd_dream(self, thread_id: str, send_fn: SendFn) -> None:
         from wintermute.workers import dreaming
-        from wintermute.infra.memory_io import read_text_safe
-        from wintermute.infra.paths import MEMORIES_FILE
+        from wintermute.infra import memory_store
 
         if not self._dreaming_loop:
             await send_fn("Dreaming loop not available.")
@@ -391,13 +391,16 @@ class SlashCommandHandler:
         from wintermute.infra import database as db
 
         def _snapshot_memory_skills():
-            mem_len = len(read_text_safe(MEMORIES_FILE) or "")
+            try:
+                mem_count = memory_store.count()
+            except Exception:
+                mem_count = 0
             try:
                 from wintermute.infra import skill_store
                 skills_count = skill_store.count()
             except Exception:
                 skills_count = 0
-            return mem_len, skills_count
+            return mem_count, skills_count
 
         mem_before, skills_count_before = await asyncio.to_thread(_snapshot_memory_skills)
         tasks_before = len(await db.async_call(db.list_tasks, "active"))
@@ -422,7 +425,7 @@ class SlashCommandHandler:
 
         await send_fn(
             f"Dream cycle complete ({len(report.phases_run)} phases).\n"
-            f"MEMORIES.txt: {mem_before} -> {mem_after} chars\n"
+            f"Memory store: {mem_before} -> {mem_after} entries\n"
             f"Tasks: {tasks_before} -> {tasks_after} active\n"
             f"Skills: {skills_count_before} -> {skills_count_after}\n"
             f"Phases:\n{phases_text}{errors_text}"
@@ -559,7 +562,7 @@ class SlashCommandHandler:
             "- `/reflect` — Trigger a reflection cycle; shows findings and self-model update\n\n"
             "**Memory**\n"
             "- `/memory-stats` — Show memory store backend, entry count, and status\n"
-            "- `/rebuild-index` — Rebuild the vector memory index from MEMORIES.txt\n\n"
+            "- `/rebuild-index` — Rebuild the vector memory index\n\n"
             "**Configuration**\n"
             "- `/config` — Show current resolved config for this thread\n"
             "- `/config <key> <value>` — Set a per-thread override (keys: backend_name, session_timeout_minutes, sub_sessions_enabled, system_prompt_mode)\n"

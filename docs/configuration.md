@@ -333,7 +333,7 @@ Three backends are available:
 | `local_vector` | embeddings endpoint | Semantic vector search with numpy cosine similarity. Vectors stored in `data/local_vectors.db`. No external vector service required. Default. |
 | `qdrant` | Qdrant instance + embeddings endpoint | Semantic vector search via Qdrant. Requires a running Qdrant instance and an OpenAI-compatible embeddings endpoint. |
 
-MEMORIES.txt is kept as a git-versioned export via dual-write on every mutation. If the configured backend fails to initialize at startup, Wintermute warns and falls back to `fts5` automatically.
+Memories are stored exclusively in the vector backend. New entries are automatically deduplicated at add-time (similarity > 0.80 triggers LLM-based merge). If the configured backend fails to initialize at startup, Wintermute warns and falls back to `fts5` automatically.
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
@@ -369,10 +369,10 @@ Controls the dreaming pipeline parameters. The dedup, contradiction, schema, and
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `dedup_similarity_threshold` | no | `0.85` | Cosine similarity threshold for deduplication clustering |
+| `dedup_similarity_threshold` | no | `0.80` | Cosine similarity threshold for deduplication clustering |
 | `stale_days` | no | `90` | Prune memories not accessed in this many days |
 | `stale_min_access` | no | `3` | ...and accessed fewer than this many times |
-| `working_set_size` | no | `50` | Top-N most-accessed memories exported to MEMORIES.txt |
+| `working_set_size` | no | `50` | Top-N most-accessed memories used for prompt assembly |
 
 **Association (REM-inspired) settings:**
 
@@ -411,9 +411,7 @@ Controls the dreaming pipeline parameters. The dedup, contradiction, schema, and
 | `prediction_proactive_cooldown_hours` | no | `4` | Minimum hours between proactive fires per prediction |
 | `proactive_target_thread_id` | no | `"default"` | Thread ID to deliver proactive sub-session results to (e.g. a Matrix room thread); defaults to the main LLM thread |
 
-**Cold boot:** When a vector backend is configured and the index is empty but `MEMORIES.txt` has content, all entries are automatically imported at startup.
-
-**Access tracking:** Every `search()` call updates `last_accessed` and `access_count` for returned entries. This metadata drives stale pruning (phase 3) and working set export (phase 4) during dreaming.
+**Access tracking:** Every `search()` call updates `last_accessed` and `access_count` for returned entries. This metadata drives stale pruning during dreaming.
 
 **Source tagging:** Each memory entry is tagged with its origin: `user_explicit` (via append_memory tool), `harvest` (via memory harvest workers), `dreaming_merge` (created by dreaming dedup/contradiction resolution), or `unknown` (legacy/untagged). User-explicit memories are protected from stale pruning.
 
@@ -421,7 +419,7 @@ Controls the dreaming pipeline parameters. The dedup, contradiction, schema, and
 
 ### `memory_harvest`
 
-Periodically mines recent conversation history for personal facts and preferences, extracting them into `MEMORIES.txt` (and the vector store, if active) via background sub-sessions. Complements the `append_memory` tool (which the AI uses in real-time during conversation).
+Periodically mines recent conversation history for personal facts and preferences, extracting them into the memory store via background sub-sessions. Deduplication is handled automatically at add-time. Complements the `append_memory` tool (which the AI uses in real-time during conversation).
 
 Triggers when **either** condition is met:
 - `message_threshold` new user messages have accumulated since last harvest
@@ -531,7 +529,7 @@ Seed prompts are language-specific files in `data/prompts/SEED_{language}.txt`. 
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `memories` | `10000` | Char limit before MEMORIES.txt auto-summarisation |
+| `memories` | `10000` | Char limit before memory store auto-summarisation |
 | `tasks` | `5000` | Char limit before tasks auto-summarisation |
 | `skills_total` | `2000` | Char limit for the skills TOC (summaries only; full skills are loaded on demand) |
 

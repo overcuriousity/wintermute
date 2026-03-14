@@ -4,7 +4,7 @@ Assembles the complete system prompt from individual file components.
 Order:
   1. BASE_PROMPT.txt          – immutable core
   2. Current datetime          – local time + timezone
-  3. MEMORIES.txt             – long-term user facts
+  3. Memories (vector store)   – long-term user facts
   4. Tasks (from DB)           – active goals, reminders, scheduled actions
   5. System Observations      – runtime diagnostics (main thread only)
   6. Predictions & Patterns   – dreaming predictions + promoted schemas (main thread only)

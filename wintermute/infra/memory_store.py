@@ -26,7 +26,7 @@ from wintermute.infra.llm_utils import (
     make_content_id as _make_id,
 )
 
-from wintermute.infra.paths import DATA_DIR, MEMORIES_FILE, FTS5_DB_PATH
+from wintermute.infra.paths import DATA_DIR, FTS5_DB_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -265,14 +265,10 @@ class FTS5Backend:
         }
 
     def rebuild(self) -> None:
-        """Drop and re-import from MEMORIES.txt."""
-        try:
-            text = MEMORIES_FILE.read_text(encoding="utf-8").strip()
-        except FileNotFoundError:
-            text = ""
-        entries = [l.strip() for l in text.splitlines() if l.strip()] if text else []
+        """Rebuild FTS index from existing meta table."""
+        entries = [e["text"] for e in self.get_all() if e.get("text")]
         self.replace_all(entries)
-        logger.info("FTS5: rebuilt index from MEMORIES.txt (%d entries)", len(entries))
+        logger.info("FTS5: rebuilt index (%d entries)", len(entries))
 
     def get_all_with_vectors(self) -> list[dict]:
         return []  # FTS5 has no vectors.
@@ -595,14 +591,10 @@ class LocalVectorBackend:
         }
 
     def rebuild(self) -> None:
-        """Drop and re-embed from MEMORIES.txt."""
-        try:
-            text = MEMORIES_FILE.read_text(encoding="utf-8").strip()
-        except FileNotFoundError:
-            text = ""
-        entries = [l.strip() for l in text.splitlines() if l.strip()] if text else []
+        """Re-embed all entries in place."""
+        entries = [e["text"] for e in self.get_all() if e.get("text")]
         self.replace_all(entries)
-        logger.info("LocalVector: rebuilt index from MEMORIES.txt (%d entries)", len(entries))
+        logger.info("LocalVector: rebuilt index (%d entries)", len(entries))
 
     def get_all_with_vectors(self) -> list[dict]:
         import numpy as np
@@ -1115,14 +1107,10 @@ class QdrantBackend:
         }
 
     def rebuild(self) -> None:
-        """Drop collection and re-import from MEMORIES.txt."""
-        try:
-            text = MEMORIES_FILE.read_text(encoding="utf-8").strip()
-        except FileNotFoundError:
-            text = ""
-        entries = [l.strip() for l in text.splitlines() if l.strip()] if text else []
+        """Re-import all entries into a fresh collection."""
+        entries = [e["text"] for e in self.get_all() if e.get("text")]
         self.replace_all(entries)
-        logger.info("Qdrant: rebuilt index from MEMORIES.txt (%d entries)", len(entries))
+        logger.info("Qdrant: rebuilt index (%d entries)", len(entries))
 
     def get_all_with_vectors(self) -> list[dict]:
         points = []
@@ -1281,7 +1269,6 @@ def init(config: dict) -> None:
     """Select and initialize the memory backend.
 
     If the configured backend fails to init, falls back to fts5.
-    On first run, imports MEMORIES.txt into the index if the store is empty.
     """
     global _backend, _config
     _config = dict(config)
@@ -1312,21 +1299,7 @@ def init(config: dict) -> None:
         _backend.init()
         backend_name = "fts5"
 
-    # Cold-boot: if backend is empty and MEMORIES.txt has content, import.
-    if backend_name in ("fts5", "local_vector", "qdrant"):
-        try:
-            if _backend.count() == 0:
-                text = MEMORIES_FILE.read_text(encoding="utf-8").strip()
-                if text:
-                    entries = [l.strip() for l in text.splitlines() if l.strip()]
-                    if entries:
-                        logger.info("Cold-boot: importing %d memories from MEMORIES.txt into %s",
-                                     len(entries), backend_name)
-                        _backend.replace_all(entries)
-        except FileNotFoundError:
-            pass
-        except Exception as exc:
-            logger.error("Cold-boot import failed: %s", exc)
+    logger.info("Memory backend initialized: %s (%d entries)", backend_name, _backend.count())
 
 
 def search(query: str, top_k: int | None = None, threshold: float | None = None) -> list[dict]:
@@ -1433,6 +1406,59 @@ def create_snapshot() -> str:
     if isinstance(_backend, QdrantBackend):
         return _backend.create_snapshot()
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Async dedup-aware add
+# ---------------------------------------------------------------------------
+
+_DEDUP_SIMILARITY_THRESHOLD = 0.80
+
+
+async def add_with_dedup(entry: str, source: str = "unknown", *, pool=None) -> str:
+    """Add a memory entry, merging with an existing near-duplicate if found.
+
+    1. Search for similar entries above ``_DEDUP_SIMILARITY_THRESHOLD``.
+    2. If a match is found and *pool* is provided, merge via LLM.
+    3. Delete the old entry and add the merged result.
+    4. If no match, fall back to plain ``add()``.
+
+    Returns the entry_id of the new/merged entry.
+    """
+    import asyncio
+    from wintermute.infra import prompt_loader
+
+    hits = await asyncio.to_thread(search, entry, top_k=1, threshold=_DEDUP_SIMILARITY_THRESHOLD)
+    if hits and pool is not None and pool.enabled:
+        existing = hits[0]
+        existing_text = existing.get("text", "")
+        existing_id = existing.get("id", "")
+
+        try:
+            merge_prompt = prompt_loader.load(
+                "MEMORY_MERGE_PROMPT.txt",
+                entry_1=existing_text,
+                entry_2=entry,
+            )
+            response = await pool.call(
+                messages=[{"role": "user", "content": merge_prompt}],
+                max_tokens_override=512,
+            )
+            merged = (response.content or "").strip()
+            if merged:
+                # Delete old, add merged.
+                await asyncio.to_thread(delete, existing_id)
+                new_id = await asyncio.to_thread(add, merged, source=source)
+                logger.info(
+                    "Memory dedup: merged existing %s (%.0f%% sim) → %s",
+                    existing_id, hits[0].get("score", 0) * 100, new_id,
+                )
+                return new_id
+        except Exception as exc:
+            logger.warning("Memory dedup merge failed, adding as new: %s", exc)
+
+    # No duplicate or merge failed — plain add.
+    return await asyncio.to_thread(add, entry, source=source)
 
 
 def search_neighbors_batch(

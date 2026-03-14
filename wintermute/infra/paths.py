@@ -4,7 +4,6 @@ from pathlib import Path
 
 DATA_DIR = Path("data")
 
-MEMORIES_FILE = DATA_DIR / "MEMORIES.txt"
 SKILLS_DIR = DATA_DIR / "skills"
 PROMPTS_DIR = DATA_DIR / "prompts"
 FTS5_DB_PATH = DATA_DIR / "memory_index.db"
