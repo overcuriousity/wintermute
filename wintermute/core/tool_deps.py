@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager
     from wintermute.core.types import BackendPool
     from wintermute.infra.event_bus import EventBus
+    from wintermute.main import ShutdownCoordinator
     from wintermute.workers.scheduler_thread import TaskScheduler
     from wintermute.workers.self_model import SelfModelProfiler
 
@@ -67,3 +68,6 @@ class ToolDeps:
 
     # Event loop reference for bridging sync tool calls to async dedup.
     event_loop: Optional[asyncio.AbstractEventLoop] = None
+
+    # Shutdown coordinator for restart_self tool.
+    shutdown_coordinator: Optional["ShutdownCoordinator"] = None

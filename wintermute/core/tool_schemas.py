@@ -385,6 +385,24 @@ TOOL_SCHEMAS = [
             "required": ["url"],
         },
     ),
+    _fn(
+        "restart_self",
+        (
+            "Restart the Wintermute process. Use after making code changes to yourself "
+            "or when a full config reload is needed. The process shuts down gracefully "
+            "(cancels all running operations, closes connections) then re-executes."
+        ),
+        {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Why the restart is needed (logged for diagnostics).",
+                },
+            },
+            "required": [],
+        },
+    ),
 ]
 
 
@@ -404,6 +422,7 @@ TOOL_CATEGORIES: dict[str, str] = {
     "append_memory":      "orchestration",
     "skill":              "research",
     "query_telemetry":    "orchestration",
+    "restart_self":       "orchestration",
 }
 
 

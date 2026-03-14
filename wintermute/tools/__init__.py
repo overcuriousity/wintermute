@@ -35,6 +35,18 @@ from wintermute.tools.session_tools import tool_worker_delegation, tool_query_te
 
 logger = logging.getLogger(__name__)
 
+
+def _tool_restart_self(inputs: dict, **kwargs: Any) -> str:
+    """Trigger a graceful restart of the Wintermute process."""
+    reason = inputs.get("reason", "no reason given")
+    tool_deps: Optional[ToolDeps] = kwargs.get("tool_deps")
+    if not tool_deps or not tool_deps.shutdown_coordinator:
+        return json.dumps({"error": "Restart not available — shutdown coordinator not wired"})
+    logger.info("restart_self requested: %s", reason)
+    tool_deps.shutdown_coordinator.request_restart()
+    return json.dumps({"status": "restarting", "reason": reason})
+
+
 # Backwards-compat alias (was private, now public in tool_schemas).
 _NL_SCHEMA_MAP = NL_SCHEMA_MAP
 
@@ -61,6 +73,7 @@ _DISPATCH: dict[str, Any] = {
     "search_web":         tool_search_web,
     "fetch_url":          tool_fetch_url,
     "query_telemetry":    tool_query_telemetry,
+    "restart_self":       _tool_restart_self,
 }
 
 

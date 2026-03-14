@@ -20,6 +20,7 @@ Startup sequence:
 import asyncio
 import logging
 import logging.handlers
+import os
 import signal
 import sys
 from pathlib import Path
@@ -118,12 +119,24 @@ def ensure_data_dirs() -> None:
 # Graceful shutdown
 # ---------------------------------------------------------------------------
 
+# Fallback exit code when os.execv() fails — systemd's Restart=on-failure
+# will restart the service on any non-zero exit.
+_EXECV_FALLBACK_EXIT_CODE = 42
+
+
 class ShutdownCoordinator:
     def __init__(self) -> None:
         self._event = asyncio.Event()
+        self._loop = asyncio.get_event_loop()
+        self.restart_requested: bool = False
 
     def request_shutdown(self) -> None:
-        self._event.set()
+        self._loop.call_soon_threadsafe(self._event.set)
+
+    def request_restart(self) -> None:
+        """Request a full process restart after graceful shutdown."""
+        self.restart_requested = True
+        self._loop.call_soon_threadsafe(self._event.set)
 
     async def wait(self) -> None:
         await self._event.wait()
@@ -542,6 +555,7 @@ async def main() -> None:
         event_bus=event_bus,
         memory_pool=sub_sessions_pool,
         event_loop=asyncio.get_running_loop(),
+        shutdown_coordinator=shutdown,
     )
 
     llm = LLMThread(main_pool=main_pool, compaction_pool=compaction_pool,
@@ -862,6 +876,15 @@ async def main() -> None:
         logger.warning("data_versioning: drain timed out after 30 s — commits may be incomplete")
 
     logger.info("Wintermute shutdown complete")
+
+    if shutdown.restart_requested:
+        logger.info("Restart requested — re-executing process")
+        try:
+            os.execv(sys.executable, [sys.executable, "-m", "wintermute.main"] + sys.argv[1:])
+        except OSError:
+            logger.exception("os.execv failed — exiting with code %d for systemd restart",
+                             _EXECV_FALLBACK_EXIT_CODE)
+            sys.exit(_EXECV_FALLBACK_EXIT_CODE)
 
 
 if __name__ == "__main__":
