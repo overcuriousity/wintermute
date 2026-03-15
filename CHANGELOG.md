@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.12.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.11.2-alpha...v0.12.0-alpha) (2026-03-15)
+
+
+### Features
+
+* add response scaffolding for sub-sessions ([0a18a16](https://github.com/overcuriousity/wintermute/commit/0a18a1660135a308c17663d20af419d394f569e1))
+* add response scaffolding for sub-sessions ([2824d2c](https://github.com/overcuriousity/wintermute/commit/2824d2c864fd672c0c921af07789218e78f324f9)), closes [#179](https://github.com/overcuriousity/wintermute/issues/179)
+
+
+### Bug Fixes
+
+* add json-repair fallback for malformed tool call arguments ([32c1884](https://github.com/overcuriousity/wintermute/commit/32c18847aacbe7968f10edc2803cc35335bbe443)), closes [#177](https://github.com/overcuriousity/wintermute/issues/177)
+* add json-repair fallback for malformed tool calls ([de1a700](https://github.com/overcuriousity/wintermute/commit/de1a700f0861ebb75e2522cefaaba2bf2b6cb447))
+
+
+### Dependencies
+
+* **python:** Bump numpy from 2.4.2 to 2.4.3 ([8da0408](https://github.com/overcuriousity/wintermute/commit/8da04088afa3fd1edb111454ad72e1c1f69dac7d))
+* **python:** Bump openai from 2.26.0 to 2.28.0 ([b49101b](https://github.com/overcuriousity/wintermute/commit/b49101bc86e5cc4cb546acb51273eb4946c20b0a))
+* **python:** Bump qdrant-client from 1.17.0 to 1.17.1 ([1a75e35](https://github.com/overcuriousity/wintermute/commit/1a75e356a5406340042f91cb9f737fdfd0f0a11a))
+* **python:** Bump ruff from 0.15.5 to 0.15.6 ([0a1ea0b](https://github.com/overcuriousity/wintermute/commit/0a1ea0be544111f76205bddcd8af83484f24dd23))
+
 ## [0.11.2-alpha](https://github.com/overcuriousity/wintermute/compare/v0.11.1-alpha...v0.11.2-alpha) (2026-03-14)
 
 
