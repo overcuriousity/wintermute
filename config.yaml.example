@@ -304,6 +304,25 @@ nl_translation:
     - skill                               # Skill management (add/read/search actions)
 
 
+# ── Tool Disclosure (Progressive Tool Exposure) ──────────────────────
+# Reduces the number of tool schemas sent per turn by classifying user
+# intent via embedding similarity.  Small models benefit most — fewer
+# schemas means less confusion and faster inference.
+#
+# Uses the existing memory.embeddings endpoint (no extra backend needed).
+# Falls back to all tools if the embeddings endpoint is unavailable.
+#
+# Tier 0 (always):       append_memory, read_file, write_file
+# Tier 1 (research):     search_web, fetch_url, execute_shell, send_file
+# Tier 2 (orchestration): worker_delegation, task, skill, query_telemetry, restart_self
+#
+tool_disclosure:
+  enabled: false                      # Default off for backward compat
+  similarity_threshold: 0.3           # Cosine sim threshold (lower = more generous)
+  always_include_delegation: true     # Always include worker_delegation when
+                                      # inline_tool_limit CP hook is active
+
+
 # ── Skill Storage ────────────────────────────────────────────────────
 # Skills (learned reusable procedures) are stored in a vector-indexed
 # backend — the same architecture as memories.  The skills backend is

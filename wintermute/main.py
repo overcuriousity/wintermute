@@ -437,6 +437,19 @@ async def main() -> None:
         logger.info("NL Translation enabled (tools=%s, model=%s)",
                      nl_translation_config["tools"], nl_translation_pool.primary.model)
 
+    # Parse tool disclosure config.
+    _td_raw = cfg.get("tool_disclosure", {}) or {}
+    _embed_cfg = cfg.get("memory", {}).get("embeddings", {})
+    tool_disclosure_config = {
+        "enabled": _td_raw.get("enabled", False),
+        "similarity_threshold": _td_raw.get("similarity_threshold", 0.3),
+        "always_include_delegation": _td_raw.get("always_include_delegation", True),
+        "embed_cfg": _embed_cfg,
+    }
+    if tool_disclosure_config["enabled"]:
+        logger.info("Tool disclosure enabled (threshold=%.2f)",
+                     tool_disclosure_config["similarity_threshold"])
+
     dreaming_raw = cfg.get("dreaming", {})
     dreaming_cfg = DreamingConfig(
         hour=dreaming_raw.get("hour", 1),
@@ -569,7 +582,8 @@ async def main() -> None:
                     thread_config_manager=thread_config_mgr,
                     backend_pools_by_name=backend_pools_by_name,
                     compaction_keep_recent=compaction_keep_recent,
-                    tool_deps=tool_deps)
+                    tool_deps=tool_deps,
+                    tool_disclosure_config=tool_disclosure_config)
 
     # 3. SubSessionManager — needs llm.enqueue_system_event (no cycle: LLM
     #    already exists).  Fills the lazy holder so LLM can reach it later.
@@ -781,6 +795,11 @@ async def main() -> None:
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, shutdown.request_shutdown)
+
+    # Initialize tool disclosure tier embeddings (non-blocking, best-effort).
+    if tool_disclosure_config["enabled"]:
+        from wintermute.core.tool_disclosure import init_tier_embeddings
+        await init_tier_embeddings(_embed_cfg)
 
     tasks = [
         asyncio.create_task(llm.run(),              name="llm"),

@@ -526,7 +526,8 @@ def _inject_profiles(schema: dict, profiles: dict[str, dict]) -> dict:
 
 def get_tool_schemas(categories: set[str] | None = None,
                      nl_tools: set[str] | None = None,
-                     tool_profiles: dict[str, dict] | None = None) -> list[dict]:
+                     tool_profiles: dict[str, dict] | None = None,
+                     allowed_tools: set[str] | None = None) -> list[dict]:
     """Return tool schemas filtered by category, with optional NL substitution.
 
     If *categories* is None, return all schemas (used by the main agent).
@@ -547,6 +548,8 @@ def get_tool_schemas(categories: set[str] | None = None,
             schema for schema in TOOL_SCHEMAS
             if TOOL_CATEGORIES.get(schema["function"]["name"]) in categories
         ]
+    if allowed_tools is not None:
+        schemas = [s for s in schemas if s["function"]["name"] in allowed_tools]
     # Inject profile names into the worker_delegation schema.
     if tool_profiles:
         schemas = [

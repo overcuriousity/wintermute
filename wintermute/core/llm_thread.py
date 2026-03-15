@@ -107,7 +107,8 @@ class LLMThread:
                  thread_config_manager: "Optional[ThreadConfigManager]" = None,
                  backend_pools_by_name: "Optional[dict[str, BackendPool]]" = None,
                  compaction_keep_recent: int = COMPACTION_KEEP_RECENT,
-                 tool_deps: "Optional[ToolDeps]" = None) -> None:
+                 tool_deps: "Optional[ToolDeps]" = None,
+                 tool_disclosure_config: "Optional[dict]" = None) -> None:
         self._main_pool = main_pool
         self._convergence_protocol_pool = convergence_protocol_pool
         from wintermute.core.cp_runner import ConvergenceProtocolRunner
@@ -121,6 +122,12 @@ class LLMThread:
         self._seed_language = seed_language
         self._event_bus = event_bus
         self._tool_deps = tool_deps
+        # Tool disclosure (progressive tool exposure).
+        _td = tool_disclosure_config or {}
+        self._tool_disclosure_enabled = _td.get("enabled", False)
+        self._tool_disclosure_threshold = _td.get("similarity_threshold", 0.3)
+        self._tool_disclosure_always_delegation = _td.get("always_include_delegation", True)
+        self._tool_disclosure_embed_cfg = _td.get("embed_cfg", {})
         # Convenience: primary config for context_size / model name lookups.
         self._cfg = main_pool.primary
         self._broadcast = broadcast_fn  # async callable(text, thread_id, *, reasoning=None)
@@ -652,11 +659,12 @@ class LLMThread:
 
     async def _prepare_inference_context(
         self, item: _QueueItem,
-    ) -> tuple[list[dict], str, str | None, "BackendPool", "ProviderConfig", bool, str, list | None, list | None]:
+    ) -> tuple[list[dict], str, str | None, "BackendPool", "ProviderConfig", bool, str, list | None, list | None, set[str] | None]:
         """Resolve config, build messages, fetch memories, assemble system prompt.
 
         Returns (messages, system_prompt, memory_query, pool, pool_cfg,
-        is_sub_session_result, prompt_mode, memory_results, prediction_results).
+        is_sub_session_result, prompt_mode, memory_results, prediction_results,
+        disclosed_tool_names).
         Also handles pre-compaction if the history exceeds the token budget.
         """
         thread_id = item.thread_id
@@ -707,6 +715,19 @@ class LLMThread:
                 _fetch_memories(), _fetch_predictions(),
             )
 
+        # Tool disclosure: classify which tool tiers to expose this turn.
+        _disclosed_tool_names: set[str] | None = None
+        if self._tool_disclosure_enabled and not item.is_system_event:
+            from wintermute.core import tool_disclosure
+            _tiers = await tool_disclosure.classify_intent(
+                item.text, self._tool_disclosure_embed_cfg,
+                threshold=self._tool_disclosure_threshold,
+            )
+            _disclosed_tool_names = tool_disclosure.get_disclosed_tool_names(_tiers)
+            if self._tool_disclosure_always_delegation:
+                _disclosed_tool_names.add("worker_delegation")
+            logger.debug("Tool disclosure: tiers=%s, tools=%s", _tiers, _disclosed_tool_names)
+
         # Assemble system prompt first so we can measure its real token cost.
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
@@ -717,10 +738,12 @@ class LLMThread:
             tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
             nl_tools=nl_tools,
             prediction_results=_prediction_results,
+            available_tools=_disclosed_tool_names,
         )
         active_schemas = tool_module.get_tool_schemas(
             nl_tools=nl_tools,
             tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
+            allowed_tools=_disclosed_tool_names,
         )
         overhead_tokens = (
             _count_tokens(system_prompt, pool_cfg.model)
@@ -749,6 +772,7 @@ class LLMThread:
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
                 nl_tools=nl_tools,
                 prediction_results=_prediction_results,
+                available_tools=_disclosed_tool_names,
             )
 
         self._store.last_system_prompt[thread_id] = system_prompt
@@ -756,7 +780,7 @@ class LLMThread:
         is_sub_session_result = item.is_system_event and "[SUB-SESSION " in item.text
         return (messages, system_prompt, _memory_query, pool, pool_cfg,
                 is_sub_session_result, prompt_mode, _memory_results,
-                _prediction_results)
+                _prediction_results, _disclosed_tool_names)
 
     async def _save_user_message(
         self, item: _QueueItem, pool_cfg: "ProviderConfig", is_sub_session_result: bool,
@@ -847,6 +871,7 @@ class LLMThread:
         memory_results: "list | None",
         prompt_mode: str,
         prediction_results: "list | None" = None,
+        disclosed_tool_names: "set[str] | None" = None,
     ) -> "LLMReply":
         """Run the inference loop, retrying once after compaction on context overflow."""
         thread_id = item.thread_id
@@ -854,6 +879,7 @@ class LLMThread:
             return await self._inference_loop(
                 system_prompt, messages, thread_id,
                 pool=pool,
+                disclosed_tool_names=disclosed_tool_names,
             )
         except ContextTooLargeError:
             logger.warning("Context too large for thread %s — forcing compaction", thread_id)
@@ -870,10 +896,12 @@ class LLMThread:
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
                 nl_tools=nl_tools,
                 prediction_results=prediction_results,
+                available_tools=disclosed_tool_names,
             )
             return await self._inference_loop(
                 system_prompt, messages, thread_id,
                 pool=pool,
+                disclosed_tool_names=disclosed_tool_names,
             )
 
     async def _process(self, item: _QueueItem) -> LLMReply:
@@ -882,7 +910,8 @@ class LLMThread:
         # 1. Prepare context: config, messages, memory, system prompt, pre-compaction.
         (messages, system_prompt, _memory_query, pool, pool_cfg,
          is_sub_session_result, _prompt_mode,
-         _memory_results, _prediction_results) = await self._prepare_inference_context(item)
+         _memory_results, _prediction_results,
+         _disclosed_tool_names) = await self._prepare_inference_context(item)
 
         # 2. Save the incoming message to DB.
         await self._save_user_message(item, pool_cfg, is_sub_session_result)
@@ -893,6 +922,7 @@ class LLMThread:
             item, system_prompt, messages, pool,
             _memory_query, _memory_results, _prompt_mode,
             prediction_results=_prediction_results,
+            disclosed_tool_names=_disclosed_tool_names,
         )
         _inference_duration = _time.time() - _inference_start
 
@@ -910,7 +940,8 @@ class LLMThread:
     async def _inference_loop(self, system_prompt: str, messages: list[dict],
                               thread_id: str = "default",
                               disable_tools: bool = False,
-                              pool: "Optional[BackendPool]" = None) -> LLMReply:
+                              pool: "Optional[BackendPool]" = None,
+                              disclosed_tool_names: "Optional[set[str]]" = None) -> LLMReply:
         """
         Repeatedly call the API until finish_reason is not 'tool_calls'.
         The system prompt is prepended as a role=system message each call
@@ -932,8 +963,11 @@ class LLMThread:
         _profiles = self._tool_deps.tool_profiles if self._tool_deps else None
         if disable_tools:
             tools = None
-        elif nl_tools or _profiles:
-            tools = tool_module.get_tool_schemas(nl_tools=nl_tools, tool_profiles=_profiles)
+        elif disclosed_tool_names is not None or nl_tools or _profiles:
+            tools = tool_module.get_tool_schemas(
+                nl_tools=nl_tools, tool_profiles=_profiles,
+                allowed_tools=disclosed_tool_names,
+            )
         else:
             tools = tool_module.TOOL_SCHEMAS
         token_budget = active_cfg.context_size - active_cfg.max_tokens
