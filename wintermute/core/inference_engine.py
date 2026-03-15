@@ -24,12 +24,12 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
-
-import json_repair
 import logging
 import time as _time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
+
+import json_repair
 
 from wintermute.core import nl_translator
 from wintermute.core.tool_deps import ToolDeps
