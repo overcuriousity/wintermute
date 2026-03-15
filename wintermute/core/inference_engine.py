@@ -29,6 +29,8 @@ import time as _time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
+import json_repair
+
 from wintermute.core import nl_translator
 from wintermute.core.tool_deps import ToolDeps
 from wintermute.infra import database
@@ -362,21 +364,28 @@ async def process_tool_call(
     # -- Step 1: Parse JSON arguments --------------------------------
     try:
         inputs = json.loads(raw_args)
-    except json.JSONDecodeError as exc:
-        logger.warning(
-            "Malformed tool args for %s in %s (id=%s): %s — raw: %s",
-            name, ctx.thread_id, tc_id, exc, raw_args[:500],
-        )
-        return ToolCallOutcome(
-            content=(
-                f"[ERROR] Could not parse arguments for tool "
-                f"'{name}': {exc}. "
-                f"Please retry with valid JSON arguments."
-            ),
-            tool_name=name,
-            raw_arguments=raw_args,
-            executed=False,
-        )
+    except json.JSONDecodeError:
+        try:
+            inputs = json_repair.loads(raw_args)
+            logger.info(
+                "Repaired malformed JSON for tool %s in %s (id=%s) — raw: %s",
+                name, ctx.thread_id, tc_id, raw_args[:500],
+            )
+        except Exception as exc:
+            logger.warning(
+                "Malformed tool args for %s in %s (id=%s): %s — raw: %s",
+                name, ctx.thread_id, tc_id, exc, raw_args[:500],
+            )
+            return ToolCallOutcome(
+                content=(
+                    f"[ERROR] Could not parse arguments for tool "
+                    f"'{name}': {exc}. "
+                    f"Please retry with valid JSON arguments."
+                ),
+                tool_name=name,
+                raw_arguments=raw_args,
+                executed=False,
+            )
 
     nl_was_translated = False
 
