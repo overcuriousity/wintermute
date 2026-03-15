@@ -114,6 +114,8 @@ def tool_worker_delegation(inputs: dict, thread_id: Optional[str] = None,
             kwargs["not_before"] = inputs["not_before"]
         if "profile" in inputs:
             kwargs["profile"] = inputs["profile"]
+        if "_spawn_batch_id" in inputs:
+            kwargs["spawn_batch_id"] = inputs["_spawn_batch_id"]
         session_id = deps.sub_session_manager.spawn(**kwargs)
         has_deps = bool(inputs.get("depends_on")) or bool(inputs.get("depends_on_previous"))
         has_gate = bool(inputs.get("not_before"))

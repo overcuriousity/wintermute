@@ -315,6 +315,10 @@ class SubSessionManager:
         # Tracks which sessions each worker has spawned (worker_session_id -> [child_ids]).
         # Used to resolve depends_on_previous without the LLM needing to track IDs.
         self._worker_spawned: dict[str, list[str]] = {}
+        # Batch-scoped spawn tracking: batch_id -> [session_ids].
+        # depends_on_previous resolves only within the same batch, preventing
+        # unrelated tasks from different conversation turns being chained together.
+        self._spawn_batches: dict[str, list[str]] = {}
         # Tracks parent sub-session IDs whose children have already been aggregated,
         # preventing duplicate delivery when multiple children complete near-simultaneously.
         self._aggregated_parents: set[str] = set()
@@ -362,6 +366,7 @@ class SubSessionManager:
         skip_cp_on_exit: bool = False,
         profile: Optional[str] = None,
         task_id: Optional[str] = None,
+        spawn_batch_id: Optional[str] = None,
     ) -> str:
         """
         Register a sub-session and start it immediately (or defer if deps pending).
@@ -372,9 +377,11 @@ class SubSessionManager:
         Results from completed dependencies are prepended to *context_blobs*.
 
         If *depends_on_previous* is True, the dependency list is automatically
-        populated with all session IDs previously spawned by the same parent
-        worker.  This eliminates the need for the LLM to track and reference
-        session IDs, preventing hallucinated-ID deadlocks.
+        populated with prior session IDs.  When *spawn_batch_id* is provided,
+        only sessions within the same batch are included — preventing unrelated
+        tasks from different conversation turns being chained together.
+        Without a batch ID, falls back to all sessions spawned by the same
+        parent worker (legacy behaviour).
 
         If *profile* is provided, it resolves to a tool_names list and
         system_prompt_mode from the configured tool profiles (unless those
@@ -411,11 +418,15 @@ class SubSessionManager:
 
         deps = self._resolve_deps(
             session_id, depends_on, depends_on_previous, parent_thread_id,
+            spawn_batch_id=spawn_batch_id,
         )
 
         # Track this session as a child of its parent worker.
         if parent_thread_id:
             self._worker_spawned.setdefault(parent_thread_id, []).append(session_id)
+        # Track this session in its spawn batch (if any).
+        if spawn_batch_id:
+            self._spawn_batches.setdefault(spawn_batch_id, []).append(session_id)
 
         root_thread_id = self._resolve_root_thread(parent_thread_id)
 
@@ -539,15 +550,26 @@ class SubSessionManager:
         depends_on: Optional[list[str]],
         depends_on_previous: bool,
         parent_thread_id: Optional[str],
+        spawn_batch_id: Optional[str] = None,
     ) -> list[str]:
-        """Resolve and validate dependency IDs, dropping unknown ones."""
+        """Resolve and validate dependency IDs, dropping unknown ones.
+
+        When *spawn_batch_id* is provided and *depends_on_previous* is True,
+        only sessions within the same batch are used — preventing unrelated
+        tasks from different conversation turns being chained together.
+        """
         if depends_on_previous and parent_thread_id:
-            previous = list(self._worker_spawned.get(parent_thread_id, []))
+            if spawn_batch_id:
+                # Batch-scoped: only depend on sessions in the same batch.
+                previous = list(self._spawn_batches.get(spawn_batch_id, []))
+            else:
+                # Legacy fallback: all sessions from this parent.
+                previous = list(self._worker_spawned.get(parent_thread_id, []))
             raw_deps = previous + (depends_on or [])
             if previous:
                 logger.info(
-                    "Sub-session %s: depends_on_previous resolved to %s",
-                    session_id, previous,
+                    "Sub-session %s: depends_on_previous resolved to %s (batch=%s)",
+                    session_id, previous, spawn_batch_id or "unbatched",
                 )
         else:
             raw_deps = depends_on or []
@@ -1096,6 +1118,11 @@ class SubSessionManager:
                                 _ws_children.remove(nid)
                                 if not _ws_children:
                                     del self._worker_spawned[_ws_parent]
+                        for _batch_id, _batch_children in list(self._spawn_batches.items()):
+                            if nid in _batch_children:
+                                _batch_children.remove(nid)
+                                if not _batch_children:
+                                    del self._spawn_batches[_batch_id]
                         self._aggregated_parents.discard(nid)
                     self._workflow_reports.pop(old_wid, None)
                     logger.debug("Purged completed workflow %s from memory", old_wid)
@@ -1122,6 +1149,11 @@ class SubSessionManager:
                             if tg_handle is not None:
                                 tg_handle.cancel()
                             self._worker_spawned.pop(nid, None)
+                            for _batch_id, _batch_children in list(self._spawn_batches.items()):
+                                if nid in _batch_children:
+                                    _batch_children.remove(nid)
+                                    if not _batch_children:
+                                        del self._spawn_batches[_batch_id]
                             self._aggregated_parents.discard(nid)
                         self._workflow_reports.pop(wid, None)
 

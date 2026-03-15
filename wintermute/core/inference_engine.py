@@ -251,6 +251,14 @@ async def _execute_multi_item(
     calls_made: list[str] = []
     call_details: list[dict] = []
 
+    # Assign a shared batch ID so depends_on_previous resolves only within
+    # this group of items, not across unrelated conversation turns.
+    if name == "worker_delegation" and len(items) > 1:
+        import uuid as _uuid
+        batch_id = f"batch_{_uuid.uuid4().hex[:8]}"
+        for item in items:
+            item.setdefault("_spawn_batch_id", batch_id)
+
     for i, item_args in enumerate(items):
         item_result = await asyncio.get_running_loop().run_in_executor(
             None, lambda _n=name, _a=item_args: tool_module.execute_tool(

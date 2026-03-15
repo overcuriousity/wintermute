@@ -23,6 +23,7 @@ Break work into focused workers — each with ONE clear responsibility.
 **Keep as one when:** single atomic action (one file edit, one search, one lookup).
 **Parallel:** independent sub-tasks → JSON array, no dependencies.
 **Sequential:** later step needs earlier results → JSON array with "depends_on_previous": true.
+**IMPORTANT:** "depends_on_previous" only chains workers within the SAME array/batch. It does NOT reference workers from earlier, unrelated requests. Use it freely for sequential steps within one decomposition.
 
 ## Rules
 
