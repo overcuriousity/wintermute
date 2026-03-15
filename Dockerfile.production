@@ -1,0 +1,85 @@
+# UltraRAG Production Dockerfile
+# Multi-stage build optimized for minimal size and security
+# Uses Python 3.12.9-slim (compatible with project requirements)
+
+# ========== BUILDER STAGE ==========
+FROM python:3.12.9-slim AS builder
+
+# Install uv for fast dependency management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Set environment variables
+ENV UV_PYTHON=python3.12 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_NO_CACHE=1
+
+# Install minimal build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy dependency files (layer caching optimization)
+COPY pyproject.toml uv.lock ./
+
+# Install production dependencies with uv
+# Include only retriever and generation optional dependencies for production
+RUN uv sync --frozen --no-dev --group retriever --group generation
+
+# ========== RUNTIME STAGE ==========
+FROM python:3.12.9-slim AS runtime
+
+# Create non-root user
+RUN addgroup --system --gid 1001 ultrarag && \
+    adduser --system --uid 1001 --gid 1001 ultrarag
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set production environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    PATH="/app/.venv/bin:$PATH" \
+    ULTRA_RAG_ENV=production \
+    PORT=5050
+
+WORKDIR /app
+
+# Copy virtual environment from builder
+COPY --from=builder /app/.venv ./.venv
+
+# Copy application code with proper ownership
+COPY --chown=ultrarag:ultrarag src/ ./src/
+COPY --chown=ultrarag:ultrarag ui/ ./ui/
+COPY --chown=ultrarag:ultrarag prompt/ ./prompt/
+COPY --chown=ultrarag:ultrarag examples/ ./examples/
+COPY --chown=ultrarag:ultrarag servers/ ./servers/
+COPY --chown=ultrarag:ultrarag script/ ./script/
+COPY --chown=ultrarag:ultrarag data/ ./data/
+COPY --chown=ultrarag:ultrarag README.md LICENSE.txt .env.dev ./
+
+# Switch to non-root user
+USER ultrarag
+
+# Health check (adjust endpoint based on actual health endpoint)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:5050/ || exit 1
+
+# Expose port
+EXPOSE 5050
+
+# Entrypoint script for better initialization
+COPY --chown=ultrarag:ultrarag script/docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["ultrarag", "show", "ui", "--admin", "--port", "5050", "--host", "0.0.0.0"]

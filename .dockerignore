@@ -1,0 +1,93 @@
+# Docker ignore file for UltraRAG
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.pytest_cache
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Documentation
+docs/_build/
+docs/build/
+
+# Test and development
+tests/
+test/
+*.test
+*.spec
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+tmp/
+temp/
+
+# Docker
+Dockerfile.optimized
+Dockerfile.base-cpu
+Dockerfile.base-gpu
+
+# Large data files (exclude from build, mount as volumes)
+data/*.db
+data/*.sqlite
+data/models/
+data/embeddings/
+
+# UI build artifacts (if any)
+ui/node_modules/
+ui/build/
+ui/dist/
+
+# Environment files (except .env.dev which is copied)
+.env
+.env.local
+.env.*.local
+
+# Backup files
+*.bak
+*.backup

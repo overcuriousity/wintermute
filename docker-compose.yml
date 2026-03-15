@@ -1,0 +1,165 @@
+version: '3.8'
+
+# UltraRAG Docker Compose Configuration
+# Simple deployment with essential services
+
+services:
+  # Main UltraRAG Application
+  ultrarag:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+      target: runtime
+    image: ultrarag:latest
+    container_name: ultrarag
+    ports:
+      - "5050:5050"
+    environment:
+      # Core environment
+      - ULTRA_RAG_ENV=production
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - PORT=5050
+      - HOST=0.0.0.0
+      
+      # API Keys (configure in .env file)
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - RETRIEVER_API_KEY=${RETRIEVER_API_KEY:-}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
+      - EXA_API_KEY=${EXA_API_KEY:-}
+      - ZHIPUAI_API_KEY=${ZHIPUAI_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      
+      # Optional service connections
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - POSTGRES_URL=${POSTGRES_URL:-postgresql://ultrarag:${POSTGRES_PASSWORD:-ultrarag123}@postgres:5432/ultrarag}
+      - MILVUS_HOST=${MILVUS_HOST:-milvus}
+      - MILVUS_PORT=${MILVUS_PORT:-19530}
+      
+      # Health check
+      - WAIT_FOR_HOSTS=${WAIT_FOR_HOSTS:-}
+      - RUN_MIGRATIONS=${RUN_MIGRATIONS:-false}
+    env_file:
+      - .env
+    volumes:
+      # Persistent storage
+      - ./data:/app/data:rw
+      - ./logs:/app/logs:rw
+      # Configuration files
+      - ./prompt:/app/prompt:ro
+      - ./examples:/app/examples:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5050/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    networks:
+      - ultrarag-network
+    # Uncomment depends_on if using these services
+    # depends_on:
+    #   redis:
+    #     condition: service_healthy
+    #   postgres:
+    #     condition: service_healthy
+
+  # Redis for caching (optional - uncomment to enable)
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: ultrarag-redis
+  #   ports:
+  #     - "6379:6379"
+  #   command: redis-server --appendonly yes
+  #   volumes:
+  #     - redis-data:/data
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #   networks:
+  #     - ultrarag-network
+
+  # PostgreSQL for persistent storage (optional - uncomment to enable)
+  # postgres:
+  #   image: postgres:15-alpine
+  #   container_name: ultrarag-postgres
+  #   environment:
+  #     POSTGRES_DB: ultrarag
+  #     POSTGRES_USER: ultrarag
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ultrarag123}
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   ports:
+  #     - "5432:5432"
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U ultrarag"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #   networks:
+  #     - ultrarag-network
+
+  # Milvus vector database (optional - uncomment to enable)
+  # milvus:
+  #   image: milvusdb/milvus:v2.4.0
+  #   container_name: ultrarag-milvus
+  #   environment:
+  #     - ETCD_ENDPOINTS=etcd:2379
+  #     - MINIO_ENDPOINTS=minio:9000
+  #   volumes:
+  #     - milvus-data:/var/lib/milvus
+  #   ports:
+  #     - "19530:19530"
+  #   restart: unless-stopped
+  #   networks:
+  #     - ultrarag-network
+  #   depends_on:
+  #     - etcd
+  #     - minio
+
+  # Milvus dependencies (required if using Milvus)
+  # etcd:
+  #   image: quay.io/coreos/etcd:v3.5.5
+  #   container_name: ultrarag-etcd
+  #   environment:
+  #     - ETCD_AUTO_COMPACTION_MODE=revision
+  #     - ETCD_AUTO_COMPACTION_RETENTION=1000
+  #   volumes:
+  #     - etcd-data:/etcd
+  #   command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+  #   networks:
+  #     - ultrarag-network
+
+  # minio:
+  #   image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+  #   container_name: ultrarag-minio
+  #   environment:
+  #     MINIO_ACCESS_KEY: minioadmin
+  #     MINIO_SECRET_KEY: minioadmin
+  #   volumes:
+  #     - minio-data:/data
+  #   command: minio server /data --console-address ":9001"
+  #   networks:
+  #     - ultrarag-network
+
+networks:
+  ultrarag-network:
+    driver: bridge
+
+volumes:
+  # Uncomment if using these services
+  # redis-data:
+  # postgres-data:
+  # milvus-data:
+  # etcd-data:
+  # minio-data:
