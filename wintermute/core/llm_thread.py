@@ -1017,6 +1017,25 @@ class LLMThread:
                     "Tool calls detected (finish_reason=%s): %s",
                     response.finish_reason, _tc_names,
                 )
+
+                # Detect truncated tool calls (LLM hit max_tokens mid-JSON).
+                # The last tool call's arguments are likely incomplete.
+                if response.finish_reason == "length":
+                    logger.warning(
+                        "Tool calls truncated (finish_reason=length) — "
+                        "discarding and asking model to retry with smaller output"
+                    )
+                    full_messages.append({
+                        "role": "user",
+                        "content": (
+                            "Your previous response was cut off (output token limit reached) "
+                            "while generating tool call arguments. Please retry — if the "
+                            "content is very large, split it into smaller parts using "
+                            "multiple sequential tool calls."
+                        ),
+                    })
+                    continue
+
                 # Log this inference round (intermediate, tool-use round).
                 try:
                     await database.async_call(

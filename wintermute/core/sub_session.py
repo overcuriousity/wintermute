@@ -1844,6 +1844,24 @@ class SubSessionManager:
                 logger.debug("Failed to log sub-session inference round", exc_info=True)
 
             if msg_tool_calls:
+                # Detect truncated tool calls (LLM hit max_tokens mid-JSON).
+                if response.finish_reason == "length":
+                    logger.warning(
+                        "Sub-session %s: tool calls truncated (finish_reason=length) "
+                        "— asking model to retry with smaller output",
+                        state.session_id,
+                    )
+                    state.messages.append({
+                        "role": "user",
+                        "content": (
+                            "Your previous response was cut off (output token limit reached) "
+                            "while generating tool call arguments. Please retry — if the "
+                            "content is very large, split it into smaller parts using "
+                            "multiple sequential tool calls."
+                        ),
+                    })
+                    continue
+
                 state.messages.append(msg)
                 # Pre-populate placeholder tool results for ALL tool_calls so
                 # state.messages is always API-valid even if a timeout cancels

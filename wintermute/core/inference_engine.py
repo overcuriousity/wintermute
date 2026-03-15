@@ -384,6 +384,20 @@ async def process_tool_call(
                 "Malformed tool args for %s in %s (id=%s): %s — raw: %s",
                 name, ctx.thread_id, tc_id, exc, raw_args[:500],
             )
+            # Detect likely truncation (unterminated string / unexpected end).
+            _exc_lower = str(exc).lower()
+            if "unterminated" in _exc_lower or "unexpected end" in _exc_lower:
+                return ToolCallOutcome(
+                    content=(
+                        f"[ERROR] Tool call arguments for '{name}' were "
+                        f"truncated (output token limit likely exceeded). "
+                        f"Please retry with smaller content — if writing a "
+                        f"large file, split it into multiple write_file calls."
+                    ),
+                    tool_name=name,
+                    raw_arguments=raw_args,
+                    executed=False,
+                )
             return ToolCallOutcome(
                 content=(
                     f"[ERROR] Could not parse arguments for tool "
