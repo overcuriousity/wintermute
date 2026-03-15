@@ -2031,6 +2031,9 @@ class SubSessionManager:
 
         parts = [base] if base else []
 
+        if mode in ("minimal", "base_only"):
+            parts.append(prompt_loader.load("SUB_SESSION_SCAFFOLDING.txt"))
+
         if context_blobs:
             blobs_text = "\n\n".join(context_blobs)
             parts.append(f"# Task Context\n\n{blobs_text}")

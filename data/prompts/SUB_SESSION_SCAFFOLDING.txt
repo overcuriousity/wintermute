@@ -1,0 +1,7 @@
+## Approach
+
+1. ASSESS — Read or search to understand the current state relevant to your objective.
+2. ACT — Use tools to perform the required actions. One step at a time.
+3. VERIFY — After each step, check: does the result match the objective?
+
+Do not repeat tool calls that already returned results.
