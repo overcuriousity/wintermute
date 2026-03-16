@@ -1260,6 +1260,9 @@ class DreamingLoop:
     # Number of memory appends before considering an early consolidation.
     _EARLY_TRIGGER_THRESHOLD = 50
 
+    # Minimum seconds between early skill consolidation runs to avoid spamming.
+    _SKILLS_COOLDOWN_SECONDS = 3600  # 1 hour
+
     def __init__(self, config: DreamingConfig,
                  pool: "BackendPool",
                  event_bus: "EventBus | None" = None) -> None:
@@ -1269,6 +1272,7 @@ class DreamingLoop:
         self._running = False
         self._memory_append_count = 0
         self._event_bus_subs: list[str] = []
+        self._last_skills_consolidation: float = 0.0
 
     async def _on_memory_appended(self, event) -> None:
         """Track memory appends; trigger early consolidation if threshold exceeded."""
@@ -1281,12 +1285,28 @@ class DreamingLoop:
             self._memory_append_count = 0
             await self._fire()
 
+    async def _on_skills_oversized(self, event) -> None:
+        """Trigger early dreaming cycle when skill TOC exceeds size limit."""
+        import time
+        now = time.monotonic()
+        if now - self._last_skills_consolidation < self._SKILLS_COOLDOWN_SECONDS:
+            logger.debug("Dreaming: skills oversized but cooldown active, skipping")
+            return
+        self._last_skills_consolidation = now
+        logger.info("Dreaming: skills TOC oversized — triggering early consolidation")
+        await self._fire()
+
     async def run(self) -> None:
         self._running = True
         if self._event_bus:
             sub_id = self._event_bus.subscribe(
                 "memory.appended", self._on_memory_appended,
                 debounce_ms=5000,
+            )
+            self._event_bus_subs.append(sub_id)
+            sub_id = self._event_bus.subscribe(
+                "skills.oversized", self._on_skills_oversized,
+                debounce_ms=30_000,
             )
             self._event_bus_subs.append(sub_id)
         target = dt_time(self._cfg.hour, self._cfg.minute)

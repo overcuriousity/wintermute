@@ -35,11 +35,13 @@ class ContextCompactor:
         store: "ConversationStore",
         keep_recent: int = COMPACTION_KEEP_RECENT,
         enqueue_system_event_fn=None,
+        event_bus=None,
     ) -> None:
         self._compaction_pool = compaction_pool
         self._broadcast = broadcast_fn
         self._store = store
         self._enqueue_system_event = enqueue_system_event_fn
+        self._event_bus = event_bus
         try:
             _keep = int(keep_recent)
         except (TypeError, ValueError):
@@ -124,6 +126,15 @@ class ContextCompactor:
         sizes = prompt_assembler.check_component_sizes()
         for component, oversized in sizes.items():
             if not oversized:
+                continue
+            # Skills are managed by the nightly dreaming cycle (auto-retire,
+            # dedup, condense) — the inline LLM lacks delete capability and
+            # cannot reduce the skill count.  Emit an event so DreamingLoop
+            # can schedule an early consolidation instead.
+            if component == "skills":
+                if self._event_bus:
+                    logger.info("Skills TOC oversized – requesting early dreaming consolidation")
+                    self._event_bus.emit("skills.oversized")
                 continue
             logger.info("Component '%s' oversized – requesting AI summarisation", component)
             prompt = prompt_loader.load("COMPONENT_OVERSIZE.txt", component=component)
