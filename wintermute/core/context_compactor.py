@@ -35,11 +35,13 @@ class ContextCompactor:
         store: "ConversationStore",
         keep_recent: int = COMPACTION_KEEP_RECENT,
         enqueue_system_event_fn=None,
+        event_bus=None,
     ) -> None:
         self._compaction_pool = compaction_pool
         self._broadcast = broadcast_fn
         self._store = store
         self._enqueue_system_event = enqueue_system_event_fn
+        self._event_bus = event_bus
         try:
             _keep = int(keep_recent)
         except (TypeError, ValueError):
@@ -52,6 +54,8 @@ class ContextCompactor:
             logger.warning("compaction_keep_recent %r < 1; clamping to 1", _keep)
             _keep = 1
         self._keep_recent = _keep
+        self._last_skills_oversized_emit: float = 0.0
+        self._SKILLS_EMIT_INTERVAL: float = 300.0  # seconds
 
     @property
     def pool(self) -> BackendPool:
@@ -124,6 +128,23 @@ class ContextCompactor:
         sizes = prompt_assembler.check_component_sizes()
         for component, oversized in sizes.items():
             if not oversized:
+                continue
+            # Skills are managed by the nightly dreaming cycle (auto-retire,
+            # dedup, condense) — the inline LLM lacks delete capability and
+            # cannot reduce the skill count.  Emit an event so DreamingLoop
+            # can schedule an early consolidation instead.
+            if component == "skills":
+                if not self._event_bus:
+                    now = _time.monotonic()
+                    if now - self._last_skills_oversized_emit >= self._SKILLS_EMIT_INTERVAL:
+                        self._last_skills_oversized_emit = now
+                        logger.warning("Skills TOC oversized but event bus unavailable")
+                    continue
+                now = _time.monotonic()
+                if now - self._last_skills_oversized_emit >= self._SKILLS_EMIT_INTERVAL:
+                    self._last_skills_oversized_emit = now
+                    logger.info("Skills TOC oversized – requesting early dreaming consolidation")
+                    self._event_bus.emit("skills.oversized")
                 continue
             logger.info("Component '%s' oversized – requesting AI summarisation", component)
             prompt = prompt_loader.load("COMPONENT_OVERSIZE.txt", component=component)

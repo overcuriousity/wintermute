@@ -149,6 +149,7 @@ class LLMThread:
             store=self._store,
             keep_recent=compaction_keep_recent,
             enqueue_system_event_fn=self.enqueue_system_event,
+            event_bus=event_bus,
         )
         self._session_mgr = SessionManager(
             main_pool=main_pool,
