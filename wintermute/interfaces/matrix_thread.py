@@ -386,6 +386,11 @@ class MatrixThread:
                      file_path, room_id, _retries, last_exc)
 
     @property
+    def group_mode(self) -> bool:
+        """Whether group chat mode is enabled."""
+        return self._cfg.group_mode
+
+    @property
     def joined_room_ids(self) -> set[str]:
         """Return room IDs the client has joined.  Used by the debug API."""
         if self._client is None:
@@ -819,17 +824,11 @@ class MatrixThread:
 
         # --- Image ---
         if msgtype == MessageType.IMAGE:
-            try:
-                data = await self._download_media(evt)
-            except Exception:  # noqa: BLE001
-                logger.exception("Failed to download image from %s", evt.sender)
-                return
-            mimetype = getattr(getattr(evt.content, "info", None), "mimetype", "image/png") or "image/png"
-            b64data = _base64.b64encode(data).decode()
             caption = (evt.content.body or "").strip()
-            text_for_db = sender_prefix + reply_prefix + (caption or "[image attached]")
 
+            # Group mode, not mentioned: store lightweight placeholder without downloading.
             if group and not mentioned:
+                text_for_db = sender_prefix + reply_prefix + (caption or "[image attached]")
                 logger.debug("Group-mode silent store (image) from %s in %s", evt.sender, thread_id)
                 await self._llm.store_message_silent(text_for_db, thread_id)
                 return
@@ -837,6 +836,14 @@ class MatrixThread:
             if group and not self._is_user_allowed(str(evt.sender)):
                 return
 
+            try:
+                data = await self._download_media(evt)
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to download image from %s", evt.sender)
+                return
+            mimetype = getattr(getattr(evt.content, "info", None), "mimetype", "image/png") or "image/png"
+            b64data = _base64.b64encode(data).decode()
+            text_for_db = sender_prefix + reply_prefix + (caption or "[image attached]")
             content_parts: list[dict] = []
             text_part = reply_prefix + caption
             if group:
@@ -855,6 +862,16 @@ class MatrixThread:
 
         # --- Audio / voice ---
         if msgtype == MessageType.AUDIO:
+            # Group mode, not mentioned: store placeholder without download/transcription.
+            if group and not mentioned:
+                text = sender_prefix + reply_prefix + "[voice message received]"
+                logger.debug("Group-mode silent store (audio) from %s in %s", evt.sender, thread_id)
+                await self._llm.store_message_silent(text, thread_id)
+                return
+
+            if group and not self._is_user_allowed(str(evt.sender)):
+                return
+
             try:
                 data = await self._download_media(evt)
             except Exception:  # noqa: BLE001
@@ -875,13 +892,7 @@ class MatrixThread:
                 voice_path.write_bytes(data)
             except OSError:
                 logger.exception("Failed to save voice message to %s", voice_path)
-                text = sender_prefix + reply_prefix + "[Voice message received but could not be saved to disk]"
-                if group and not mentioned:
-                    await self._llm.store_message_silent(text, thread_id)
-                else:
-                    if group and not self._is_user_allowed(str(evt.sender)):
-                        return
-                    await self._dispatch(text, thread_id)
+                await self._dispatch(sender_prefix + reply_prefix + "[Voice message received but could not be saved to disk]", thread_id)
                 return
             logger.info("Saved voice message from %s to %s", evt.sender, voice_path)
 
@@ -921,26 +932,15 @@ class MatrixThread:
                     else:
                         logger.info("Whisper transcript (%s): %s", evt.sender, transcript[:120])
                         text = sender_prefix + reply_prefix + f"[Transcribed voice message] {transcript}"
-
-                    if group and not mentioned:
-                        await self._llm.store_message_silent(text, thread_id)
-                    else:
-                        if group and not self._is_user_allowed(str(evt.sender)):
-                            return
-                        if group:
-                            text = self._strip_bot_mention(text)
-                        await self._dispatch(text, thread_id)
+                    if group:
+                        text = self._strip_bot_mention(text)
+                    await self._dispatch(text, thread_id)
                     return
                 except Exception:  # noqa: BLE001
                     logger.exception("Whisper transcription failed for %s — falling back to placeholder", voice_path)
 
             text = sender_prefix + reply_prefix + f"[Voice message received: {voice_path}]"
-            if group and not mentioned:
-                await self._llm.store_message_silent(text, thread_id)
-            else:
-                if group and not self._is_user_allowed(str(evt.sender)):
-                    return
-                await self._dispatch(text, thread_id)
+            await self._dispatch(text, thread_id)
             return
 
         # --- Text ---

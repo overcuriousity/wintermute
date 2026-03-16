@@ -216,7 +216,7 @@ class WebInterface:
                 "type": ttype,
                 "live": tid in web_live or tid in matrix_rooms,
                 "group_mode": ttype == "matrix" and self._matrix is not None
-                              and getattr(self._matrix._cfg, "group_mode", False),
+                              and self._matrix.group_mode,
                 "msg_count": budget["msg_count"],
                 "sp_tokens": budget["sp_tokens"],
                 "tools_tokens": budget["tools_tokens"],
