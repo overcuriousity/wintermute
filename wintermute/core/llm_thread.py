@@ -243,18 +243,16 @@ class LLMThread:
     async def store_message_silent(self, text: str, thread_id: str = "default") -> None:
         """Store a user message without triggering inference (group mode).
 
-        Delegates to ConversationStore.save_user_message() for consistent
-        token counting, event emission, and future per-thread config support.
+        Saves directly to DB with per-thread model for accurate token
+        counting.  Does NOT emit ``message.received`` — silent messages
+        are context-only and should not trigger memory harvest or other
+        event-driven pipelines.
         """
         pool = self._session_mgr.resolve_pool(thread_id)
         model = pool.primary.model if pool.enabled else self._cfg.model
-        await self._store.save_user_message(
-            text, thread_id,
-            is_system_event=False,
-            is_sub_session_result=False,
-            convergence_depth=0,
-            content=None,
-            model=model,
+        await database.async_call(
+            database.save_message, "user", text, thread_id,
+            token_count=count_tokens(text, model),
         )
         self._session_mgr.record_activity(thread_id)
 
