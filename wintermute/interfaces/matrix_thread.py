@@ -1558,21 +1558,26 @@ class MatrixThread:
         return user_id
 
     def _is_bot_mentioned(self, evt) -> bool:
-        """Return True if the event mentions this bot.
+        """Return True if the event mentions this bot via pill or structured mention.
 
         Checks (in order):
         1. Structured ``m.mentions`` field (MSC3952, supported by modern clients)
         2. Matrix pill link in ``formatted_body`` (plain and URL-encoded MXID)
-        3. Plain-text ``body`` containing the full MXID or ``@localpart``
+
+        Plain-text body is intentionally NOT checked to avoid false positives
+        from quoted text or casual ``@name`` references.
         """
         uid = self._cfg.user_id
 
         # 1. Structured mentions (m.mentions.user_ids)
-        mentions = evt.content.get("m.mentions")
-        if isinstance(mentions, dict):
-            user_ids = mentions.get("user_ids")
-            if isinstance(user_ids, list) and uid in user_ids:
-                return True
+        # mautrix content objects implement get() via SerializableAttrs;
+        # guard with hasattr for safety against future API changes.
+        if hasattr(evt.content, "get"):
+            mentions = evt.content.get("m.mentions")
+            if isinstance(mentions, dict):
+                user_ids = mentions.get("user_ids")
+                if isinstance(user_ids, list) and uid in user_ids:
+                    return True
 
         # 2. Pill in formatted_body (handle URL-encoded MXIDs)
         fmt = getattr(evt.content, "formatted_body", None) or ""
@@ -1583,11 +1588,6 @@ class MatrixThread:
             encoded_uid = _url_quote(uid, safe="")
             if f"https://matrix.to/#/{encoded_uid}" in fmt:
                 return True
-
-        # 3. Fallback: plain body contains MXID or @localpart
-        body = getattr(evt.content, "body", None) or ""
-        if uid in body or f"@{self._localpart(uid)}" in body:
-            return True
 
         return False
 
