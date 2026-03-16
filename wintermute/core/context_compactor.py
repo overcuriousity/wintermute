@@ -140,7 +140,12 @@ class ContextCompactor:
                     self._last_skills_oversized_emit = now
                     logger.info("Skills TOC oversized – requesting early dreaming consolidation")
                     self._event_bus.emit("skills.oversized")
-                continue
+                    continue
+                if not self._event_bus:
+                    logger.warning("Skills TOC oversized but no event bus available; "
+                                   "falling back to inline summarisation")
+                else:
+                    continue
             logger.info("Component '%s' oversized – requesting AI summarisation", component)
             prompt = prompt_loader.load("COMPONENT_OVERSIZE.txt", component=component)
             try:

@@ -1273,7 +1273,7 @@ class DreamingLoop:
         self._memory_append_count = 0
         self._event_bus_subs: list[str] = []
         self._last_skills_consolidation: float = 0.0
-        self._fire_lock: asyncio.Lock = asyncio.Lock()
+        self._firing: bool = False
 
     async def _on_memory_appended(self, event) -> None:
         """Track memory appends; trigger early consolidation if threshold exceeded."""
@@ -1292,7 +1292,6 @@ class DreamingLoop:
         if now - self._last_skills_consolidation < self._SKILLS_COOLDOWN_SECONDS:
             logger.debug("Dreaming: skills oversized but cooldown active, skipping")
             return
-        self._last_skills_consolidation = now
         logger.info("Dreaming: skills TOC oversized — triggering early consolidation")
         await self._fire()
 
@@ -1331,15 +1330,16 @@ class DreamingLoop:
             self._event_bus_subs.clear()
 
     async def _fire(self) -> None:
-        if self._fire_lock.locked():
+        if self._firing:
             logger.debug("Dreaming: consolidation already in progress, skipping")
             return
-        async with self._fire_lock:
+        self._firing = True
+        try:
             if not self._pool.enabled:
                 logger.error("Dreaming: no backends configured, skipping")
                 return
             logger.info(
-                "Dreaming: starting nightly consolidation (model=%s)",
+                "Dreaming: starting consolidation cycle (model=%s)",
                 self._pool.primary.model,
             )
             if self._event_bus:
@@ -1360,13 +1360,15 @@ class DreamingLoop:
                         ],
                     )
                 logger.info(
-                    "Dreaming: nightly consolidation complete (%d phases, %d errors)",
+                    "Dreaming: consolidation cycle complete (%d phases, %d errors)",
                     len(report.phases_run), len(report.errors),
                 )
             except Exception as exc:  # noqa: BLE001
-                logger.exception("Dreaming: nightly consolidation failed: %s", exc)
+                logger.exception("Dreaming: consolidation cycle failed: %s", exc)
             finally:
                 self._last_skills_consolidation = _time.monotonic()
+        finally:
+            self._firing = False
 
     @staticmethod
     def _seconds_until(target: dt_time, tz_name: str = "UTC") -> float:
