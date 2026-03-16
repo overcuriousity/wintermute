@@ -54,6 +54,8 @@ class ContextCompactor:
             logger.warning("compaction_keep_recent %r < 1; clamping to 1", _keep)
             _keep = 1
         self._keep_recent = _keep
+        self._last_skills_oversized_emit: float = 0.0
+        self._SKILLS_EMIT_INTERVAL: float = 300.0  # seconds
 
     @property
     def pool(self) -> BackendPool:
@@ -132,7 +134,10 @@ class ContextCompactor:
             # cannot reduce the skill count.  Emit an event so DreamingLoop
             # can schedule an early consolidation instead.
             if component == "skills":
-                if self._event_bus:
+                now = _time.monotonic()
+                if (self._event_bus
+                        and now - self._last_skills_oversized_emit >= self._SKILLS_EMIT_INTERVAL):
+                    self._last_skills_oversized_emit = now
                     logger.info("Skills TOC oversized – requesting early dreaming consolidation")
                     self._event_bus.emit("skills.oversized")
                 continue
