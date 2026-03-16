@@ -841,6 +841,8 @@ class MatrixThread:
             text_part = reply_prefix + caption
             if group:
                 text_part = sender_prefix + text_part
+                text_part = self._strip_bot_mention(text_part)
+                text_for_db = self._strip_bot_mention(text_for_db)
             if text_part.strip():
                 content_parts.append({"type": "text", "text": text_part})
             content_parts.append({

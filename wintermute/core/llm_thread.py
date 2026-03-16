@@ -242,11 +242,14 @@ class LLMThread:
 
     async def store_message_silent(self, text: str, thread_id: str = "default") -> None:
         """Store a user message without triggering inference (group mode)."""
-        token_count = count_tokens(text, "gpt-3.5-turbo")
+        token_count = count_tokens(text, self._cfg.model)
         await database.async_call(
             database.save_message, "user", text, thread_id,
             token_count=token_count,
         )
+        self._session_mgr.record_activity(thread_id)
+        if self._store._event_bus:
+            self._store._event_bus.emit("message.received", thread_id=thread_id, text=text)
 
     async def force_compact(self, thread_id: str = "default") -> None:
         await self._compactor.compact(thread_id)
