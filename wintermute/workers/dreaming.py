@@ -1279,6 +1279,9 @@ class DreamingLoop:
         """Track memory appends; trigger early consolidation if threshold exceeded."""
         self._memory_append_count += 1
         if self._memory_append_count >= self._EARLY_TRIGGER_THRESHOLD:
+            if self._firing:
+                logger.debug("Dreaming: memory threshold reached but consolidation in progress")
+                return
             logger.info(
                 "Dreaming: %d memory appends — triggering early consolidation",
                 self._memory_append_count,
@@ -1288,6 +1291,9 @@ class DreamingLoop:
 
     async def _on_skills_oversized(self, event) -> None:
         """Trigger early dreaming cycle when skill TOC exceeds size limit."""
+        if self._firing:
+            logger.debug("Dreaming: skills oversized but consolidation in progress, skipping")
+            return
         now = _time.monotonic()
         if now - self._last_consolidation < self._SKILLS_COOLDOWN_SECONDS:
             logger.debug("Dreaming: skills oversized but cooldown active, skipping")
