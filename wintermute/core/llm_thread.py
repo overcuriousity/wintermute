@@ -246,13 +246,15 @@ class LLMThread:
         Delegates to ConversationStore.save_user_message() for consistent
         token counting, event emission, and future per-thread config support.
         """
+        pool = self._session_mgr.resolve_pool(thread_id)
+        model = pool.primary.model if pool.enabled else self._cfg.model
         await self._store.save_user_message(
             text, thread_id,
             is_system_event=False,
             is_sub_session_result=False,
             convergence_depth=0,
             content=None,
-            model=self._cfg.model,
+            model=model,
         )
         self._session_mgr.record_activity(thread_id)
 
