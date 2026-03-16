@@ -239,6 +239,7 @@ class MatrixConfig:
     password: str = ""
     allowed_users: list[str] = field(default_factory=list)
     allowed_rooms: list[str] = field(default_factory=list)
+    group_mode: bool = False
 
 
 class MatrixThread:
@@ -784,9 +785,15 @@ class MatrixThread:
         """Handle m.room.message events (auto-decrypted by mautrix)."""
         if str(evt.sender) == self._cfg.user_id:
             return
-        if not self._is_user_allowed(str(evt.sender)):
-            return
         if self._cfg.allowed_rooms and str(evt.room_id) not in self._cfg.allowed_rooms:
+            return
+
+        group = self._cfg.group_mode
+
+        # In normal mode, gate on allowed_users immediately.
+        # In group mode, we collect from everyone — allowed_users is checked
+        # only when the bot is @mentioned (below).
+        if not group and not self._is_user_allowed(str(evt.sender)):
             return
 
         msgtype = getattr(evt.content, "msgtype", None)
@@ -795,6 +802,9 @@ class MatrixThread:
 
         thread_id = str(evt.room_id)
         await self._send_read_receipt(thread_id, evt.event_id)
+
+        sender_prefix = f"[{self._localpart(str(evt.sender))}]: " if group else ""
+        mentioned = self._is_bot_mentioned(evt) if group else False
 
         # --- Reply context ---
         reply_prefix = ""
@@ -817,10 +827,22 @@ class MatrixThread:
             mimetype = getattr(getattr(evt.content, "info", None), "mimetype", "image/png") or "image/png"
             b64data = _base64.b64encode(data).decode()
             caption = (evt.content.body or "").strip()
-            text_for_db = reply_prefix + (caption or "[image attached]")
+            text_for_db = sender_prefix + reply_prefix + (caption or "[image attached]")
+
+            if group and not mentioned:
+                logger.debug("Group-mode silent store (image) from %s in %s", evt.sender, thread_id)
+                await self._llm.store_message_silent(text_for_db, thread_id)
+                return
+
+            if group and not self._is_user_allowed(str(evt.sender)):
+                return
+
             content_parts: list[dict] = []
-            if reply_prefix or caption:
-                content_parts.append({"type": "text", "text": reply_prefix + caption})
+            text_part = reply_prefix + caption
+            if group:
+                text_part = sender_prefix + text_part
+            if text_part.strip():
+                content_parts.append({"type": "text", "text": text_part})
             content_parts.append({
                 "type": "image_url",
                 "image_url": {"url": f"data:{mimetype};base64,{b64data}"},
@@ -851,7 +873,13 @@ class MatrixThread:
                 voice_path.write_bytes(data)
             except OSError:
                 logger.exception("Failed to save voice message to %s", voice_path)
-                await self._dispatch(reply_prefix + "[Voice message received but could not be saved to disk]", thread_id)
+                text = sender_prefix + reply_prefix + "[Voice message received but could not be saved to disk]"
+                if group and not mentioned:
+                    await self._llm.store_message_silent(text, thread_id)
+                else:
+                    if group and not self._is_user_allowed(str(evt.sender)):
+                        return
+                    await self._dispatch(text, thread_id)
                 return
             logger.info("Saved voice message from %s to %s", evt.sender, voice_path)
 
@@ -887,24 +915,50 @@ class MatrixThread:
                     transcript = resp.text.strip()
                     if not transcript:
                         logger.warning("Whisper returned empty transcript for %s", voice_path)
-                        text = reply_prefix + "[Voice message received — transcription was empty (silence?)]"
+                        text = sender_prefix + reply_prefix + "[Voice message received — transcription was empty (silence?)]"
                     else:
                         logger.info("Whisper transcript (%s): %s", evt.sender, transcript[:120])
-                        text = reply_prefix + f"[Transcribed voice message] {transcript}"
-                    await self._dispatch(text, thread_id)
+                        text = sender_prefix + reply_prefix + f"[Transcribed voice message] {transcript}"
+
+                    if group and not mentioned:
+                        await self._llm.store_message_silent(text, thread_id)
+                    else:
+                        if group and not self._is_user_allowed(str(evt.sender)):
+                            return
+                        if group:
+                            text = self._strip_bot_mention(text)
+                        await self._dispatch(text, thread_id)
                     return
                 except Exception:  # noqa: BLE001
                     logger.exception("Whisper transcription failed for %s — falling back to placeholder", voice_path)
 
-            text = reply_prefix + f"[Voice message received: {voice_path}]"
-            await self._dispatch(text, thread_id)
+            text = sender_prefix + reply_prefix + f"[Voice message received: {voice_path}]"
+            if group and not mentioned:
+                await self._llm.store_message_silent(text, thread_id)
+            else:
+                if group and not self._is_user_allowed(str(evt.sender)):
+                    return
+                await self._dispatch(text, thread_id)
             return
 
         # --- Text ---
         text = (evt.content.body or "").strip()
         if not text:
             return
-        text = reply_prefix + text
+        text = sender_prefix + reply_prefix + text
+
+        if group and not mentioned:
+            logger.debug("Group-mode silent store from %s in %s: %s", evt.sender, thread_id, text[:80])
+            await self._llm.store_message_silent(text, thread_id)
+            return
+
+        # Group mode + mentioned: check allowed_users for response triggering.
+        if group:
+            if not self._is_user_allowed(str(evt.sender)):
+                logger.debug("Group-mode mention from non-allowed user %s — ignoring", evt.sender)
+                return
+            text = self._strip_bot_mention(text)
+
         logger.info("Received message from %s in %s: %s", evt.sender, thread_id, text[:100])
         await self._dispatch(text, thread_id)
 
@@ -1481,6 +1535,29 @@ class MatrixThread:
         if not self._cfg.allowed_users:
             return True
         return user_id in self._cfg.allowed_users
+
+    # -- Group-mode helpers -------------------------------------------------
+
+    @staticmethod
+    def _localpart(user_id: str) -> str:
+        """Extract localpart from a Matrix user ID (``@alice:server`` → ``alice``)."""
+        if user_id.startswith("@"):
+            return user_id[1:].split(":", 1)[0]
+        return user_id
+
+    def _is_bot_mentioned(self, evt) -> bool:
+        """Return True if the event contains a Matrix pill mention of this bot."""
+        fmt = getattr(evt.content, "formatted_body", None) or ""
+        return f"https://matrix.to/#/{self._cfg.user_id}" in fmt
+
+    def _strip_bot_mention(self, text: str) -> str:
+        """Remove the bot's @localpart and full user_id from plain text body."""
+        localpart = self._localpart(self._cfg.user_id)
+        # Remove full MXID forms first, then bare @localpart
+        cleaned = text.replace(self._cfg.user_id, "")
+        cleaned = cleaned.replace(f"@{localpart}", "")
+        # Collapse any resulting double-spaces and strip
+        return " ".join(cleaned.split()).strip()
 
 
 # ---------------------------------------------------------------------------

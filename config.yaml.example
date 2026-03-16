@@ -47,10 +47,18 @@ matrix:
   device_id: ""                           # Auto-filled when using password login
 
   # Access control
-  allowed_users:                          # [REQUIRED] Matrix user IDs allowed to talk to the bot
+  allowed_users:                          # Matrix user IDs allowed to interact with the bot.
     - "@admin:matrix.org"                 # Your personal Matrix ID
+                                          # Empty list = allow all users (1:1 and group mode).
+                                          # In group mode: gates who can trigger responses via @mention.
+                                          # In 1:1 mode: gates who can talk to the bot at all.
   allowed_rooms: []                       # Room ID whitelist. Empty = bot responds in any room
                                           # it's invited to. Example: ["!abc123:matrix.org"]
+                                          # In group mode this should be set — it controls which
+                                          # rooms the bot collects messages from.
+  group_mode: false                       # Group chat mode: silently collect all messages in
+                                          # allowed rooms, respond only when @mentioned via pill.
+                                          # Messages include sender attribution ([user]: text).
 
 
 # ── Whisper (Voice Transcription) ────────────────────────────────────

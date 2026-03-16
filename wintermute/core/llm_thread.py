@@ -240,6 +240,14 @@ class LLMThread:
     async def reset_session(self, thread_id: str = "default") -> None:
         await self._session_mgr.reset_session(thread_id)
 
+    async def store_message_silent(self, text: str, thread_id: str = "default") -> None:
+        """Store a user message without triggering inference (group mode)."""
+        token_count = count_tokens(text, "gpt-3.5-turbo")
+        await database.async_call(
+            database.save_message, "user", text, thread_id,
+            token_count=token_count,
+        )
+
     async def force_compact(self, thread_id: str = "default") -> None:
         await self._compactor.compact(thread_id)
 
