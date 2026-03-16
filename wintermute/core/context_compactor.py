@@ -135,7 +135,10 @@ class ContextCompactor:
             # can schedule an early consolidation instead.
             if component == "skills":
                 if not self._event_bus:
-                    logger.error("Skills TOC oversized but event bus unavailable")
+                    now = _time.monotonic()
+                    if now - self._last_skills_oversized_emit >= self._SKILLS_EMIT_INTERVAL:
+                        self._last_skills_oversized_emit = now
+                        logger.warning("Skills TOC oversized but event bus unavailable")
                     continue
                 now = _time.monotonic()
                 if now - self._last_skills_oversized_emit >= self._SKILLS_EMIT_INTERVAL:

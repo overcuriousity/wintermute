@@ -1272,7 +1272,7 @@ class DreamingLoop:
         self._running = False
         self._memory_append_count = 0
         self._event_bus_subs: list[str] = []
-        self._last_skills_consolidation: float = 0.0
+        self._last_consolidation: float = 0.0
         self._firing: bool = False
 
     async def _on_memory_appended(self, event) -> None:
@@ -1289,7 +1289,7 @@ class DreamingLoop:
     async def _on_skills_oversized(self, event) -> None:
         """Trigger early dreaming cycle when skill TOC exceeds size limit."""
         now = _time.monotonic()
-        if now - self._last_skills_consolidation < self._SKILLS_COOLDOWN_SECONDS:
+        if now - self._last_consolidation < self._SKILLS_COOLDOWN_SECONDS:
             logger.debug("Dreaming: skills oversized but cooldown active, skipping")
             return
         logger.info("Dreaming: skills TOC oversized — triggering early consolidation")
@@ -1363,10 +1363,9 @@ class DreamingLoop:
                     "Dreaming: consolidation cycle complete (%d phases, %d errors)",
                     len(report.phases_run), len(report.errors),
                 )
+                self._last_consolidation = _time.monotonic()
             except Exception as exc:  # noqa: BLE001
                 logger.exception("Dreaming: consolidation cycle failed: %s", exc)
-            finally:
-                self._last_skills_consolidation = _time.monotonic()
         finally:
             self._firing = False
 
