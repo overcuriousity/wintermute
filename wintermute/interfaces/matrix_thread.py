@@ -432,6 +432,7 @@ class MatrixThread:
                 "To avoid unintended data collection from all joined rooms, the Matrix "
                 "interface will not start. Set allowed_rooms in config.yaml and restart."
             )
+            self._running = False
             return
 
         # Auto-login if no token but password is configured.
@@ -442,6 +443,7 @@ class MatrixThread:
                 "Matrix: no access_token and no password configured. "
                 "Set at least one in config.yaml.",
             )
+            self._running = False
             return
 
         # If we have credentials for an existing device but the crypto DB is gone,
