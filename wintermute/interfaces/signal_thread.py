@@ -445,7 +445,7 @@ class SignalThread:
             thread_id = f"sig_{source_identity}"
             if not self._is_user_allowed(source_number, source_uuid):
                 logger.info("[signal] User %s (uuid=%s) not in allowed_users, ignoring",
-                            source_number or "(none)", source_uuid[:12] if source_uuid else "(none)")
+                            source_number or "(none)", source_uuid or "(none)")
                 return
 
         is_group = group_info is not None
