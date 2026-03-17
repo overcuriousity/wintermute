@@ -1002,6 +1002,7 @@ class LLMThread:
                 assistant_response=assistant_response,
                 tool_name=tool_name, tool_args=tool_args,
                 tool_result=tool_result, nl_tools=nl_tools,
+                exclude_tool_names=exclude_tool_names,
             )
 
         tc_ctx = make_tool_context(
@@ -1194,6 +1195,7 @@ class LLMThread:
         tool_args: Optional[dict] = None,
         tool_result: Optional[str] = None,
         nl_tools: "set[str] | None" = None,
+        exclude_tool_names: "set[str] | None" = None,
     ) -> Optional["convergence_protocol_module.ConvergenceResult"]:
         """Run Convergence Protocol hooks for a specific phase.
 
@@ -1209,5 +1211,6 @@ class LLMThread:
             tool_args=tool_args,
             tool_result=tool_result,
             nl_tools=nl_tools,
+            exclude_tool_names=exclude_tool_names,
         )
 

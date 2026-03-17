@@ -836,6 +836,12 @@ def validate_inline_tool_limit(context: dict, detection_result: dict) -> bool:
     if context.get("scope") != "main":
         return False
 
+    # Skip when worker_delegation is excluded (lite mode) — the correction
+    # would tell the model to call a tool that isn't available.
+    excluded = context.get("exclude_tool_names") or set()
+    if "worker_delegation" in excluded:
+        return False
+
     tool_name = context.get("tool_name", "")
 
     # Import here to avoid circular imports at module level.
@@ -1094,6 +1100,7 @@ async def run_convergence_protocol(
     prior_assistant_message: Optional[str] = None,
     prior_tool_calls_made: Optional[list[str]] = None,
     recent_assistant_messages: Optional[list[str]] = None,
+    exclude_tool_names: "set[str] | None" = None,
 ) -> ConvergenceResult:
     """Run the three-stage Convergence Protocol validation pipeline.
 
@@ -1137,6 +1144,9 @@ async def run_convergence_protocol(
         (avoiding cross-turn false positives).
     recent_assistant_messages : list[str] or None
         Last N assistant messages for repetition loop detection.
+    exclude_tool_names : set[str] or None
+        Tool names excluded from schemas (e.g. lite mode).  Passed through
+        to validators so they can skip checks that reference unavailable tools.
     """
     hooks = _load_hooks(enabled_validators, phase_filter=phase, scope_filter=scope)
     if not hooks:
@@ -1166,6 +1176,8 @@ async def run_convergence_protocol(
             for s in active_sessions
         ],
     }
+    if exclude_tool_names:
+        context["exclude_tool_names"] = exclude_tool_names
     # Phase-specific context enrichment.
     if objective:
         context["objective"] = objective
