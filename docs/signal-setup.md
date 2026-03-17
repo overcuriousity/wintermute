@@ -105,7 +105,28 @@ allowed_users:
   - "a1b2c3d4-e5f6-7890-abcd-ef1234567890"  # UUID
 ```
 
-If the list is empty, all users are allowed. To find a user's UUID, check the logs after they send a message — Wintermute logs both `sourceNumber` and `sourceUuid` from the envelope.
+If the list is empty, all users are allowed.
+
+**Finding a user's UUID:**
+
+Signal UUIDs aren't visible in the app. There are three ways to find them:
+
+1. **From Wintermute's logs** (easiest) — temporarily remove the user from `allowed_users` or leave the list empty, then have them send a message. The log will show:
+   ```
+   [signal] User (none) (uuid=a1b2c3d4-e5f6-7890-abcd-ef1234567890) not in allowed_users, ignoring
+   ```
+   Copy the full UUID into your config.
+
+2. **Via signal-cli** — list all known contacts with their UUIDs:
+   ```bash
+   signal-cli -a +1234567890 listContacts
+   ```
+   Or look up a specific number:
+   ```bash
+   signal-cli -a +1234567890 getUserStatus +0987654321
+   ```
+
+3. **signal-cli data directory** — stored in `~/.local/share/signal-cli/data/`, but the methods above are easier.
 
 ### Thread ID format
 
