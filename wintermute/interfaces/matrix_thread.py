@@ -1602,8 +1602,11 @@ class MatrixThread:
         #  - followed by whitespace, common punctuation, or end-of-string
         pattern = rf"(?<!\S)(?:{_re.escape(uid)}|@{_re.escape(localpart)})(?=[\s\.,:;!?)]|$)"
         cleaned = _re.sub(pattern, "", text)
-        # Collapse any resulting double-spaces and strip
-        return " ".join(cleaned.split()).strip()
+        # Tidy up spacing caused by removals without rewriting all formatting:
+        #  - collapse runs of spaces/tabs within lines
+        #  - trim leading/trailing whitespace on the full text
+        cleaned = _re.sub(r"[ \t]{2,}", " ", cleaned)
+        return cleaned.strip()
 
 
 # ---------------------------------------------------------------------------
