@@ -1,6 +1,6 @@
 # Signal Setup
 
-Wintermute can connect to Signal messenger via [signal-cli](https://github.com/AsamK/signal-cli), a command-line interface for Signal that uses the Signal protocol directly. Wintermute spawns signal-cli as a subprocess and communicates via JSON-RPC.
+Wintermute can connect to Signal messenger via [signal-cli](https://github.com/AsamK/signal-cli), a command-line interface for Signal that uses the Signal protocol directly. Wintermute spawns signal-cli in HTTP daemon mode (`daemon --http`) and communicates via HTTP JSON-RPC for sending and SSE (Server-Sent Events) for receiving messages.
 
 ## Prerequisites
 
@@ -88,15 +88,28 @@ signal:
   enabled: true
   phone_number: "+1234567890"           # Bot's registered Signal number
   signal_cli_path: "signal-cli"         # Path to signal-cli binary
-  allowed_users: ["+0987654321"]        # Phone numbers allowed to interact
+  allowed_users: ["+0987654321"]        # Phone numbers or UUIDs allowed to interact
   allowed_groups: []                    # Group IDs (empty = allow all)
   group_mode: false                     # Only respond when mentioned
   trust_new_keys: true                  # Auto-trust new identity keys
+  http_port: 8190                       # Port for signal-cli HTTP daemon
 ```
+
+### Allowed users
+
+`allowed_users` accepts both phone numbers and Signal UUIDs. This is important because Signal users can hide their phone number — in that case, only their UUID is available.
+
+```yaml
+allowed_users:
+  - "+491234567890"                     # Phone number
+  - "a1b2c3d4-e5f6-7890-abcd-ef1234567890"  # UUID
+```
+
+If the list is empty, all users are allowed. To find a user's UUID, check the logs after they send a message — Wintermute logs both `sourceNumber` and `sourceUuid` from the envelope.
 
 ### Thread ID format
 
-- 1:1 chats: `sig_+491234567890`
+- 1:1 chats: `sig_+491234567890` (phone) or `sig_<uuid>` (UUID)
 - Groups: `sig_group_<base64-group-id>`
 
 ### Group mode
@@ -129,16 +142,16 @@ On some systems, signal-cli may fail to load the native libsignal library. Ensur
 
 ### Attachment paths
 
-signal-cli stores received attachments in `~/.local/share/signal-cli/attachments/`. Wintermute reads them from the paths provided in the JSON-RPC response. Ensure the Wintermute process has read access to this directory.
+signal-cli stores received attachments in `~/.local/share/signal-cli/attachments/`. Wintermute reads them from the paths provided in the SSE event data. Ensure the Wintermute process has read access to this directory.
 
 ### Process management
 
-Wintermute spawns signal-cli as a subprocess and manages its lifecycle. If signal-cli crashes, Wintermute automatically restarts it with exponential backoff (1s, 2s, 4s, ... up to 60s).
+Wintermute spawns signal-cli as a subprocess in HTTP daemon mode and manages its lifecycle. On startup, it polls `/api/v1/check` until the daemon is ready (up to 60s). If signal-cli crashes, Wintermute automatically restarts it with exponential backoff (1s, 2s, 4s, ... up to 60s). If only the SSE stream disconnects while the process is alive, Wintermute reconnects the stream without restarting signal-cli.
 
 To check if signal-cli is running independently:
 
 ```bash
-signal-cli -a +1234567890 daemon --json
+signal-cli -a +1234567890 daemon --http 127.0.0.1:8190 --receive-mode on-start
 ```
 
 ### Whisper transcription
