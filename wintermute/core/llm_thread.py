@@ -782,6 +782,7 @@ class LLMThread:
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
                 nl_tools=nl_tools,
                 prediction_results=_prediction_results,
+                available_tools=_available_tools,
             )
 
         self._store.last_system_prompt[thread_id] = system_prompt
