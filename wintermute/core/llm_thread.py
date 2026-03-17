@@ -756,7 +756,7 @@ class LLMThread:
                 ephemeral=item.ephemeral,
             )
             # Reassemble with the updated compaction summary.
-            summary = self._store.compaction_summaries.get(thread_id)
+            summary = None if item.ephemeral else self._store.compaction_summaries.get(thread_id)
             system_prompt = prompt_assembler.assemble(
                 extra_summary=summary, query=_memory_query,
                 memory_results=_memory_results, prompt_mode=prompt_mode,
@@ -878,7 +878,7 @@ class LLMThread:
             )
             nl_enabled = self._nl_translation_config.get("enabled", False)
             nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
-            summary = self._store.compaction_summaries.get(thread_id)
+            summary = None if item.ephemeral else self._store.compaction_summaries.get(thread_id)
             system_prompt = prompt_assembler.assemble(
                 extra_summary=summary, query=memory_query,
                 memory_results=memory_results, prompt_mode=prompt_mode,

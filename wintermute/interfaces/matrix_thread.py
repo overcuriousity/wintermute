@@ -822,15 +822,18 @@ class MatrixThread:
         mentioned = self._is_bot_mentioned(evt) if group else False
 
         # --- Reply context ---
+        # In group mode, skip fetching reply-to events to avoid forwarding
+        # other users' messages to the LLM provider.
         reply_prefix = ""
-        reply_to = evt.content.get_reply_to()
-        if reply_to:
-            try:
-                orig = await self._client.get_event(RoomID(thread_id), reply_to)
-                orig_body = getattr(getattr(orig, "content", None), "body", None) or ""
-                reply_prefix = f"> {orig.sender}: {orig_body}\n>\n"
-            except Exception:  # noqa: BLE001
-                logger.debug("Could not fetch replied-to event %s", reply_to)
+        if not group:
+            reply_to = evt.content.get_reply_to()
+            if reply_to:
+                try:
+                    orig = await self._client.get_event(RoomID(thread_id), reply_to)
+                    orig_body = getattr(getattr(orig, "content", None), "body", None) or ""
+                    reply_prefix = f"> {orig.sender}: {orig_body}\n>\n"
+                except Exception:  # noqa: BLE001
+                    logger.debug("Could not fetch replied-to event %s", reply_to)
 
         # --- Image ---
         if msgtype == MessageType.IMAGE:
