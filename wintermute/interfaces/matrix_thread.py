@@ -424,12 +424,12 @@ class MatrixThread:
         # Validate group_mode: allowed_rooms must be set to prevent
         # unintended data collection from every room the bot joins.
         if self._cfg.group_mode and not self._cfg.allowed_rooms:
-            logger.warning(
-                "group_mode is enabled but allowed_rooms is empty — "
-                "disabling group_mode to prevent collecting messages "
-                "from all rooms. Set allowed_rooms in config.yaml."
+            logger.error(
+                "Configuration error: group_mode is enabled but allowed_rooms is empty. "
+                "To avoid unintended data collection from all joined rooms, the Matrix "
+                "interface will not start. Set allowed_rooms in config.yaml and restart."
             )
-            self._cfg.group_mode = False
+            return
 
         # Auto-login if no token but password is configured.
         if not self._cfg.access_token and self._cfg.password:
