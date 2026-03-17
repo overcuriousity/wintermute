@@ -97,12 +97,14 @@ signal:
 
 ### Allowed users
 
-`allowed_users` accepts both phone numbers and Signal UUIDs. This is important because Signal users can hide their phone number — in that case, only their UUID is available.
+`allowed_users` accepts both phone numbers and Signal UUIDs. This is important because Signal allows users to hide their phone number — in that case, only their UUID is available in the message envelope, and phone-number-based allowlisting will silently reject the message.
+
+If a user has no visible phone number, you **must** use their UUID in `allowed_users`.
 
 ```yaml
 allowed_users:
   - "+491234567890"                     # Phone number
-  - "a1b2c3d4-e5f6-7890-abcd-ef1234567890"  # UUID
+  - "a1b2c3d4-e5f6-7890-abcd-ef1234567890"  # UUID (required if phone is hidden)
 ```
 
 If the list is empty, all users are allowed.
