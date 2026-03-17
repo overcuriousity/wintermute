@@ -820,11 +820,26 @@ class MatrixThread:
         if msgtype not in (MessageType.TEXT, MessageType.IMAGE, MessageType.AUDIO):
             return
 
+        # In group mode, check mention early and drop non-mentioned messages
+        # before any side effects (read receipts, media downloads, etc.).
+        if group and not self._is_bot_mentioned(evt):
+            return
+        # Group mode + mentioned: gate on allowed_users.
+        if group and not self._is_user_allowed(str(evt.sender)):
+            logger.debug("Group-mode mention from non-allowed user %s — ignoring", evt.sender)
+            return
+
         thread_id = str(evt.room_id)
         await self._send_read_receipt(thread_id, evt.event_id)
 
         sender_prefix = f"[{self._localpart(str(evt.sender))}]: " if group else ""
-        mentioned = self._is_bot_mentioned(evt) if group else False
+
+        # In group mode, strip the plaintext reply fallback from the body
+        # so that quoted content from other users is never forwarded to the
+        # LLM provider.  This mutates evt.content.body in-place before any
+        # downstream code reads it (text, caption, etc.).
+        if group and evt.content.body:
+            evt.content.body = self._strip_reply_fallback(evt.content.body)
 
         # --- Reply context ---
         # In group mode, skip fetching reply-to events to avoid forwarding
@@ -843,13 +858,6 @@ class MatrixThread:
         # --- Image ---
         if msgtype == MessageType.IMAGE:
             caption = (evt.content.body or "").strip()
-
-            # Group mode, not mentioned: drop — no DB storage, no LLM context.
-            if group and not mentioned:
-                return
-
-            if group and not self._is_user_allowed(str(evt.sender)):
-                return
 
             try:
                 data = await self._download_media(evt)
@@ -877,12 +885,6 @@ class MatrixThread:
 
         # --- Audio / voice ---
         if msgtype == MessageType.AUDIO:
-            # Group mode, not mentioned: drop.
-            if group and not mentioned:
-                return
-
-            if group and not self._is_user_allowed(str(evt.sender)):
-                return
 
             try:
                 data = await self._download_media(evt)
@@ -961,14 +963,7 @@ class MatrixThread:
             return
         text = sender_prefix + reply_prefix + text
 
-        if group and not mentioned:
-            return
-
-        # Group mode + mentioned: check allowed_users for response triggering.
         if group:
-            if not self._is_user_allowed(str(evt.sender)):
-                logger.debug("Group-mode mention from non-allowed user %s — ignoring", evt.sender)
-                return
             text = self._strip_bot_mention(text)
 
         logger.info("Received message from %s in %s: %s", evt.sender, thread_id, text[:100])
@@ -1592,6 +1587,25 @@ class MatrixThread:
                 return True
 
         return False
+
+    @staticmethod
+    def _strip_reply_fallback(body: str) -> str:
+        """Strip the Matrix plaintext reply fallback from a message body.
+
+        Matrix clients prepend quoted lines (``> <@user:server> …``) as a
+        reply fallback.  In group mode these must be removed so that other
+        users' message content is never forwarded to the LLM provider.
+        """
+        lines = body.split("\n")
+        # Reply fallback: leading lines starting with "> ", possibly
+        # followed by a single blank line.
+        idx = 0
+        while idx < len(lines) and lines[idx].startswith("> "):
+            idx += 1
+        # Skip the optional blank separator line after the quote block.
+        if idx > 0 and idx < len(lines) and lines[idx].strip() == "":
+            idx += 1
+        return "\n".join(lines[idx:]).strip() if idx > 0 else body
 
     def _strip_bot_mention(self, text: str) -> str:
         """Remove the bot's @localpart and full user_id from plain text body."""

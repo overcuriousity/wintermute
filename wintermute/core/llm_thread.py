@@ -385,7 +385,10 @@ class LLMThread:
                     )
 
                 # Seed empty threads on first real user message.
-                if not item.is_system_event and not await database.async_call(database.thread_has_messages, thread_id):
+                # Skip seeding for ephemeral turns (group mode) — the bot
+                # should only respond to the actual @mention, not send an
+                # unsolicited greeting.
+                if not item.ephemeral and not item.is_system_event and not await database.async_call(database.thread_has_messages, thread_id):
                     try:
                         seed_prompt = prompt_loader.load_seed(self._seed_language)
                         seed_item = _QueueItem(
