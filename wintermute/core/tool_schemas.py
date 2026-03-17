@@ -526,7 +526,8 @@ def _inject_profiles(schema: dict, profiles: dict[str, dict]) -> dict:
 
 def get_tool_schemas(categories: set[str] | None = None,
                      nl_tools: set[str] | None = None,
-                     tool_profiles: dict[str, dict] | None = None) -> list[dict]:
+                     tool_profiles: dict[str, dict] | None = None,
+                     exclude_names: set[str] | None = None) -> list[dict]:
     """Return tool schemas filtered by category, with optional NL substitution.
 
     If *categories* is None, return all schemas (used by the main agent).
@@ -539,6 +540,9 @@ def get_tool_schemas(categories: set[str] | None = None,
     When *tool_profiles* is provided, the ``worker_delegation`` schema's
     ``profile`` field gets an ``enum`` constraint and description listing
     the available profile names.
+
+    When *exclude_names* is provided, schemas whose tool name is in the set
+    are dropped from the result (used by lite mode to hide worker_delegation).
     """
     if categories is None:
         schemas = list(TOOL_SCHEMAS)
@@ -547,6 +551,8 @@ def get_tool_schemas(categories: set[str] | None = None,
             schema for schema in TOOL_SCHEMAS
             if TOOL_CATEGORIES.get(schema["function"]["name"]) in categories
         ]
+    if exclude_names:
+        schemas = [s for s in schemas if s["function"]["name"] not in exclude_names]
     # Inject profile names into the worker_delegation schema.
     if tool_profiles:
         schemas = [
