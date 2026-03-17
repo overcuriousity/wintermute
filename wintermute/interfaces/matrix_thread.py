@@ -1593,10 +1593,13 @@ class MatrixThread:
 
     def _strip_bot_mention(self, text: str) -> str:
         """Remove the bot's @localpart and full user_id from plain text body."""
-        localpart = self._localpart(self._cfg.user_id)
-        # Remove full MXID forms first, then bare @localpart
-        cleaned = text.replace(self._cfg.user_id, "")
-        cleaned = cleaned.replace(f"@{localpart}", "")
+        uid = self._cfg.user_id
+        localpart = self._localpart(uid)
+        # Match the full MXID or bare @localpart as standalone mention tokens:
+        #  - preceded only by whitespace or start-of-string
+        #  - followed by whitespace, common punctuation, or end-of-string
+        pattern = rf"(?<!\S)(?:{_re.escape(uid)}|@{_re.escape(localpart)})(?=[\s\.,:;!?)]|$)"
+        cleaned = _re.sub(pattern, "", text)
         # Collapse any resulting double-spaces and strip
         return " ".join(cleaned.split()).strip()
 
