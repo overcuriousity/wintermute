@@ -148,6 +148,16 @@ Not configurable via the `validators` map. Always active in all scopes.
 
 ---
 
+### `credential_redaction` — API key / password leak prevention
+
+**Phase:** `post_inference` | **Scope:** `main` | **Type:** programmatic
+
+Programmatic check that replaces known secret values in LLM output with `[API-KEY-REDACTED]` before the response is saved to DB or delivered to the user. Main thread only — sub-sessions are excluded. No behavioral correction is injected; the response is simply redacted and logged.
+
+Secrets are extracted at startup from known config paths: `inference_backends[*].api_key`, `matrix.password`, `matrix.access_token`, `matrix.device_id`, `whisper.api_key`, `memory.embeddings.api_key`, `memory.qdrant.api_key`, and `skills.qdrant.api_key`. Placeholder values (`""`, `"none"`, `"llama-server"`) and values shorter than 8 characters are excluded. Enabled by default; disable via `convergence_protocol.validators.credential_redaction: false`.
+
+---
+
 ### `repetition_loop` — Stuck-in-a-loop detection
 
 **Phase:** `post_inference` | **Scope:** `main` + `sub_session` | **Type:** programmatic
