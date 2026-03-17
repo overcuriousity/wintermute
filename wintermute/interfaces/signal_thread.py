@@ -182,7 +182,7 @@ class SignalThread:
         cmd = [self._cfg.signal_cli_path, "-a", self._cfg.phone_number]
         if self._cfg.trust_new_keys:
             cmd.extend(["--trust-new-identities", "always"])
-        cmd.extend(["daemon", "--receive-mode", "on-start"])
+        cmd.append("jsonRpc")
 
         logger.info("Starting signal-cli daemon (account=<redacted>)")
         self._process = await asyncio.create_subprocess_exec(
@@ -205,7 +205,7 @@ class SignalThread:
                 line = await self._process.stderr.readline()
                 if not line:
                     break
-                logger.debug("signal-cli stderr: %s", line.decode(errors="replace").rstrip())
+                logger.warning("signal-cli stderr: %s", line.decode(errors="replace").rstrip())
         except Exception:  # noqa: BLE001
             pass
 
