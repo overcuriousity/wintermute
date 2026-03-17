@@ -865,7 +865,7 @@ class MatrixThread:
                 text_part = sender_prefix + text_part
                 text_part = self._strip_bot_mention(text_part)
                 text_for_db = self._strip_bot_mention(text_for_db)
-            if text_part.strip():
+            if text_part.strip() and text_part.strip() != sender_prefix.strip():
                 content_parts.append({"type": "text", "text": text_part})
             content_parts.append({
                 "type": "image_url",
