@@ -111,7 +111,6 @@ class LLMThread:
                  tool_deps: "Optional[ToolDeps]" = None) -> None:
         self._main_pool = main_pool
         self._convergence_protocol_pool = convergence_protocol_pool
-        self._cp_validators = convergence_protocol_validators or {}
         from wintermute.core.cp_runner import ConvergenceProtocolRunner
         self._cp_runner = ConvergenceProtocolRunner(
             pool=convergence_protocol_pool,
@@ -914,34 +913,6 @@ class LLMThread:
             prediction_results=_prediction_results,
         )
         _inference_duration = _time.time() - _inference_start
-
-        # 3b. Credential redaction (main thread only, before save/delivery).
-        #     Gated on the credential_redaction CP hook being enabled.
-        if (
-            not thread_id.startswith("sub_")
-            and self._cp_validators.get("credential_redaction", True) is not False
-        ):
-            if reply.text:
-                _redacted, _was_redacted = convergence_protocol_module.redact_credentials(reply.text)
-                if _was_redacted:
-                    reply = LLMReply(
-                        text=_redacted, reasoning=reply.reasoning,
-                        tool_calls_made=reply.tool_calls_made,
-                        tool_call_details=reply.tool_call_details,
-                        duration_seconds=reply.duration_seconds,
-                        backend_used=reply.backend_used,
-                    )
-                    logger.warning("Credential redaction triggered for thread %s", thread_id)
-            if reply.reasoning:
-                _r_redacted, _r_was = convergence_protocol_module.redact_credentials(reply.reasoning)
-                if _r_was:
-                    reply = LLMReply(
-                        text=reply.text, reasoning=_r_redacted,
-                        tool_calls_made=reply.tool_calls_made,
-                        tool_call_details=reply.tool_call_details,
-                        duration_seconds=reply.duration_seconds,
-                        backend_used=reply.backend_used,
-                    )
 
         # 4. Save results, log, emit events, run post-inference tasks.
         await self._save_inference_result(
