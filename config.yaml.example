@@ -314,6 +314,11 @@ convergence_protocol:
                                            # telling the model to spawn a sub-session.
                                            # (pre_execution, main scope only)
 
+    #credential_redaction: true            # Redacts API keys, passwords, and access
+                                           # tokens from LLM output before save/delivery.
+                                           # Main thread only, enabled by default.
+                                           # (post_inference, main scope)
+
 
 # ── NL Translation (Natural-Language Tool Pipe) ─────────────────────
 # For weak models that struggle with complex tool-call schemas, NL

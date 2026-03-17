@@ -486,6 +486,13 @@ async def main() -> None:
     from wintermute.core.convergence_protocol import set_max_inline_tool_rounds
     set_max_inline_tool_rounds(max_inline_tool_rounds)
 
+    # Extract config secrets and enable credential redaction.
+    from wintermute.core.convergence_protocol import extract_config_secrets, set_redaction_secrets
+    _secrets = extract_config_secrets(cfg)
+    set_redaction_secrets(_secrets)
+    if _secrets:
+        logger.info("Credential redaction: %d secret values loaded", len(_secrets))
+
     harvest_cfg_raw = cfg.get("memory_harvest", {})
     harvest_config = MemoryHarvestConfig(
         enabled=harvest_cfg_raw.get("enabled", True),
