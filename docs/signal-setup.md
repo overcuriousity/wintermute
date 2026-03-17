@@ -5,8 +5,8 @@ Wintermute can connect to Signal messenger via [signal-cli](https://github.com/A
 ## Prerequisites
 
 - **JRE 21+** (signal-cli requires Java)
-  - Fedora: `sudo dnf install java-21-openjdk-headless`
-  - Debian/Ubuntu: `sudo apt install openjdk-21-jre-headless`
+  - Fedora: `sudo dnf install java-25-openjdk-headless`
+  - Debian/Ubuntu: `sudo apt install openjdk-25-jre-headless`
 - **signal-cli** (download from [GitHub releases](https://github.com/AsamK/signal-cli/releases))
 - *(Optional)* **qrencode** — for rendering QR codes in the terminal when linking as a secondary device
   - Fedora: `sudo dnf install qrencode`
