@@ -94,7 +94,8 @@ signal:
   enabled: false
   phone_number: ""                      # Bot's Signal number ("+1234567890")
   signal_cli_path: "signal-cli"         # Path to signal-cli binary
-  allowed_users: []                     # Phone numbers, empty = allow all
+  allowed_users: []                     # Phone numbers or UUIDs, empty = allow all
+                                        # e.g. ["+491234567890", "a1b2c3d4-..."]
   allowed_groups: []                    # Group IDs, empty = allow all (1:1 mode)
                                         # MUST be set when group_mode is true
   group_mode: false                     # Group chat mode: respond only when
@@ -102,6 +103,7 @@ signal:
                                         # Each mention is single-turn (ephemeral).
   trust_new_keys: true                  # Auto-trust new identity keys (required
                                         # for headless operation)
+  http_port: 8190                       # Port for signal-cli HTTP daemon
 
 
 # ── Web Interface ────────────────────────────────────────────────────

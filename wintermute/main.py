@@ -778,6 +778,7 @@ async def main() -> None:
             allowed_groups=signal_cfg_raw.get("allowed_groups", []),
             group_mode=signal_cfg_raw.get("group_mode", False),
             trust_new_keys=signal_cfg_raw.get("trust_new_keys", True),
+            http_port=signal_cfg_raw.get("http_port", 8190),
         )
         signal_iface = SignalThread(
             sig_cfg, llm,
