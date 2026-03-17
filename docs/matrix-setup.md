@@ -93,7 +93,7 @@ When `group_mode: true`, **only messages that @mention the bot (via Matrix pill)
 
 Each @mention is a **single-turn conversation**: the LLM receives only the current message plus the system prompt (with memories and skills), but no prior conversation history. This means the LLM provider never sees accumulated chat context from the room.
 
-The user's message and the bot's response are saved to the local database after inference completes. This allows the memory harvester, dreaming cycle, and reflection systems to extract long-term knowledge from group interactions — but the raw conversation history is never forwarded to the LLM in bulk.
+The user's message is saved to the local database before inference; the bot's response is saved after. This allows the memory harvester, dreaming cycle, and reflection systems to extract long-term knowledge from group interactions — but the raw conversation history is never forwarded to the LLM in bulk.
 
 ### Configuration
 

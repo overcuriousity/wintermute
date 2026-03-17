@@ -806,8 +806,8 @@ class MatrixThread:
         group = self._cfg.group_mode
 
         # In normal mode, gate on allowed_users immediately.
-        # In group mode, we collect from everyone — allowed_users is checked
-        # only when the bot is @mentioned (below).
+        # In group mode, non-mentioned messages are dropped entirely;
+        # allowed_users is checked only when the bot is @mentioned (below).
         if not group and not self._is_user_allowed(str(evt.sender)):
             return
 
@@ -1571,9 +1571,13 @@ class MatrixThread:
                 if isinstance(user_ids, list) and uid in user_ids:
                     return True
 
-        # 2. Pill in formatted_body (handle URL-encoded MXIDs)
+        # 2. Pill in formatted_body (handle URL-encoded MXIDs).
+        #    Strip <mx-reply>…</mx-reply> first — reply fallback quotes the
+        #    original event's HTML and may contain a stale pill mention.
         fmt = getattr(evt.content, "formatted_body", None) or ""
         if fmt:
+            import re as _re
+            fmt = _re.sub(r"<mx-reply>.*?</mx-reply>", "", fmt, flags=_re.DOTALL)
             from urllib.parse import quote as _url_quote
             if f"https://matrix.to/#/{uid}" in fmt:
                 return True
