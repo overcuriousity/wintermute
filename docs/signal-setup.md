@@ -19,10 +19,10 @@ Download the latest release and extract it:
 
 ```bash
 # Check https://github.com/AsamK/signal-cli/releases for the latest version
-SIGNAL_CLI_VERSION=0.13.12
-wget https://github.com/AsamK/signal-cli/releases/download/v${SIGNAL_CLI_VERSION}/signal-cli-${SIGNAL_CLI_VERSION}-Linux.tar.gz
-sudo tar xf signal-cli-${SIGNAL_CLI_VERSION}-Linux.tar.gz -C /opt
-sudo ln -sf /opt/signal-cli-${SIGNAL_CLI_VERSION}/bin/signal-cli /usr/local/bin/signal-cli
+VERSION=$(curl -Ls -o /dev/null -w %{url_effective} https://github.com/AsamK/signal-cli/releases/latest | sed -e 's/^.*\/v//')
+curl -L -O https://github.com/AsamK/signal-cli/releases/download/v"${VERSION}"/signal-cli-"${VERSION}".tar.gz
+sudo tar xf signal-cli-"${VERSION}".tar.gz -C /opt
+sudo ln -sf /opt/signal-cli-"${VERSION}"/bin/signal-cli /usr/local/bin/
 ```
 
 Verify installation:
