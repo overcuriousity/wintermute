@@ -448,6 +448,29 @@ class LLMThread:
                         )
                     reply = LLMReply(text=f"[Error during inference: {err_msg}]")
 
+                # -- Credential redaction (pre-dispatch) --
+                if reply.text:
+                    _redacted, _was_redacted = convergence_protocol_module.redact_credentials(reply.text)
+                    if _was_redacted:
+                        reply = LLMReply(
+                            text=_redacted, reasoning=reply.reasoning,
+                            tool_calls_made=reply.tool_calls_made,
+                            tool_call_details=reply.tool_call_details,
+                            duration_seconds=reply.duration_seconds,
+                            backend_used=reply.backend_used,
+                        )
+                        logger.warning("Credential redaction triggered for thread %s", thread_id)
+                if reply.reasoning:
+                    _r_redacted, _r_was = convergence_protocol_module.redact_credentials(reply.reasoning)
+                    if _r_was:
+                        reply = LLMReply(
+                            text=reply.text, reasoning=_r_redacted,
+                            tool_calls_made=reply.tool_calls_made,
+                            tool_call_details=reply.tool_call_details,
+                            duration_seconds=reply.duration_seconds,
+                            backend_used=reply.backend_used,
+                        )
+
                 if item.future and not item.future.done():
                     item.future.set_result(reply)
                 elif item.is_system_event and not item.future and item.convergence_depth == 0:

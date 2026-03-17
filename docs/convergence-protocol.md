@@ -148,6 +148,20 @@ Not configurable via the `validators` map. Always active in all scopes.
 
 ---
 
+### `credential_redaction` — API key / password leak prevention
+
+**Phase:** `post_inference` | **Scope:** `main` | **Type:** programmatic
+
+A dual-layer safety mechanism that prevents LLM output from containing API keys, passwords, or access tokens from the system configuration.
+
+**Layer 1 — Pre-dispatch filter:** A synchronous text filter in `llm_thread.py` replaces any known secret values with `[API-KEY-REDACTED]` before the response reaches the user. This filter runs unconditionally and cannot be bypassed by the CP pipeline.
+
+**Layer 2 — CP hook:** This hook fires post-inference and detects the `[API-KEY-REDACTED]` markers left by the pre-dispatch filter. When found, it logs the incident, fires a Gotify alert (stub — future integration), and injects a correction telling the LLM not to leak credentials in future responses.
+
+Secrets are extracted at startup from known config paths: `inference_backends[*].api_key`, `matrix.password`, `matrix.access_token`, `matrix.device_id`, `whisper.api_key`, `memory.embeddings.api_key`, `memory.qdrant.api_key`, and `skills.qdrant.api_key`. Placeholder values (`""`, `"none"`, `"llama-server"`) and values shorter than 8 characters are excluded.
+
+---
+
 ### `repetition_loop` — Stuck-in-a-loop detection
 
 **Phase:** `post_inference` | **Scope:** `main` + `sub_session` | **Type:** programmatic

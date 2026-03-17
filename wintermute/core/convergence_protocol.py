@@ -102,6 +102,96 @@ def set_max_inline_tool_rounds(value: int) -> None:
 
 
 # ------------------------------------------------------------------
+# Credential redaction — pre-dispatch text filter
+# ------------------------------------------------------------------
+
+_redaction_secrets: frozenset[str] = frozenset()
+
+_SECRET_PLACEHOLDER = "[API-KEY-REDACTED]"
+
+# Values to ignore when extracting secrets from config (placeholders,
+# common dummy values, and anything shorter than 8 characters).
+_SECRET_IGNORE = frozenset({"", "none", "llama-server", "whisper-1"})
+
+
+def set_redaction_secrets(secrets: frozenset[str]) -> None:
+    """Set the secret values used for credential redaction (called from main.py)."""
+    global _redaction_secrets
+    _redaction_secrets = secrets
+
+
+def extract_config_secrets(cfg: dict) -> frozenset[str]:
+    """Walk known config paths and extract secret values for redaction.
+
+    Returns a frozenset of non-trivial secret strings found in the config.
+    """
+    candidates: list[str] = []
+
+    # inference_backends[*].api_key
+    for backend in cfg.get("inference_backends", []):
+        if backend.get("api_key"):
+            candidates.append(backend["api_key"])
+
+    # matrix.password, matrix.access_token, matrix.device_id
+    matrix = cfg.get("matrix", {}) or {}
+    for key in ("password", "access_token", "device_id"):
+        if matrix.get(key):
+            candidates.append(matrix[key])
+
+    # whisper.api_key
+    whisper = cfg.get("whisper", {}) or {}
+    if whisper.get("api_key"):
+        candidates.append(whisper["api_key"])
+
+    # memory.embeddings.api_key
+    memory = cfg.get("memory", {}) or {}
+    embeddings = memory.get("embeddings", {}) or {}
+    if embeddings.get("api_key"):
+        candidates.append(embeddings["api_key"])
+
+    # memory.qdrant.api_key
+    qdrant = memory.get("qdrant", {}) or {}
+    if qdrant.get("api_key"):
+        candidates.append(qdrant["api_key"])
+
+    # skills.qdrant.api_key
+    skills = cfg.get("skills", {}) or {}
+    skills_qdrant = skills.get("qdrant", {}) or {}
+    if skills_qdrant.get("api_key"):
+        candidates.append(skills_qdrant["api_key"])
+
+    # Filter out placeholders and short values.
+    secrets: set[str] = set()
+    for val in candidates:
+        val_str = str(val).strip()
+        if val_str.lower() in _SECRET_IGNORE:
+            continue
+        if len(val_str) < 8:
+            continue
+        secrets.add(val_str)
+
+    return frozenset(secrets)
+
+
+def redact_credentials(text: str) -> tuple[str, bool]:
+    """Replace any known secret values in *text* with a placeholder.
+
+    Returns ``(redacted_text, was_redacted)``.
+    """
+    if not _redaction_secrets or not text:
+        return text, False
+
+    redacted = text
+    was_redacted = False
+    for secret in _redaction_secrets:
+        if secret in redacted:
+            redacted = redacted.replace(secret, _SECRET_PLACEHOLDER)
+            was_redacted = True
+
+    return redacted, was_redacted
+
+
+# ------------------------------------------------------------------
 # Data model
 # ------------------------------------------------------------------
 
@@ -381,6 +471,30 @@ _BUILTIN_HOOKS: list[ConvergenceHook] = [
         halt_inference=False,
         kill_on_detect=False,
         phase="pre_execution",
+        scope=["main"],
+    ),
+    # -- credential_redaction: detect that secrets were redacted from output --
+    # Programmatic-only.  The actual redaction happens as a pre-dispatch
+    # filter in llm_thread.py (so it can never be bypassed).  This hook
+    # fires post-inference to detect the redaction markers, log the event,
+    # fire a gotify alert, and inject a correction telling the LLM not to
+    # leak credentials again.
+    ConvergenceHook(
+        name="credential_redaction",
+        detection_prompt="",  # programmatic-only, no Stage 1
+        validator_type="programmatic",
+        validator_fn_name="validate_credential_redaction",
+        validator_prompt=None,
+        correction_template=(
+            "[CONVERGENCE PROTOCOL — CREDENTIAL LEAK] Your response contained "
+            "API credentials from the system configuration. They have been "
+            "redacted before delivery.\nIssue: {reason}\n\n"
+            "NEVER include API keys, passwords, or access tokens in responses. "
+            "Describe configuration structure without revealing secret values."
+        ),
+        halt_inference=False,
+        kill_on_detect=False,
+        phase="post_inference",
         scope=["main"],
     ),
 ]
@@ -866,6 +980,40 @@ def validate_inline_tool_limit(context: dict, detection_result: dict) -> bool:
     return True
 
 
+def validate_credential_redaction(context: dict, detection_result: dict) -> bool:
+    """Programmatic validator for credential_redaction.
+
+    Returns True if the pre-dispatch redaction filter replaced secrets in
+    the assistant response (indicated by the ``[API-KEY-REDACTED]`` marker).
+    When triggered, fires a gotify alert stub and sets the hook reason.
+    """
+    response = context.get("assistant_response", "")
+    if _SECRET_PLACEHOLDER not in response:
+        return False
+
+    context["_convergence_hook_reason"] = (
+        "LLM output contained configuration credentials that were "
+        "redacted before delivery to the user."
+    )
+
+    # Fire gotify alert stub (best-effort, non-blocking).
+    try:
+        import asyncio
+        from wintermute.infra.alerts import send_gotify_alert
+        asyncio.get_event_loop().create_task(
+            send_gotify_alert(
+                "Credential Leak Detected",
+                "LLM output contained API credentials. Redacted before delivery.",
+                priority=8,
+            )
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    logger.warning("Credential redaction: confirmed leak in assistant response")
+    return True
+
+
 # Registry of programmatic validator functions.
 _PROGRAMMATIC_VALIDATORS = {
     "validate_workflow_spawn": validate_workflow_spawn,
@@ -875,6 +1023,7 @@ _PROGRAMMATIC_VALIDATORS = {
     "validate_task_complete": validate_task_complete,
     "validate_repetition_loop": validate_repetition_loop,
     "validate_inline_tool_limit": validate_inline_tool_limit,
+    "validate_credential_redaction": validate_credential_redaction,
 }
 
 
