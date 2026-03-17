@@ -211,7 +211,7 @@ if $DRY_RUN; then
   echo -e "  ${C_DIM}OS family:${C_RESET}       ${OS_FAMILY}"
   echo -e "  ${C_DIM}Script dir:${C_RESET}      ${SCRIPT_DIR}"
   echo ""
-  echo -e "  ${C_DIM}Would install: Python 3.12+, curl, uv, build tools, libolm-dev, ffmpeg${C_RESET}"
+  echo -e "  ${C_DIM}Would install: Python 3.12+, curl, uv, build tools, libolm-dev, ffmpeg (+ optional: signal-cli, qrencode)${C_RESET}"
   echo -e "  ${C_DIM}Would run: uv sync${C_RESET}"
   echo -e "  ${C_DIM}Would launch AI-driven configuration assistant${C_RESET}"
   echo ""
@@ -321,6 +321,23 @@ if ! need_pkg ffmpeg; then
   run_quiet "Install ffmpeg" install_pkg ffmpeg || warn "ffmpeg installation failed — voice message transcription will not work."
 fi
 if need_pkg ffmpeg; then ok "ffmpeg available."; fi
+
+info "Checking signal-cli (optional — for Signal messenger interface)..."
+if command -v signal-cli &>/dev/null; then
+  ok "signal-cli available: $(signal-cli --version 2>/dev/null || echo 'unknown version')"
+else
+  info "signal-cli not found. Install it manually if you want Signal support."
+  info "See docs/signal-setup.md for installation instructions."
+fi
+
+info "Checking qrencode (optional — for Signal link-as-device QR codes)..."
+if command -v qrencode &>/dev/null; then
+  ok "qrencode available."
+else
+  info "qrencode not found. Install it if you want to link Signal as secondary device."
+  info "  Fedora: sudo dnf install qrencode"
+  info "  Debian/Ubuntu: sudo apt install qrencode"
+fi
 
 info "Checking uv..."
 if ! need_pkg uv; then

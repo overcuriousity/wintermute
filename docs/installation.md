@@ -7,6 +7,7 @@
 - An OpenAI-compatible LLM endpoint
 - *(Strongly recommended)* A local [SearXNG](https://docs.searxng.org/) instance — Wintermute's `search_web` tool queries SearXNG for web search. Without it, searches fall back to DuckDuckGo's limited Instant Answer API. SearXNG is lightweight, privacy-respecting, and easy to deploy via Docker.
 - *(Recommended)* A dedicated Matrix account for the bot
+- *(Optional)* [signal-cli](https://github.com/AsamK/signal-cli) (Java) — for Signal messenger integration. See [Signal Setup](signal-setup.md) for details.
 
 ## Quickstart — AI-Driven Onboarding (experimental)
 

@@ -64,10 +64,10 @@ matrix:
 
 
 # ── Whisper (Voice Transcription) ────────────────────────────────────
-# Transcribes Matrix voice messages using an OpenAI-compatible
+# Transcribes voice messages (Matrix and Signal) using an OpenAI-compatible
 # /v1/audio/transcriptions endpoint (e.g. faster-whisper-server, OpenAI).
-# Only relevant if Matrix is enabled. Without this, voice messages show
-# a placeholder "[voice message received]".
+# Only relevant if Matrix or Signal is enabled. Without this, voice messages
+# show a placeholder "[voice message received]".
 #
 # Local options:
 #   - faster-whisper-server: https://github.com/fedirz/faster-whisper-server
@@ -81,6 +81,26 @@ whisper:
   model: "whisper-large-v3"               # Model name (depends on your endpoint)
   language: ""                            # Optional ISO-639-1 hint, e.g. "de", "en"
                                           # Empty = auto-detect language
+
+
+# ── Signal (optional) ────────────────────────────────────────────────
+# Signal messenger interface via signal-cli (JSON-RPC daemon mode).
+# Requires signal-cli (Java) to be installed and a phone number
+# registered or linked. See docs/signal-setup.md for setup instructions.
+#
+# Thread IDs: sig_+491234567890 (1:1) or sig_group_<base64id> (groups)
+#
+signal:
+  enabled: false
+  phone_number: ""                      # Bot's Signal number ("+1234567890")
+  signal_cli_path: "signal-cli"         # Path to signal-cli binary
+  allowed_users: []                     # Phone numbers, empty = allow all
+  allowed_groups: []                    # Group IDs, empty = allow all
+  group_mode: false                     # Group chat mode: respond only when
+                                        # the bot's phone number is mentioned.
+                                        # Each mention is single-turn (ephemeral).
+  trust_new_keys: true                  # Auto-trust new identity keys (required
+                                        # for headless operation)
 
 
 # ── Web Interface ────────────────────────────────────────────────────
