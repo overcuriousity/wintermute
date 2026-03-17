@@ -964,7 +964,12 @@ class MatrixThread:
         text = sender_prefix + reply_prefix + text
 
         if group:
-            text = self._strip_bot_mention(text)
+            text = self._strip_bot_mention(text).strip()
+            # After stripping the bot mention in group mode, the message may become empty
+            # or reduce to only the sender prefix (e.g., "[alice]:"). In those cases,
+            # drop the turn instead of dispatching a low-signal message.
+            if not text or text == sender_prefix:
+                return
 
         logger.info("Received message from %s in %s: %s", evt.sender, thread_id, text[:100])
         await self._dispatch(text, thread_id, ephemeral=group)
