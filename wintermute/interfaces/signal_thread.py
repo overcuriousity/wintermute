@@ -348,6 +348,10 @@ class SignalThread:
         # In group mode, only respond when mentioned.
         if group and not self._is_bot_mentioned(data_msg):
             return
+        # Group mode + mentioned: gate on allowed_users (matches Matrix behavior).
+        if group and not self._is_user_allowed(source_number):
+            logger.debug("Group-mode mention from non-allowed user %s — ignoring", source_number)
+            return
 
         # Send read receipt
         timestamp = data_msg.get("timestamp")
