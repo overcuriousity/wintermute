@@ -208,6 +208,7 @@ class WebInterface:
             budget = self._token_budget(tid)
             ttype = (
                 "web" if tid.startswith("web_")
+                else "signal" if tid.startswith("sig_")
                 else "matrix" if (tid.startswith("!") and ":" in tid)
                 else "system"
             )
@@ -867,6 +868,7 @@ class WebInterface:
             budget = self._token_budget(tid)
             ttype = (
                 "web" if tid.startswith("web_")
+                else "signal" if tid.startswith("sig_")
                 else "matrix" if (tid.startswith("!") and ":" in tid)
                 else "system"
             )

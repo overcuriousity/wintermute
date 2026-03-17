@@ -37,6 +37,20 @@ logger = logging.getLogger(__name__)
 VOICE_DIR = Path("data/voice")
 
 
+def _to_urlsafe_b64(s: str) -> str:
+    """Convert standard base64 to URL-safe base64 (no padding)."""
+    return s.replace("+", "-").replace("/", "_").rstrip("=")
+
+
+def _from_urlsafe_b64(s: str) -> str:
+    """Convert URL-safe base64 back to standard base64."""
+    s = s.replace("-", "+").replace("_", "/")
+    pad = 4 - len(s) % 4
+    if pad != 4:
+        s += "=" * pad
+    return s
+
+
 @dataclass
 class SignalConfig:
     phone_number: str
@@ -76,8 +90,9 @@ class SignalThread:
         self._slash_handler = slash_handler
         # Subscribe to send_file events from the tool.
         self._event_bus = event_bus
+        self._send_file_sub_id: Optional[str] = None
         if event_bus is not None:
-            event_bus.subscribe("send_file", self._handle_send_file_event)
+            self._send_file_sub_id = event_bus.subscribe("send_file", self._handle_send_file_event)
 
     # ------------------------------------------------------------------
     # Public interface
@@ -153,6 +168,9 @@ class SignalThread:
 
     def stop(self) -> None:
         self._running = False
+        if self._event_bus is not None and self._send_file_sub_id is not None:
+            self._event_bus.unsubscribe(self._send_file_sub_id)
+            self._send_file_sub_id = None
         self._kill_process_sync()
 
     # ------------------------------------------------------------------
@@ -334,7 +352,8 @@ class SignalThread:
         group_info = data_msg.get("groupInfo")
         if group_info:
             group_id = group_info.get("groupId", "")
-            thread_id = f"sig_group_{group_id}"
+            safe_group_id = _to_urlsafe_b64(group_id)
+            thread_id = f"sig_group_{safe_group_id}"
             if not self._is_group_allowed(group_id):
                 return
         else:
@@ -617,7 +636,8 @@ class SignalThread:
     def _thread_id_to_send_params(self, thread_id: str) -> dict | None:
         """Convert a thread_id to signal-cli JSON-RPC send parameters."""
         if thread_id.startswith("sig_group_"):
-            group_id = thread_id[len("sig_group_"):]
+            safe_group_id = thread_id[len("sig_group_"):]
+            group_id = _from_urlsafe_b64(safe_group_id)
             return {"groupId": [group_id]}
         if thread_id.startswith("sig_"):
             recipient = thread_id[len("sig_"):]
