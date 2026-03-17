@@ -218,6 +218,7 @@ class SignalThread:
             if not line:
                 logger.warning("signal-cli stdout closed (process exited?)")
                 break
+            logger.info("signal-cli stdout: %s", line.decode(errors="replace").rstrip()[:500])
             try:
                 data = _json.loads(line)
             except _json.JSONDecodeError:
@@ -342,10 +343,13 @@ class SignalThread:
         envelope = params.get("envelope", params)
         source = envelope.get("source", "")
         source_number = envelope.get("sourceNumber", source)
+        logger.info("[signal] envelope keys=%s source=%r sourceNumber=%r",
+                     list(envelope.keys()), source, source_number)
 
         # Data message (text, attachments)
         data_msg = envelope.get("dataMessage")
         if data_msg is None:
+            logger.info("[signal] No dataMessage in envelope, ignoring")
             return
 
         # Determine thread_id
@@ -355,10 +359,12 @@ class SignalThread:
             safe_group_id = _to_urlsafe_b64(group_id)
             thread_id = f"sig_group_{safe_group_id}"
             if not self._is_group_allowed(group_id):
+                logger.info("[signal] Group %s not in allowed_groups, ignoring", group_id)
                 return
         else:
             thread_id = f"sig_{source_number}"
             if not self._is_user_allowed(source_number):
+                logger.info("[signal] User %s not in allowed_users, ignoring", source_number)
                 return
 
         is_group = group_info is not None
