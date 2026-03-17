@@ -41,9 +41,12 @@ from collections.abc import MutableMapping as _Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote as _url_quote
 
 from ruamel.yaml import YAML as _YAML
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString as _DQStr
+
+_REPLY_STRIP_RE = _re.compile(r"<mx-reply>.*?</mx-reply>", flags=_re.DOTALL)
 
 try:
     import olm as _olm
@@ -239,6 +242,7 @@ class MatrixConfig:
     password: str = ""
     allowed_users: list[str] = field(default_factory=list)
     allowed_rooms: list[str] = field(default_factory=list)
+    group_mode: bool = False
 
 
 class MatrixThread:
@@ -385,6 +389,11 @@ class MatrixThread:
                      file_path, room_id, _retries, last_exc)
 
     @property
+    def group_mode(self) -> bool:
+        """Whether group chat mode is enabled."""
+        return self._cfg.group_mode
+
+    @property
     def joined_room_ids(self) -> set[str]:
         """Return room IDs the client has joined.  Used by the debug API."""
         if self._client is None:
@@ -415,6 +424,17 @@ class MatrixThread:
     async def run(self) -> None:
         self._running = True
 
+        # Validate group_mode: allowed_rooms must be set to prevent
+        # unintended data collection from every room the bot joins.
+        if self._cfg.group_mode and not self._cfg.allowed_rooms:
+            logger.error(
+                "Configuration error: group_mode is enabled but allowed_rooms is empty. "
+                "To avoid unintended data collection from all joined rooms, the Matrix "
+                "interface will not start. Set allowed_rooms in config.yaml and restart."
+            )
+            self._running = False
+            return
+
         # Auto-login if no token but password is configured.
         if not self._cfg.access_token and self._cfg.password:
             await self._auto_login()
@@ -423,6 +443,7 @@ class MatrixThread:
                 "Matrix: no access_token and no password configured. "
                 "Set at least one in config.yaml.",
             )
+            self._running = False
             return
 
         # If we have credentials for an existing device but the crypto DB is gone,
@@ -784,31 +805,60 @@ class MatrixThread:
         """Handle m.room.message events (auto-decrypted by mautrix)."""
         if str(evt.sender) == self._cfg.user_id:
             return
-        if not self._is_user_allowed(str(evt.sender)):
-            return
         if self._cfg.allowed_rooms and str(evt.room_id) not in self._cfg.allowed_rooms:
+            return
+
+        group = self._cfg.group_mode
+
+        # In normal mode, gate on allowed_users immediately.
+        # In group mode, non-mentioned messages are dropped entirely;
+        # allowed_users is checked only when the bot is @mentioned (below).
+        if not group and not self._is_user_allowed(str(evt.sender)):
             return
 
         msgtype = getattr(evt.content, "msgtype", None)
         if msgtype not in (MessageType.TEXT, MessageType.IMAGE, MessageType.AUDIO):
             return
 
+        # In group mode, check mention early and drop non-mentioned messages
+        # before any side effects (read receipts, media downloads, etc.).
+        if group and not self._is_bot_mentioned(evt):
+            return
+        # Group mode + mentioned: gate on allowed_users.
+        if group and not self._is_user_allowed(str(evt.sender)):
+            logger.debug("Group-mode mention from non-allowed user %s — ignoring", evt.sender)
+            return
+
         thread_id = str(evt.room_id)
         await self._send_read_receipt(thread_id, evt.event_id)
 
+        sender_prefix = f"[{self._localpart(str(evt.sender))}]: " if group else ""
+
+        # In group mode, strip the plaintext reply fallback from the body
+        # so that quoted content from other users is never forwarded to the
+        # LLM provider.  This mutates evt.content.body in-place before any
+        # downstream code reads it (text, caption, etc.).
+        if group and evt.content.body:
+            evt.content.body = self._strip_reply_fallback(evt.content.body)
+
         # --- Reply context ---
+        # In group mode, skip fetching reply-to events to avoid forwarding
+        # other users' messages to the LLM provider.
         reply_prefix = ""
-        reply_to = evt.content.get_reply_to()
-        if reply_to:
-            try:
-                orig = await self._client.get_event(RoomID(thread_id), reply_to)
-                orig_body = getattr(getattr(orig, "content", None), "body", None) or ""
-                reply_prefix = f"> {orig.sender}: {orig_body}\n>\n"
-            except Exception:  # noqa: BLE001
-                logger.debug("Could not fetch replied-to event %s", reply_to)
+        if not group:
+            reply_to = evt.content.get_reply_to()
+            if reply_to:
+                try:
+                    orig = await self._client.get_event(RoomID(thread_id), reply_to)
+                    orig_body = getattr(getattr(orig, "content", None), "body", None) or ""
+                    reply_prefix = f"> {orig.sender}: {orig_body}\n>\n"
+                except Exception:  # noqa: BLE001
+                    logger.debug("Could not fetch replied-to event %s", reply_to)
 
         # --- Image ---
         if msgtype == MessageType.IMAGE:
+            caption = (evt.content.body or "").strip()
+
             try:
                 data = await self._download_media(evt)
             except Exception:  # noqa: BLE001
@@ -816,21 +866,26 @@ class MatrixThread:
                 return
             mimetype = getattr(getattr(evt.content, "info", None), "mimetype", "image/png") or "image/png"
             b64data = _base64.b64encode(data).decode()
-            caption = (evt.content.body or "").strip()
-            text_for_db = reply_prefix + (caption or "[image attached]")
+            text_for_db = sender_prefix + reply_prefix + (caption or "[image attached]")
             content_parts: list[dict] = []
-            if reply_prefix or caption:
-                content_parts.append({"type": "text", "text": reply_prefix + caption})
+            text_part = reply_prefix + caption
+            if group:
+                text_part = sender_prefix + text_part
+                text_part = self._strip_bot_mention(text_part)
+                text_for_db = self._strip_bot_mention(text_for_db)
+            if text_part.strip() and text_part.strip() != sender_prefix.strip():
+                content_parts.append({"type": "text", "text": text_part})
             content_parts.append({
                 "type": "image_url",
                 "image_url": {"url": f"data:{mimetype};base64,{b64data}"},
             })
             logger.info("Received image from %s in %s", evt.sender, thread_id)
-            await self._dispatch(text_for_db, thread_id, content=content_parts)
+            await self._dispatch(text_for_db, thread_id, content=content_parts, ephemeral=group)
             return
 
         # --- Audio / voice ---
         if msgtype == MessageType.AUDIO:
+
             try:
                 data = await self._download_media(evt)
             except Exception:  # noqa: BLE001
@@ -851,7 +906,7 @@ class MatrixThread:
                 voice_path.write_bytes(data)
             except OSError:
                 logger.exception("Failed to save voice message to %s", voice_path)
-                await self._dispatch(reply_prefix + "[Voice message received but could not be saved to disk]", thread_id)
+                await self._dispatch(sender_prefix + reply_prefix + "[Voice message received but could not be saved to disk]", thread_id, ephemeral=group)
                 return
             logger.info("Saved voice message from %s to %s", evt.sender, voice_path)
 
@@ -887,26 +942,37 @@ class MatrixThread:
                     transcript = resp.text.strip()
                     if not transcript:
                         logger.warning("Whisper returned empty transcript for %s", voice_path)
-                        text = reply_prefix + "[Voice message received — transcription was empty (silence?)]"
+                        text = sender_prefix + reply_prefix + "[Voice message received — transcription was empty (silence?)]"
                     else:
                         logger.info("Whisper transcript (%s): %s", evt.sender, transcript[:120])
-                        text = reply_prefix + f"[Transcribed voice message] {transcript}"
-                    await self._dispatch(text, thread_id)
+                        text = sender_prefix + reply_prefix + f"[Transcribed voice message] {transcript}"
+                    if group:
+                        text = self._strip_bot_mention(text)
+                    await self._dispatch(text, thread_id, ephemeral=group)
                     return
                 except Exception:  # noqa: BLE001
                     logger.exception("Whisper transcription failed for %s — falling back to placeholder", voice_path)
 
-            text = reply_prefix + f"[Voice message received: {voice_path}]"
-            await self._dispatch(text, thread_id)
+            text = sender_prefix + reply_prefix + f"[Voice message received: {voice_path}]"
+            await self._dispatch(text, thread_id, ephemeral=group)
             return
 
         # --- Text ---
         text = (evt.content.body or "").strip()
         if not text:
             return
-        text = reply_prefix + text
+        text = sender_prefix + reply_prefix + text
+
+        if group:
+            text = self._strip_bot_mention(text).strip()
+            # After stripping the bot mention in group mode, the message may become empty
+            # or reduce to only the sender prefix (e.g., "[alice]:"). In those cases,
+            # drop the turn instead of dispatching a low-signal message.
+            if not text or text == sender_prefix:
+                return
+
         logger.info("Received message from %s in %s: %s", evt.sender, thread_id, text[:100])
-        await self._dispatch(text, thread_id)
+        await self._dispatch(text, thread_id, ephemeral=group)
 
     async def _download_media(self, evt) -> bytes:
         """Download media from a Matrix event, handling E2EE decryption."""
@@ -1375,7 +1441,7 @@ class MatrixThread:
     # Command dispatch
     # ------------------------------------------------------------------
 
-    async def _dispatch(self, text: str, thread_id: str, *, content: list | None = None) -> None:
+    async def _dispatch(self, text: str, thread_id: str, *, content: list | None = None, ephemeral: bool = False) -> None:
         # Shared slash commands (delegated to SlashCommandHandler).
         if content is None and self._slash_handler is not None:
             async def send_fn(msg: str) -> None:
@@ -1402,7 +1468,7 @@ class MatrixThread:
             self._typing_loop(thread_id), name=f"typing_{thread_id}",
         )
         try:
-            reply = await self._llm.enqueue_user_message(text, thread_id, content=content)
+            reply = await self._llm.enqueue_user_message(text, thread_id, content=content, ephemeral=ephemeral)
         finally:
             typing_task.cancel()
             try:
@@ -1481,6 +1547,85 @@ class MatrixThread:
         if not self._cfg.allowed_users:
             return True
         return user_id in self._cfg.allowed_users
+
+    # -- Group-mode helpers -------------------------------------------------
+
+    @staticmethod
+    def _localpart(user_id: str) -> str:
+        """Extract localpart from a Matrix user ID (``@alice:server`` → ``alice``)."""
+        if user_id.startswith("@"):
+            return user_id[1:].split(":", 1)[0]
+        return user_id
+
+    def _is_bot_mentioned(self, evt) -> bool:
+        """Return True if the event mentions this bot via pill or structured mention.
+
+        Checks (in order):
+        1. Structured ``m.mentions`` field (MSC3952, supported by modern clients)
+        2. Matrix pill link in ``formatted_body`` (plain and URL-encoded MXID)
+
+        Plain-text body is intentionally NOT checked to avoid false positives
+        from quoted text or casual ``@name`` references.
+        """
+        uid = self._cfg.user_id
+
+        # 1. Structured mentions (m.mentions.user_ids)
+        # mautrix content objects implement get() via SerializableAttrs;
+        # guard with hasattr for safety against future API changes.
+        if hasattr(evt.content, "get"):
+            mentions = evt.content.get("m.mentions")
+            if isinstance(mentions, dict):
+                user_ids = mentions.get("user_ids")
+                if isinstance(user_ids, list) and uid in user_ids:
+                    return True
+
+        # 2. Pill in formatted_body (handle URL-encoded MXIDs).
+        #    Strip <mx-reply>…</mx-reply> first — reply fallback quotes the
+        #    original event's HTML and may contain a stale pill mention.
+        fmt = getattr(evt.content, "formatted_body", None) or ""
+        if fmt:
+            fmt = _REPLY_STRIP_RE.sub("", fmt)
+            if f"https://matrix.to/#/{uid}" in fmt:
+                return True
+            encoded_uid = _url_quote(uid, safe="")
+            if f"https://matrix.to/#/{encoded_uid}" in fmt:
+                return True
+
+        return False
+
+    @staticmethod
+    def _strip_reply_fallback(body: str) -> str:
+        """Strip the Matrix plaintext reply fallback from a message body.
+
+        Matrix clients prepend quoted lines (``> <@user:server> …``) as a
+        reply fallback.  In group mode these must be removed so that other
+        users' message content is never forwarded to the LLM provider.
+        """
+        lines = body.split("\n")
+        # Reply fallback: leading lines starting with "> ", possibly
+        # followed by a single blank line.
+        idx = 0
+        while idx < len(lines) and lines[idx].startswith("> "):
+            idx += 1
+        # Skip the optional blank separator line after the quote block.
+        if idx > 0 and idx < len(lines) and lines[idx].strip() == "":
+            idx += 1
+        return "\n".join(lines[idx:]).strip() if idx > 0 else body
+
+    def _strip_bot_mention(self, text: str) -> str:
+        """Remove the bot's @localpart and full user_id from plain text body."""
+        uid = self._cfg.user_id
+        localpart = self._localpart(uid)
+        # Match the full MXID or bare @localpart as standalone mention tokens:
+        #  - preceded only by whitespace or start-of-string
+        #  - followed by whitespace, common punctuation, or end-of-string
+        pattern = rf"(?<!\S)(?:{_re.escape(uid)}|@{_re.escape(localpart)})(?=[\s\.,:;!?)]|$)"
+        cleaned = _re.sub(pattern, "", text)
+        # Tidy up spacing caused by removals without rewriting all formatting:
+        #  - collapse runs of spaces/tabs within lines
+        #  - trim leading/trailing whitespace on the full text
+        cleaned = _re.sub(r"[ \t]{2,}", " ", cleaned)
+        return cleaned.strip()
 
 
 # ---------------------------------------------------------------------------

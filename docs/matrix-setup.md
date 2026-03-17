@@ -83,6 +83,43 @@ If for any reason the automatic verification request doesn't arrive, you can tri
 1. In Element go to **Settings → Security → Sessions**, find Wintermute's session, tap **Verify**.
 2. Wintermute auto-completes the handshake immediately.
 
+## Group Mode
+
+Group mode lets Wintermute participate in multi-user Matrix rooms while minimizing data exposure to LLM providers.
+
+### Privacy model
+
+When `group_mode: true`, **only messages that @mention the bot (via Matrix pill)** are processed. All other room messages are silently ignored — they are never saved to the database and never sent to the LLM provider.
+
+Each @mention is a **single-turn conversation**: the LLM receives only the current message plus the system prompt (with memories and skills), but no prior conversation history. This means the LLM provider never sees accumulated chat context from the room.
+
+The user's message is saved to the local database before inference; the bot's response is saved after. This allows the memory harvester, dreaming cycle, and reflection systems to extract long-term knowledge from group interactions — but the raw conversation history is never forwarded to the LLM in bulk.
+
+### Configuration
+
+```yaml
+matrix:
+  group_mode: true
+  allowed_rooms:
+    - "!room-id:matrix.org"       # REQUIRED — prevents unintended listening
+  allowed_users:
+    - "@admin:matrix.org"         # Only these users can trigger responses via @mention
+```
+
+`allowed_rooms` is mandatory when `group_mode` is enabled. If it is omitted or left empty, Wintermute logs an error and the Matrix interface will not start until you configure at least one allowed room.
+
+### How it works
+
+1. Bot joins the configured rooms and listens for events
+2. Messages without an @mention (pill or `m.mentions`) are dropped entirely
+3. When an allowed user @mentions the bot, the mention text is extracted, the bot name is stripped, and inference runs with **only that message** as context
+4. The response is sent back to the room
+5. Both the user message and response are persisted locally for memory harvesting
+
+### Debug panel
+
+Group mode sessions show a `[GROUP]` badge in the web debug panel (`/debug`). The context size display reflects the accumulated DB history (used for memory harvesting), not what the LLM actually sees per turn.
+
 ## Troubleshooting
 
 ### Token Expired (`MUnknownToken`)

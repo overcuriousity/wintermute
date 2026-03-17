@@ -91,6 +91,7 @@ class _QueueItem:
     # If the thread has advanced past this number by the time the correction is
     # dequeued, the correction is stale and will be dropped.
     correction_for_seq: Optional[int] = None
+    ephemeral: bool = False  # skip loading history (group mode: single-turn)
 
 
 class LLMThread:
@@ -205,6 +206,7 @@ class LLMThread:
     async def enqueue_user_message(
         self, text: str, thread_id: str = "default",
         content: Optional[list] = None,
+        ephemeral: bool = False,
     ) -> "LLMReply":
         """Submit a user message and await the AI reply (returns LLMReply).
 
@@ -212,11 +214,16 @@ class LLMThread:
         (e.g. text + image_url).  When set, it is used as the message
         payload sent to the API instead of *text*.  *text* is always used
         for DB storage and logging.
+
+        *ephemeral* skips loading conversation history — the LLM sees only
+        this message (group mode single-turn).  The message is still saved
+        to DB for memory harvesting.
         """
         loop = asyncio.get_running_loop()
         fut: asyncio.Future = loop.create_future()
         await self._dispatch(_QueueItem(
             text=text, thread_id=thread_id, future=fut, content=content,
+            ephemeral=ephemeral,
         ))
         return await fut
 
@@ -378,7 +385,10 @@ class LLMThread:
                     )
 
                 # Seed empty threads on first real user message.
-                if not item.is_system_event and not await database.async_call(database.thread_has_messages, thread_id):
+                # Skip seeding for ephemeral turns (group mode) — the bot
+                # should only respond to the actual @mention, not send an
+                # unsolicited greeting.
+                if not item.ephemeral and not item.is_system_event and not await database.async_call(database.thread_has_messages, thread_id):
                     try:
                         seed_prompt = prompt_loader.load_seed(self._seed_language)
                         seed_item = _QueueItem(
@@ -661,7 +671,10 @@ class LLMThread:
         Also handles pre-compaction if the history exceeds the token budget.
         """
         thread_id = item.thread_id
-        messages = await self._store.build_messages(item.text, item.is_system_event, thread_id, item.content)
+        messages = await self._store.build_messages(
+            item.text, item.is_system_event, thread_id, item.content,
+            ephemeral=item.ephemeral,
+        )
 
         # Track last activity for session timeout checking (#58 plumbing).
         if not item.is_system_event:
@@ -711,7 +724,7 @@ class LLMThread:
         # Assemble system prompt first so we can measure its real token cost.
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
-        summary = self._store.compaction_summaries.get(thread_id)
+        summary = None if item.ephemeral else self._store.compaction_summaries.get(thread_id)
         system_prompt = prompt_assembler.assemble(
             extra_summary=summary, query=_memory_query,
             memory_results=_memory_results, prompt_mode=prompt_mode,
@@ -741,9 +754,12 @@ class LLMThread:
                 history_tokens, overhead_tokens, compaction_threshold, thread_id,
             )
             await self._compactor.compact(thread_id)
-            messages = await self._store.build_messages(item.text, item.is_system_event, thread_id, item.content)
+            messages = await self._store.build_messages(
+                item.text, item.is_system_event, thread_id, item.content,
+                ephemeral=item.ephemeral,
+            )
             # Reassemble with the updated compaction summary.
-            summary = self._store.compaction_summaries.get(thread_id)
+            summary = None if item.ephemeral else self._store.compaction_summaries.get(thread_id)
             system_prompt = prompt_assembler.assemble(
                 extra_summary=summary, query=_memory_query,
                 memory_results=_memory_results, prompt_mode=prompt_mode,
@@ -861,10 +877,11 @@ class LLMThread:
             await self._compactor.compact(thread_id)
             messages = await self._store.build_messages(
                 item.text, item.is_system_event, thread_id, item.content,
+                ephemeral=item.ephemeral,
             )
             nl_enabled = self._nl_translation_config.get("enabled", False)
             nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
-            summary = self._store.compaction_summaries.get(thread_id)
+            summary = None if item.ephemeral else self._store.compaction_summaries.get(thread_id)
             system_prompt = prompt_assembler.assemble(
                 extra_summary=summary, query=memory_query,
                 memory_results=memory_results, prompt_mode=prompt_mode,

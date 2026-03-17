@@ -123,13 +123,21 @@ class ConversationStore:
         self, new_text: str, is_system_event: bool,
         thread_id: str = "default",
         content: Optional[list] = None,
+        ephemeral: bool = False,
     ) -> list[dict]:
-        """Load active messages from DB and append the new user message."""
-        rows = await database.async_call(database.load_active_messages, thread_id)
-        messages = [
-            {"role": r["role"], "content": r["content"] or "..."}
-            for r in rows
-        ]
+        """Load active messages from DB and append the new user message.
+
+        When *ephemeral* is True, prior history is skipped — only the new
+        message is returned (group mode single-turn).
+        """
+        if ephemeral:
+            messages: list[dict] = []
+        else:
+            rows = await database.async_call(database.load_active_messages, thread_id)
+            messages = [
+                {"role": r["role"], "content": r["content"] or "..."}
+                for r in rows
+            ]
         prefix = "[SYSTEM EVENT] " if is_system_event else ""
         if content is not None and not is_system_event:
             messages.append({"role": "user", "content": content})

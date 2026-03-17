@@ -741,6 +741,7 @@ async def main() -> None:
             password=matrix_cfg_raw.get("password", ""),
             allowed_users=matrix_cfg_raw.get("allowed_users", []),
             allowed_rooms=matrix_cfg_raw.get("allowed_rooms", []),
+            group_mode=matrix_cfg_raw.get("group_mode", False),
         )
         matrix = MatrixThread(
             matrix_cfg, llm,
