@@ -66,6 +66,7 @@ class SignalThread:
         self._process: Optional[asyncio.subprocess.Process] = None
         self._stdin_lock = asyncio.Lock()
         self._rpc_id = 0
+        self._background_tasks: set[asyncio.Task] = set()
         # Whisper transcription (passed from main.py if enabled).
         self._whisper_client = whisper_client
         self._whisper_model: str = whisper_model
@@ -164,7 +165,7 @@ class SignalThread:
             cmd.extend(["--trust-new-identities", "always"])
         cmd.extend(["daemon", "--json"])
 
-        logger.info("Starting signal-cli: %s", " ".join(cmd))
+        logger.info("Starting signal-cli daemon (account=<redacted>)")
         self._process = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
@@ -172,9 +173,9 @@ class SignalThread:
             stderr=asyncio.subprocess.PIPE,
         )
         # Read stderr in background (Java warnings)
-        asyncio.create_task(
-            self._read_stderr(), name="signal-stderr",
-        )
+        _t = asyncio.create_task(self._read_stderr(), name="signal-stderr")
+        self._background_tasks.add(_t)
+        _t.add_done_callback(self._background_tasks.discard)
 
     async def _read_stderr(self) -> None:
         """Log signal-cli stderr at DEBUG level."""
@@ -204,10 +205,18 @@ class SignalThread:
                 logger.debug("signal-cli non-JSON line: %s", line.decode(errors="replace").rstrip())
                 continue
 
-            # JSON-RPC response or notification
+            # Log JSON-RPC error responses from signal-cli
+            if "error" in data:
+                logger.warning("signal-cli RPC error (id=%s): %s",
+                               data.get("id"), data["error"])
+                continue
+
+            # JSON-RPC notification (incoming message)
             if "method" in data and data["method"] == "receive":
                 params = data.get("params", {})
-                asyncio.create_task(self._on_message(params))
+                _t = asyncio.create_task(self._on_message(params))
+                self._background_tasks.add(_t)
+                _t.add_done_callback(self._background_tasks.discard)
 
     async def _send_jsonrpc(self, method: str, params: dict) -> dict:
         """Write a JSON-RPC request to stdin and return (fire-and-forget)."""
@@ -228,6 +237,11 @@ class SignalThread:
         return request
 
     async def _kill_process(self) -> None:
+        # Cancel all tracked background tasks before killing the process.
+        for task in list(self._background_tasks):
+            task.cancel()
+        self._background_tasks.clear()
+
         if self._process is not None:
             try:
                 self._process.terminate()
@@ -277,10 +291,6 @@ class SignalThread:
         is_group = group_info is not None
         group = self._cfg.group_mode and is_group
 
-        # In normal 1:1 mode, gate on allowed_users.
-        if not is_group and not self._is_user_allowed(source_number):
-            return
-
         # In group mode, only respond when mentioned.
         if group and not self._is_bot_mentioned(data_msg):
             return
@@ -288,7 +298,9 @@ class SignalThread:
         # Send read receipt
         timestamp = data_msg.get("timestamp")
         if timestamp and source_number:
-            asyncio.create_task(self._send_read_receipt(source_number, timestamp))
+            _t = asyncio.create_task(self._send_read_receipt(source_number, timestamp))
+            self._background_tasks.add(_t)
+            _t.add_done_callback(self._background_tasks.discard)
 
         sender_prefix = f"[{source_number}]: " if group else ""
 

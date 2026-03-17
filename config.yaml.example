@@ -95,7 +95,8 @@ signal:
   phone_number: ""                      # Bot's Signal number ("+1234567890")
   signal_cli_path: "signal-cli"         # Path to signal-cli binary
   allowed_users: []                     # Phone numbers, empty = allow all
-  allowed_groups: []                    # Group IDs, empty = allow all
+  allowed_groups: []                    # Group IDs, empty = allow all (1:1 mode)
+                                        # MUST be set when group_mode is true
   group_mode: false                     # Group chat mode: respond only when
                                         # the bot's phone number is mentioned.
                                         # Each mention is single-turn (ephemeral).
