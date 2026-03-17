@@ -106,7 +106,7 @@ matrix:
     - "@admin:matrix.org"         # Only these users can trigger responses via @mention
 ```
 
-`allowed_rooms` must be set when `group_mode` is enabled. If omitted, group mode is automatically disabled at startup with a warning.
+`allowed_rooms` is mandatory when `group_mode` is enabled. If it is omitted or left empty, Wintermute logs an error and the Matrix interface will not start until you configure at least one allowed room.
 
 ### How it works
 
