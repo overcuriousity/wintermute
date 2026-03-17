@@ -135,6 +135,25 @@ Signal UUIDs aren't visible in the app. There are three ways to find them:
 - 1:1 chats: `sig_+491234567890` (phone) or `sig_<uuid>` (UUID)
 - Groups: `sig_group_<base64-group-id>`
 
+### Allowed groups
+
+`allowed_groups` uses signal-cli's internal base64-encoded group IDs. To find them:
+
+1. **Via signal-cli** (easiest):
+   ```bash
+   signal-cli -a +1234567890 listGroups
+   ```
+   This prints all groups with their IDs, names, and members. Copy the `Id` value into your config.
+
+2. **From Wintermute's logs** — if `allowed_groups` is empty (allow all), send a message in the group and look for the thread_id in the logs. The group ID is the base64 value after `sig_group_`.
+
+```yaml
+allowed_groups:
+  - "mQ5xR7k3bT..."                    # Base64 group ID from listGroups
+```
+
+If the list is empty, all groups are allowed (1:1 mode default).
+
 ### Group mode
 
 When `group_mode: true`, the bot only responds to messages that mention its phone number. Each mention is a single-turn conversation (no prior history sent to the LLM). Sender attribution is included as `[+491234567890]: message`.
