@@ -986,6 +986,10 @@ def validate_credential_redaction(context: dict, detection_result: dict) -> bool
     if _SECRET_PLACEHOLDER not in response:
         return False
 
+    context["_convergence_hook_reason"] = (
+        "Known secrets were redacted from the assistant response "
+        "(replaced with [API-KEY-REDACTED])."
+    )
     logger.warning("Credential redaction: secrets were redacted from assistant response")
     return True
 

@@ -22,7 +22,7 @@ import json
 import logging
 import re
 import time as _time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Optional, TYPE_CHECKING
 
@@ -924,24 +924,12 @@ class LLMThread:
             if reply.text:
                 _redacted, _was_redacted = convergence_protocol_module.redact_credentials(reply.text)
                 if _was_redacted:
-                    reply = LLMReply(
-                        text=_redacted, reasoning=reply.reasoning,
-                        tool_calls_made=reply.tool_calls_made,
-                        tool_call_details=reply.tool_call_details,
-                        duration_seconds=reply.duration_seconds,
-                        backend_used=reply.backend_used,
-                    )
+                    reply = replace(reply, text=_redacted)
                     logger.warning("Credential redaction triggered for thread %s", thread_id)
             if reply.reasoning:
                 _r_redacted, _r_was = convergence_protocol_module.redact_credentials(reply.reasoning)
                 if _r_was:
-                    reply = LLMReply(
-                        text=reply.text, reasoning=_r_redacted,
-                        tool_calls_made=reply.tool_calls_made,
-                        tool_call_details=reply.tool_call_details,
-                        duration_seconds=reply.duration_seconds,
-                        backend_used=reply.backend_used,
-                    )
+                    reply = replace(reply, reasoning=_r_redacted)
 
         # 4. Save results, log, emit events, run post-inference tasks.
         await self._save_inference_result(
