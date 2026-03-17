@@ -66,6 +66,7 @@ class SignalThread:
         self._process: Optional[asyncio.subprocess.Process] = None
         self._stdin_lock = asyncio.Lock()
         self._rpc_id = 0
+        self._pending_rpcs: dict[int, asyncio.Future] = {}
         self._background_tasks: set[asyncio.Task] = set()
         # Whisper transcription (passed from main.py if enabled).
         self._whisper_client = whisper_client
@@ -205,10 +206,23 @@ class SignalThread:
                 logger.debug("signal-cli non-JSON line: %s", line.decode(errors="replace").rstrip())
                 continue
 
-            # Log JSON-RPC error responses from signal-cli
+            # Resolve pending RPC futures (request/response correlation)
+            rpc_id = data.get("id")
+            if rpc_id is not None and rpc_id in self._pending_rpcs:
+                future = self._pending_rpcs.pop(rpc_id)
+                if not future.done():
+                    if "error" in data:
+                        future.set_exception(
+                            RuntimeError(f"signal-cli RPC error: {data['error']}")
+                        )
+                    else:
+                        future.set_result(data.get("result", {}))
+                continue
+
+            # Log unexpected RPC error responses (no matching future)
             if "error" in data:
                 logger.warning("signal-cli RPC error (id=%s): %s",
-                               data.get("id"), data["error"])
+                               rpc_id, data["error"])
                 continue
 
             # JSON-RPC notification (incoming message)
@@ -218,10 +232,45 @@ class SignalThread:
                 self._background_tasks.add(_t)
                 _t.add_done_callback(self._background_tasks.discard)
 
-    async def _send_jsonrpc(self, method: str, params: dict) -> dict:
-        """Write a JSON-RPC request to stdin and return (fire-and-forget)."""
+    async def _send_jsonrpc(self, method: str, params: dict,
+                            *, timeout: float = 30.0) -> dict:
+        """Send a JSON-RPC request and await the response.
+
+        Raises RuntimeError on RPC-level errors so callers can retry.
+        """
         if self._process is None or self._process.stdin is None:
             raise RuntimeError("signal-cli process not running")
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future = loop.create_future()
+
+        async with self._stdin_lock:
+            self._rpc_id += 1
+            rpc_id = self._rpc_id
+            self._pending_rpcs[rpc_id] = future
+            request = {
+                "jsonrpc": "2.0",
+                "method": method,
+                "id": rpc_id,
+                "params": params,
+            }
+            line = _json.dumps(request) + "\n"
+            self._process.stdin.write(line.encode())
+            await self._process.stdin.drain()
+
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        except asyncio.TimeoutError:
+            self._pending_rpcs.pop(rpc_id, None)
+            raise RuntimeError(f"signal-cli RPC timeout for {method} (id={rpc_id})")
+
+    async def _send_jsonrpc_fire_and_forget(self, method: str, params: dict) -> None:
+        """Send a JSON-RPC request without waiting for a response.
+
+        Used for non-critical calls (typing indicators, read receipts).
+        """
+        if self._process is None or self._process.stdin is None:
+            return
 
         async with self._stdin_lock:
             self._rpc_id += 1
@@ -234,13 +283,18 @@ class SignalThread:
             line = _json.dumps(request) + "\n"
             self._process.stdin.write(line.encode())
             await self._process.stdin.drain()
-        return request
 
     async def _kill_process(self) -> None:
         # Cancel all tracked background tasks before killing the process.
         for task in list(self._background_tasks):
             task.cancel()
         self._background_tasks.clear()
+
+        # Cancel any pending RPC futures.
+        for future in self._pending_rpcs.values():
+            if not future.done():
+                future.cancel()
+        self._pending_rpcs.clear()
 
         if self._process is not None:
             try:
@@ -327,7 +381,7 @@ class SignalThread:
                     text_part = sender_prefix + text_part
                     text_part = self._strip_bot_mention(text_part)
                     text_for_db = self._strip_bot_mention(text_for_db)
-                if text_part.strip():
+                if text_part.strip() and text_part.strip() != sender_prefix.strip():
                     content_parts.append({"type": "text", "text": text_part})
                 content_parts.append({
                     "type": "image_url",
@@ -470,7 +524,7 @@ class SignalThread:
         if params is None:
             return
         try:
-            await self._send_jsonrpc("sendTyping", params)
+            await self._send_jsonrpc_fire_and_forget("sendTyping", params)
         except Exception as exc:  # noqa: BLE001
             logger.debug("Typing indicator failed for %s: %s", thread_id, exc)
 
@@ -481,7 +535,7 @@ class SignalThread:
     async def _send_read_receipt(self, sender: str, timestamp: int) -> None:
         """Send a read receipt for a message."""
         try:
-            await self._send_jsonrpc("sendReceipt", {
+            await self._send_jsonrpc_fire_and_forget("sendReceipt", {
                 "recipient": [sender],
                 "targetTimestamp": [timestamp],
                 "type": "read",
