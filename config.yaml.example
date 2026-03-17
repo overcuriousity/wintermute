@@ -131,6 +131,13 @@ search:
   searxng_url: "http://127.0.0.1:8888"   # URL of your SearXNG instance
 
 
+# ── Lite Mode (Global Sub-Session Toggle) ──────────────────────────
+# Disables worker_delegation globally to reduce LLM API calls.
+# Useful for local/small models where spawned workflows are prohibitive.
+# Per-thread override via /config sub_sessions_enabled true still works.
+sub_sessions_enabled: true
+
+
 # ── Inference Backends ───────────────────────────────────────────────
 # Named backend definitions. Each describes one LLM endpoint+model.
 # You can define as many as you want and reference them by name in the

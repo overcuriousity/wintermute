@@ -424,9 +424,13 @@ async def main() -> None:
             _ = backend_pools_by_name[bname]
 
     # Per-thread configuration manager.
+    global_sub_sessions = cfg.get("sub_sessions_enabled", True)
     thread_config_mgr = ThreadConfigManager(
         available_backends=list(backends_by_name.keys()),
+        global_defaults={"sub_sessions_enabled": global_sub_sessions},
     )
+    if not global_sub_sessions:
+        logger.info("sub_sessions_enabled=false (lite mode) — worker_delegation disabled globally")
 
     # Parse NL translation config.
     nl_raw = cfg.get("nl_translation", {}) or {}

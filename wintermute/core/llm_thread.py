@@ -663,11 +663,12 @@ class LLMThread:
 
     async def _prepare_inference_context(
         self, item: _QueueItem,
-    ) -> tuple[list[dict], str, str | None, "BackendPool", "ProviderConfig", bool, str, list | None, list | None]:
+    ) -> tuple[list[dict], str, str | None, "BackendPool", "ProviderConfig", bool, str, list | None, list | None, "set[str] | None"]:
         """Resolve config, build messages, fetch memories, assemble system prompt.
 
         Returns (messages, system_prompt, memory_query, pool, pool_cfg,
-        is_sub_session_result, prompt_mode, memory_results, prediction_results).
+        is_sub_session_result, prompt_mode, memory_results, prediction_results,
+        exclude_tools).
         Also handles pre-compaction if the history exceeds the token budget.
         """
         thread_id = item.thread_id
@@ -725,16 +726,31 @@ class LLMThread:
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
         summary = None if item.ephemeral else self._store.compaction_summaries.get(thread_id)
+        # Determine tool exclusions based on sub_sessions_enabled flag.
+        _exclude_tools: set[str] | None = None
+        if resolved_cfg and not resolved_cfg.sub_sessions_enabled:
+            _exclude_tools = {"worker_delegation"}
+
+        # Compute available_tools set so prompt sections gated by tool
+        # requirements (e.g. requires: worker_delegation) are excluded.
+        _available_tools: set[str] | None = None
+        if _exclude_tools:
+            _available_tools = {
+                s["function"]["name"] for s in tool_module.TOOL_SCHEMAS
+            } - _exclude_tools
+
         system_prompt = prompt_assembler.assemble(
             extra_summary=summary, query=_memory_query,
             memory_results=_memory_results, prompt_mode=prompt_mode,
             tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
             nl_tools=nl_tools,
             prediction_results=_prediction_results,
+            available_tools=_available_tools,
         )
         active_schemas = tool_module.get_tool_schemas(
             nl_tools=nl_tools,
             tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
+            exclude_names=_exclude_tools,
         )
         overhead_tokens = (
             _count_tokens(system_prompt, pool_cfg.model)
@@ -773,7 +789,7 @@ class LLMThread:
         is_sub_session_result = item.is_system_event and "[SUB-SESSION " in item.text
         return (messages, system_prompt, _memory_query, pool, pool_cfg,
                 is_sub_session_result, prompt_mode, _memory_results,
-                _prediction_results)
+                _prediction_results, _exclude_tools)
 
     async def _save_user_message(
         self, item: _QueueItem, pool_cfg: "ProviderConfig", is_sub_session_result: bool,
@@ -864,6 +880,7 @@ class LLMThread:
         memory_results: "list | None",
         prompt_mode: str,
         prediction_results: "list | None" = None,
+        exclude_tool_names: "set[str] | None" = None,
     ) -> "LLMReply":
         """Run the inference loop, retrying once after compaction on context overflow."""
         thread_id = item.thread_id
@@ -871,6 +888,7 @@ class LLMThread:
             return await self._inference_loop(
                 system_prompt, messages, thread_id,
                 pool=pool,
+                exclude_tool_names=exclude_tool_names,
             )
         except ContextTooLargeError:
             logger.warning("Context too large for thread %s — forcing compaction", thread_id)
@@ -881,6 +899,10 @@ class LLMThread:
             )
             nl_enabled = self._nl_translation_config.get("enabled", False)
             nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
+            # Compute available_tools for prompt assembly when tools are excluded.
+            _avail = None
+            if exclude_tool_names:
+                _avail = {s["function"]["name"] for s in tool_module.TOOL_SCHEMAS} - exclude_tool_names
             summary = None if item.ephemeral else self._store.compaction_summaries.get(thread_id)
             system_prompt = prompt_assembler.assemble(
                 extra_summary=summary, query=memory_query,
@@ -888,10 +910,12 @@ class LLMThread:
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
                 nl_tools=nl_tools,
                 prediction_results=prediction_results,
+                available_tools=_avail,
             )
             return await self._inference_loop(
                 system_prompt, messages, thread_id,
                 pool=pool,
+                exclude_tool_names=exclude_tool_names,
             )
 
     async def _process(self, item: _QueueItem) -> LLMReply:
@@ -900,7 +924,8 @@ class LLMThread:
         # 1. Prepare context: config, messages, memory, system prompt, pre-compaction.
         (messages, system_prompt, _memory_query, pool, pool_cfg,
          is_sub_session_result, _prompt_mode,
-         _memory_results, _prediction_results) = await self._prepare_inference_context(item)
+         _memory_results, _prediction_results,
+         _exclude_tools) = await self._prepare_inference_context(item)
 
         # 2. Save the incoming message to DB.
         await self._save_user_message(item, pool_cfg, is_sub_session_result)
@@ -911,6 +936,7 @@ class LLMThread:
             item, system_prompt, messages, pool,
             _memory_query, _memory_results, _prompt_mode,
             prediction_results=_prediction_results,
+            exclude_tool_names=_exclude_tools,
         )
         _inference_duration = _time.time() - _inference_start
 
@@ -928,7 +954,8 @@ class LLMThread:
     async def _inference_loop(self, system_prompt: str, messages: list[dict],
                               thread_id: str = "default",
                               disable_tools: bool = False,
-                              pool: "Optional[BackendPool]" = None) -> LLMReply:
+                              pool: "Optional[BackendPool]" = None,
+                              exclude_tool_names: "set[str] | None" = None) -> LLMReply:
         """
         Repeatedly call the API until finish_reason is not 'tool_calls'.
         The system prompt is prepended as a role=system message each call
@@ -950,8 +977,11 @@ class LLMThread:
         _profiles = self._tool_deps.tool_profiles if self._tool_deps else None
         if disable_tools:
             tools = None
-        elif nl_tools or _profiles:
-            tools = tool_module.get_tool_schemas(nl_tools=nl_tools, tool_profiles=_profiles)
+        elif nl_tools or _profiles or exclude_tool_names:
+            tools = tool_module.get_tool_schemas(
+                nl_tools=nl_tools, tool_profiles=_profiles,
+                exclude_names=exclude_tool_names,
+            )
         else:
             tools = tool_module.TOOL_SCHEMAS
         token_budget = active_cfg.context_size - active_cfg.max_tokens

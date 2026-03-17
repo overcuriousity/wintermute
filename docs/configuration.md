@@ -28,6 +28,14 @@ llm:
 
 ## Section Details
 
+### `sub_sessions_enabled`
+
+Top-level toggle for background worker spawning (lite mode). See [Lite Mode](lite-mode.md) for details.
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `sub_sessions_enabled` | no | `true` | When `false`, removes the `worker_delegation` tool globally — no background workers can be spawned. Per-thread overrides via `/config sub_sessions_enabled true` still work. Useful for local/small models where spawned workflows are too expensive. |
+
 ### `inference_backends`
 
 A list of named backend definitions. Each entry describes one LLM endpoint+model
@@ -466,9 +474,10 @@ Operational self-awareness profiler that runs inside the reflection cycle. Aggre
 
 Individual threads can override settings at runtime via the `/config` slash
 command or the web debug API.  Overrides are stored in SQLite (`thread_config`
-table) and persist across restarts.  When no override is set, hardcoded defaults
-apply.  All changes are logged to the interaction log with action `config_change`
-or `config_reset` for auditability.
+table) and persist across restarts.  Resolution order: per-thread override >
+global config default (from `config.yaml`) > hardcoded default.  All changes
+are logged to the interaction log with action `config_change` or `config_reset`
+for auditability.
 
 | Key | Default | Description |
 |-----|---------|-------------|

@@ -1,7 +1,7 @@
 """Per-thread configuration overrides.
 
-Provides a two-layer config resolution model:
-  per-thread override (SQLite)  →  hardcoded default
+Provides a three-layer config resolution model:
+  per-thread override (SQLite)  →  global config default  →  hardcoded default
 
 Each thread can independently override:
   - ``backend_name``              — pin inference to a named backend
@@ -110,8 +110,10 @@ class ThreadConfigManager:
         Names from ``inference_backends`` — used to validate ``backend_name``.
     """
 
-    def __init__(self, available_backends: list[str]) -> None:
+    def __init__(self, available_backends: list[str],
+                 global_defaults: dict[str, Any] | None = None) -> None:
         self._available_backends = list(available_backends)
+        self._global_defaults: dict[str, Any] = dict(global_defaults or {})
         self._cache: dict[str, ThreadConfig] = {}
         self._load_all()
 
@@ -136,12 +138,17 @@ class ThreadConfigManager:
         return self._cache.get(thread_id, ThreadConfig())
 
     def resolve(self, thread_id: str) -> ResolvedThreadConfig:
-        """Merge per-thread overrides with hardcoded defaults."""
+        """Merge per-thread overrides → global defaults → hardcoded defaults."""
         tc = self.get(thread_id)
 
         def _pick(key: str):
             val = getattr(tc, key, None)
-            return val if val is not None else _HARDCODED_DEFAULTS[key]
+            if val is not None:
+                return val
+            global_val = self._global_defaults.get(key)
+            if global_val is not None:
+                return global_val
+            return _HARDCODED_DEFAULTS[key]
 
         sub_enabled = _pick("sub_sessions_enabled")
         return ResolvedThreadConfig(
@@ -159,7 +166,12 @@ class ThreadConfigManager:
         for f in fields(ResolvedThreadConfig):
             val = getattr(resolved, f.name)
             override = getattr(tc, f.name, None)
-            source = "override" if override is not None else "default"
+            if override is not None:
+                source = "override"
+            elif f.name in self._global_defaults and self._global_defaults[f.name] is not None:
+                source = "global"
+            else:
+                source = "default"
             result[f.name] = {"value": val, "source": source}
         return result
 
