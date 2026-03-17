@@ -1,5 +1,59 @@
 # Changelog
 
+## [0.13.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.12.0-alpha...v0.13.0-alpha) (2026-03-17)
+
+
+### Features
+
+* add credential redaction CP hook to prevent API key leaks ([f05c117](https://github.com/overcuriousity/wintermute/commit/f05c1179aef99d731b5a9d72a3ec72428dfee45c))
+* add credential redaction CP hook to prevent API key leaks ([661b7de](https://github.com/overcuriousity/wintermute/commit/661b7de3cefd4aa5b24808d7a2a00d01854dce24))
+* add group chat mode for Matrix rooms ([cfb4575](https://github.com/overcuriousity/wintermute/commit/cfb45756dd3782f89517f682ab4f526041ad2fa9))
+* add group chat mode for Matrix rooms ([29910db](https://github.com/overcuriousity/wintermute/commit/29910dbef1d00be6b04103649fac98464482880f))
+* add Signal messenger interface via signal-cli ([7b2f70c](https://github.com/overcuriousity/wintermute/commit/7b2f70cedf85098c0306d6447d5470fe8b5e7c01))
+* add Signal messenger interface via signal-cli ([670bd0a](https://github.com/overcuriousity/wintermute/commit/670bd0a81bf91aa9be4213e1ed5fd00398ac5148))
+* credential redaction CP hook ([a2c1c71](https://github.com/overcuriousity/wintermute/commit/a2c1c717615e168911fe96abd24f30292020e8f9))
+* enforce sub_sessions_enabled as global config (lite mode) ([1ed624d](https://github.com/overcuriousity/wintermute/commit/1ed624de12c99915339518a4d3309d1a66e38b11))
+* enforce sub_sessions_enabled as global config (lite mode) ([3a5da64](https://github.com/overcuriousity/wintermute/commit/3a5da6450fc3328dde556576920a0e19eebc245f))
+
+
+### Bug Fixes
+
+* address Copilot review — stale comment, mx-reply pill false positive, docs ([91a90e6](https://github.com/overcuriousity/wintermute/commit/91a90e61bd049486d880ce52406e97aaf51fb1f1))
+* address Copilot review — token model, activity tracking, image mention strip ([9ccc0c8](https://github.com/overcuriousity/wintermute/commit/9ccc0c8730dfdd692587032c3ff2f1e61f0927c9))
+* address Copilot review feedback on credential redaction ([35b60e1](https://github.com/overcuriousity/wintermute/commit/35b60e1630dc89a10282e76ece5e61690d00b72d))
+* address PR review — add concurrency guard, cooldown sync, and emit throttle ([82981f9](https://github.com/overcuriousity/wintermute/commit/82981f91428d1bb1b687cd26e4794925b5cc19ce))
+* address PR review feedback for Signal interface ([61dfc45](https://github.com/overcuriousity/wintermute/commit/61dfc45c833ff8029cc74e9175139b8627e53915))
+* address remaining PR review — race-free guard, cooldown logic, fallback ([bbd10db](https://github.com/overcuriousity/wintermute/commit/bbd10db31ad0549eea2c34054d4b7a02e222de42))
+* address second Copilot review round ([2c01da2](https://github.com/overcuriousity/wintermute/commit/2c01da2868b8de11d64ad0d3eb979805de8f68d6))
+* address second round of PR review feedback ([9e2a188](https://github.com/overcuriousity/wintermute/commit/9e2a188e5b77b31d50823e2bb0b637a08ab49210))
+* address third round of PR review feedback ([e041ee4](https://github.com/overcuriousity/wintermute/commit/e041ee483138e02c2447fd8b07982ebb5dbe5603))
+* check _firing before reset/log in event handlers ([54860b4](https://github.com/overcuriousity/wintermute/commit/54860b457e77f51a6e311a792cb9b60246a30380))
+* drop inline summarisation fallback for skills — missing event bus is an error ([421f05a](https://github.com/overcuriousity/wintermute/commit/421f05a071081b844c2c259de5926480ec0528e4))
+* gate compaction summaries on ephemeral, skip reply fetch in group mode ([9997b9a](https://github.com/overcuriousity/wintermute/commit/9997b9ace3d44ab44f6704736fceaed74e839e7e))
+* gate group-mode mentions on allowed_users (match Matrix behavior) ([e9b79df](https://github.com/overcuriousity/wintermute/commit/e9b79df46ba3fad6459a7d0289376e57931064b5))
+* log full UUID in Signal ACL rejection message ([4ffe815](https://github.com/overcuriousity/wintermute/commit/4ffe81512e669b148d4720ec37e7026e8ffae1db))
+* pass available_tools in pre-compaction prompt reassembly ([d930b6f](https://github.com/overcuriousity/wintermute/commit/d930b6f0b022eebe09701fdd03c48a3007990e53))
+* rename cooldown field, only set on success, throttle warning log ([a3bc66f](https://github.com/overcuriousity/wintermute/commit/a3bc66f351897e308c713b6848b4c5bed9f6979f))
+* resolve per-thread model for silent store, require allowed_rooms in group mode ([0449070](https://github.com/overcuriousity/wintermute/commit/044907005e3f5f2769b3910ecd8db6ce25ea5aa1))
+* restrict group mode to single-turn ephemeral conversations ([b0a52b6](https://github.com/overcuriousity/wintermute/commit/b0a52b6f63631efe426cc180d1e8569f1963a9b6))
+* robust mention detection, suppress events for silent stores ([e552ac5](https://github.com/overcuriousity/wintermute/commit/e552ac5f92b36199c0ff5e848f26c0d0e312a948))
+* route skills oversize to dreaming cycle instead of inline LLM ([8bac8a0](https://github.com/overcuriousity/wintermute/commit/8bac8a067dd01b2074aceb2e200ab3b161dc689b))
+* route skills oversize to dreaming cycle instead of inline LLM ([78d229e](https://github.com/overcuriousity/wintermute/commit/78d229eea9a11f85b64871e2f82eb2456cc27c0c)), closes [#190](https://github.com/overcuriousity/wintermute/issues/190)
+* strip plaintext reply fallback, consolidate group-mode gating, skip seed ([c85d759](https://github.com/overcuriousity/wintermute/commit/c85d7597d967942e95a67ff893cae09a23e11c8e))
+* tighten mention detection to pill/structured only, guard get() ([39a6a34](https://github.com/overcuriousity/wintermute/commit/39a6a342d2eae6b3e1d636271afe88107c72d423))
+* use daemon mode without --json for newer signal-cli versions ([c8764af](https://github.com/overcuriousity/wintermute/commit/c8764af0e5f04f3d7f596baf4daeebb2eae90b6b))
+* use jsonRpc subcommand and elevate stderr logging to WARNING ([64fb716](https://github.com/overcuriousity/wintermute/commit/64fb716c1d426d449edbcaa17678605f650febee))
+* use jsonRpc subcommand for newer signal-cli ([1217c3e](https://github.com/overcuriousity/wintermute/commit/1217c3eb8539fb256777f74b0192fa490c4cf83d))
+* use jsonRpc subcommand for newer signal-cli versions ([ddbc584](https://github.com/overcuriousity/wintermute/commit/ddbc58460999eb79642240e32f0be3aade117692))
+
+
+### Documentation
+
+* add instructions for finding Signal group IDs ([fe4c203](https://github.com/overcuriousity/wintermute/commit/fe4c203840678e4c4015963a5cc76fb99f4adb05))
+* add instructions for finding Signal UUIDs ([6b0dba3](https://github.com/overcuriousity/wintermute/commit/6b0dba3ce919cbd8f4fdd43dc19ebbc036975704))
+* clarify UUID requirement for users with hidden phone numbers ([463da45](https://github.com/overcuriousity/wintermute/commit/463da4509836ad97eaab84b07b3dae914a7861d7))
+* update signal-setup.md for HTTP daemon mode and UUID support ([3671679](https://github.com/overcuriousity/wintermute/commit/367167943ae5570bf12eba6b0a86b27d9eecf653))
+
 ## [0.12.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.11.2-alpha...v0.12.0-alpha) (2026-03-15)
 
 
