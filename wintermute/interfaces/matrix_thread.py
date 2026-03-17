@@ -41,9 +41,12 @@ from collections.abc import MutableMapping as _Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote as _url_quote
 
 from ruamel.yaml import YAML as _YAML
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString as _DQStr
+
+_REPLY_STRIP_RE = _re.compile(r"<mx-reply>.*?</mx-reply>", flags=_re.DOTALL)
 
 try:
     import olm as _olm
@@ -1579,9 +1582,7 @@ class MatrixThread:
         #    original event's HTML and may contain a stale pill mention.
         fmt = getattr(evt.content, "formatted_body", None) or ""
         if fmt:
-            import re as _re
-            fmt = _re.sub(r"<mx-reply>.*?</mx-reply>", "", fmt, flags=_re.DOTALL)
-            from urllib.parse import quote as _url_quote
+            fmt = _REPLY_STRIP_RE.sub("", fmt)
             if f"https://matrix.to/#/{uid}" in fmt:
                 return True
             encoded_uid = _url_quote(uid, safe="")
