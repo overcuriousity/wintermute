@@ -54,11 +54,13 @@ matrix:
                                           # In 1:1 mode: gates who can talk to the bot at all.
   allowed_rooms: []                       # Room ID whitelist. Empty = bot responds in any room
                                           # it's invited to. Example: ["!abc123:matrix.org"]
-                                          # In group mode this should be set — it controls which
-                                          # rooms the bot collects messages from.
-  group_mode: false                       # Group chat mode: silently collect all messages in
-                                          # allowed rooms, respond only when @mentioned via pill.
-                                          # Messages include sender attribution ([user]: text).
+                                          # In group mode this MUST be set — it controls which
+                                          # rooms the bot listens in.
+  group_mode: false                       # Group chat mode: respond only when @mentioned via
+                                          # pill. Each mention is a single-turn conversation —
+                                          # NO prior chat history is sent to the LLM provider.
+                                          # Messages are still saved locally for memory harvest.
+                                          # Sender attribution: [user]: text.
 
 
 # ── Whisper (Voice Transcription) ────────────────────────────────────

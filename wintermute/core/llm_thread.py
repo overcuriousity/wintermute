@@ -91,6 +91,7 @@ class _QueueItem:
     # If the thread has advanced past this number by the time the correction is
     # dequeued, the correction is stale and will be dropped.
     correction_for_seq: Optional[int] = None
+    ephemeral: bool = False  # skip loading history (group mode: single-turn)
 
 
 class LLMThread:
@@ -205,6 +206,7 @@ class LLMThread:
     async def enqueue_user_message(
         self, text: str, thread_id: str = "default",
         content: Optional[list] = None,
+        ephemeral: bool = False,
     ) -> "LLMReply":
         """Submit a user message and await the AI reply (returns LLMReply).
 
@@ -212,11 +214,16 @@ class LLMThread:
         (e.g. text + image_url).  When set, it is used as the message
         payload sent to the API instead of *text*.  *text* is always used
         for DB storage and logging.
+
+        *ephemeral* skips loading conversation history — the LLM sees only
+        this message (group mode single-turn).  The message is still saved
+        to DB for memory harvesting.
         """
         loop = asyncio.get_running_loop()
         fut: asyncio.Future = loop.create_future()
         await self._dispatch(_QueueItem(
             text=text, thread_id=thread_id, future=fut, content=content,
+            ephemeral=ephemeral,
         ))
         return await fut
 
@@ -239,22 +246,6 @@ class LLMThread:
 
     async def reset_session(self, thread_id: str = "default") -> None:
         await self._session_mgr.reset_session(thread_id)
-
-    async def store_message_silent(self, text: str, thread_id: str = "default") -> None:
-        """Store a user message without triggering inference (group mode).
-
-        Saves directly to DB with per-thread model for accurate token
-        counting.  Does NOT emit ``message.received`` — silent messages
-        are context-only and should not trigger memory harvest or other
-        event-driven pipelines.
-        """
-        pool = self._session_mgr.resolve_pool(thread_id)
-        model = pool.primary.model if pool.enabled else self._cfg.model
-        await database.async_call(
-            database.save_message, "user", text, thread_id,
-            token_count=count_tokens(text, model),
-        )
-        self._session_mgr.record_activity(thread_id)
 
     async def force_compact(self, thread_id: str = "default") -> None:
         await self._compactor.compact(thread_id)
@@ -677,7 +668,10 @@ class LLMThread:
         Also handles pre-compaction if the history exceeds the token budget.
         """
         thread_id = item.thread_id
-        messages = await self._store.build_messages(item.text, item.is_system_event, thread_id, item.content)
+        messages = await self._store.build_messages(
+            item.text, item.is_system_event, thread_id, item.content,
+            ephemeral=item.ephemeral,
+        )
 
         # Track last activity for session timeout checking (#58 plumbing).
         if not item.is_system_event:
@@ -727,7 +721,7 @@ class LLMThread:
         # Assemble system prompt first so we can measure its real token cost.
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
-        summary = self._store.compaction_summaries.get(thread_id)
+        summary = None if item.ephemeral else self._store.compaction_summaries.get(thread_id)
         system_prompt = prompt_assembler.assemble(
             extra_summary=summary, query=_memory_query,
             memory_results=_memory_results, prompt_mode=prompt_mode,
@@ -757,7 +751,10 @@ class LLMThread:
                 history_tokens, overhead_tokens, compaction_threshold, thread_id,
             )
             await self._compactor.compact(thread_id)
-            messages = await self._store.build_messages(item.text, item.is_system_event, thread_id, item.content)
+            messages = await self._store.build_messages(
+                item.text, item.is_system_event, thread_id, item.content,
+                ephemeral=item.ephemeral,
+            )
             # Reassemble with the updated compaction summary.
             summary = self._store.compaction_summaries.get(thread_id)
             system_prompt = prompt_assembler.assemble(
@@ -877,6 +874,7 @@ class LLMThread:
             await self._compactor.compact(thread_id)
             messages = await self._store.build_messages(
                 item.text, item.is_system_event, thread_id, item.content,
+                ephemeral=item.ephemeral,
             )
             nl_enabled = self._nl_translation_config.get("enabled", False)
             nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None

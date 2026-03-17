@@ -836,11 +836,8 @@ class MatrixThread:
         if msgtype == MessageType.IMAGE:
             caption = (evt.content.body or "").strip()
 
-            # Group mode, not mentioned: store lightweight placeholder without downloading.
+            # Group mode, not mentioned: drop — no DB storage, no LLM context.
             if group and not mentioned:
-                text_for_db = sender_prefix + reply_prefix + (caption or "[image attached]")
-                logger.debug("Group-mode silent store (image) from %s in %s", evt.sender, thread_id)
-                await self._llm.store_message_silent(text_for_db, thread_id)
                 return
 
             if group and not self._is_user_allowed(str(evt.sender)):
@@ -867,16 +864,13 @@ class MatrixThread:
                 "image_url": {"url": f"data:{mimetype};base64,{b64data}"},
             })
             logger.info("Received image from %s in %s", evt.sender, thread_id)
-            await self._dispatch(text_for_db, thread_id, content=content_parts)
+            await self._dispatch(text_for_db, thread_id, content=content_parts, ephemeral=group)
             return
 
         # --- Audio / voice ---
         if msgtype == MessageType.AUDIO:
-            # Group mode, not mentioned: store placeholder without download/transcription.
+            # Group mode, not mentioned: drop.
             if group and not mentioned:
-                text = sender_prefix + reply_prefix + "[voice message received]"
-                logger.debug("Group-mode silent store (audio) from %s in %s", evt.sender, thread_id)
-                await self._llm.store_message_silent(text, thread_id)
                 return
 
             if group and not self._is_user_allowed(str(evt.sender)):
@@ -902,7 +896,7 @@ class MatrixThread:
                 voice_path.write_bytes(data)
             except OSError:
                 logger.exception("Failed to save voice message to %s", voice_path)
-                await self._dispatch(sender_prefix + reply_prefix + "[Voice message received but could not be saved to disk]", thread_id)
+                await self._dispatch(sender_prefix + reply_prefix + "[Voice message received but could not be saved to disk]", thread_id, ephemeral=group)
                 return
             logger.info("Saved voice message from %s to %s", evt.sender, voice_path)
 
@@ -944,13 +938,13 @@ class MatrixThread:
                         text = sender_prefix + reply_prefix + f"[Transcribed voice message] {transcript}"
                     if group:
                         text = self._strip_bot_mention(text)
-                    await self._dispatch(text, thread_id)
+                    await self._dispatch(text, thread_id, ephemeral=group)
                     return
                 except Exception:  # noqa: BLE001
                     logger.exception("Whisper transcription failed for %s — falling back to placeholder", voice_path)
 
             text = sender_prefix + reply_prefix + f"[Voice message received: {voice_path}]"
-            await self._dispatch(text, thread_id)
+            await self._dispatch(text, thread_id, ephemeral=group)
             return
 
         # --- Text ---
@@ -960,8 +954,6 @@ class MatrixThread:
         text = sender_prefix + reply_prefix + text
 
         if group and not mentioned:
-            logger.debug("Group-mode silent store from %s in %s: %s", evt.sender, thread_id, text[:80])
-            await self._llm.store_message_silent(text, thread_id)
             return
 
         # Group mode + mentioned: check allowed_users for response triggering.
@@ -972,7 +964,7 @@ class MatrixThread:
             text = self._strip_bot_mention(text)
 
         logger.info("Received message from %s in %s: %s", evt.sender, thread_id, text[:100])
-        await self._dispatch(text, thread_id)
+        await self._dispatch(text, thread_id, ephemeral=group)
 
     async def _download_media(self, evt) -> bytes:
         """Download media from a Matrix event, handling E2EE decryption."""
@@ -1441,7 +1433,7 @@ class MatrixThread:
     # Command dispatch
     # ------------------------------------------------------------------
 
-    async def _dispatch(self, text: str, thread_id: str, *, content: list | None = None) -> None:
+    async def _dispatch(self, text: str, thread_id: str, *, content: list | None = None, ephemeral: bool = False) -> None:
         # Shared slash commands (delegated to SlashCommandHandler).
         if content is None and self._slash_handler is not None:
             async def send_fn(msg: str) -> None:
@@ -1468,7 +1460,7 @@ class MatrixThread:
             self._typing_loop(thread_id), name=f"typing_{thread_id}",
         )
         try:
-            reply = await self._llm.enqueue_user_message(text, thread_id, content=content)
+            reply = await self._llm.enqueue_user_message(text, thread_id, content=content, ephemeral=ephemeral)
         finally:
             typing_task.cancel()
             try:
