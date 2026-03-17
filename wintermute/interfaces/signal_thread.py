@@ -182,7 +182,7 @@ class SignalThread:
         cmd = [self._cfg.signal_cli_path, "-a", self._cfg.phone_number]
         if self._cfg.trust_new_keys:
             cmd.extend(["--trust-new-identities", "always"])
-        cmd.append("jsonRpc")
+        cmd.extend(["daemon", "--receive-mode", "on-start"])
 
         logger.info("Starting signal-cli daemon (account=<redacted>)")
         self._process = await asyncio.create_subprocess_exec(
