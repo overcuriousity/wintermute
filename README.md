@@ -96,19 +96,14 @@ Run it in a dedicated LXC container or VM — something you can reset without re
 
 ## Documentation
 
-| Guide | Description |
-|-------|-------------|
-| [Installation](docs/installation.md) | Quickstart, manual setup, systemd service |
-| [Configuration](docs/configuration.md) | Full `config.yaml` reference |
-| [Matrix Setup](docs/matrix-setup.md) | Account creation, credentials, E2E encryption, troubleshooting |
-| [Architecture](docs/architecture.md) | Component overview, diagrams, data flow, small-LLM design |
-| [Convergence Protocol](docs/convergence-protocol.md) | Validation pipeline: hooks, phases, scopes, configuration |
-| [System Prompts](docs/system-prompts.md) | Prompt assembly, components, size limits |
-| [Tools](docs/tools.md) | All 13 tools with parameters and categories |
-| [Commands](docs/commands.md) | Slash commands (`/new`, `/compact`, `/tasks`, etc.) |
-| [Web Interface](docs/web-interface.md) | Debug panel, REST API |
-| [Autonomy](docs/autonomy.md) | Dreaming, task reviews, sub-sessions, workflows |
-| [Best Practices](docs/best-practices.md) | Deployment, model selection, security |
+Start at [Documentation Index](docs/README.md) for the full map and suggested reading paths.
+
+| Category | Guides |
+|----------|--------|
+| Getting Started | [Installation](docs/installation.md), [Configuration](docs/configuration.md), [Best Practices](docs/best-practices.md) |
+| Interfaces & Messaging | [Web Interface](docs/web-interface.md), [Matrix Setup](docs/matrix-setup.md), [Signal Setup](docs/signal-setup.md) |
+| Runtime & Internals | [Architecture](docs/architecture.md), [Autonomy](docs/autonomy.md), [Convergence Protocol](docs/convergence-protocol.md), [System Prompts](docs/system-prompts.md), [Lite Mode](docs/lite-mode.md) |
+| Operator Reference | [Tools](docs/tools.md), [Commands](docs/commands.md), [Outcome Tracking](docs/outcome-tracking.md), [Skills Storage](docs/skills-storage.md) |
 
 ---
 
