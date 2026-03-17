@@ -777,7 +777,7 @@ function renderSessionList(sessions) {
       <div class="session-id">${esc(shortId)}</div>
       <div class="session-meta">
         ${badge(type, type)}
-        ${s.group_mode ? badge('GROUP', 'group') : ''}
+        ${s.group_mode ? badge('group', 'GROUP') : ''}
         ${s.live ? badge('live', 'live') : ''}
         <span class="dim">${s.msg_count} msg${s.msg_count !== 1 ? 's' : ''}</span>
       </div>
