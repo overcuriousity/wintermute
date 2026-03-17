@@ -339,6 +339,9 @@ class MatrixThread:
         if not file_path or not thread_id:
             logger.warning("send_file event missing path or thread_id: %s", data)
             return
+        # Ignore events targeting other interfaces.
+        if thread_id.startswith("sig_") or thread_id.startswith("web_"):
+            return
         await self._send_file(file_path, thread_id)
 
     async def _send_file(self, file_path: str, room_id: str,

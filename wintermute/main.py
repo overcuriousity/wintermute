@@ -2,7 +2,7 @@
 Wintermute - Multi-Thread AI Assistant
 Entry point and orchestration.
 
-Both Matrix and the web interface are optional; at least one must be enabled.
+Matrix, Signal, and web are all optional; at least one must be enabled.
 
 Startup sequence:
   1. Load config.yaml
@@ -10,11 +10,12 @@ Startup sequence:
   3. Initialise SQLite databases
   4. Ensure data/ files exist
   5. Restore APScheduler jobs (and execute missed tasks)
-  6. Build shared broadcast function (Matrix + web)
+  6. Build shared broadcast function (Matrix + Signal + web)
   7. Start LLM inference task
   8. Start web interface task (if enabled)
   9. Start Matrix task (if configured)
-  10. Await shutdown signals
+  10. Start Signal task (if configured)
+  11. Await shutdown signals
 """
 
 import asyncio
@@ -38,6 +39,7 @@ from wintermute.core.tool_deps import ToolDeps
 from wintermute.core.llm_thread import LLMThread
 from wintermute.core.types import BackendPool, MultiProviderConfig, ProviderConfig
 from wintermute.interfaces.matrix_thread import MatrixConfig, MatrixThread
+from wintermute.interfaces.signal_thread import SignalConfig, SignalThread
 from wintermute.workers.dreaming import DreamingConfig, DreamingLoop
 from wintermute.workers.memory_harvest import MemoryHarvestConfig, MemoryHarvestLoop
 from wintermute.workers.reflection import ReflectionConfig, ReflectionLoop
@@ -505,10 +507,17 @@ async def main() -> None:
         and matrix_cfg_raw.get("homeserver")
         and (matrix_cfg_raw.get("access_token") or matrix_cfg_raw.get("password"))
     )
+    signal_cfg_raw: Optional[dict] = cfg.get("signal")
+    signal_enabled = bool(
+        signal_cfg_raw
+        and signal_cfg_raw.get("enabled")
+        and signal_cfg_raw.get("phone_number")
+    )
+
     web_enabled = web_cfg.get("enabled", True)
 
-    if not matrix_enabled and not web_enabled:
-        logger.error("Neither Matrix nor web interface is enabled - nothing to do. Exiting.")
+    if not matrix_enabled and not web_enabled and not signal_enabled:
+        logger.error("No interface enabled (Matrix, Signal, or web) - nothing to do. Exiting.")
         sys.exit(1)
 
     shutdown = ShutdownCoordinator()
@@ -528,12 +537,16 @@ async def main() -> None:
     #    asyncio tasks start, by which point everything is wired).
     _matrix_ref: list[Optional[MatrixThread]] = [None]
     _web_ref: list[Optional[WebInterface]] = [None]
+    _signal_ref: list[Optional[SignalThread]] = [None]
 
     async def broadcast(text: str, thread_id: Optional[str] = None, *,
                         reasoning: Optional[str] = None) -> None:
         mx = _matrix_ref[0]
         wi = _web_ref[0]
-        if mx and thread_id and not thread_id.startswith("web_") and thread_id != "default":
+        si = _signal_ref[0]
+        if si and thread_id and thread_id.startswith("sig_"):
+            await si.send_message(text, thread_id)
+        elif mx and thread_id and not thread_id.startswith("web_") and not thread_id.startswith("sig_") and thread_id != "default":
             await mx.send_message(text, thread_id)
         if wi and thread_id:
             await wi.broadcast(text, thread_id, reasoning=reasoning)
@@ -712,7 +725,7 @@ async def main() -> None:
     whisper_model = ""
     whisper_language = ""
     whisper_raw = cfg.get("whisper", {}) or {}
-    if whisper_raw.get("enabled") and matrix_enabled:
+    if whisper_raw.get("enabled") and (matrix_enabled or signal_enabled):
         from openai import AsyncOpenAI
         whisper_client = AsyncOpenAI(
             api_key=whisper_raw.get("api_key", ""),
@@ -755,6 +768,28 @@ async def main() -> None:
     else:
         logger.info("Matrix not configured - skipping Matrix interface")
 
+    # 12b. SignalThread
+    signal_iface: Optional[SignalThread] = None
+    if signal_enabled:
+        sig_cfg = SignalConfig(
+            phone_number=signal_cfg_raw["phone_number"],
+            signal_cli_path=signal_cfg_raw.get("signal_cli_path", "signal-cli"),
+            allowed_users=signal_cfg_raw.get("allowed_users", []),
+            allowed_groups=signal_cfg_raw.get("allowed_groups", []),
+            group_mode=signal_cfg_raw.get("group_mode", False),
+            trust_new_keys=signal_cfg_raw.get("trust_new_keys", True),
+        )
+        signal_iface = SignalThread(
+            sig_cfg, llm,
+            whisper_client=whisper_client,
+            whisper_model=whisper_model,
+            whisper_language=whisper_language,
+            slash_handler=slash_handler,
+            event_bus=event_bus,
+        )
+    else:
+        logger.info("Signal not configured - skipping Signal interface")
+
     # 13. WebInterface — all deps passed via constructor (no post-injection)
     web_iface: Optional[WebInterface] = None
     if web_enabled:
@@ -774,6 +809,7 @@ async def main() -> None:
     # Fill the broadcast closure's forward references.
     _matrix_ref[0] = matrix
     _web_ref[0] = web_iface
+    _signal_ref[0] = signal_iface
 
     # 14. Start the scheduler now that broadcast refs are filled, so
     #     _recover_missed() reminder broadcasts reach the interfaces.
@@ -794,12 +830,16 @@ async def main() -> None:
         tasks.append(asyncio.create_task(update_checker.run(), name="update_checker"))
     if matrix:
         tasks.append(asyncio.create_task(matrix.run(), name="matrix"))
+    if signal_iface:
+        tasks.append(asyncio.create_task(signal_iface.run(), name="signal"))
     if web_iface:
         tasks.append(asyncio.create_task(web_iface.run(), name="web"))
 
     interfaces = []
     if matrix_enabled:
         interfaces.append("Matrix")
+    if signal_enabled:
+        interfaces.append("Signal")
     if web_enabled:
         interfaces.append(f"web http://{web_cfg.get('host','127.0.0.1')}:{web_cfg.get('port',8080)}")
     # Feature branch: enhanced logging
@@ -856,6 +896,8 @@ async def main() -> None:
     reflection_loop.stop()
     if matrix:
         matrix.stop()
+    if signal_iface:
+        signal_iface.stop()
     llm.stop()
     scheduler.stop()
 
