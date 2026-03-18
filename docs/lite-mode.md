@@ -41,3 +41,16 @@ This uses the three-layer resolution chain: per-thread override > global config 
 - The LLM must handle all work inline in the main conversation thread
 
 All other features (memory harvest, dreaming, reflection, scheduled tasks) continue to work normally.
+
+## Inline tool limit in lite mode
+
+The `inline_tool_limit` Convergence Protocol hook remains active in lite mode. When the model exceeds `max_inline_tool_rounds` tool calls in a turn, it is instructed to present its findings as-is and transparently suggest the user split the remaining work into smaller subtasks — rather than attempting to delegate to an unavailable worker.
+
+Since there is no worker delegation to offload to, consider setting `max_inline_tool_rounds` higher (e.g. 8–12) in lite mode to give the model more room per turn:
+
+```yaml
+tuning:
+  max_inline_tool_rounds: 10
+```
+
+Wintermute lite mode is best suited for focused, single-step tasks. Complex multi-step work (large refactors, continuous coding across many files) should be broken into smaller requests by the user.

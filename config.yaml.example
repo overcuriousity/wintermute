@@ -319,6 +319,9 @@ convergence_protocol:
                                            # execution/research tool calls. Blocks further
                                            # inline tool calls and injects a correction
                                            # telling the model to spawn a sub-session.
+                                           # In lite mode: instead of delegation, instructs
+                                           # the model to present findings as-is and suggest
+                                           # the user split the task into smaller subtasks.
                                            # (pre_execution, main scope only)
 
     #credential_redaction: true            # Redacts API keys, passwords, and access
@@ -423,6 +426,13 @@ tuning:
                                       # write_file, search_web, fetch_url). Orchestration
                                       # tools (worker_delegation, task, append_memory, etc.)
                                       # do not count. Set 0 to disable the limit.
+                                      #
+                                      # LITE MODE: In lite mode (sub_sessions_enabled: false)
+                                      # there is no worker delegation, so the limit controls
+                                      # how many tool calls the model can make per turn before
+                                      # being asked to present findings and stop. Consider
+                                      # setting this higher (e.g. 8-12) in lite mode to give
+                                      # the model more room per turn.
 
 
 # ── Context Compaction ───────────────────────────────────────────────
