@@ -84,6 +84,8 @@ class SessionManager:
         await database.async_call(database.clear_active_messages, thread_id)
         if self._store:
             self._store.compaction_summaries.pop(thread_id, None)
+            self._store.last_system_prompt.pop(thread_id, None)
+            self._store.last_tool_schemas.pop(thread_id, None)
         ssm = self._get_sub_sessions() if self._get_sub_sessions else None
         if ssm:
             n = await ssm.cancel_for_thread(thread_id)

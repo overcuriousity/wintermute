@@ -42,15 +42,6 @@ logger = logging.getLogger(__name__)
 
 VOICE_DIR = Path("data/voice")
 
-_UUID_RE = _re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", _re.IGNORECASE
-)
-
-
-def _looks_like_uuid(value: str) -> bool:
-    return bool(_UUID_RE.match(value))
-
-
 def _to_urlsafe_b64(s: str) -> str:
     """Convert standard base64 to URL-safe base64 (no padding)."""
     return s.replace("+", "-").replace("/", "_").rstrip("=")

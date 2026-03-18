@@ -58,16 +58,3 @@ def search_skills(query: str, top_k: int = 5) -> list[dict]:
     return skill_store.search(query, top_k)
 
 
-def list_skills() -> list[dict]:
-    """List all skills."""
-    return skill_store.get_all()
-
-
-def delete_skill(skill_name: str) -> bool:
-    """Delete a skill by name."""
-    skill_name = _validate_skill_name(skill_name)
-    deleted = skill_store.delete(skill_name)
-    if deleted:
-        logger.info("Skill '%s' deleted", skill_name)
-        data_versioning.commit_async(f"skill: delete {skill_name}")
-    return deleted

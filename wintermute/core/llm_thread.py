@@ -232,19 +232,6 @@ class LLMThread:
         """Submit an autonomous system event (heartbeat, scheduled task, etc.)."""
         await self._dispatch(_QueueItem(text=text, thread_id=thread_id, is_system_event=True))
 
-    async def enqueue_system_event_with_reply(self, text: str,
-                                              thread_id: str = "default") -> str:
-        """Submit a system event and await the AI reply.
-
-        Like enqueue_system_event but returns the reply text. The prompt is
-        NOT saved to the DB as a user message; only the assistant response is.
-        """
-        loop = asyncio.get_running_loop()
-        fut: asyncio.Future = loop.create_future()
-        await self._dispatch(_QueueItem(text=text, thread_id=thread_id,
-                                        is_system_event=True, future=fut))
-        return await fut
-
     async def reset_session(self, thread_id: str = "default") -> None:
         await self._session_mgr.reset_session(thread_id)
 
@@ -256,6 +243,9 @@ class LLMThread:
 
     def get_last_system_prompt(self, thread_id: str = "default") -> Optional[str]:
         return self._store.get_last_system_prompt(thread_id)
+
+    def get_last_tool_schemas(self, thread_id: str = "default") -> Optional[list]:
+        return self._store.get_last_tool_schemas(thread_id)
 
     def get_token_budget(self, thread_id: str = "default") -> dict:
         return self._store.get_token_budget(thread_id)
@@ -787,6 +777,7 @@ class LLMThread:
             )
 
         self._store.last_system_prompt[thread_id] = system_prompt
+        self._store.last_tool_schemas[thread_id] = active_schemas
 
         is_sub_session_result = item.is_system_event and "[SUB-SESSION " in item.text
         return (messages, system_prompt, _memory_query, pool, pool_cfg,
