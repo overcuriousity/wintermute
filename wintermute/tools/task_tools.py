@@ -41,7 +41,16 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     ai_prompt = inputs.get("ai_prompt")
     background = bool(inputs.get("background", False))
 
-    # Auto-promote: scheduled + ai_prompt always runs as background sub-session.
+    # Auto-promote: scheduled tasks without an explicit ai_prompt get the content
+    # as their prompt.  Weak / small models and the NL translator often fail to
+    # generate ai_prompt even when the user clearly wants autonomous execution.
+    # Defaulting to autonomous is safe — a sub-session that has nothing actionable
+    # to do simply replies with [NO_ACTION].
+    if schedule_type and not ai_prompt:
+        ai_prompt = content
+        logger.info("Auto-generated ai_prompt from content (no explicit ai_prompt provided)")
+
+    # Scheduled + ai_prompt always runs as background sub-session.
     # The foreground path (enqueue into main LLM thread) is fragile — weak models
     # chat about the prompt instead of executing it.
     if schedule_type and ai_prompt and not background:
@@ -84,21 +93,8 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     result = {"status": "ok", "task_id": task_id}
     if schedule_desc:
         result["schedule"] = schedule_desc
-    # Tell the LLM what execution mode was selected so it can self-correct
-    # without mistaking a legitimate passive reminder for an error.
     if schedule_type:
-        if ai_prompt:
-            result["mode"] = "autonomous"
-        else:
-            result["mode"] = "reminder"
-            result["warning"] = (
-                "NO ai_prompt was provided — this task will ONLY send a "
-                "passive ⏰ text reminder at the scheduled time. Nothing "
-                "will be executed autonomously. If the user asked for "
-                "autonomous work (e.g. 'make improvements', 'search for', "
-                "'check', 'do X'), you MUST re-create this task with an "
-                "ai_prompt field containing a self-contained instruction."
-            )
+        result["mode"] = "autonomous"
     return json.dumps(result)
 
 
