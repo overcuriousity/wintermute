@@ -342,10 +342,14 @@ class SignalThread:
             raise RuntimeError(f"signal-cli RPC error: {data['error']}")
         return data.get("result", {})
 
-    async def _send_jsonrpc_fire_and_forget(self, method: str, params: dict) -> None:
+    async def _send_jsonrpc_fire_and_forget(
+        self, method: str, params: dict, *, log_level: int = logging.DEBUG,
+    ) -> None:
         """Send a JSON-RPC request without caring about the response.
 
         Used for non-critical calls (typing indicators, read receipts).
+        *log_level* controls the severity used for error/success messages
+        (default ``DEBUG``; pass ``logging.WARNING`` to surface failures).
         """
         if self._http_session is None:
             return
@@ -365,10 +369,26 @@ class SignalThread:
             ) as resp:
                 if resp.status not in (200, 201):
                     body = await resp.text()
-                    logger.debug("Fire-and-forget RPC %s returned %d: %s",
-                                 method, resp.status, body[:200])
+                    logger.log(log_level, "Fire-and-forget RPC %s returned %d: %s",
+                               method, resp.status, body[:200])
+                elif log_level <= logging.DEBUG:
+                    logger.debug("Fire-and-forget RPC %s succeeded", method)
+                else:
+                    # At higher log levels, inspect response for RPC errors.
+                    body = await resp.text()
+                    if body:
+                        try:
+                            data = _json.loads(body)
+                        except (ValueError, _json.JSONDecodeError):
+                            pass  # Non-JSON success response — nothing to inspect.
+                        else:
+                            if "error" in data:
+                                logger.log(log_level, "RPC %s error: %s",
+                                           method, data["error"])
+                                return
+                    logger.debug("Fire-and-forget RPC %s succeeded", method)
         except Exception as exc:  # noqa: BLE001
-            logger.debug("Fire-and-forget RPC %s failed: %s", method, exc)
+            logger.log(log_level, "Fire-and-forget RPC %s failed: %s", method, exc)
 
     async def _cleanup_session(self) -> None:
         """Close the HTTP session without killing the process."""
@@ -677,42 +697,12 @@ class SignalThread:
     # ------------------------------------------------------------------
 
     async def _send_read_receipt(self, sender: str, timestamp: int) -> None:
-        """Send a read receipt for a message."""
-        if self._http_session is None:
-            return
-
-        self._rpc_id += 1
-        request = {
-            "jsonrpc": "2.0",
-            "method": "sendReceipt",
-            "id": self._rpc_id,
-            "params": {
-                "recipient": [sender],
-                "targetTimestamp": [timestamp],
-                "type": "read",
-            },
-        }
-        rpc_url = f"{self._base_url}/api/v1/rpc"
-        try:
-            async with self._http_session.post(
-                rpc_url, json=request,
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                body = await resp.text()
-                if resp.status not in (200, 201):
-                    logger.warning("Read receipt for %s/%s returned HTTP %d: %s",
-                                   sender, timestamp, resp.status, body[:200])
-                elif body:
-                    data = _json.loads(body)
-                    if "error" in data:
-                        logger.warning("Read receipt RPC error for %s/%s: %s",
-                                       sender, timestamp, data["error"])
-                    else:
-                        logger.debug("Read receipt sent for %s/%s", sender, timestamp)
-                else:
-                    logger.debug("Read receipt sent for %s/%s", sender, timestamp)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Read receipt failed for %s/%s: %s", sender, timestamp, exc)
+        """Send a read receipt for a message (logged at WARNING on failure)."""
+        await self._send_jsonrpc_fire_and_forget("sendReceipt", {
+            "recipient": [sender],
+            "targetTimestamp": [timestamp],
+            "type": "read",
+        }, log_level=logging.WARNING)
 
     # ------------------------------------------------------------------
     # File sending
