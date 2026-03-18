@@ -270,22 +270,48 @@ IMPORTANT RULES:
      (text-embeddings-inference, Infinity), or cloud (OpenAI, Together).
      Use probe_endpoint to test it works (probe {url}/embeddings or
      {url}/models). Write memory.embeddings.endpoint, memory.embeddings.model,
-     memory.embeddings.dimensions. Also ask about the API key. Then ask if
-     they want Qdrant (advanced) or local_vector (default, recommended).
+     memory.embeddings.dimensions, memory.embeddings.batch_size,
+     memory.embeddings.max_text_chars. Also ask about the API key. Then
+     ask if they want Qdrant (advanced) or local_vector (default, recommended).
      Set memory.backend accordingly.
   3. Web interface (host, port — suggest 127.0.0.1:8080 default, mention
      0.0.0.0 for remote access with a security warning)
-  4. Matrix integration (ask "Do you want to connect Wintermute to Matrix
-     chat?" — if yes, collect credentials and test them)
-  5. Whisper voice transcription (only ask if Matrix is enabled)
-  6. Convergence Protocol validators (explain briefly, recommend enabling all
+  4. Search — ask for their SearXNG instance URL (default http://127.0.0.1:8888).
+     Briefly explain: "SearXNG powers the search_web tool."
+  5. Matrix integration (ask "Do you want to connect Wintermute to Matrix
+     chat?" — if yes, collect ALL fields including group_mode, and test
+     credentials)
+  6. Signal integration (ask "Do you want to connect Wintermute to Signal
+     messenger?" — if yes, collect phone_number, allowed_users, group_mode,
+     http_port, etc.)
+  7. Whisper voice transcription (only ask if Matrix or Signal is enabled)
+  8. Convergence Protocol validators (explain briefly, recommend enabling all
      if using a small/mid model, suggest defaults)
-  7. NL Translation (only mention if main model is small, <14B — otherwise skip)
-  8. Scheduler timezone (auto-detect from system if possible, confirm)
-  9. Remaining settings: tasks, dreaming, memory harvest, context limits,
-     logging — apply sensible defaults, briefly list what was set, ask if
-     they want to change anything
-  10. Systemd service installation
+  9. NL Translation (only mention if main model is small, <14B — otherwise skip)
+  10. Seed language (ask which language for conversation starters)
+  11. Scheduler timezone (auto-detect from system if possible, confirm)
+  12. Remaining settings — apply sensible defaults for ALL of these, briefly
+      list what was set, and ask if they want to change anything:
+      - sub_sessions_enabled (lite mode toggle)
+      - tool_profiles (researcher, file_worker, full_worker, orchestrator)
+      - tuning constants (compaction_keep_recent, max_continuation_depth,
+        max_nesting_depth, max_blob_chars, max_completed_workflows,
+        max_inline_tool_rounds)
+      - context.component_size_limits (memories, tasks, skills_total)
+      - dreaming (hour, minute)
+      - update_checker (enabled, check_on_startup, interval_hours)
+      - reflection cycle (enabled, batch_threshold, consecutive_failure_limit,
+        lookback_seconds, min_result_length, main_turn_batch_threshold,
+        synthesis_min_cluster_size, synthesis_min_outcomes)
+      - self_model (enabled, sub_session_timeout_range,
+        memory_harvest_threshold_range, summary_max_chars)
+      - memory_harvest (enabled, message_threshold,
+        inactivity_timeout_minutes, max_message_chars)
+      - memory.dreaming (housekeeping thresholds, associative discovery,
+        schema abstraction, predictive patterns — all have sane defaults)
+      - skills storage (backend — defaults to memory backend)
+      - logging (level, directory)
+  13. Systemd service installation
 
 - Use set_config to write each value as it's decided. Don't batch everything
   at the end — write incrementally so partial progress is preserved.
@@ -297,9 +323,12 @@ IMPORTANT RULES:
   during bootstrap. Only call run_kimi_auth if the user wants to add a
   NEW kimi-code backend that isn't yet authenticated.
 - After all sections are configured, call install_systemd if the user wants it.
-- Finally, call finish_onboarding to write the config file.
-- For optional sections the user declines, skip them entirely (don't write
-  disabled config — omitted sections use defaults).
+- Finally, call finish_onboarding to write the config file. The finish tool
+  automatically fills in sane defaults for any section not explicitly
+  configured, so every field from config.yaml.example will be present.
+- For optional sections the user declines, just move on — finish_onboarding
+  will fill in the defaults. Only use set_config for values the user
+  actively customises.
 
 Here is the full config.yaml.example with documentation on every field.
 Use this as your reference for what each option does:
@@ -721,25 +750,256 @@ async def _tool_install_systemd(args: dict, config: dict) -> str:
             })
 
 
+def _build_full_config(config: dict) -> dict:
+    """Return a complete config dict with defaults for every section.
+
+    Values explicitly set by the onboarding assistant (in *config*) take
+    precedence.  Everything else gets the same defaults as config.yaml.example.
+    """
+
+    def _deep_merge(base: dict, override: dict) -> dict:
+        """Recursively merge *override* into *base*, returning a new dict."""
+        merged = base.copy()
+        for key, val in override.items():
+            if key in merged and isinstance(merged[key], dict) and isinstance(val, dict):
+                merged[key] = _deep_merge(merged[key], val)
+            else:
+                merged[key] = val
+        return merged
+
+    defaults: dict[str, Any] = {
+        # web
+        "web": {"enabled": True, "host": "127.0.0.1", "port": 8080},
+        # search
+        "search": {"searxng_url": "http://127.0.0.1:8888"},
+        # lite mode
+        "sub_sessions_enabled": True,
+        # tool profiles
+        "tool_profiles": {
+            "researcher": {"tools": ["search_web", "fetch_url"], "prompt_mode": "minimal"},
+            "file_worker": {
+                "tools": ["execute_shell", "read_file", "write_file"],
+                "prompt_mode": "minimal",
+            },
+            "full_worker": {
+                "tools": ["execute_shell", "read_file", "write_file", "search_web", "fetch_url"],
+                "prompt_mode": "minimal",
+            },
+            "orchestrator": {
+                "tools": ["worker_delegation", "task", "append_memory", "skill"],
+                "prompt_mode": "full",
+            },
+        },
+        # seed
+        "seed": {"language": "en"},
+        # tuning
+        "tuning": {
+            "compaction_keep_recent": 10,
+            "max_continuation_depth": 3,
+            "max_nesting_depth": 2,
+            "max_blob_chars": 60000,
+            "max_completed_workflows": 50,
+            "max_inline_tool_rounds": 3,
+        },
+        # context
+        "context": {"component_size_limits": {"memories": 10000, "tasks": 5000, "skills_total": 3000}},
+        # dreaming
+        "dreaming": {"hour": 1, "minute": 0},
+        # update checker
+        "update_checker": {
+            "enabled": True,
+            "check_on_startup": True,
+            "interval_hours": 24,
+            "remote_url": "",
+        },
+        # reflection
+        "reflection": {
+            "enabled": True,
+            "batch_threshold": 10,
+            "consecutive_failure_limit": 3,
+            "lookback_seconds": 86400,
+            "min_result_length": 50,
+            "main_turn_batch_threshold": 15,
+            "synthesis_min_cluster_size": 3,
+            "synthesis_min_outcomes": 20,
+        },
+        # self-model
+        "self_model": {
+            "enabled": True,
+            "sub_session_timeout_range": [120, 900],
+            "memory_harvest_threshold_range": [5, 50],
+            "summary_max_chars": 300,
+        },
+        # memory harvest
+        "memory_harvest": {
+            "enabled": True,
+            "message_threshold": 20,
+            "inactivity_timeout_minutes": 15,
+            "max_message_chars": 1024,
+        },
+        # scheduler
+        "scheduler": {"timezone": "UTC"},
+        # convergence protocol
+        "convergence_protocol": {
+            "validators": {
+                "workflow_spawn": True,
+                "phantom_tool_result": True,
+                "empty_promise": True,
+                "objective_completion": {"enabled": True, "scope": "sub_session"},
+            },
+        },
+        # logging
+        "logging": {"level": "INFO", "directory": "logs"},
+    }
+
+    # Memory defaults (with dreaming subsection)
+    memory_defaults: dict[str, Any] = {
+        "backend": "local_vector",
+        "top_k": 10,
+        "score_threshold": 0.3,
+        "embeddings": {
+            "endpoint": "http://localhost:8080/v1",
+            "api_key": "",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536,
+            "batch_size": 32,
+            "max_text_chars": 1024,
+        },
+        "dreaming": {
+            "dedup_similarity_threshold": 0.80,
+            "stale_days": 90,
+            "stale_min_access": 3,
+            "working_set_size": 50,
+            "association_min_new_memories": 20,
+            "association_max_insights": 5,
+            "association_days_interval": 7,
+            "association_seed_count": 8,
+            "association_sim_low": 0.3,
+            "association_sim_high": 0.6,
+            "schema_min_store_size": 50,
+            "schema_days_interval": 14,
+            "schema_merge_trigger": 10,
+            "schema_cluster_threshold": 0.6,
+            "schema_max_clusters": 5,
+            "prediction_min_outcomes": 50,
+            "prediction_days_interval": 7,
+            "prediction_lookback_days": 30,
+            "prediction_max_predictions": 3,
+            "prediction_inject_prompt": True,
+            "prediction_proactive_scheduling": True,
+            "prediction_proactive_cooldown_hours": 4,
+        },
+    }
+    defaults["memory"] = memory_defaults
+
+    return _deep_merge(defaults, config)
+
+
+# ── Section-ordered YAML writer ──────────────────────────────────────
+
+# Canonical section order matching config.yaml.example
+_SECTION_ORDER = [
+    "matrix",
+    "whisper",
+    "signal",
+    "web",
+    "search",
+    "sub_sessions_enabled",
+    "inference_backends",
+    "llm",
+    "convergence_protocol",
+    "nl_translation",
+    "skills",
+    "tool_profiles",
+    "seed",
+    "tuning",
+    "context",
+    "dreaming",
+    "update_checker",
+    "reflection",
+    "self_model",
+    "memory_harvest",
+    "scheduler",
+    "memory",
+    "logging",
+]
+
+_SECTION_COMMENTS: dict[str, str] = {
+    "matrix": "# ── Matrix ────────────────────────────────────────────────────────────",
+    "whisper": "# ── Whisper (Voice Transcription) ─────────────────────────────────────",
+    "signal": "# ── Signal ────────────────────────────────────────────────────────────",
+    "web": "# ── Web Interface ─────────────────────────────────────────────────────",
+    "search": "# ── Search ────────────────────────────────────────────────────────────",
+    "sub_sessions_enabled": "# ── Lite Mode (Global Sub-Session Toggle) ─────────────────────────────",
+    "inference_backends": "# ── Inference Backends ────────────────────────────────────────────────",
+    "llm": "# ── LLM Role Mapping ─────────────────────────────────────────────────",
+    "convergence_protocol": "# ── Convergence Protocol (Post-Inference Validation) ──────────────────",
+    "nl_translation": "# ── NL Translation ────────────────────────────────────────────────────",
+    "skills": "# ── Skill Storage ─────────────────────────────────────────────────────",
+    "tool_profiles": "# ── Tool Profiles (Named Sub-session Presets) ─────────────────────────",
+    "seed": "# ── Seed (Conversation Starter) ──────────────────────────────────────",
+    "tuning": "# ── Tuning Constants ──────────────────────────────────────────────────",
+    "context": "# ── Component Size Limits ─────────────────────────────────────────────",
+    "dreaming": "# ── Dreaming (Nightly Consolidation) ─────────────────────────────────",
+    "update_checker": "# ── Update Checker ────────────────────────────────────────────────────",
+    "reflection": "# ── Reflection Cycle (Feedback Loop) ─────────────────────────────────",
+    "self_model": "# ── Self-Model (Operational Self-Awareness) ──────────────────────────",
+    "memory_harvest": "# ── Memory Harvest (Automatic Memory Extraction) ─────────────────────",
+    "scheduler": "# ── Scheduler ─────────────────────────────────────────────────────────",
+    "memory": "# ── Memory Retrieval (Vector-Indexed Memories) ───────────────────────",
+    "logging": "# ── Logging ───────────────────────────────────────────────────────────",
+}
+
+
+def _ordered_yaml_dump(config: dict) -> str:
+    """Dump config to YAML with sections in canonical order and comments."""
+    parts: list[str] = [
+        "# ═══════════════════════════════════════════════════════════════════════\n"
+        "#  Wintermute — Configuration\n"
+        "# ═══════════════════════════════════════════════════════════════════════\n"
+        "#\n"
+        "# Generated by onboarding assistant. See config.yaml.example for\n"
+        "# full documentation on every field.\n"
+    ]
+
+    # Emit sections in canonical order
+    emitted: set[str] = set()
+    for key in _SECTION_ORDER:
+        if key not in config:
+            continue
+        emitted.add(key)
+        comment = _SECTION_COMMENTS.get(key, "")
+        section_yaml = yaml.dump(
+            {key: config[key]},
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+            width=100,
+        )
+        parts.append(f"\n{comment}\n{section_yaml}")
+
+    # Emit any remaining keys not in _SECTION_ORDER
+    for key, val in config.items():
+        if key in emitted:
+            continue
+        section_yaml = yaml.dump(
+            {key: val},
+            default_flow_style=False,
+            allow_unicode=True,
+            sort_keys=False,
+            width=100,
+        )
+        parts.append(f"\n{section_yaml}")
+
+    return "\n".join(parts)
+
+
 async def _tool_finish_onboarding(args: dict, config: dict) -> str:
     _status("Writing config.yaml ...")
 
-    # Serialize with nice formatting
-    yaml_content = yaml.dump(
-        config,
-        default_flow_style=False,
-        allow_unicode=True,
-        sort_keys=False,
-        width=100,
-    )
-
-    # Add header comment
-    output = (
-        "# Wintermute configuration\n"
-        "# Generated by onboarding assistant\n"
-        "# See config.yaml.example for full documentation\n\n"
-        + yaml_content
-    )
+    # Merge user-set values with full defaults so every section is present
+    full_config = _build_full_config(config)
+    output = _ordered_yaml_dump(full_config)
 
     CONFIG_FILE.write_text(output, encoding="utf-8")
     _ok(f"Config written to {CONFIG_FILE}")
