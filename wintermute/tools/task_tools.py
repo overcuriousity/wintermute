@@ -38,7 +38,7 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
         return json.dumps({"error": "content is required for add action"})
     add_thread = inputs.get("thread_id") or effective_scope
     schedule_type = inputs.get("schedule_type")
-    ai_prompt = inputs.get("ai_prompt")
+    ai_prompt = (inputs.get("ai_prompt") or "").strip() or None
     background = bool(inputs.get("background", False))
 
     # Auto-promote: scheduled tasks without an explicit ai_prompt get the content

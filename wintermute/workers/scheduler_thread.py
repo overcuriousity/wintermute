@@ -322,10 +322,15 @@ class TaskScheduler:
                     if self._sub_sessions is not None:
                         # Enrich objective with behavioral/preference predictions.
                         pred_ctx = await self._get_prediction_context()
-                        objective = (
-                            f"[TASK {task_id}] {ai_prompt}\n\n"
-                            f"(Task: {message})\n\n"
-                        )
+                        # When ai_prompt was auto-generated from content they
+                        # are identical — avoid duplicating the text.
+                        if ai_prompt == message:
+                            objective = f"[TASK {task_id}] {ai_prompt}\n\n"
+                        else:
+                            objective = (
+                                f"[TASK {task_id}] {ai_prompt}\n\n"
+                                f"(Task: {message})\n\n"
+                            )
                         if pred_ctx:
                             # Cap prediction context to avoid inflating sub-session prompts.
                             capped = pred_ctx[:800]
@@ -351,11 +356,14 @@ class TaskScheduler:
                 elif thread_id:
                     # Foreground task: enqueue into the main LLM thread
                     # as if the user typed it.
-                    await self._llm_enqueue(
-                        f"[TASK {task_id}] {ai_prompt}\n\n"
-                        f"(Task: {message})",
-                        thread_id,
-                    )
+                    if ai_prompt == message:
+                        enqueue_text = f"[TASK {task_id}] {ai_prompt}"
+                    else:
+                        enqueue_text = (
+                            f"[TASK {task_id}] {ai_prompt}\n\n"
+                            f"(Task: {message})"
+                        )
+                    await self._llm_enqueue(enqueue_text, thread_id)
                 else:
                     logger.warning(
                         "Task %s has ai_prompt but no thread_id and not "
