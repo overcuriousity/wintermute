@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.13.1-alpha](https://github.com/overcuriousity/wintermute/compare/v0.13.0-alpha...v0.13.1-alpha) (2026-03-18)
+
+
+### Bug Fixes
+
+* accurate docstring for log_level; add context to fire-and-forget logs ([0e26e6d](https://github.com/overcuriousity/wintermute/commit/0e26e6d05e4b4d1313042cf0dad638af26971f47))
+* address Copilot review feedback on scheduled task auto-promotion ([a390e4b](https://github.com/overcuriousity/wintermute/commit/a390e4b52aec6732931b5a45cd7488da6cadd9ee))
+* address PR review — normalize ai_prompt and avoid content duplication ([c189c3d](https://github.com/overcuriousity/wintermute/commit/c189c3d0d6aee94be97b5a0744d6403914bc6fa5))
+* align setup.sh and onboarding.sh config output with config.yaml.example ([383d521](https://github.com/overcuriousity/wintermute/commit/383d5218fce812bfe8e3c299e830a21ca9d22571))
+* auto-generate ai_prompt for scheduled tasks missing one ([4d1cf47](https://github.com/overcuriousity/wintermute/commit/4d1cf47d290761648c9cb4354d08eef1cca70d30))
+* auto-generate ai_prompt for scheduled tasks missing one ([5d98ba6](https://github.com/overcuriousity/wintermute/commit/5d98ba6de30fe852c7aeb161fa4c8ef9297250e8))
+* clarify skill tool returns docs, not executes procedures ([5d05202](https://github.com/overcuriousity/wintermute/commit/5d0520212fbc37139259c6a78fa0c8b8beb2baf0))
+* debug panel accuracy + remove dead code ([d6f1d66](https://github.com/overcuriousity/wintermute/commit/d6f1d66d038049ffd7140ff37c8c5f98f15f8d00))
+* debug panel shows accurate tool schemas; remove dead code ([031c935](https://github.com/overcuriousity/wintermute/commit/031c935c874a525ac163e955ceeb857c04186ac6))
+* derive skill collection name from memory collection ([18d8300](https://github.com/overcuriousity/wintermute/commit/18d83007b989b3fb321f0f7e8255736fb41a3b54))
+* derive skill collection name from memory collection for instance isolation ([f5e773f](https://github.com/overcuriousity/wintermute/commit/f5e773f90a32d2991c3fbe6ded786225aac61890))
+* disable inline_tool_limit CP hook when worker_delegation excluded ([25a4503](https://github.com/overcuriousity/wintermute/commit/25a45039459c8c933f5da9a2ac8a34f6f7d469bd))
+* prefer UUID over phone number for Signal read receipts ([1aa057b](https://github.com/overcuriousity/wintermute/commit/1aa057b28779eab0a243450ba30be9eb6a088555))
+* prefer UUID over phone number for Signal read receipts ([52653f5](https://github.com/overcuriousity/wintermute/commit/52653f5c22474838521617f7175e4f6a393cd2c7))
+* re-enable inline tool limit in lite mode ([edc271a](https://github.com/overcuriousity/wintermute/commit/edc271ace493e05c0da885f9d03563d97b86b67b))
+* re-enable inline tool limit in lite mode with adapted correction ([4297936](https://github.com/overcuriousity/wintermute/commit/4297936d5d8794903394ca0db47217544e24dce2))
+* restore _update_config_yaml and clear caches on session reset ([ad1e0bb](https://github.com/overcuriousity/wintermute/commit/ad1e0bb5e62925517cf58ffcce7d7a884e8688cc))
+* Signal voice transcription and read receipt visibility ([3db0a3f](https://github.com/overcuriousity/wintermute/commit/3db0a3f2d4512529ad21ad7ef784eece3c4dfb60))
+* Signal voice transcription and read receipt visibility ([cdc0df1](https://github.com/overcuriousity/wintermute/commit/cdc0df1ef094d6af04b67d3dfd6a021a2d4a3754))
+
 ## [0.13.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.12.0-alpha...v0.13.0-alpha) (2026-03-17)
 
 
