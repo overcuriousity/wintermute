@@ -4,7 +4,7 @@ Wintermute can connect to Signal messenger via [signal-cli](https://github.com/A
 
 ## Prerequisites
 
-- **JRE 21+** (signal-cli requires Java)
+- **JRE 25+** (signal-cli requires Java)
   - Fedora: `sudo dnf install java-25-openjdk-headless`
   - Debian/Ubuntu: `sudo apt install openjdk-25-jre-headless`
 - **signal-cli** (download from [GitHub releases](https://github.com/AsamK/signal-cli/releases))
@@ -170,7 +170,7 @@ If you want stricter trust (manual key verification), set `trust_new_keys: false
 
 ### Java version errors
 
-signal-cli requires JRE 21+. Check your version:
+signal-cli requires JRE 25+. Check your version:
 
 ```bash
 java -version
