@@ -363,6 +363,17 @@ class WebInterface:
         active_schemas = None
         if self._llm:
             active_schemas = self._llm.get_last_tool_schemas(thread_id)
+        # Fallback when there is no cached schema from a prior LLM call.
+        if active_schemas is None:
+            # Prefer a helper on the LLM thread that mirrors inference-time
+            # tool selection (lite-mode exclusions, tool profiles, etc.),
+            # if such a helper is available.
+            if self._llm and hasattr(self._llm, "get_active_tool_schemas"):
+                try:
+                    active_schemas = self._llm.get_active_tool_schemas(thread_id)
+                except Exception:  # noqa: BLE001
+                    # If anything goes wrong, fall back to the generic schema builder.
+                    active_schemas = None
         if active_schemas is None:
             nl_tools = None
             if self._llm:
