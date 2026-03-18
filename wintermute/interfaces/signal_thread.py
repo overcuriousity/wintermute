@@ -404,6 +404,50 @@ class SignalThread:
                 pass
 
     # ------------------------------------------------------------------
+    # Attachment download
+    # ------------------------------------------------------------------
+
+    async def _get_attachment_data(self, att: dict) -> bytes | None:
+        """Read attachment bytes: try local ``file`` path, then REST API download.
+
+        signal-cli populates ``file`` with the local storage path in some modes.
+        In HTTP daemon mode the REST endpoint ``/api/v1/attachments/{id}`` is the
+        reliable fallback.
+        """
+        # 1. Local file path (signal-cli may set 'file' to the stored path)
+        local_path = att.get("file")
+        if local_path:
+            try:
+                return Path(local_path).read_bytes()
+            except (OSError, FileNotFoundError):
+                logger.debug("Local attachment path unreadable: %s", local_path)
+
+        # 2. Download via REST API using attachment ID
+        att_id = att.get("id")
+        if att_id and self._http_session is not None:
+            url = f"{self._base_url}/api/v1/attachments/{att_id}"
+            try:
+                async with self._http_session.get(
+                    url, timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    if resp.status == 200:
+                        return await resp.read()
+                    logger.warning("Attachment download returned HTTP %d for id=%s",
+                                   resp.status, att_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to download attachment id=%s: %s", att_id, exc)
+
+        # 3. Legacy: try 'filename' as a path (old signal-cli versions)
+        filename = att.get("filename")
+        if filename:
+            try:
+                return Path(filename).read_bytes()
+            except (OSError, FileNotFoundError):
+                logger.debug("Attachment filename not a valid path: %s", filename)
+
+        return None
+
+    # ------------------------------------------------------------------
     # Message handling
     # ------------------------------------------------------------------
 
@@ -468,13 +512,11 @@ class SignalThread:
         # Process image attachments
         for att in attachments:
             content_type = att.get("contentType", "")
-            att_path = att.get("filename") or att.get("id", "")
 
-            if content_type.startswith("image/") and att_path:
-                try:
-                    att_data = Path(att_path).read_bytes()
-                except (OSError, FileNotFoundError):
-                    logger.warning("Cannot read Signal attachment: %s", att_path)
+            if content_type.startswith("image/"):
+                att_data = await self._get_attachment_data(att)
+                if att_data is None:
+                    logger.warning("Cannot read Signal image attachment: %s", att)
                     continue
                 b64data = _base64.b64encode(att_data).decode()
                 text_for_db = sender_prefix + (body or "[image attached]")
@@ -495,11 +537,10 @@ class SignalThread:
                 return
 
             # Voice message (audio attachment)
-            if content_type.startswith("audio/") and att_path:
-                try:
-                    audio_data = Path(att_path).read_bytes()
-                except (OSError, FileNotFoundError):
-                    logger.warning("Cannot read Signal audio attachment: %s", att_path)
+            if content_type.startswith("audio/"):
+                audio_data = await self._get_attachment_data(att)
+                if audio_data is None:
+                    logger.warning("Cannot read Signal audio attachment: %s", att)
                     continue
 
                 # Save voice file
@@ -637,14 +678,41 @@ class SignalThread:
 
     async def _send_read_receipt(self, sender: str, timestamp: int) -> None:
         """Send a read receipt for a message."""
-        try:
-            await self._send_jsonrpc_fire_and_forget("sendReceipt", {
+        if self._http_session is None:
+            return
+
+        self._rpc_id += 1
+        request = {
+            "jsonrpc": "2.0",
+            "method": "sendReceipt",
+            "id": self._rpc_id,
+            "params": {
                 "recipient": [sender],
                 "targetTimestamp": [timestamp],
                 "type": "read",
-            })
+            },
+        }
+        rpc_url = f"{self._base_url}/api/v1/rpc"
+        try:
+            async with self._http_session.post(
+                rpc_url, json=request,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                body = await resp.text()
+                if resp.status not in (200, 201):
+                    logger.warning("Read receipt for %s/%s returned HTTP %d: %s",
+                                   sender, timestamp, resp.status, body[:200])
+                elif body:
+                    data = _json.loads(body)
+                    if "error" in data:
+                        logger.warning("Read receipt RPC error for %s/%s: %s",
+                                       sender, timestamp, data["error"])
+                    else:
+                        logger.debug("Read receipt sent for %s/%s", sender, timestamp)
+                else:
+                    logger.debug("Read receipt sent for %s/%s", sender, timestamp)
         except Exception as exc:  # noqa: BLE001
-            logger.debug("Read receipt failed for %s/%s: %s", sender, timestamp, exc)
+            logger.warning("Read receipt failed for %s/%s: %s", sender, timestamp, exc)
 
     # ------------------------------------------------------------------
     # File sending
