@@ -946,12 +946,6 @@ def validate_inline_tool_limit(context: dict, detection_result: dict) -> bool:
     if context.get("scope") != "main":
         return False
 
-    # Skip when worker_delegation is excluded (lite mode) — the correction
-    # would tell the model to call a tool that isn't available.
-    excluded = context.get("exclude_tool_names") or set()
-    if "worker_delegation" in excluded:
-        return False
-
     tool_name = context.get("tool_name", "")
 
     # Import here to avoid circular imports at module level.
@@ -975,6 +969,25 @@ def validate_inline_tool_limit(context: dict, detection_result: dict) -> bool:
     context["_convergence_hook_reason"] = (
         f"{exec_count} execution/research"
     )
+
+    # In lite mode (worker_delegation excluded), override the correction
+    # to avoid referencing unavailable delegation and instead instruct the
+    # model to present findings as-is.
+    excluded = context.get("exclude_tool_names") or set()
+    if "worker_delegation" in excluded:
+        context["_convergence_hook_correction_override"] = (
+            "[CONVERGENCE PROTOCOL — INLINE TOOL LIMIT] You have used {reason} "
+            "inline tool calls in this turn, reaching the configured limit.\n\n"
+            "STOP making further tool calls for this turn. Instead:\n"
+            "1. Present the findings you have gathered so far clearly and completely.\n"
+            "2. If the task is not fully resolved, transparently tell the user what "
+            "remains and suggest splitting the work into smaller, focused subtasks "
+            "they can ask you one at a time.\n\n"
+            "Wintermute lite mode is optimised for focused, single-step tasks. "
+            "Complex multi-step work (e.g. large refactors, continuous coding across "
+            "many files) works best when broken into smaller requests."
+        )
+
     logger.info(
         "inline_tool_limit: blocking %s (exec_count=%d >= limit=%d)",
         tool_name, exec_count, _max_inline_tool_rounds,
@@ -1077,8 +1090,16 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, Convergenc
                     all_schemas[partial] = partial
             effective_schema = "\n\n".join(all_schemas.values()) if all_schemas else \
                 "(call the tool that corresponds to the action you claimed)"
+        # Allow programmatic validators to override the correction template
+        # (e.g. inline_tool_limit in lite mode uses a delegation-free message).
+        template = hook.correction_template
+        if hook.name == "inline_tool_limit":
+            override = ctx.get("_convergence_hook_correction_override")
+            if override:
+                template = override
+
         try:
-            part = hook.correction_template.format(
+            part = template.format(
                 reason=reason,
                 tool_schema=effective_schema,
                 tool_name=tool_name or "(unknown)",
