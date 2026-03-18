@@ -365,7 +365,7 @@ nl_translation:
 # skills:
 #   backend: "local_vector"               # "local_vector" | "qdrant"
 #   qdrant:
-#     collection: "wintermute_skills"     # Separate collection (default)
+#     collection: "wintermute_skills"     # Derived from memory.qdrant.collection by default
 #     url: "http://localhost:6333"        # Inherits from memory.qdrant if omitted
 #     api_key: null
 
