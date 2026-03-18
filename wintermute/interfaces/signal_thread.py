@@ -518,10 +518,11 @@ class SignalThread:
             logger.debug("Group-mode mention from non-allowed user %s — ignoring", source_identity)
             return
 
-        # Send read receipt
+        # Send read receipt (prefer UUID — phone numbers can cause UNREGISTERED_FAILURE)
         timestamp = data_msg.get("timestamp")
-        if timestamp and source_identity:
-            _t = asyncio.create_task(self._send_read_receipt(source_identity, timestamp))
+        receipt_target = source_uuid or source_number
+        if timestamp and receipt_target:
+            _t = asyncio.create_task(self._send_read_receipt(receipt_target, timestamp))
             self._background_tasks.add(_t)
             _t.add_done_callback(self._background_tasks.discard)
 
