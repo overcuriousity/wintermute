@@ -167,10 +167,10 @@ TOOL_SCHEMAS = [
                 "ai_prompt": {
                     "type": "string",
                     "description": (
-                        "REQUIRED for autonomous execution. Without this, "
-                        "scheduled tasks only send a passive \u23f0 reminder — "
-                        "nothing executes. Write a complete, self-contained "
-                        "instruction the system can execute independently."
+                        "Instruction for autonomous execution. Write a "
+                        "complete, self-contained instruction the system "
+                        "can execute independently. If omitted for scheduled "
+                        "tasks, content is used as the prompt automatically."
                     ),
                 },
                 "background": {
