@@ -443,7 +443,8 @@ class LocalVectorSkillBackend:
 class QdrantSkillBackend:
     """Qdrant vector DB with embedding-based semantic search for skills.
 
-    Uses a separate collection from memories (default: ``wintermute_skills``).
+    Uses a separate collection from memories (derived from the memory
+    collection name by default, e.g. ``wintermute_memories`` → ``wintermute_skills``).
     """
 
     def __init__(self, config: dict, embed_cfg: dict) -> None:
@@ -455,7 +456,15 @@ class QdrantSkillBackend:
                      memory_qdrant.get("url", "http://localhost:6333"))
         self._api_key = self._qdrant_cfg.get("api_key",
                         memory_qdrant.get("api_key", "")) or None
-        self._collection = self._qdrant_cfg.get("collection", "wintermute_skills")
+        # Derive default skill collection name from the memory collection name
+        # so separate instances using different memory collections automatically
+        # get isolated skill collections too.
+        mem_collection = memory_qdrant.get("collection", "wintermute_memories")
+        if mem_collection.endswith("_memories"):
+            default_skill_collection = mem_collection[:-len("_memories")] + "_skills"
+        else:
+            default_skill_collection = mem_collection + "_skills"
+        self._collection = self._qdrant_cfg.get("collection", default_skill_collection)
         self._dimensions = embed_cfg.get("dimensions", 1536)
         self._client: Any = None
         self._lock = threading.Lock()

@@ -42,13 +42,13 @@ Skills inherit embedding settings from `memory.embeddings`. No separate embeddin
 
 ### Qdrant Configuration
 
-When using the Qdrant backend, skills are stored in a **separate collection** (default: `wintermute_skills`) to keep them isolated from memories:
+When using the Qdrant backend, skills are stored in a **separate collection** to keep them isolated from memories. The collection name is derived from the memory collection by default (e.g., `wintermute_memories` → `wintermute_skills`), or can be set explicitly:
 
 ```yaml
 skills:
   backend: "qdrant"
   qdrant:
-    collection: "wintermute_skills"   # default
+    collection: "wintermute_skills"   # derived from memory.qdrant.collection if omitted
     url: "http://localhost:6333"      # inherited from memory.qdrant if omitted
     api_key: null
 ```
