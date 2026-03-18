@@ -48,7 +48,8 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     # to do simply replies with [NO_ACTION].
     if schedule_type and not ai_prompt:
         ai_prompt = content
-        logger.info("Auto-generated ai_prompt from content (no explicit ai_prompt provided)")
+        logger.info("Auto-generated ai_prompt from content for scheduled task "
+                     "(schedule_type=%s, thread=%s)", schedule_type, add_thread)
 
     # Scheduled + ai_prompt always runs as background sub-session.
     # The foreground path (enqueue into main LLM thread) is fragile — weak models
