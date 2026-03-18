@@ -343,13 +343,16 @@ class SignalThread:
         return data.get("result", {})
 
     async def _send_jsonrpc_fire_and_forget(
-        self, method: str, params: dict, *, log_level: int = logging.DEBUG,
+        self, method: str, params: dict, *,
+        log_level: int = logging.DEBUG, context: str = "",
     ) -> None:
         """Send a JSON-RPC request without caring about the response.
 
         Used for non-critical calls (typing indicators, read receipts).
-        *log_level* controls the severity used for error/success messages
+        *log_level* controls the severity used for failure messages
         (default ``DEBUG``; pass ``logging.WARNING`` to surface failures).
+        *context* is an optional string appended to log messages for
+        correlation (e.g. sender/timestamp for read receipts).
         """
         if self._http_session is None:
             return
@@ -362,6 +365,7 @@ class SignalThread:
             "params": params,
         }
         rpc_url = f"{self._base_url}/api/v1/rpc"
+        ctx = f" [{context}]" if context else ""
         try:
             async with self._http_session.post(
                 rpc_url, json=request,
@@ -369,10 +373,10 @@ class SignalThread:
             ) as resp:
                 if resp.status not in (200, 201):
                     body = await resp.text()
-                    logger.log(log_level, "Fire-and-forget RPC %s returned %d: %s",
-                               method, resp.status, body[:200])
+                    logger.log(log_level, "Fire-and-forget RPC %s%s returned %d: %s",
+                               method, ctx, resp.status, body[:200])
                 elif log_level <= logging.DEBUG:
-                    logger.debug("Fire-and-forget RPC %s succeeded", method)
+                    logger.debug("Fire-and-forget RPC %s%s succeeded", method, ctx)
                 else:
                     # At higher log levels, inspect response for RPC errors.
                     body = await resp.text()
@@ -383,12 +387,12 @@ class SignalThread:
                             pass  # Non-JSON success response — nothing to inspect.
                         else:
                             if "error" in data:
-                                logger.log(log_level, "RPC %s error: %s",
-                                           method, data["error"])
+                                logger.log(log_level, "RPC %s%s error: %s",
+                                           method, ctx, data["error"])
                                 return
-                    logger.debug("Fire-and-forget RPC %s succeeded", method)
+                    logger.debug("Fire-and-forget RPC %s%s succeeded", method, ctx)
         except Exception as exc:  # noqa: BLE001
-            logger.log(log_level, "Fire-and-forget RPC %s failed: %s", method, exc)
+            logger.log(log_level, "Fire-and-forget RPC %s%s failed: %s", method, ctx, exc)
 
     async def _cleanup_session(self) -> None:
         """Close the HTTP session without killing the process."""
@@ -702,7 +706,7 @@ class SignalThread:
             "recipient": [sender],
             "targetTimestamp": [timestamp],
             "type": "read",
-        }, log_level=logging.WARNING)
+        }, log_level=logging.WARNING, context=f"{sender}/{timestamp}")
 
     # ------------------------------------------------------------------
     # File sending
