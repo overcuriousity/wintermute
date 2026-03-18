@@ -58,6 +58,8 @@ class ConversationStore:
         self.thread_seq: dict[str, int] = {}
         # Per-thread cache of the last system prompt actually sent to the LLM.
         self.last_system_prompt: dict[str, str] = {}
+        # Per-thread cache of the last tool schemas actually sent to the LLM.
+        self.last_tool_schemas: dict[str, list] = {}
 
     async def load_summaries(self) -> None:
         """Load compaction summaries for all known threads from DB."""
@@ -73,6 +75,10 @@ class ConversationStore:
     def get_last_system_prompt(self, thread_id: str = "default") -> Optional[str]:
         """Return the last system prompt actually sent to the LLM for *thread_id*."""
         return self.last_system_prompt.get(thread_id)
+
+    def get_last_tool_schemas(self, thread_id: str = "default") -> Optional[list]:
+        """Return the last tool schemas actually sent to the LLM for *thread_id*."""
+        return self.last_tool_schemas.get(thread_id)
 
     def get_token_budget(self, thread_id: str = "default") -> dict:
         """Return precise token accounting for a thread."""
@@ -97,10 +103,15 @@ class ConversationStore:
             except Exception:  # noqa: BLE001
                 sp_text = ""
         sp_tokens = count_tokens(sp_text, model)
-        active_schemas = tool_module.get_tool_schemas(
-            nl_tools=nl_tools,
-            tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
-        )
+        # Prefer the exact schemas last sent to the LLM (respects lite-mode
+        # exclusions, tool profiles, etc.).  Fall back to a fresh build only
+        # when no cached version exists yet.
+        active_schemas = self.last_tool_schemas.get(thread_id)
+        if active_schemas is None:
+            active_schemas = tool_module.get_tool_schemas(
+                nl_tools=nl_tools,
+                tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
+            )
         tools_tokens = count_tokens(json.dumps(active_schemas), model)
 
         stats = database.get_thread_stats(thread_id)

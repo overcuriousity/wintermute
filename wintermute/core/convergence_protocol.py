@@ -1623,11 +1623,3 @@ async def _check_objective_completion(
     return {"type": "objective_completion", "reason": reason}
 
 
-def get_hooks(
-    enabled_validators: Optional[dict[str, Any]] = None,
-    *,
-    phase_filter: Optional[str] = None,
-    scope_filter: Optional[str] = None,
-) -> list[ConvergenceHook]:
-    """Return the list of enabled hooks (for pre-flight checks by callers)."""
-    return _load_hooks(enabled_validators, phase_filter=phase_filter, scope_filter=scope_filter)
