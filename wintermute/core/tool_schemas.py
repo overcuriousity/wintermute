@@ -205,7 +205,8 @@ TOOL_SCHEMAS = [
     _fn(
         "skill",
         (
-            "Manage skills — reusable procedures stored in long-term memory. "
+            "Skill store — saved step-by-step procedures. "
+            "read/search returns documentation text; you then execute those steps yourself using your other tools. "
             "Actions: add (create/update), read (retrieve by name), search (semantic query)."
         ),
         {
