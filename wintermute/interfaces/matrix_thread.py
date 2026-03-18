@@ -35,10 +35,16 @@ import logging
 import mimetypes as _mimetypes
 import os as _os
 import re as _re
+import tempfile as _tempfile
+import threading as _threading
+from collections.abc import MutableMapping as _Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote as _url_quote
+
+from ruamel.yaml import YAML as _YAML
+from ruamel.yaml.scalarstring import DoubleQuotedScalarString as _DQStr
 
 _REPLY_STRIP_RE = _re.compile(r"<mx-reply>.*?</mx-reply>", flags=_re.DOTALL)
 
@@ -72,6 +78,71 @@ CRYPTO_DB_PATH = Path("data/matrix_crypto.db")
 CRYPTO_MARKER_PATH = Path("data/matrix_signed.marker")
 CRYPTO_RECOVERY_KEY_PATH = Path("data/matrix_recovery.key")
 CRYPTO_PICKLE_KEY = "wintermute"
+CONFIG_PATH = Path("config.yaml")
+
+
+_config_write_lock = _threading.Lock()
+
+
+def _update_config_yaml(access_token: str, device_id: str) -> None:
+    """Write new access_token and device_id back into config.yaml (in-place).
+
+    Uses ruamel.yaml for a comment-preserving round-trip parse that preserves
+    comments and key order while minimizing formatting changes.  Writes via a
+    tempfile + os.replace to prevent concurrent writes from producing truncated
+    YAML.
+
+    Values are stored as double-quoted scalars so that PyYAML's safe_load()
+    does not coerce otherwise-ambiguous tokens (e.g. values like 'yes' or
+    'null' are read back as strings instead of bool/None).
+    If the file cannot be parsed or the matrix section is missing, a warning is
+    logged and the function returns without modifying the file.
+    """
+    if not CONFIG_PATH.exists():
+        return
+
+    yaml = _YAML()
+    yaml.preserve_quotes = True
+
+    with _config_write_lock:
+        try:
+            with CONFIG_PATH.open(encoding="utf-8") as f:
+                data = yaml.load(f)
+        except Exception:
+            logger.warning("_update_config_yaml: failed to parse %s — skipping write", CONFIG_PATH, exc_info=True)
+            return
+
+        if not isinstance(data, _Mapping):
+            logger.warning("_update_config_yaml: %s does not contain a YAML mapping at root — skipping write", CONFIG_PATH)
+            return
+        if not isinstance(data.get("matrix"), _Mapping):
+            logger.warning("_update_config_yaml: 'matrix' section missing or not a mapping in %s — skipping write", CONFIG_PATH)
+            return
+
+        # Force double-quoted scalars so PyYAML safe_load() always reads them
+        # back as strings regardless of the token value.
+        data["matrix"]["access_token"] = _DQStr(access_token)
+        data["matrix"]["device_id"] = _DQStr(device_id)
+
+        # Atomic write: temp file in same directory, then os.replace().
+        fd, tmp_path = _tempfile.mkstemp(
+            dir=str(CONFIG_PATH.parent), suffix=".tmp", prefix=".config_",
+        )
+        try:
+            with _os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+                fd = -1  # fdopen took ownership of the descriptor
+                yaml.dump(data, f)
+            _os.replace(tmp_path, str(CONFIG_PATH))
+        except BaseException:
+            if fd >= 0:
+                _os.close(fd)
+            try:
+                _os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+
 # SAS (m.sas.v1) to-device event types
 _VERIFY_REQUEST = EventType.find("m.key.verification.request", EventType.Class.TO_DEVICE)
 _VERIFY_READY   = EventType.find("m.key.verification.ready",   EventType.Class.TO_DEVICE)
