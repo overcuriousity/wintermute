@@ -170,7 +170,7 @@ If you want stricter trust (manual key verification), set `trust_new_keys: false
 
 ### Java version errors
 
-signal-cli requires JRE 21+. Check your version:
+signal-cli requires JRE 25+. Check your version:
 
 ```bash
 java -version
