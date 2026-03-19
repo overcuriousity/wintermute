@@ -16,8 +16,9 @@ Translate natural-language task descriptions into JSON arguments. Output ONLY va
   "interval_seconds": "(integer) For interval.",
   "window_start": "(string) HH:MM. For interval.",
   "window_end": "(string) HH:MM. For interval.",
-  "ai_prompt": "(string) REQUIRED for autonomous execution. Without this, schedules only send a passive reminder — nothing runs. Write a complete, self-contained instruction with tool names.",
-  "background": "(boolean) Silent execution, no chat output. Auto-set when ai_prompt + schedule are present."
+  "ai_prompt": "(string) Required when execution_mode is autonomous_notify or autonomous_silent. Write a complete, self-contained instruction with tool names.",
+  "execution_mode": "(string) reminder | autonomous_notify | autonomous_silent. reminder sends only chat reminder; autonomous_notify runs ai_prompt via sub-session and posts results; autonomous_silent runs ai_prompt via a background sub-session (fire-and-forget) without posting results to chat.",
+  "background": "(boolean) Deprecated legacy field. Do not emit when execution_mode is provided."
 }}
 
 ## Rules
@@ -28,9 +29,11 @@ Translate natural-language task descriptions into JSON arguments. Output ONLY va
 4. Times: 24h HH:MM for recurring, ISO-8601 for once.
 5. Goal without time trigger → omit schedule_type. Scheduled action → schedule_type + at.
 6. "reason" is mandatory for complete. Infer from context if not stated.
-7. Scheduled autonomous work needs `ai_prompt` with a self-contained instruction including tool names (search_web, fetch_url, execute_shell, read_file). Without `ai_prompt`, it is a passive reminder.
-8. For reminder/notification phrasing (e.g., 'remind me', 'send a reminder', 'water reminder', 'notify me to'), default to passive reminders unless the user explicitly asks the AI to perform external work.
-9. Add `ai_prompt` only when user intent clearly asks autonomous execution (e.g., research, summarize, analyze, fetch data, modify files, run commands). If ambiguous, prefer passive reminder over autonomous execution.
+7. Emit `execution_mode` for every scheduled task. Use `reminder` for reminders/notifications, `autonomous_notify` when autonomous output should be posted to chat, and `autonomous_silent` only when the user explicitly asks for silent background maintenance.
+8. Scheduled autonomous work (`autonomous_notify`/`autonomous_silent`) requires `ai_prompt` with a self-contained instruction including tool names (search_web, fetch_url, execute_shell, read_file).
+9. For reminder/notification phrasing (e.g., 'remind me', 'send a reminder', 'water reminder', 'notify me to'), default to `execution_mode=reminder`.
+10. Add `ai_prompt` only when user intent clearly asks autonomous execution (e.g., research, summarize, analyze, fetch data, modify files, run commands). If ambiguous, prefer `execution_mode=reminder`.
+11. Do not emit `background` unless explicitly asked to generate legacy-compatible payloads.
 
 ## Examples
 
@@ -38,10 +41,10 @@ Translate natural-language task descriptions into JSON arguments. Output ONLY va
 {{"action": "add", "content": "Fix the login page bug"}}
 
 "remind me daily at 9am to check email"
-{{"action": "add", "content": "Check email", "schedule_type": "daily", "at": "09:00"}}
+{{"action": "add", "content": "Check email", "schedule_type": "daily", "at": "09:00", "execution_mode": "reminder"}}
 
 "every morning at 8, search for news and summarize"
-{{"action": "add", "content": "Daily news research", "schedule_type": "daily", "at": "08:00", "ai_prompt": "Search for today's top news using search_web, fetch top 3 articles with fetch_url, compile a summary."}}
+{{"action": "add", "content": "Daily news research", "schedule_type": "daily", "at": "08:00", "execution_mode": "autonomous_notify", "ai_prompt": "Search for today's top news using search_web, fetch top 3 articles with fetch_url, compile a summary."}}
 
 "mark task_abc123 as done, the patch was deployed"
 {{"action": "complete", "task_id": "task_abc123", "reason": "Patch was deployed successfully"}}
@@ -50,23 +53,23 @@ Translate natural-language task descriptions into JSON arguments. Output ONLY va
 {{"action": "list", "status": "all"}}
 
 "monthly on the 1st at noon pay rent, and daily at 9am take vitamins"
-[{{"action": "add", "content": "Pay rent", "schedule_type": "monthly", "at": "12:00", "day_of_month": 1}}, {{"action": "add", "content": "Take vitamins", "schedule_type": "daily", "at": "09:00"}}]
+[{{"action": "add", "content": "Pay rent", "schedule_type": "monthly", "at": "12:00", "day_of_month": 1, "execution_mode": "reminder"}}, {{"action": "add", "content": "Take vitamins", "schedule_type": "daily", "at": "09:00", "execution_mode": "reminder"}}]
 
 "make some improvements to your game of life github repo. schedule this for 1620."
 WRONG — passive reminder, nothing executes:
-{{"action": "add", "content": "Verbesserungen am Game-of-Life GitHub Repo durchführen", "schedule_type": "once", "at": "2026-03-02T16:20:00+01:00"}}
+{{"action": "add", "content": "Verbesserungen am Game-of-Life GitHub Repo durchführen", "schedule_type": "once", "at": "2026-03-02T16:20:00+01:00", "execution_mode": "reminder"}}
 RIGHT — autonomous execution (action verb "make improvements" requires ai_prompt):
-{{"action": "add", "content": "Game-of-Life GitHub Repo Verbesserungen", "schedule_type": "once", "at": "2026-03-02T16:20:00+01:00", "ai_prompt": "Make improvements to the game-of-life GitHub repo. Use execute_shell to clone the repo, review the code with read_file, implement improvements, commit and push changes.", "background": true}}
+{{"action": "add", "content": "Game-of-Life GitHub Repo Verbesserungen", "schedule_type": "once", "at": "2026-03-02T16:20:00+01:00", "execution_mode": "autonomous_notify", "ai_prompt": "Make improvements to the game-of-life GitHub repo. Use execute_shell to clone the repo, review the code with read_file, implement improvements, commit and push changes."}}
 
 "every morning at 7 check my calendar and summarize my day"
 WRONG — passive reminder, nothing executes:
-{{"action": "add", "content": "Check calendar", "schedule_type": "daily", "at": "07:00"}}
+{{"action": "add", "content": "Check calendar", "schedule_type": "daily", "at": "07:00", "execution_mode": "reminder"}}
 RIGHT — autonomous execution:
-{{"action": "add", "content": "Daily calendar summary", "schedule_type": "daily", "at": "07:00", "ai_prompt": "Check the user's calendar for today using execute_shell. Summarize upcoming events and deadlines."}}
+{{"action": "add", "content": "Daily calendar summary", "schedule_type": "daily", "at": "07:00", "execution_mode": "autonomous_notify", "ai_prompt": "Check the user's calendar for today using execute_shell. Summarize upcoming events and deadlines."}}
 
 "remind me to buy groceries at 5pm"
 CORRECT — genuine reminder, no action verb the AI can execute:
-{{"action": "add", "content": "Buy groceries", "schedule_type": "once", "at": "2026-03-02T17:00:00+01:00"}}
+{{"action": "add", "content": "Buy groceries", "schedule_type": "once", "at": "2026-03-02T17:00:00+01:00", "execution_mode": "reminder"}}
 "send a water reminder notification to user now"
 CORRECT — this is a reminder/notification task, keep it passive:
-{{"action": "add", "content": "Drink water", "schedule_type": "once", "at": "2026-03-02T10:00:00+01:00"}}
+{{"action": "add", "content": "Drink water", "schedule_type": "once", "at": "2026-03-02T10:00:00+01:00", "execution_mode": "reminder"}}

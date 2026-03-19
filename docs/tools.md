@@ -143,7 +143,7 @@ Maximum nesting depth: 2 (main -> sub -> sub-sub).
 
 #### `task`
 
-Manage tasks — tracked goals and scheduled actions. Tasks are stored in SQLite. Tasks can optionally have schedules — scheduled tasks with `ai_prompt` run autonomous sub-sessions when the schedule fires.
+Manage tasks — tracked goals and scheduled actions. Tasks are stored in SQLite. Scheduled behavior is explicitly controlled via `execution_mode` for reminders vs autonomous runs.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -160,8 +160,9 @@ Manage tasks — tracked goals and scheduled actions. Tasks are stored in SQLite
 | `interval_seconds` | integer | no | Required for `interval` |
 | `window_start` | string | no | For `interval`: earliest fire time (HH:MM) |
 | `window_end` | string | no | For `interval`: latest fire time (HH:MM) |
-| `ai_prompt` | string | no | Prompt for AI inference when schedule fires |
-| `background` | boolean | no | Only valid with `ai_prompt`. When true, the AI task runs silently without delivering results to chat. Use for autonomous maintenance tasks. |
+| `ai_prompt` | string | no | Prompt for autonomous execution; required when `execution_mode` is `autonomous_notify` or `autonomous_silent` |
+| `execution_mode` | enum | no | Scheduled execution behavior: `reminder` (chat reminder), `autonomous_notify` (run AI and post results), `autonomous_silent` (run AI silently) |
+| `background` | boolean | no | Deprecated legacy flag; ignored when `execution_mode` is set. For legacy payloads with `ai_prompt`, `true` maps to `autonomous_notify` and `false` to `autonomous_silent`. |
 
 Returns vary by action. `add` returns `status`, `task_id`. `list` returns tasks grouped by status.
 

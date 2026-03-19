@@ -51,6 +51,7 @@ _instance: Optional["TaskScheduler"] = None
 async def _fire_task_job(task_id: str, message: str, ai_prompt: Optional[str],
                           thread_id: Optional[str] = None,
                           background: bool = False,
+                          execution_mode: Optional[str] = None,
                           **_extra) -> None:
     """
     Module-level coroutine used as the APScheduler job callable.
@@ -59,7 +60,9 @@ async def _fire_task_job(task_id: str, message: str, ai_prompt: Optional[str],
     **_extra absorbs metadata kwargs stored alongside the job.
     """
     if _instance is not None:
-        await _instance._fire_task(task_id, message, ai_prompt, thread_id, background)
+        await _instance._fire_task(
+            task_id, message, ai_prompt, thread_id, background, execution_mode
+        )
 
 
 # Backward-compat aliases: jobs persisted in scheduler.db before the
@@ -67,9 +70,13 @@ async def _fire_task_job(task_id: str, message: str, ai_prompt: Optional[str],
 # callables by dotted name at load time, so the aliases must exist.
 async def _fire_routine_job(job_id: str, message: str, ai_prompt: Optional[str],
                              thread_id: Optional[str] = None,
+                             background: bool = False,
+                             execution_mode: Optional[str] = None,
                              **_extra) -> None:
     if _instance is not None:
-        await _instance._fire_task(job_id, message, ai_prompt, thread_id)
+        await _instance._fire_task(
+            job_id, message, ai_prompt, thread_id, background, execution_mode
+        )
 
 _fire_reminder_job = _fire_routine_job
 
@@ -204,8 +211,10 @@ class TaskScheduler:
             ai_prompt = task.get("ai_prompt")
             thread_id = task.get("thread_id")
             background = bool(task.get("background"))
+            execution_mode = task.get("execution_mode")
             self.ensure_job(task_id, schedule_config, ai_prompt=ai_prompt,
-                            thread_id=thread_id, background=background)
+                            thread_id=thread_id, background=background,
+                            execution_mode=execution_mode)
             # Persist job ID so pause/complete/delete can manage it later.
             await database.async_call(database.update_task, task_id, apscheduler_job_id=task_id)
             logger.info("[scheduler] Scheduled job for new task %s", task_id)
@@ -252,7 +261,8 @@ class TaskScheduler:
     def ensure_job(self, task_id: str, schedule_config: dict,
                    ai_prompt: Optional[str] = None,
                    thread_id: Optional[str] = None,
-                   background: bool = False) -> None:
+                   background: bool = False,
+                   execution_mode: Optional[str] = None) -> None:
         """Create or update an APScheduler job for a task."""
         trigger = self._parse_trigger(schedule_config)
         message = database.get_task(task_id) or {}
@@ -268,6 +278,7 @@ class TaskScheduler:
                 "ai_prompt": ai_prompt,
                 "thread_id": thread_id,
                 "background": background,
+                "execution_mode": execution_mode,
                 "schedule_type": schedule_config.get("schedule_type"),
                 "schedule": tool_module._describe_schedule(schedule_config),
                 "created": datetime.now(timezone.utc).isoformat(),
@@ -306,113 +317,148 @@ class TaskScheduler:
 
     async def _fire_task(self, task_id: str, message: str, ai_prompt: Optional[str],
                           thread_id: Optional[str] = None,
-                          background: bool = False) -> None:
-        mode = "autonomous" if ai_prompt else "reminder"
-        logger.info("Firing task %s (thread=%s, background=%s, mode=%s)",
+                          background: bool = False,
+                          execution_mode: Optional[str] = None) -> None:
+        raw_mode = execution_mode
+        mode = (execution_mode or "").strip() or None
+        if mode not in {"reminder", "autonomous_notify", "autonomous_silent"}:
+            # An explicit but unexpected execution_mode was provided; log and fall back.
+            if raw_mode is not None:
+                logger.warning(
+                    "Unexpected execution_mode '%s' for task %s; falling back to inferred "
+                    "behavior (ai_prompt=%s, background=%s)",
+                    raw_mode,
+                    task_id,
+                    bool(ai_prompt),
+                    background,
+                )
+            if ai_prompt:
+                mode = "autonomous_notify" if background else "autonomous_silent"
+            else:
+                mode = "reminder"
+
+        logger.info("Firing task %s (thread=%s, background=%s, execution_mode=%s)",
                     task_id, thread_id, background, mode)
         if self._event_bus:
             self._event_bus.emit("task.fired", task_id=task_id, thread_id=thread_id)
+
+        executed = False
+        attempted = False
+        requested_mode = mode
+        delivery = f"execution_mode={mode}, delivery=skipped"
+
         try:
-            if ai_prompt:
-                if background:
-                    # Background task: spawn an isolated sub-session with full
-                    # orchestration tools.  Results are delivered back to the
-                    # originating thread; [NO_ACTION] suppression prevents
-                    # noise when there's nothing to report.
-                    if self._sub_sessions is not None:
-                        # Enrich objective with behavioral/preference predictions.
-                        pred_ctx = await self._get_prediction_context()
-                        # When ai_prompt was auto-generated from content they
-                        # are identical — avoid duplicating the text.
-                        if ai_prompt == message:
-                            objective = f"[TASK {task_id}] {ai_prompt}\n\n"
-                        else:
-                            objective = (
-                                f"[TASK {task_id}] {ai_prompt}\n\n"
-                                f"(Task: {message})\n\n"
-                            )
-                        if pred_ctx:
-                            # Cap prediction context to avoid inflating sub-session prompts.
-                            capped = pred_ctx[:800]
-                            objective += (
-                                f"## Relevant predictions about the user\n"
-                                f"{capped}\n\n"
-                            )
-                        objective += (
-                            "If you have nothing actionable to report, "
-                            "respond with exactly: [NO_ACTION]"
-                        )
-                        self._sub_sessions.spawn(
-                            objective=objective,
-                            parent_thread_id=thread_id,
-                            system_prompt_mode="full",
-                            task_id=task_id,
-                        )
-                    else:
-                        logger.warning(
-                            "Task %s has ai_prompt but SubSessionManager "
-                            "is not available — skipping", task_id
-                        )
-                elif thread_id:
-                    # Foreground task: enqueue into the main LLM thread
-                    # as if the user typed it.
-                    if ai_prompt == message:
-                        enqueue_text = f"[TASK {task_id}] {ai_prompt}"
-                    else:
-                        enqueue_text = (
-                            f"[TASK {task_id}] {ai_prompt}\n\n"
-                            f"(Task: {message})"
-                        )
-                    await self._llm_enqueue(enqueue_text, thread_id)
-                else:
-                    logger.warning(
-                        "Task %s has ai_prompt but no thread_id and not "
-                        "background — message was NOT delivered: %s",
-                        task_id, message
-                    )
-            else:
+            if mode == "reminder":
                 if thread_id:
-                    await self._broadcast(f"\u23f0 Task: {message}", thread_id)
+                    attempted = True
+                    await self._broadcast(f"⏰ Task: {message}", thread_id)
+                    executed = True
+                    delivery = "execution_mode=reminder, delivery=chat"
                 else:
+                    delivery = "execution_mode=reminder, delivery=not_delivered_no_thread"
                     logger.warning(
-                        "Task %s has no thread_id and no ai_prompt — "
+                        "Task %s is reminder mode but has no thread_id — "
                         "message was NOT delivered: %s", task_id, message
                     )
+            else:
+                if not ai_prompt:
+                    delivery = f"execution_mode={mode}, delivery=not_executed_missing_ai_prompt"
+                    logger.warning(
+                        "Task %s execution_mode=%s requires ai_prompt but none provided — skipping",
+                        task_id, mode,
+                    )
+                elif self._sub_sessions is not None:
+                    attempted = True
+                    pred_ctx = await self._get_prediction_context()
+                    if ai_prompt == message:
+                        objective = f"[TASK {task_id}] {ai_prompt}\n\n"
+                    else:
+                        objective = (
+                            f"[TASK {task_id}] {ai_prompt}\n\n"
+                            f"(Task: {message})\n\n"
+                        )
+                    if pred_ctx:
+                        capped = pred_ctx[:800]
+                        objective += (
+                            f"## Relevant predictions about the user\n"
+                            f"{capped}\n\n"
+                        )
+                    objective += (
+                        "If you have nothing actionable to report, "
+                        "respond with exactly: [NO_ACTION]"
+                    )
+                    parent_thread_id = None
+                    if mode == "autonomous_notify":
+                        if thread_id is None:
+                            logger.warning(
+                                "Task %s execution_mode=autonomous_notify but no thread_id provided — "
+                                "running as autonomous_silent (no notifications will be delivered)",
+                                task_id,
+                            )
+                            mode = "autonomous_silent"
+                        else:
+                            parent_thread_id = thread_id
+                    self._sub_sessions.spawn(
+                        objective=objective,
+                        parent_thread_id=parent_thread_id,
+                        system_prompt_mode="full",
+                        task_id=task_id,
+                    )
+                    executed = True
+                    if mode == "autonomous_notify":
+                        delivery = "execution_mode=autonomous_notify, delivery=chat"
+                    elif requested_mode == "autonomous_notify":
+                        delivery = "execution_mode=autonomous_silent, delivery=silent_downgraded_missing_thread"
+                    else:
+                        delivery = "execution_mode=autonomous_silent, delivery=silent"
+                else:
+                    delivery = f"execution_mode={mode}, delivery=not_executed_no_sub_session_manager"
+                    logger.warning(
+                        "Task %s execution_mode=%s has ai_prompt but SubSessionManager "
+                        "is not available — skipping", task_id, mode
+                    )
 
-            # Record execution in the tasks table.
-            try:
-                database.record_task_run(task_id, summary=f"executed ({mode})")
-            except Exception:  # noqa: BLE001
-                logger.debug("Failed to record task run for %s", task_id)
+            if executed:
+                try:
+                    summary = f"executed (execution_mode={mode})"
+                    database.record_task_run(task_id, summary=summary)
+                except Exception:  # noqa: BLE001
+                    logger.debug("Failed to record task run for %s", task_id)
 
-            # Log to interaction_log so task firings appear in the web debug panel.
             try:
+                mode_info = (
+                    f"requested_mode={requested_mode}, execution_mode={mode}"
+                    if requested_mode != mode
+                    else f"execution_mode={mode}"
+                )
+                status = "ok" if executed else "skipped"
                 await database.async_call(
                     database.save_interaction_log,
                     _time.time(),
                     "task_fired",
                     thread_id or "system:scheduler",
                     "scheduler",
-                    f"task_id={task_id}, mode={mode}, content={message[:200]}",
-                    f"{'sub_session spawned' if ai_prompt and background else 'llm_enqueue' if ai_prompt else 'broadcast reminder'}",
-                    "ok",
+                    f"task_id={task_id}, {mode_info}, content={message[:200]}",
+                    delivery,
+                    status,
                 )
             except Exception:  # noqa: BLE001
                 logger.debug("Failed to log task firing for %s", task_id)
 
-            # If the job is no longer in APScheduler (one-time, now done), log it.
             if self._scheduler.get_job(task_id) is None:
                 logger.info("One-time task %s completed", task_id)
 
         except Exception as exc:  # noqa: BLE001
             logger.exception("Task %s failed", task_id)
+            if attempted:
+                try:
+                    database.record_task_run(task_id, summary=f"failed: {exc}")
+                except Exception:  # noqa: BLE001
+                    pass
             try:
-                database.record_task_run(task_id, summary=f"failed: {exc}")
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                if thread_id:
-                    await self._broadcast(f"\u274c Task {task_id} failed: {exc}", thread_id)
+                # In autonomous_silent mode, suppress chat broadcasts even on failure.
+                if thread_id and mode != "autonomous_silent":
+                    await self._broadcast(f"❌ Task {task_id} failed: {exc}", thread_id)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -698,6 +744,7 @@ class TaskScheduler:
             task_id = kw.get("task_id", job.id)
             thread_id = kw.get("thread_id")
             background = kw.get("background", False)
+            execution_mode = kw.get("execution_mode")
             message = kw.get("message", task_id)
 
             if not ai_prompt and not thread_id:
@@ -713,7 +760,7 @@ class TaskScheduler:
             )
             # Schedule immediate async execution via the event loop.
             self._loop_call_soon(
-                task_id, message, ai_prompt, thread_id, background,
+                task_id, message, ai_prompt, thread_id, background, execution_mode,
             )
             recovered += 1
 
@@ -722,12 +769,12 @@ class TaskScheduler:
 
     def _loop_call_soon(self, task_id: str, message: str,
                         ai_prompt: str | None, thread_id: str | None,
-                        background: bool) -> None:
+                        background: bool, execution_mode: str | None) -> None:
         """Schedule _fire_task on the event loop from the synchronous start() context."""
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(
-                self._fire_task(task_id, message, ai_prompt, thread_id, background),
+                self._fire_task(task_id, message, ai_prompt, thread_id, background, execution_mode),
                 name=f"recover_{task_id}",
             )
         except RuntimeError:

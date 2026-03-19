@@ -150,6 +150,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             schedule_desc       TEXT,
             schedule_config     TEXT,
             ai_prompt           TEXT,
+            execution_mode      TEXT,
             background          INTEGER DEFAULT 0,
             apscheduler_job_id  TEXT,
             last_run_at         REAL,
@@ -213,6 +214,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     conn.commit()
     # Inline migrations: add columns that may not exist in older DBs.
     _add_column(conn, "sub_session_outcomes", "task_id", "TEXT")
+    _add_column(conn, "tasks", "execution_mode", "TEXT")
     # Rename turing_verdict → convergence_verdict for existing databases.
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(sub_session_outcomes)")}
     if "turing_verdict" in existing_cols and "convergence_verdict" not in existing_cols:
@@ -362,16 +364,16 @@ def _new_task_id() -> str:
 def add_task(content: str, priority: int = 5, thread_id: Optional[str] = None,
              schedule_type: Optional[str] = None, schedule_desc: Optional[str] = None,
              schedule_config: Optional[str] = None, ai_prompt: Optional[str] = None,
-             background: bool = False) -> str:
+             background: bool = False, execution_mode: Optional[str] = None) -> str:
     """Insert a new active task. Returns the task_id."""
     task_id = _new_task_id()
     with _connect() as conn:
         conn.execute(
             "INSERT INTO tasks (id, thread_id, content, priority, status, created, "
-            "schedule_type, schedule_desc, schedule_config, ai_prompt, background) "
-            "VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)",
+            "schedule_type, schedule_desc, schedule_config, ai_prompt, execution_mode, background) "
+            "VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)",
             (task_id, thread_id, content, priority, time.time(),
-             schedule_type, schedule_desc, schedule_config, ai_prompt,
+             schedule_type, schedule_desc, schedule_config, ai_prompt, execution_mode,
              1 if background else 0),
         )
         conn.commit()
@@ -388,12 +390,14 @@ def get_task(task_id: str) -> Optional[dict]:
 
 def update_task(task_id: str, thread_id: Optional[str] = None, **kwargs) -> bool:
     """Update fields on a task. Supported: content, priority, status, ai_prompt,
-    schedule_type, schedule_desc, schedule_config, background, apscheduler_job_id.
+    execution_mode, schedule_type, schedule_desc, schedule_config, background,
+    apscheduler_job_id.
 
     When *thread_id* is given the task must belong to that thread (ownership guard).
     """
-    allowed = {"content", "priority", "status", "ai_prompt", "schedule_type",
-               "schedule_desc", "schedule_config", "background", "apscheduler_job_id"}
+    allowed = {"content", "priority", "status", "ai_prompt", "execution_mode",
+               "schedule_type", "schedule_desc", "schedule_config", "background",
+               "apscheduler_job_id"}
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return False
