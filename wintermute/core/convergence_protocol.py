@@ -1135,6 +1135,17 @@ def _truncate_middle(text: str, keep_head: int, keep_tail: int) -> str:
     return text[:keep_head] + f"\n[… {omitted} chars omitted …]\n" + text[-keep_tail:]
 
 
+def _json_safe_for_cp(value: Any) -> Any:
+    """Return a JSON-serializable representation for CP context payloads."""
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, dict):
+        return {str(k): _json_safe_for_cp(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe_for_cp(v) for v in value]
+    return repr(value)
+
+
 def _get_tool_schema(tool_name: str, nl_tools: "set[str] | None" = None) -> str:
     """Return a compact JSON string of the named tool's schema.
 
@@ -1343,7 +1354,7 @@ async def run_convergence_protocol(
     context["phase"] = phase
     context["scope"] = scope
     if extra_context:
-        context.update(extra_context)
+        context.update(_json_safe_for_cp(extra_context))
     if nl_tools:
         context["nl_tools"] = sorted(nl_tools)  # sets are not JSON-serializable
     if prior_assistant_message:

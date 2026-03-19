@@ -1448,7 +1448,7 @@ class SubSessionManager:
                     )
                     try:
                         from wintermute.infra import skill_store
-                        skill_store.record_outcome(sname, succeeded)
+                        await asyncio.to_thread(skill_store.record_outcome, sname, succeeded)
                     except Exception:
                         _log.debug("Failed to record skill outcome for %s", sname, exc_info=True)
         except Exception:

@@ -122,8 +122,9 @@ class LocalVectorSkillBackend:
                         f"ALTER TABLE skill_vectors ADD COLUMN {col} INTEGER NOT NULL DEFAULT {default}"
                     )
                     conn.commit()
-                except sqlite3.OperationalError:
-                    pass  # column already exists
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
             conn.close()
         logger.info("Skill backend: local_vector (SQLite+numpy at %s)", self._db_path)
 
@@ -838,25 +839,25 @@ class QdrantSkillBackend:
     def record_outcome(self, name: str, success: bool) -> None:
         """Increment success_count or failure_count for a skill in Qdrant.
 
-        Uses read-modify-write since Qdrant has no atomic increment.
-        Acceptable in this single-process asyncio architecture where
-        concurrent writes to the same skill are rare.
+        Uses read-modify-write and a process-local lock to avoid in-process
+        lost updates for concurrent writes to the same skill.
         """
-        pid = _skill_point_id(name)
+        pid = self._name_to_id(name)
         try:
-            results = self._client.retrieve(
-                collection_name=self._collection,
-                ids=[pid], with_payload=True,
-            )
-            if not results:
-                return
-            p = results[0].payload or {}
-            field = "success_count" if success else "failure_count"
-            self._client.set_payload(
-                collection_name=self._collection,
-                payload={field: p.get(field, 0) + 1},
-                points=[pid],
-            )
+            with self._lock:
+                results = self._client.retrieve(
+                    collection_name=self._collection,
+                    ids=[pid], with_payload=True,
+                )
+                if not results:
+                    return
+                payload = results[0].payload or {}
+                field = "success_count" if success else "failure_count"
+                self._client.set_payload(
+                    collection_name=self._collection,
+                    payload={field: payload.get(field, 0) + 1},
+                    points=[pid],
+                )
         except Exception:
             logger.debug("Qdrant: failed to record skill outcome for %s", name, exc_info=True)
 
@@ -1074,6 +1075,8 @@ def init(config: dict, embed_cfg: dict | None = None) -> None:
         _backend = LocalVectorSkillBackend(_embed_cfg)
     elif backend_name == "qdrant":
         _backend = QdrantSkillBackend(config, _embed_cfg)
+    if _backend is None:
+        raise RuntimeError("Skill backend initialization failed")
     _backend.init()
 
     # One-time migration from flat files.

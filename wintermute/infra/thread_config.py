@@ -259,7 +259,7 @@ class ThreadConfigManager:
         elif key == "session_timeout_minutes":
             value = int(value)
             if value < 1:
-                raise ValueError("session_timeout_minutes must be >= 1 (or null to disable)")
+                raise ValueError("session_timeout_minutes must be >= 1 (or null to clear override)")
         elif key == "sub_sessions_enabled":
             value = _parse_bool(value)
         elif key == "system_prompt_mode":
@@ -269,8 +269,9 @@ class ThreadConfigManager:
                 )
         elif key == "seed_language":
             value = str(value).lower().strip()
-            if len(value) != 2 or not value.isalpha():
-                raise ValueError(f"seed_language must be a 2-letter code, got {value!r}")
+            if value not in _VALID_SEED_LANGUAGES:
+                allowed = ", ".join(sorted(_VALID_SEED_LANGUAGES))
+                raise ValueError(f"Invalid seed_language {value!r}. Allowed: {allowed}")
         elif key == "nl_translation_enabled":
             value = _parse_bool(value)
         elif key == "memory_top_k":
