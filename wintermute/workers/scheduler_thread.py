@@ -330,9 +330,11 @@ class TaskScheduler:
         if self._event_bus:
             self._event_bus.emit("task.fired", task_id=task_id, thread_id=thread_id)
         try:
+            executed = False
             if mode == "reminder":
                 if thread_id:
                     await self._broadcast(f"⏰ Task: {message}", thread_id)
+                    executed = True
                 else:
                     logger.warning(
                         "Task %s is reminder mode but has no thread_id — "
@@ -365,13 +367,24 @@ class TaskScheduler:
                         "If you have nothing actionable to report, "
                         "respond with exactly: [NO_ACTION]"
                     )
-                    parent_thread_id = thread_id if mode == "autonomous_notify" else None
+                    parent_thread_id = None
+                    if mode == "autonomous_notify":
+                        if thread_id is None:
+                            logger.warning(
+                                "Task %s execution_mode=autonomous_notify but no thread_id provided — "
+                                "running as autonomous_silent (no notifications will be delivered)",
+                                task_id,
+                            )
+                            mode = "autonomous_silent"
+                        else:
+                            parent_thread_id = thread_id
                     self._sub_sessions.spawn(
                         objective=objective,
                         parent_thread_id=parent_thread_id,
                         system_prompt_mode="full",
                         task_id=task_id,
                     )
+                    executed = True
                 else:
                     logger.warning(
                         "Task %s execution_mode=%s has ai_prompt but SubSessionManager "
@@ -379,16 +392,27 @@ class TaskScheduler:
                     )
 
             try:
-                database.record_task_run(task_id, summary=f"executed (execution_mode={mode})")
+                summary = f"executed (execution_mode={mode})" if executed else f"not_executed (execution_mode={mode})"
+                database.record_task_run(task_id, summary=summary)
             except Exception:  # noqa: BLE001
                 logger.debug("Failed to record task run for %s", task_id)
 
             try:
-                delivery = (
-                    "execution_mode=autonomous_notify, delivery=chat" if mode == "autonomous_notify"
-                    else "execution_mode=autonomous_silent, delivery=silent" if mode == "autonomous_silent"
-                    else "execution_mode=reminder, delivery=chat"
-                )
+                if mode == "reminder":
+                    if thread_id:
+                        delivery = "execution_mode=reminder, delivery=chat"
+                    else:
+                        delivery = "execution_mode=reminder, delivery=not_delivered_no_thread"
+                elif mode == "autonomous_notify":
+                    if self._sub_sessions is None:
+                        delivery = "execution_mode=autonomous_notify, delivery=not_executed_no_sub_session_manager"
+                    else:
+                        delivery = "execution_mode=autonomous_notify, delivery=chat"
+                else:
+                    if self._sub_sessions is None:
+                        delivery = "execution_mode=autonomous_silent, delivery=not_executed_no_sub_session_manager"
+                    else:
+                        delivery = "execution_mode=autonomous_silent, delivery=silent"
                 await database.async_call(
                     database.save_interaction_log,
                     _time.time(),
