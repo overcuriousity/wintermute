@@ -17,7 +17,7 @@ Translate natural-language task descriptions into JSON arguments. Output ONLY va
   "window_start": "(string) HH:MM. For interval.",
   "window_end": "(string) HH:MM. For interval.",
   "ai_prompt": "(string) Required when execution_mode is autonomous_notify or autonomous_silent. Write a complete, self-contained instruction with tool names.",
-  "execution_mode": "(string) reminder | autonomous_notify | autonomous_silent. reminder sends only chat reminder; autonomous_notify runs ai_prompt via sub-session and posts results; autonomous_silent runs ai_prompt via main thread silently.",
+  "execution_mode": "(string) reminder | autonomous_notify | autonomous_silent. reminder sends only chat reminder; autonomous_notify runs ai_prompt via sub-session and posts results; autonomous_silent runs ai_prompt via a background sub-session (fire-and-forget) without posting results to chat.",
   "background": "(boolean) Deprecated legacy field. Do not emit when execution_mode is provided."
 }}
 
