@@ -425,11 +425,21 @@ async def main() -> None:
 
     # Per-thread configuration manager.
     global_sub_sessions = cfg.get("sub_sessions_enabled", True)
+    # Normalise global seed language to avoid bypassing per-thread validation.
+    _raw_seed_language = (cfg.get("seed", {}) or {}).get("language", "en")
+    if _raw_seed_language is None:
+        _raw_seed_language = "en"
+    normalized_seed_language = str(_raw_seed_language).strip().lower()
+    if "-" in normalized_seed_language:
+        # Strip region tags like "en-US" -> "en"
+        normalized_seed_language = normalized_seed_language.split("-", 1)[0].strip()
+    if not normalized_seed_language:
+        normalized_seed_language = "en"
     thread_config_mgr = ThreadConfigManager(
         available_backends=list(backends_by_name.keys()),
         global_defaults={
             "sub_sessions_enabled": global_sub_sessions,
-            "seed_language": cfg.get("seed", {}).get("language", "en"),
+            "seed_language": normalized_seed_language,
             "nl_translation_enabled": (cfg.get("nl_translation") or {}).get("enabled", False),
             "memory_top_k": (cfg.get("memory") or {}).get("top_k", 10),
             "memory_score_threshold": (cfg.get("memory") or {}).get("score_threshold", 0.3),
