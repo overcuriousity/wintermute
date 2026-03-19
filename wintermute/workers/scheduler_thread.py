@@ -319,8 +319,19 @@ class TaskScheduler:
                           thread_id: Optional[str] = None,
                           background: bool = False,
                           execution_mode: Optional[str] = None) -> None:
+        raw_mode = execution_mode
         mode = (execution_mode or "").strip() or None
         if mode not in {"reminder", "autonomous_notify", "autonomous_silent"}:
+            # An explicit but unexpected execution_mode was provided; log and fall back.
+            if raw_mode is not None:
+                logger.warning(
+                    "Unexpected execution_mode '%s' for task %s; falling back to inferred "
+                    "behavior (ai_prompt=%s, background=%s)",
+                    raw_mode,
+                    task_id,
+                    bool(ai_prompt),
+                    background,
+                )
             if ai_prompt:
                 mode = "autonomous_notify" if background else "autonomous_silent"
             else:
