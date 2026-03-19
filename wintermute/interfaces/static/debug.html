@@ -983,7 +983,6 @@ async function showThreadConfig() {
     const meta = await metaR.json();
     if (cfg.error) { document.getElementById('tc-body').textContent = cfg.error; return; }
     const keyDefs = meta.keys || [];
-    const backends = meta.available_backends || [];
     const resolved = cfg.resolved || {};
     const overrides = cfg.overrides || {};
     let html = '<table style="width:100%;border-collapse:collapse">';
