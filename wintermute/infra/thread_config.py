@@ -183,12 +183,21 @@ class ThreadConfigManager:
             return _HARDCODED_DEFAULTS[key]
 
         sub_enabled = _pick("sub_sessions_enabled")
+
+        # Normalize seed_language so that both per-thread overrides and
+        # global defaults are treated consistently (e.g. "EN" → "en").
+        raw_seed_language = _pick("seed_language") or "en"
+        if isinstance(raw_seed_language, str):
+            normalized_seed_language = raw_seed_language.strip().lower() or "en"
+        else:
+            normalized_seed_language = "en"
+
         return ResolvedThreadConfig(
             backend_name=_pick("backend_name"),
             session_timeout_minutes=_pick("session_timeout_minutes"),
             sub_sessions_enabled=bool(sub_enabled) if sub_enabled is not None else True,
             system_prompt_mode=_pick("system_prompt_mode") or "full",
-            seed_language=_pick("seed_language") or "en",
+            seed_language=normalized_seed_language,
             nl_translation_enabled=bool(_pick("nl_translation_enabled")),
             memory_top_k=int(_pick("memory_top_k")),
             memory_score_threshold=float(_pick("memory_score_threshold")),
