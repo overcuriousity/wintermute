@@ -14,7 +14,8 @@ _EXECUTION_MODES = {"reminder", "autonomous_notify", "autonomous_silent"}
 
 
 def _resolve_execution_mode(schedule_type: Optional[str], ai_prompt: Optional[str],
-                            execution_mode: Optional[str], background: bool) -> tuple[Optional[str], bool]:
+                            execution_mode: Optional[str], background: bool,
+                            background_provided: bool = False) -> tuple[Optional[str], bool]:
     """Resolve explicit/legacy execution semantics for scheduled tasks."""
     mode = (execution_mode or "").strip() or None
     if mode is not None and mode not in _EXECUTION_MODES:
@@ -42,9 +43,13 @@ def _resolve_execution_mode(schedule_type: Optional[str], ai_prompt: Optional[st
     # Backward compatibility for existing callers without execution_mode:
     # - ai_prompt + background=true  -> autonomous_notify
     # - ai_prompt + background=false -> autonomous_silent
+    # - ai_prompt + background omitted -> autonomous_notify (legacy default)
     # - no ai_prompt                -> reminder
     if ai_prompt:
-        inferred = "autonomous_notify" if background else "autonomous_silent"
+        if background_provided:
+            inferred = "autonomous_notify" if background else "autonomous_silent"
+        else:
+            inferred = "autonomous_notify"
         return inferred, True
 
     return "reminder", False
@@ -80,6 +85,7 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     schedule_type = inputs.get("schedule_type")
     ai_prompt = (inputs.get("ai_prompt") or "").strip() or None
     execution_mode = (inputs.get("execution_mode") or "").strip() or None
+    background_provided = "background" in inputs
     background = bool(inputs.get("background", False))
 
     try:
@@ -88,6 +94,7 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
             ai_prompt=ai_prompt,
             execution_mode=execution_mode,
             background=background,
+            background_provided=background_provided,
         )
     except ValueError as exc:
         return json.dumps({"error": str(exc)})

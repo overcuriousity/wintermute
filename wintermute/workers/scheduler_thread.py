@@ -332,12 +332,14 @@ class TaskScheduler:
             self._event_bus.emit("task.fired", task_id=task_id, thread_id=thread_id)
 
         executed = False
+        attempted = False
         requested_mode = mode
         delivery = f"execution_mode={mode}, delivery=skipped"
 
         try:
             if mode == "reminder":
                 if thread_id:
+                    attempted = True
                     await self._broadcast(f"⏰ Task: {message}", thread_id)
                     executed = True
                     delivery = "execution_mode=reminder, delivery=chat"
@@ -355,6 +357,7 @@ class TaskScheduler:
                         task_id, mode,
                     )
                 elif self._sub_sessions is not None:
+                    attempted = True
                     pred_ctx = await self._get_prediction_context()
                     if ai_prompt == message:
                         objective = f"[TASK {task_id}] {ai_prompt}\n\n"
@@ -436,7 +439,7 @@ class TaskScheduler:
 
         except Exception as exc:  # noqa: BLE001
             logger.exception("Task %s failed", task_id)
-            if executed:
+            if attempted:
                 try:
                     database.record_task_run(task_id, summary=f"failed: {exc}")
                 except Exception:  # noqa: BLE001
