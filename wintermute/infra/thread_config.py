@@ -113,17 +113,6 @@ def _parse_bool(value: Any) -> bool:
     raise ValueError(f"Cannot parse {value!r} as bool")
 
 
-def _parse_optional_int(value: Any) -> Optional[int]:
-    """Parse an optional int (None / null / 'null' all mean None)."""
-    if value is None:
-        return None
-    if isinstance(value, str):
-        if value.lower() in ("null", "none", ""):
-            return None
-        return int(value)
-    return int(value)
-
-
 def _parse_float(value: Any) -> float:
     """Parse a required float."""
     return float(value)
