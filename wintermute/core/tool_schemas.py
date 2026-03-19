@@ -169,8 +169,8 @@ TOOL_SCHEMAS = [
                     "description": (
                         "Instruction for autonomous execution. Write a "
                         "complete, self-contained instruction the system "
-                        "can execute independently. If omitted for scheduled "
-                        "tasks, content is used as the prompt automatically."
+                        "can execute independently. If omitted, scheduled "
+                        "tasks run as passive reminders only."
                     ),
                 },
                 "background": {
