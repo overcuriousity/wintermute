@@ -10,6 +10,46 @@ from wintermute.infra import database
 logger = logging.getLogger(__name__)
 
 
+_EXECUTION_MODES = {"reminder", "autonomous_notify", "autonomous_silent"}
+
+
+def _resolve_execution_mode(schedule_type: Optional[str], ai_prompt: Optional[str],
+                            execution_mode: Optional[str], background: bool) -> tuple[Optional[str], bool]:
+    """Resolve explicit/legacy execution semantics for scheduled tasks."""
+    mode = (execution_mode or "").strip() or None
+    if mode is not None and mode not in _EXECUTION_MODES:
+        raise ValueError(
+            "execution_mode must be one of: reminder, autonomous_notify, autonomous_silent"
+        )
+
+    if not schedule_type:
+        if mode is not None:
+            raise ValueError("execution_mode is only valid for scheduled tasks")
+        return None, bool(background)
+
+    if mode == "reminder":
+        if ai_prompt:
+            raise ValueError("ai_prompt is not allowed when execution_mode is reminder")
+        return mode, False
+
+    if mode in {"autonomous_notify", "autonomous_silent"}:
+        if not ai_prompt:
+            raise ValueError(
+                f"ai_prompt is required when execution_mode is {mode}"
+            )
+        return mode, (mode == "autonomous_notify")
+
+    # Backward compatibility for existing callers without execution_mode:
+    # - ai_prompt + background=true  -> autonomous_notify
+    # - ai_prompt + background=false -> autonomous_silent
+    # - no ai_prompt                -> reminder
+    if ai_prompt:
+        inferred = "autonomous_notify" if background else "autonomous_silent"
+        return inferred, bool(background)
+
+    return "reminder", False
+
+
 def _describe_schedule(inputs: dict) -> str:
     """Build a human-readable schedule string from structured inputs."""
     t = inputs.get("schedule_type", "once")
@@ -39,14 +79,18 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     add_thread = inputs.get("thread_id") or effective_scope
     schedule_type = inputs.get("schedule_type")
     ai_prompt = (inputs.get("ai_prompt") or "").strip() or None
+    execution_mode = (inputs.get("execution_mode") or "").strip() or None
     background = bool(inputs.get("background", False))
 
-    # Scheduled + ai_prompt always runs as background sub-session.
-    # The foreground path (enqueue into main LLM thread) is fragile — weak models
-    # chat about the prompt instead of executing it.
-    if schedule_type and ai_prompt and not background:
-        background = True
-        logger.info("Auto-promoted scheduled task to background (ai_prompt present)")
+    try:
+        execution_mode, background = _resolve_execution_mode(
+            schedule_type=schedule_type,
+            ai_prompt=ai_prompt,
+            execution_mode=execution_mode,
+            background=background,
+        )
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
 
     schedule_config = None
     schedule_desc = None
@@ -67,13 +111,14 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
         schedule_config=schedule_config,
         ai_prompt=ai_prompt,
         background=background,
+        execution_mode=execution_mode,
     )
 
     deps = tool_deps or ToolDeps()
     if schedule_type and deps.task_scheduler is not None:
         deps.task_scheduler.ensure_job(
             task_id, json.loads(schedule_config),
-            ai_prompt, add_thread, background,
+            ai_prompt, add_thread, background, execution_mode,
         )
         database.update_task(task_id, apscheduler_job_id=task_id)
 
@@ -85,7 +130,7 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     if schedule_desc:
         result["schedule"] = schedule_desc
     if schedule_type:
-        result["mode"] = "autonomous" if ai_prompt else "reminder"
+        result["execution_mode"] = execution_mode
     return json.dumps(result)
 
 
@@ -135,6 +180,7 @@ def _task_resume(inputs: dict, effective_scope: Optional[str],
                 task_id, sched,
                 task.get("ai_prompt"), task.get("thread_id"),
                 bool(task.get("background")),
+                task.get("execution_mode"),
             )
     return json.dumps({"status": "ok" if ok else "not_found"})
 
@@ -182,6 +228,8 @@ def _task_list(inputs: dict, effective_scope: Optional[str],
             entry["schedule"] = it["schedule_desc"]
         if it.get("ai_prompt"):
             entry["ai_prompt"] = it["ai_prompt"][:100]
+        if it.get("execution_mode"):
+            entry["execution_mode"] = it["execution_mode"]
         if it.get("last_run_at"):
             entry["last_run_at"] = it["last_run_at"]
             entry["run_count"] = it.get("run_count", 0)

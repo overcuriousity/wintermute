@@ -167,17 +167,26 @@ TOOL_SCHEMAS = [
                 "ai_prompt": {
                     "type": "string",
                     "description": (
-                        "Instruction for autonomous execution. Write a "
-                        "complete, self-contained instruction the system "
-                        "can execute independently. If omitted, scheduled "
-                        "tasks run as passive reminders only."
+                        "Instruction for autonomous execution. Required when "
+                        "execution_mode is autonomous_notify or "
+                        "autonomous_silent."
+                    ),
+                },
+                "execution_mode": {
+                    "type": "string",
+                    "enum": ["reminder", "autonomous_notify", "autonomous_silent"],
+                    "description": (
+                        "How the scheduled task executes: reminder = broadcast message only; "
+                        "autonomous_notify = run ai_prompt and post results to chat; "
+                        "autonomous_silent = run ai_prompt silently (no chat output). "
+                        "If omitted, runtime infers mode for backward compatibility."
                     ),
                 },
                 "background": {
                     "type": "boolean",
                     "description": (
-                        "Run as background sub-session (auto-set when "
-                        "ai_prompt + schedule are both present). Default: false."
+                        "Deprecated legacy flag. Ignored when execution_mode is set. "
+                        "For legacy tasks with ai_prompt, true maps to autonomous_notify and false maps to autonomous_silent."
                     ),
                 },
             },

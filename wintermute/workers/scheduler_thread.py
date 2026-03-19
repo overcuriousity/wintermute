@@ -51,6 +51,7 @@ _instance: Optional["TaskScheduler"] = None
 async def _fire_task_job(task_id: str, message: str, ai_prompt: Optional[str],
                           thread_id: Optional[str] = None,
                           background: bool = False,
+                          execution_mode: Optional[str] = None,
                           **_extra) -> None:
     """
     Module-level coroutine used as the APScheduler job callable.
@@ -59,7 +60,9 @@ async def _fire_task_job(task_id: str, message: str, ai_prompt: Optional[str],
     **_extra absorbs metadata kwargs stored alongside the job.
     """
     if _instance is not None:
-        await _instance._fire_task(task_id, message, ai_prompt, thread_id, background)
+        await _instance._fire_task(
+            task_id, message, ai_prompt, thread_id, background, execution_mode
+        )
 
 
 # Backward-compat aliases: jobs persisted in scheduler.db before the
@@ -67,9 +70,12 @@ async def _fire_task_job(task_id: str, message: str, ai_prompt: Optional[str],
 # callables by dotted name at load time, so the aliases must exist.
 async def _fire_routine_job(job_id: str, message: str, ai_prompt: Optional[str],
                              thread_id: Optional[str] = None,
+                             execution_mode: Optional[str] = None,
                              **_extra) -> None:
     if _instance is not None:
-        await _instance._fire_task(job_id, message, ai_prompt, thread_id)
+        await _instance._fire_task(
+            job_id, message, ai_prompt, thread_id, execution_mode=execution_mode
+        )
 
 _fire_reminder_job = _fire_routine_job
 
@@ -204,8 +210,10 @@ class TaskScheduler:
             ai_prompt = task.get("ai_prompt")
             thread_id = task.get("thread_id")
             background = bool(task.get("background"))
+            execution_mode = task.get("execution_mode")
             self.ensure_job(task_id, schedule_config, ai_prompt=ai_prompt,
-                            thread_id=thread_id, background=background)
+                            thread_id=thread_id, background=background,
+                            execution_mode=execution_mode)
             # Persist job ID so pause/complete/delete can manage it later.
             await database.async_call(database.update_task, task_id, apscheduler_job_id=task_id)
             logger.info("[scheduler] Scheduled job for new task %s", task_id)
@@ -252,7 +260,8 @@ class TaskScheduler:
     def ensure_job(self, task_id: str, schedule_config: dict,
                    ai_prompt: Optional[str] = None,
                    thread_id: Optional[str] = None,
-                   background: bool = False) -> None:
+                   background: bool = False,
+                   execution_mode: Optional[str] = None) -> None:
         """Create or update an APScheduler job for a task."""
         trigger = self._parse_trigger(schedule_config)
         message = database.get_task(task_id) or {}
@@ -268,6 +277,7 @@ class TaskScheduler:
                 "ai_prompt": ai_prompt,
                 "thread_id": thread_id,
                 "background": background,
+                "execution_mode": execution_mode,
                 "schedule_type": schedule_config.get("schedule_type"),
                 "schedule": tool_module._describe_schedule(schedule_config),
                 "created": datetime.now(timezone.utc).isoformat(),
@@ -306,101 +316,92 @@ class TaskScheduler:
 
     async def _fire_task(self, task_id: str, message: str, ai_prompt: Optional[str],
                           thread_id: Optional[str] = None,
-                          background: bool = False) -> None:
-        mode = "autonomous" if ai_prompt else "reminder"
-        logger.info("Firing task %s (thread=%s, background=%s, mode=%s)",
+                          background: bool = False,
+                          execution_mode: Optional[str] = None) -> None:
+        mode = (execution_mode or "").strip() or None
+        if mode not in {"reminder", "autonomous_notify", "autonomous_silent"}:
+            if ai_prompt:
+                mode = "autonomous_notify" if background else "autonomous_silent"
+            else:
+                mode = "reminder"
+
+        logger.info("Firing task %s (thread=%s, background=%s, execution_mode=%s)",
                     task_id, thread_id, background, mode)
         if self._event_bus:
             self._event_bus.emit("task.fired", task_id=task_id, thread_id=thread_id)
         try:
-            if ai_prompt:
-                if background:
-                    # Background task: spawn an isolated sub-session with full
-                    # orchestration tools.  Results are delivered back to the
-                    # originating thread; [NO_ACTION] suppression prevents
-                    # noise when there's nothing to report.
-                    if self._sub_sessions is not None:
-                        # Enrich objective with behavioral/preference predictions.
-                        pred_ctx = await self._get_prediction_context()
-                        # When ai_prompt was auto-generated from content they
-                        # are identical — avoid duplicating the text.
-                        if ai_prompt == message:
-                            objective = f"[TASK {task_id}] {ai_prompt}\n\n"
-                        else:
-                            objective = (
-                                f"[TASK {task_id}] {ai_prompt}\n\n"
-                                f"(Task: {message})\n\n"
-                            )
-                        if pred_ctx:
-                            # Cap prediction context to avoid inflating sub-session prompts.
-                            capped = pred_ctx[:800]
-                            objective += (
-                                f"## Relevant predictions about the user\n"
-                                f"{capped}\n\n"
-                            )
-                        objective += (
-                            "If you have nothing actionable to report, "
-                            "respond with exactly: [NO_ACTION]"
-                        )
-                        self._sub_sessions.spawn(
-                            objective=objective,
-                            parent_thread_id=thread_id,
-                            system_prompt_mode="full",
-                            task_id=task_id,
-                        )
-                    else:
-                        logger.warning(
-                            "Task %s has ai_prompt but SubSessionManager "
-                            "is not available — skipping", task_id
-                        )
-                elif thread_id:
-                    # Foreground task: enqueue into the main LLM thread
-                    # as if the user typed it.
-                    if ai_prompt == message:
-                        enqueue_text = f"[TASK {task_id}] {ai_prompt}"
-                    else:
-                        enqueue_text = (
-                            f"[TASK {task_id}] {ai_prompt}\n\n"
-                            f"(Task: {message})"
-                        )
-                    await self._llm_enqueue(enqueue_text, thread_id)
-                else:
-                    logger.warning(
-                        "Task %s has ai_prompt but no thread_id and not "
-                        "background — message was NOT delivered: %s",
-                        task_id, message
-                    )
-            else:
+            if mode == "reminder":
                 if thread_id:
-                    await self._broadcast(f"\u23f0 Task: {message}", thread_id)
+                    await self._broadcast(f"⏰ Task: {message}", thread_id)
                 else:
                     logger.warning(
-                        "Task %s has no thread_id and no ai_prompt — "
+                        "Task %s is reminder mode but has no thread_id — "
                         "message was NOT delivered: %s", task_id, message
                     )
+            else:
+                if not ai_prompt:
+                    logger.warning(
+                        "Task %s execution_mode=%s requires ai_prompt but none provided — skipping",
+                        task_id, mode,
+                    )
+                    return
 
-            # Record execution in the tasks table.
+                if self._sub_sessions is not None:
+                    pred_ctx = await self._get_prediction_context()
+                    if ai_prompt == message:
+                        objective = f"[TASK {task_id}] {ai_prompt}\n\n"
+                    else:
+                        objective = (
+                            f"[TASK {task_id}] {ai_prompt}\n\n"
+                            f"(Task: {message})\n\n"
+                        )
+                    if pred_ctx:
+                        capped = pred_ctx[:800]
+                        objective += (
+                            f"## Relevant predictions about the user\n"
+                            f"{capped}\n\n"
+                        )
+                    objective += (
+                        "If you have nothing actionable to report, "
+                        "respond with exactly: [NO_ACTION]"
+                    )
+                    parent_thread_id = thread_id if mode == "autonomous_notify" else None
+                    self._sub_sessions.spawn(
+                        objective=objective,
+                        parent_thread_id=parent_thread_id,
+                        system_prompt_mode="full",
+                        task_id=task_id,
+                    )
+                else:
+                    logger.warning(
+                        "Task %s execution_mode=%s has ai_prompt but SubSessionManager "
+                        "is not available — skipping", task_id, mode
+                    )
+
             try:
-                database.record_task_run(task_id, summary=f"executed ({mode})")
+                database.record_task_run(task_id, summary=f"executed (execution_mode={mode})")
             except Exception:  # noqa: BLE001
                 logger.debug("Failed to record task run for %s", task_id)
 
-            # Log to interaction_log so task firings appear in the web debug panel.
             try:
+                delivery = (
+                    "execution_mode=autonomous_notify, delivery=chat" if mode == "autonomous_notify"
+                    else "execution_mode=autonomous_silent, delivery=silent" if mode == "autonomous_silent"
+                    else "execution_mode=reminder, delivery=chat"
+                )
                 await database.async_call(
                     database.save_interaction_log,
                     _time.time(),
                     "task_fired",
                     thread_id or "system:scheduler",
                     "scheduler",
-                    f"task_id={task_id}, mode={mode}, content={message[:200]}",
-                    f"{'sub_session spawned' if ai_prompt and background else 'llm_enqueue' if ai_prompt else 'broadcast reminder'}",
+                    f"task_id={task_id}, execution_mode={mode}, content={message[:200]}",
+                    delivery,
                     "ok",
                 )
             except Exception:  # noqa: BLE001
                 logger.debug("Failed to log task firing for %s", task_id)
 
-            # If the job is no longer in APScheduler (one-time, now done), log it.
             if self._scheduler.get_job(task_id) is None:
                 logger.info("One-time task %s completed", task_id)
 
@@ -412,7 +413,7 @@ class TaskScheduler:
                 pass
             try:
                 if thread_id:
-                    await self._broadcast(f"\u274c Task {task_id} failed: {exc}", thread_id)
+                    await self._broadcast(f"❌ Task {task_id} failed: {exc}", thread_id)
             except Exception:  # noqa: BLE001
                 pass
 
