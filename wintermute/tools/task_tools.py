@@ -37,7 +37,7 @@ def _resolve_execution_mode(schedule_type: Optional[str], ai_prompt: Optional[st
             raise ValueError(
                 f"ai_prompt is required when execution_mode is {mode}"
             )
-        return mode, (mode == "autonomous_notify")
+        return mode, True
 
     # Backward compatibility for existing callers without execution_mode:
     # - ai_prompt + background=true  -> autonomous_notify
@@ -45,7 +45,7 @@ def _resolve_execution_mode(schedule_type: Optional[str], ai_prompt: Optional[st
     # - no ai_prompt                -> reminder
     if ai_prompt:
         inferred = "autonomous_notify" if background else "autonomous_silent"
-        return inferred, bool(background)
+        return inferred, True
 
     return "reminder", False
 

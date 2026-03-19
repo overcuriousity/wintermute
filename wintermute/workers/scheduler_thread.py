@@ -70,11 +70,12 @@ async def _fire_task_job(task_id: str, message: str, ai_prompt: Optional[str],
 # callables by dotted name at load time, so the aliases must exist.
 async def _fire_routine_job(job_id: str, message: str, ai_prompt: Optional[str],
                              thread_id: Optional[str] = None,
+                             background: bool = False,
                              execution_mode: Optional[str] = None,
                              **_extra) -> None:
     if _instance is not None:
         await _instance._fire_task(
-            job_id, message, ai_prompt, thread_id, execution_mode=execution_mode
+            job_id, message, ai_prompt, thread_id, background, execution_mode
         )
 
 _fire_reminder_job = _fire_routine_job
@@ -329,26 +330,31 @@ class TaskScheduler:
                     task_id, thread_id, background, mode)
         if self._event_bus:
             self._event_bus.emit("task.fired", task_id=task_id, thread_id=thread_id)
+
+        executed = False
+        requested_mode = mode
+        delivery = f"execution_mode={mode}, delivery=skipped"
+
         try:
-            executed = False
             if mode == "reminder":
                 if thread_id:
                     await self._broadcast(f"⏰ Task: {message}", thread_id)
                     executed = True
+                    delivery = "execution_mode=reminder, delivery=chat"
                 else:
+                    delivery = "execution_mode=reminder, delivery=not_delivered_no_thread"
                     logger.warning(
                         "Task %s is reminder mode but has no thread_id — "
                         "message was NOT delivered: %s", task_id, message
                     )
             else:
                 if not ai_prompt:
+                    delivery = f"execution_mode={mode}, delivery=not_executed_missing_ai_prompt"
                     logger.warning(
                         "Task %s execution_mode=%s requires ai_prompt but none provided — skipping",
                         task_id, mode,
                     )
-                    return
-
-                if self._sub_sessions is not None:
+                elif self._sub_sessions is not None:
                     pred_ctx = await self._get_prediction_context()
                     if ai_prompt == message:
                         objective = f"[TASK {task_id}] {ai_prompt}\n\n"
@@ -385,43 +391,42 @@ class TaskScheduler:
                         task_id=task_id,
                     )
                     executed = True
+                    if mode == "autonomous_notify":
+                        delivery = "execution_mode=autonomous_notify, delivery=chat"
+                    elif requested_mode == "autonomous_notify":
+                        delivery = "execution_mode=autonomous_silent, delivery=silent_downgraded_missing_thread"
+                    else:
+                        delivery = "execution_mode=autonomous_silent, delivery=silent"
                 else:
+                    delivery = f"execution_mode={mode}, delivery=not_executed_no_sub_session_manager"
                     logger.warning(
                         "Task %s execution_mode=%s has ai_prompt but SubSessionManager "
                         "is not available — skipping", task_id, mode
                     )
 
-            try:
-                summary = f"executed (execution_mode={mode})" if executed else f"not_executed (execution_mode={mode})"
-                database.record_task_run(task_id, summary=summary)
-            except Exception:  # noqa: BLE001
-                logger.debug("Failed to record task run for %s", task_id)
+            if executed:
+                try:
+                    summary = f"executed (execution_mode={mode})"
+                    database.record_task_run(task_id, summary=summary)
+                except Exception:  # noqa: BLE001
+                    logger.debug("Failed to record task run for %s", task_id)
 
             try:
-                if mode == "reminder":
-                    if thread_id:
-                        delivery = "execution_mode=reminder, delivery=chat"
-                    else:
-                        delivery = "execution_mode=reminder, delivery=not_delivered_no_thread"
-                elif mode == "autonomous_notify":
-                    if self._sub_sessions is None:
-                        delivery = "execution_mode=autonomous_notify, delivery=not_executed_no_sub_session_manager"
-                    else:
-                        delivery = "execution_mode=autonomous_notify, delivery=chat"
-                else:
-                    if self._sub_sessions is None:
-                        delivery = "execution_mode=autonomous_silent, delivery=not_executed_no_sub_session_manager"
-                    else:
-                        delivery = "execution_mode=autonomous_silent, delivery=silent"
+                mode_info = (
+                    f"requested_mode={requested_mode}, execution_mode={mode}"
+                    if requested_mode != mode
+                    else f"execution_mode={mode}"
+                )
+                status = "ok" if executed else "skipped"
                 await database.async_call(
                     database.save_interaction_log,
                     _time.time(),
                     "task_fired",
                     thread_id or "system:scheduler",
                     "scheduler",
-                    f"task_id={task_id}, execution_mode={mode}, content={message[:200]}",
+                    f"task_id={task_id}, {mode_info}, content={message[:200]}",
                     delivery,
-                    "ok",
+                    status,
                 )
             except Exception:  # noqa: BLE001
                 logger.debug("Failed to log task firing for %s", task_id)
@@ -431,10 +436,11 @@ class TaskScheduler:
 
         except Exception as exc:  # noqa: BLE001
             logger.exception("Task %s failed", task_id)
-            try:
-                database.record_task_run(task_id, summary=f"failed: {exc}")
-            except Exception:  # noqa: BLE001
-                pass
+            if executed:
+                try:
+                    database.record_task_run(task_id, summary=f"failed: {exc}")
+                except Exception:  # noqa: BLE001
+                    pass
             try:
                 if thread_id:
                     await self._broadcast(f"❌ Task {task_id} failed: {exc}", thread_id)
@@ -723,6 +729,7 @@ class TaskScheduler:
             task_id = kw.get("task_id", job.id)
             thread_id = kw.get("thread_id")
             background = kw.get("background", False)
+            execution_mode = kw.get("execution_mode")
             message = kw.get("message", task_id)
 
             if not ai_prompt and not thread_id:
@@ -738,7 +745,7 @@ class TaskScheduler:
             )
             # Schedule immediate async execution via the event loop.
             self._loop_call_soon(
-                task_id, message, ai_prompt, thread_id, background,
+                task_id, message, ai_prompt, thread_id, background, execution_mode,
             )
             recovered += 1
 
@@ -747,12 +754,12 @@ class TaskScheduler:
 
     def _loop_call_soon(self, task_id: str, message: str,
                         ai_prompt: str | None, thread_id: str | None,
-                        background: bool) -> None:
+                        background: bool, execution_mode: str | None) -> None:
         """Schedule _fire_task on the event loop from the synchronous start() context."""
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(
-                self._fire_task(task_id, message, ai_prompt, thread_id, background),
+                self._fire_task(task_id, message, ai_prompt, thread_id, background, execution_mode),
                 name=f"recover_{task_id}",
             )
         except RuntimeError:
