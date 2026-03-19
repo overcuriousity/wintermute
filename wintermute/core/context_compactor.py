@@ -62,13 +62,18 @@ class ContextCompactor:
         """The compaction backend pool."""
         return self._compaction_pool
 
-    async def compact(self, thread_id: str = "default") -> None:
-        """Summarise and archive old messages for the given thread."""
+    async def compact(self, thread_id: str = "default",
+                      keep_recent: int | None = None) -> None:
+        """Summarise and archive old messages for the given thread.
+
+        *keep_recent* overrides the instance default when provided (per-thread config).
+        """
+        effective_keep = keep_recent if keep_recent is not None else self._keep_recent
         rows = await database.async_call(database.load_active_messages, thread_id)
-        if len(rows) <= self._keep_recent:
+        if len(rows) <= effective_keep:
             return
 
-        to_summarise = rows[:-self._keep_recent]
+        to_summarise = rows[:-effective_keep]
 
         prior_summary = self._store.compaction_summaries.get(thread_id)
         parts = []

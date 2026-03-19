@@ -1409,10 +1409,8 @@ class SubSessionManager:
         except Exception:
             logger.debug("Failed to persist outcome for %s", state.session_id, exc_info=True)
 
-        # Detect skill reads in this session for future outcome-correlation work.
-        # Currently only emits a debug log — success/failure counts are not yet
-        # persisted to skill_store.  When per-skill tracking is implemented, this
-        # is where the store update should happen.  Never raises.
+        # Detect skill reads in this session and record outcome (success/failure)
+        # in skill_store for per-skill success rate tracking.  Never raises.
         try:
             import json as _json
             skill_names_used: list[str] = []
@@ -1443,14 +1441,16 @@ class SubSessionManager:
             if skill_names_used:
                 succeeded = status == "completed"
                 for sname in set(skill_names_used):
-                    # Log the correlation so it is available in interaction_log.
-                    # Avoid touching skill_store here to prevent mutating skill stats
-                    # (e.g., access_count/last_accessed) during outcome correlation.
                     _log = logging.getLogger(__name__)
                     _log.debug(
                         "Skill outcome: skill=%r, session=%s, success=%s",
                         sname, state.session_id, succeeded,
                     )
+                    try:
+                        from wintermute.infra import skill_store
+                        skill_store.record_outcome(sname, succeeded)
+                    except Exception:
+                        _log.debug("Failed to record skill outcome for %s", sname, exc_info=True)
         except Exception:
             logger.debug("Failed to correlate skills for %s", state.session_id, exc_info=True)
 

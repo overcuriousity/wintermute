@@ -8,6 +8,12 @@ Each thread can independently override:
   - ``session_timeout_minutes``   — auto-session-renewal timeout (plumbing for #58)
   - ``sub_sessions_enabled``      — enable/disable sub-session spawning
   - ``system_prompt_mode``        — 'full' or 'minimal' prompt assembly
+  - ``seed_language``             — language code for seed prompt on /new
+  - ``nl_translation_enabled``    — enable/disable NL translation per-thread
+  - ``memory_top_k``              — max memories retrieved per turn
+  - ``memory_score_threshold``    — minimum similarity score for memory retrieval
+  - ``compaction_keep_recent``    — messages kept untouched during compaction
+  - ``max_inline_tool_rounds``    — inline tool call limit before CP enforcement
 
 The ``ThreadConfigManager`` caches configs in memory and persists to SQLite.
 All mutations are logged to the interaction_log for auditability.
@@ -35,6 +41,12 @@ class ThreadConfig:
     session_timeout_minutes: Optional[int] = None
     sub_sessions_enabled: Optional[bool] = None
     system_prompt_mode: Optional[str] = None          # 'full' | 'minimal'
+    seed_language: Optional[str] = None
+    nl_translation_enabled: Optional[bool] = None
+    memory_top_k: Optional[int] = None
+    memory_score_threshold: Optional[float] = None
+    compaction_keep_recent: Optional[int] = None
+    max_inline_tool_rounds: Optional[int] = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -55,6 +67,12 @@ class ResolvedThreadConfig:
     session_timeout_minutes: Optional[int]  # None means "no auto-renewal"
     sub_sessions_enabled: bool
     system_prompt_mode: str              # 'full' | 'minimal'
+    seed_language: str
+    nl_translation_enabled: bool
+    memory_top_k: int
+    memory_score_threshold: float
+    compaction_keep_recent: int
+    max_inline_tool_rounds: int
 
 
 # Hardcoded fallback defaults (baseline when no per-thread override exists).
@@ -63,10 +81,19 @@ _HARDCODED_DEFAULTS = {
     "session_timeout_minutes": None,
     "sub_sessions_enabled": True,
     "system_prompt_mode": "full",
+    "seed_language": "en",
+    "nl_translation_enabled": False,
+    "memory_top_k": 10,
+    "memory_score_threshold": 0.3,
+    "compaction_keep_recent": 10,
+    "max_inline_tool_rounds": 3,
 }
 
 # Valid values for system_prompt_mode.
 _VALID_PROMPT_MODES = {"full", "minimal"}
+
+# Valid 2-char language codes for seed_language.
+_VALID_SEED_LANGUAGES = {"en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "ja", "zh", "ko"}
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +122,16 @@ def _parse_optional_int(value: Any) -> Optional[int]:
             return None
         return int(value)
     return int(value)
+
+
+def _parse_int(value: Any) -> int:
+    """Parse a required int."""
+    return int(value)
+
+
+def _parse_float(value: Any) -> float:
+    """Parse a required float."""
+    return float(value)
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +193,12 @@ class ThreadConfigManager:
             session_timeout_minutes=_pick("session_timeout_minutes"),
             sub_sessions_enabled=bool(sub_enabled) if sub_enabled is not None else True,
             system_prompt_mode=_pick("system_prompt_mode") or "full",
+            seed_language=_pick("seed_language") or "en",
+            nl_translation_enabled=bool(_pick("nl_translation_enabled")),
+            memory_top_k=int(_pick("memory_top_k")),
+            memory_score_threshold=float(_pick("memory_score_threshold")),
+            compaction_keep_recent=int(_pick("compaction_keep_recent")),
+            max_inline_tool_rounds=int(_pick("max_inline_tool_rounds")),
         )
 
     def resolve_as_dict(self, thread_id: str) -> dict:
@@ -225,6 +268,34 @@ class ThreadConfigManager:
                 raise ValueError(
                     f"Invalid system_prompt_mode {value!r}. Valid: {', '.join(sorted(_VALID_PROMPT_MODES))}"
                 )
+        elif key == "seed_language":
+            if value is None or (isinstance(value, str) and value.lower() in ("null", "none", "")):
+                value = None
+            else:
+                value = str(value).lower().strip()
+                if len(value) != 2 or not value.isalpha():
+                    raise ValueError(f"seed_language must be a 2-letter code, got {value!r}")
+        elif key == "nl_translation_enabled":
+            value = _parse_bool(value)
+        elif key == "memory_top_k":
+            value = _parse_optional_int(value)
+            if value is not None and value < 1:
+                raise ValueError("memory_top_k must be >= 1 (or null to use default)")
+        elif key == "memory_score_threshold":
+            if value is None or (isinstance(value, str) and value.lower() in ("null", "none", "")):
+                value = None
+            else:
+                value = _parse_float(value)
+                if not (0.0 <= value <= 1.0):
+                    raise ValueError("memory_score_threshold must be between 0.0 and 1.0")
+        elif key == "compaction_keep_recent":
+            value = _parse_optional_int(value)
+            if value is not None and value < 1:
+                raise ValueError("compaction_keep_recent must be >= 1 (or null to use default)")
+        elif key == "max_inline_tool_rounds":
+            value = _parse_optional_int(value)
+            if value is not None and value < 0:
+                raise ValueError("max_inline_tool_rounds must be >= 0 (or null to use default)")
 
         old_value = getattr(tc, key, None)
         setattr(tc, key, value)

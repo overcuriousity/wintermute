@@ -939,7 +939,9 @@ def validate_inline_tool_limit(context: dict, detection_result: dict) -> bool:
 
     Returns True if the violation is confirmed (limit exceeded).
     """
-    if _max_inline_tool_rounds <= 0:
+    # Per-thread override takes precedence over module-level global.
+    limit = context.get("max_inline_tool_rounds", _max_inline_tool_rounds)
+    if limit <= 0:
         return False  # disabled
 
     # Only applies in main scope.
@@ -963,7 +965,7 @@ def validate_inline_tool_limit(context: dict, detection_result: dict) -> bool:
         if TOOL_CATEGORIES.get(t, "") in ("execution", "research")
     )
 
-    if exec_count < _max_inline_tool_rounds:
+    if exec_count < limit:
         return False
 
     context["_convergence_hook_reason"] = (
@@ -990,7 +992,7 @@ def validate_inline_tool_limit(context: dict, detection_result: dict) -> bool:
 
     logger.info(
         "inline_tool_limit: blocking %s (exec_count=%d >= limit=%d)",
-        tool_name, exec_count, _max_inline_tool_rounds,
+        tool_name, exec_count, limit,
     )
     return True
 
@@ -1251,6 +1253,7 @@ async def run_convergence_protocol(
     prior_tool_calls_made: Optional[list[str]] = None,
     recent_assistant_messages: Optional[list[str]] = None,
     exclude_tool_names: "set[str] | None" = None,
+    extra_context: Optional[dict] = None,
 ) -> ConvergenceResult:
     """Run the three-stage Convergence Protocol validation pipeline.
 
@@ -1339,6 +1342,8 @@ async def run_convergence_protocol(
         context["tool_result"] = _truncate_middle(tool_result, keep_head=500, keep_tail=200)
     context["phase"] = phase
     context["scope"] = scope
+    if extra_context:
+        context.update(extra_context)
     if nl_tools:
         context["nl_tools"] = sorted(nl_tools)  # sets are not JSON-serializable
     if prior_assistant_message:

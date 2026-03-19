@@ -488,11 +488,22 @@ class WebInterface:
         if mgr is None:
             return self._json({"error": "Thread config not available"})
         overrides = mgr.get_all_overrides()
+        backends = sorted(mgr.get_available_backends())
         return self._json({
             "overrides": overrides,
-            "available_backends": sorted(mgr.get_available_backends()),
-            "keys": ["backend_name", "session_timeout_minutes",
-                     "sub_sessions_enabled", "system_prompt_mode"],
+            "available_backends": backends,
+            "keys": [
+                {"name": "backend_name", "type": "select", "options": backends},
+                {"name": "session_timeout_minutes", "type": "int", "min": 1, "nullable": True},
+                {"name": "sub_sessions_enabled", "type": "bool"},
+                {"name": "system_prompt_mode", "type": "select", "options": ["full", "minimal"]},
+                {"name": "seed_language", "type": "str", "placeholder": "en"},
+                {"name": "nl_translation_enabled", "type": "bool"},
+                {"name": "memory_top_k", "type": "int", "min": 1},
+                {"name": "memory_score_threshold", "type": "float", "min": 0, "max": 1, "step": 0.05},
+                {"name": "compaction_keep_recent", "type": "int", "min": 1},
+                {"name": "max_inline_tool_rounds", "type": "int", "min": 0},
+            ],
         })
 
     async def _api_thread_config_get(self, request: web.Request) -> web.Response:
@@ -678,7 +689,6 @@ class WebInterface:
                 "doc_chars": len(rec.get("documentation", "")),
                 "last_accessed": rec.get("last_accessed", 0),
                 "read_count": sstat.get("read_count", 0),
-                # sessions_loaded mirrors read_count; success/failure not yet persisted.
                 "sessions_loaded": sstat.get("sessions_loaded", 0),
                 "success_count": sstat.get("success_count", 0),
                 "failure_count": sstat.get("failure_count", 0),
