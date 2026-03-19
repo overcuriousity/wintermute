@@ -1354,7 +1354,9 @@ async def run_convergence_protocol(
     context["phase"] = phase
     context["scope"] = scope
     if extra_context:
-        context.update(_json_safe_for_cp(extra_context))
+        # Store extra_context under a dedicated namespace to avoid collisions
+        # with canonical convergence protocol fields (e.g. "phase", "tool_name").
+        context["extra_context"] = _json_safe_for_cp(extra_context)
     if nl_tools:
         context["nl_tools"] = sorted(nl_tools)  # sets are not JSON-serializable
     if prior_assistant_message:
