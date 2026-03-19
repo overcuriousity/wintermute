@@ -24,7 +24,7 @@ import re
 import time as _time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Callable, Optional, TYPE_CHECKING
+from typing import Any, Callable, Optional, TYPE_CHECKING
 
 from wintermute.infra import database
 from wintermute.infra import prompt_assembler
@@ -988,7 +988,8 @@ class LLMThread:
         """
         active_pool = pool or self._main_pool
         active_cfg = active_pool.primary if active_pool.enabled else self._cfg
-        full_messages = [{"role": "system", "content": system_prompt}] + messages
+        resolved_cfg = self._session_mgr.resolve_config(thread_id)
+        full_messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}] + messages
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
         _profiles = self._tool_deps.tool_profiles if self._tool_deps else None
