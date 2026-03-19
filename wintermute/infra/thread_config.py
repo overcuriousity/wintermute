@@ -222,9 +222,53 @@ class ThreadConfigManager:
             result[f.name] = {"value": val, "source": source}
         return result
 
+    def _coerce_global_default(self, key: str, value: Any) -> Any:
+        """Validate/coerce a single global default value based on hardcoded defaults.
+
+        This keeps _global_defaults consistent with the types expected by resolve().
+        """
+        # If we don't have a hardcoded baseline, we can't infer a type reliably.
+        if key not in _HARDCODED_DEFAULTS:
+            return value
+
+        baseline = _HARDCODED_DEFAULTS[key]
+        # If the baseline is None, accept the value as-is.
+        if baseline is None:
+            return value
+
+        target_type = type(baseline)
+        try:
+            if target_type is bool:
+                # Normalize truthy/falsy into a proper bool.
+                return bool(value)
+            if target_type is int:
+                return int(value)
+            if target_type is float:
+                return float(value)
+            if target_type is str:
+                return str(value)
+            # Fallback: leave value unchanged for unsupported types.
+            return value
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid global default for %s: %r (expected %s) — ignoring",
+                key,
+                value,
+                target_type.__name__,
+            )
+            # Preserve any existing value or fall back to the hardcoded baseline.
+            return self._global_defaults.get(key, baseline)
+
     def update_global_defaults(self, defaults: dict[str, Any]) -> None:
-        """Merge additional global defaults (e.g. from tuning config)."""
-        self._global_defaults.update(defaults)
+        """Merge additional global defaults (e.g. from tuning config).
+
+        Values are validated/coerced to the types implied by _HARDCODED_DEFAULTS
+        to avoid type errors later in resolve().
+        """
+        coerced: dict[str, Any] = {}
+        for key, value in defaults.items():
+            coerced[key] = self._coerce_global_default(key, value)
+        self._global_defaults.update(coerced)
 
     def get_available_backends(self) -> list[str]:
         """Return the list of configured backend names."""
