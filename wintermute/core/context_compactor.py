@@ -69,6 +69,13 @@ class ContextCompactor:
         *keep_recent* overrides the instance default when provided (per-thread config).
         """
         effective_keep = keep_recent if keep_recent is not None else self._keep_recent
+        if effective_keep < 1:
+            logger.warning(
+                "Invalid keep_recent value %r in compact(); clamping to 1 for thread %s",
+                keep_recent,
+                thread_id,
+            )
+            effective_keep = 1
         rows = await database.async_call(database.load_active_messages, thread_id)
         if len(rows) <= effective_keep:
             return
