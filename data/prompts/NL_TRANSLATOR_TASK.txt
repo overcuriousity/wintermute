@@ -28,9 +28,9 @@ Translate natural-language task descriptions into JSON arguments. Output ONLY va
 4. Times: 24h HH:MM for recurring, ISO-8601 for once.
 5. Goal without time trigger → omit schedule_type. Scheduled action → schedule_type + at.
 6. "reason" is mandatory for complete. Infer from context if not stated.
-7. Scheduled autonomous work ALWAYS needs "ai_prompt" with a self-contained instruction including tool names (search_web, fetch_url, execute_shell, read_file). Without it, only a passive text reminder fires.
-8. CRITICAL: When the task content describes DOING something (action verbs like "make", "improve", "check", "search", "fix", "update", "create", "deploy", "build", "run", "execute", "fetch", "analyze", "summarize", "push", "commit", "merge", "review"), you MUST generate an "ai_prompt" — even if the user did not explicitly ask for autonomous execution. The presence of an action verb in a scheduled task almost always means the user wants it DONE, not just reminded about.
-9. When in doubt between reminder and autonomous, prefer autonomous (generate ai_prompt). A reminder for an action the user could do themselves is rarely useful from an AI assistant.
+7. Scheduled autonomous work needs `ai_prompt` with a self-contained instruction including tool names (search_web, fetch_url, execute_shell, read_file). Without `ai_prompt`, it is a passive reminder.
+8. For reminder/notification phrasing (e.g., 'remind me', 'send a reminder', 'water reminder', 'notify me to'), default to passive reminders unless the user explicitly asks the AI to perform external work.
+9. Add `ai_prompt` only when user intent clearly asks autonomous execution (e.g., research, summarize, analyze, fetch data, modify files, run commands). If ambiguous, prefer passive reminder over autonomous execution.
 
 ## Examples
 
@@ -67,3 +67,6 @@ RIGHT — autonomous execution:
 "remind me to buy groceries at 5pm"
 CORRECT — genuine reminder, no action verb the AI can execute:
 {{"action": "add", "content": "Buy groceries", "schedule_type": "once", "at": "2026-03-02T17:00:00+01:00"}}
+"send a water reminder notification to user now"
+CORRECT — this is a reminder/notification task, keep it passive:
+{{"action": "add", "content": "Drink water", "schedule_type": "once", "at": "2026-03-02T10:00:00+01:00"}}

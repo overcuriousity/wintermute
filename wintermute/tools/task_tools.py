@@ -41,16 +41,6 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     ai_prompt = (inputs.get("ai_prompt") or "").strip() or None
     background = bool(inputs.get("background", False))
 
-    # Auto-promote: scheduled tasks without an explicit ai_prompt get the content
-    # as their prompt.  Weak / small models and the NL translator often fail to
-    # generate ai_prompt even when the user clearly wants autonomous execution.
-    # Defaulting to autonomous is safe — a sub-session that has nothing actionable
-    # to do simply replies with [NO_ACTION].
-    if schedule_type and not ai_prompt:
-        ai_prompt = content
-        logger.info("Auto-generated ai_prompt from content for scheduled task "
-                     "(schedule_type=%s, thread=%s)", schedule_type, add_thread)
-
     # Scheduled + ai_prompt always runs as background sub-session.
     # The foreground path (enqueue into main LLM thread) is fragile — weak models
     # chat about the prompt instead of executing it.
@@ -95,7 +85,7 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     if schedule_desc:
         result["schedule"] = schedule_desc
     if schedule_type:
-        result["mode"] = "autonomous"
+        result["mode"] = "autonomous" if ai_prompt else "reminder"
     return json.dumps(result)
 
 
