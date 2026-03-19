@@ -493,8 +493,10 @@ async def main() -> None:
     max_inline_tool_rounds = _tuning_int("max_inline_tool_rounds", 3, minimum=0)
 
     # Feed tuning-based defaults into the per-thread config manager.
-    thread_config_mgr._global_defaults["compaction_keep_recent"] = compaction_keep_recent
-    thread_config_mgr._global_defaults["max_inline_tool_rounds"] = max_inline_tool_rounds
+    thread_config_mgr.update_global_defaults({
+        "compaction_keep_recent": compaction_keep_recent,
+        "max_inline_tool_rounds": max_inline_tool_rounds,
+    })
 
     # Push the inline tool limit into the Convergence Protocol module.
     from wintermute.core.convergence_protocol import set_max_inline_tool_rounds

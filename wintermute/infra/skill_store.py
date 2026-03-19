@@ -73,6 +73,7 @@ class SkillBackend(Protocol):
     def get_stale(self, max_age_days: int, min_access: int) -> list[dict]: ...
     def get_all_with_vectors(self) -> list[dict]: ...
     def bulk_delete(self, names: list[str]) -> int: ...
+    def record_outcome(self, name: str, success: bool) -> None: ...
 
 
 def _build_full_text(summary: str, documentation: str) -> str:
@@ -835,7 +836,12 @@ class QdrantSkillBackend:
         return result
 
     def record_outcome(self, name: str, success: bool) -> None:
-        """Increment success_count or failure_count for a skill in Qdrant."""
+        """Increment success_count or failure_count for a skill in Qdrant.
+
+        Uses read-modify-write since Qdrant has no atomic increment.
+        Acceptable in this single-process asyncio architecture where
+        concurrent writes to the same skill are rare.
+        """
         pid = _skill_point_id(name)
         try:
             results = self._client.retrieve(

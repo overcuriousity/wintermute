@@ -124,11 +124,6 @@ def _parse_optional_int(value: Any) -> Optional[int]:
     return int(value)
 
 
-def _parse_int(value: Any) -> int:
-    """Parse a required int."""
-    return int(value)
-
-
 def _parse_float(value: Any) -> float:
     """Parse a required float."""
     return float(value)
@@ -218,6 +213,10 @@ class ThreadConfigManager:
             result[f.name] = {"value": val, "source": source}
         return result
 
+    def update_global_defaults(self, defaults: dict[str, Any]) -> None:
+        """Merge additional global defaults (e.g. from tuning config)."""
+        self._global_defaults.update(defaults)
+
     def get_available_backends(self) -> list[str]:
         """Return the list of configured backend names."""
         return list(self._available_backends)
@@ -249,17 +248,17 @@ class ThreadConfigManager:
             valid_keys = ", ".join(f.name for f in fields(ThreadConfig))
             raise ValueError(f"Unknown config key {key!r}. Valid keys: {valid_keys}")
 
-        # Validate + coerce value per key.
-        if key == "backend_name":
-            if value is None or (isinstance(value, str) and value.lower() in ("null", "none", "")):
-                value = None
-            elif value not in self._available_backends:
+        # Treat null / "null" / "" as "clear override" for any key.
+        if value is None or (isinstance(value, str) and value.strip().lower() in ("null", "none", "")):
+            value = None
+        elif key == "backend_name":
+            if value not in self._available_backends:
                 raise ValueError(
                     f"Unknown backend {value!r}. Available: {', '.join(self._available_backends)}"
                 )
         elif key == "session_timeout_minutes":
-            value = _parse_optional_int(value)
-            if value is not None and value < 1:
+            value = int(value)
+            if value < 1:
                 raise ValueError("session_timeout_minutes must be >= 1 (or null to disable)")
         elif key == "sub_sessions_enabled":
             value = _parse_bool(value)
@@ -269,32 +268,26 @@ class ThreadConfigManager:
                     f"Invalid system_prompt_mode {value!r}. Valid: {', '.join(sorted(_VALID_PROMPT_MODES))}"
                 )
         elif key == "seed_language":
-            if value is None or (isinstance(value, str) and value.lower() in ("null", "none", "")):
-                value = None
-            else:
-                value = str(value).lower().strip()
-                if len(value) != 2 or not value.isalpha():
-                    raise ValueError(f"seed_language must be a 2-letter code, got {value!r}")
+            value = str(value).lower().strip()
+            if len(value) != 2 or not value.isalpha():
+                raise ValueError(f"seed_language must be a 2-letter code, got {value!r}")
         elif key == "nl_translation_enabled":
             value = _parse_bool(value)
         elif key == "memory_top_k":
-            value = _parse_optional_int(value)
-            if value is not None and value < 1:
+            value = int(value)
+            if value < 1:
                 raise ValueError("memory_top_k must be >= 1 (or null to use default)")
         elif key == "memory_score_threshold":
-            if value is None or (isinstance(value, str) and value.lower() in ("null", "none", "")):
-                value = None
-            else:
-                value = _parse_float(value)
-                if not (0.0 <= value <= 1.0):
-                    raise ValueError("memory_score_threshold must be between 0.0 and 1.0")
+            value = _parse_float(value)
+            if not (0.0 <= value <= 1.0):
+                raise ValueError("memory_score_threshold must be between 0.0 and 1.0")
         elif key == "compaction_keep_recent":
-            value = _parse_optional_int(value)
-            if value is not None and value < 1:
+            value = int(value)
+            if value < 1:
                 raise ValueError("compaction_keep_recent must be >= 1 (or null to use default)")
         elif key == "max_inline_tool_rounds":
-            value = _parse_optional_int(value)
-            if value is not None and value < 0:
+            value = int(value)
+            if value < 0:
                 raise ValueError("max_inline_tool_rounds must be >= 0 (or null to use default)")
 
         old_value = getattr(tc, key, None)
