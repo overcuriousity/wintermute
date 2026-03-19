@@ -445,7 +445,8 @@ class TaskScheduler:
                 except Exception:  # noqa: BLE001
                     pass
             try:
-                if thread_id:
+                # In autonomous_silent mode, suppress chat broadcasts even on failure.
+                if thread_id and mode != "autonomous_silent":
                     await self._broadcast(f"❌ Task {task_id} failed: {exc}", thread_id)
             except Exception:  # noqa: BLE001
                 pass
