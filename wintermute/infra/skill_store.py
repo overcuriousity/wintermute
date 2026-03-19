@@ -73,6 +73,7 @@ class SkillBackend(Protocol):
     def get_stale(self, max_age_days: int, min_access: int) -> list[dict]: ...
     def get_all_with_vectors(self) -> list[dict]: ...
     def bulk_delete(self, names: list[str]) -> int: ...
+    def record_outcome(self, name: str, success: bool) -> None: ...
 
 
 def _build_full_text(summary: str, documentation: str) -> str:
@@ -114,6 +115,16 @@ class LocalVectorSkillBackend:
                 ")"
             )
             conn.commit()
+            # Migration: add success/failure tracking columns.
+            for col, default in [("success_count", 0), ("failure_count", 0)]:
+                try:
+                    conn.execute(
+                        f"ALTER TABLE skill_vectors ADD COLUMN {col} INTEGER NOT NULL DEFAULT {default}"
+                    )
+                    conn.commit()
+                except sqlite3.OperationalError as exc:
+                    if "duplicate column name" not in str(exc).lower():
+                        raise
             conn.close()
         logger.info("Skill backend: local_vector (SQLite+numpy at %s)", self._db_path)
 
@@ -364,7 +375,8 @@ class LocalVectorSkillBackend:
             try:
                 rows = conn.execute(
                     "SELECT name, created_at, last_accessed, access_count, "
-                    "version FROM skill_vectors ORDER BY name"
+                    "version, success_count, failure_count "
+                    "FROM skill_vectors ORDER BY name"
                 ).fetchall()
             finally:
                 conn.close()
@@ -374,9 +386,24 @@ class LocalVectorSkillBackend:
                 "created": r[1], "last_read": r[2], "read_count": r[3],
                 "sessions_loaded": r[3],
                 "version": r[4],
-                "success_count": 0, "failure_count": 0,  # not currently persisted; always 0
+                "success_count": r[5] if len(r) > 5 else 0,
+                "failure_count": r[6] if len(r) > 6 else 0,
             }
         return result
+
+    def record_outcome(self, name: str, success: bool) -> None:
+        """Increment success_count or failure_count for a skill."""
+        col = "success_count" if success else "failure_count"
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    f"UPDATE skill_vectors SET {col} = {col} + 1 WHERE name = ?",
+                    (name,),
+                )
+                conn.commit()
+            finally:
+                conn.close()
 
     def get_stale(self, max_age_days: int, min_access: int) -> list[dict]:
         cutoff = time.time() - (max_age_days * 86400)
@@ -573,6 +600,8 @@ class QdrantSkillBackend:
                 "access_count": old_payload.get("access_count", 0),
                 "version": version,
                 "changelog": new_changelog,
+                "success_count": old_payload.get("success_count", 0),
+                "failure_count": old_payload.get("failure_count", 0),
             },
         )
         self._client.upsert(
@@ -627,6 +656,8 @@ class QdrantSkillBackend:
             "access_count": p.get("access_count", 0),
             "version": p.get("version", 1),
             "changelog": p.get("changelog", ""),
+            "success_count": p.get("success_count", 0),
+            "failure_count": p.get("failure_count", 0),
         }
 
     def search(self, query: str, top_k: int, threshold: float) -> list[dict]:
@@ -657,6 +688,8 @@ class QdrantSkillBackend:
                 "access_count": p.get("access_count", 0),
                 "version": p.get("version", 1),
                 "changelog": p.get("changelog", ""),
+                "success_count": p.get("success_count", 0),
+                "failure_count": p.get("failure_count", 0),
                 "score": r.score,
             })
         _log_interaction(
@@ -693,6 +726,8 @@ class QdrantSkillBackend:
              "access_count": (p.payload or {}).get("access_count", 0),
              "version": (p.payload or {}).get("version", 1),
              "changelog": (p.payload or {}).get("changelog", ""),
+             "success_count": (p.payload or {}).get("success_count", 0),
+             "failure_count": (p.payload or {}).get("failure_count", 0),
              "score": 1.0}
             for p in sorted(all_points,
                             key=lambda x: (x.payload or {}).get("name", ""))
@@ -769,6 +804,8 @@ class QdrantSkillBackend:
                 "access_count": payload.get("access_count", 0),
                 "version": new_version,
                 "changelog": new_changelog,
+                "success_count": payload.get("success_count", 0),
+                "failure_count": payload.get("failure_count", 0),
             },
         )
         self._client.upsert(
@@ -794,9 +831,35 @@ class QdrantSkillBackend:
                 "read_count": s["access_count"],
                 "sessions_loaded": s["access_count"],
                 "version": s["version"],
-                "success_count": 0, "failure_count": 0,
+                "success_count": s.get("success_count", 0),
+                "failure_count": s.get("failure_count", 0),
             }
         return result
+
+    def record_outcome(self, name: str, success: bool) -> None:
+        """Increment success_count or failure_count for a skill in Qdrant.
+
+        Uses read-modify-write and a process-local lock to avoid in-process
+        lost updates for concurrent writes to the same skill.
+        """
+        pid = self._name_to_id(name)
+        try:
+            with self._lock:
+                results = self._client.retrieve(
+                    collection_name=self._collection,
+                    ids=[pid], with_payload=True,
+                )
+                if not results:
+                    return
+                payload = results[0].payload or {}
+                field = "success_count" if success else "failure_count"
+                self._client.set_payload(
+                    collection_name=self._collection,
+                    payload={field: payload.get(field, 0) + 1},
+                    points=[pid],
+                )
+        except Exception:
+            logger.debug("Qdrant: failed to record skill outcome for %s", name, exc_info=True)
 
     def get_stale(self, max_age_days: int, min_access: int) -> list[dict]:
         from qdrant_client.models import Filter, FieldCondition, Range
@@ -865,7 +928,9 @@ class QdrantSkillBackend:
              "last_accessed": (p.payload or {}).get("last_accessed", 0),
              "access_count": (p.payload or {}).get("access_count", 0),
              "version": (p.payload or {}).get("version", 1),
-             "changelog": (p.payload or {}).get("changelog", "")}
+             "changelog": (p.payload or {}).get("changelog", ""),
+             "success_count": (p.payload or {}).get("success_count", 0),
+             "failure_count": (p.payload or {}).get("failure_count", 0)}
             for p in all_points
         ]
 
@@ -1010,6 +1075,8 @@ def init(config: dict, embed_cfg: dict | None = None) -> None:
         _backend = LocalVectorSkillBackend(_embed_cfg)
     elif backend_name == "qdrant":
         _backend = QdrantSkillBackend(config, _embed_cfg)
+    if _backend is None:
+        raise RuntimeError("Skill backend initialization failed")
     _backend.init()
 
     # One-time migration from flat files.
@@ -1080,6 +1147,11 @@ def get_stale(max_age_days: int, min_access: int) -> list[dict]:
 
 def get_all_with_vectors() -> list[dict]:
     return _b().get_all_with_vectors()
+
+
+def record_outcome(name: str, success: bool) -> None:
+    """Record a success or failure outcome for a skill."""
+    _b().record_outcome(name, success)
 
 
 def bulk_delete(names: list[str]) -> int:

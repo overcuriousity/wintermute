@@ -425,9 +425,25 @@ async def main() -> None:
 
     # Per-thread configuration manager.
     global_sub_sessions = cfg.get("sub_sessions_enabled", True)
+    # Normalise global seed language to avoid bypassing per-thread validation.
+    _raw_seed_language = (cfg.get("seed", {}) or {}).get("language", "en")
+    if _raw_seed_language is None:
+        _raw_seed_language = "en"
+    normalized_seed_language = str(_raw_seed_language).strip().lower()
+    if "-" in normalized_seed_language:
+        # Strip region tags like "en-US" -> "en"
+        normalized_seed_language = normalized_seed_language.split("-", 1)[0].strip()
+    if not normalized_seed_language:
+        normalized_seed_language = "en"
     thread_config_mgr = ThreadConfigManager(
         available_backends=list(backends_by_name.keys()),
-        global_defaults={"sub_sessions_enabled": global_sub_sessions},
+        global_defaults={
+            "sub_sessions_enabled": global_sub_sessions,
+            "seed_language": normalized_seed_language,
+            "nl_translation_enabled": (cfg.get("nl_translation") or {}).get("enabled", False),
+            "memory_top_k": (cfg.get("memory") or {}).get("top_k", 10),
+            "memory_score_threshold": (cfg.get("memory") or {}).get("score_threshold", 0.3),
+        },
     )
     if not global_sub_sessions:
         logger.info("sub_sessions_enabled=false (lite mode) — worker_delegation disabled globally")
@@ -485,6 +501,12 @@ async def main() -> None:
     max_blob_chars = _tuning_int("max_blob_chars", 60_000, minimum=1)
     max_completed_workflows = _tuning_int("max_completed_workflows", 50, minimum=1)
     max_inline_tool_rounds = _tuning_int("max_inline_tool_rounds", 3, minimum=0)
+
+    # Feed tuning-based defaults into the per-thread config manager.
+    thread_config_mgr.update_global_defaults({
+        "compaction_keep_recent": compaction_keep_recent,
+        "max_inline_tool_rounds": max_inline_tool_rounds,
+    })
 
     # Push the inline tool limit into the Convergence Protocol module.
     from wintermute.core.convergence_protocol import set_max_inline_tool_rounds

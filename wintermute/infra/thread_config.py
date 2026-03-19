@@ -8,6 +8,12 @@ Each thread can independently override:
   - ``session_timeout_minutes``   — auto-session-renewal timeout (plumbing for #58)
   - ``sub_sessions_enabled``      — enable/disable sub-session spawning
   - ``system_prompt_mode``        — 'full' or 'minimal' prompt assembly
+  - ``seed_language``             — language code for seed prompt on /new
+  - ``nl_translation_enabled``    — enable/disable NL translation per-thread
+  - ``memory_top_k``              — max memories retrieved per turn
+  - ``memory_score_threshold``    — minimum similarity score for memory retrieval
+  - ``compaction_keep_recent``    — messages kept untouched during compaction
+  - ``max_inline_tool_rounds``    — inline tool call limit before CP enforcement
 
 The ``ThreadConfigManager`` caches configs in memory and persists to SQLite.
 All mutations are logged to the interaction_log for auditability.
@@ -35,6 +41,12 @@ class ThreadConfig:
     session_timeout_minutes: Optional[int] = None
     sub_sessions_enabled: Optional[bool] = None
     system_prompt_mode: Optional[str] = None          # 'full' | 'minimal'
+    seed_language: Optional[str] = None
+    nl_translation_enabled: Optional[bool] = None
+    memory_top_k: Optional[int] = None
+    memory_score_threshold: Optional[float] = None
+    compaction_keep_recent: Optional[int] = None
+    max_inline_tool_rounds: Optional[int] = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -55,6 +67,12 @@ class ResolvedThreadConfig:
     session_timeout_minutes: Optional[int]  # None means "no auto-renewal"
     sub_sessions_enabled: bool
     system_prompt_mode: str              # 'full' | 'minimal'
+    seed_language: str
+    nl_translation_enabled: bool
+    memory_top_k: int
+    memory_score_threshold: float
+    compaction_keep_recent: int
+    max_inline_tool_rounds: int
 
 
 # Hardcoded fallback defaults (baseline when no per-thread override exists).
@@ -63,10 +81,19 @@ _HARDCODED_DEFAULTS = {
     "session_timeout_minutes": None,
     "sub_sessions_enabled": True,
     "system_prompt_mode": "full",
+    "seed_language": "en",
+    "nl_translation_enabled": False,
+    "memory_top_k": 10,
+    "memory_score_threshold": 0.3,
+    "compaction_keep_recent": 10,
+    "max_inline_tool_rounds": 3,
 }
 
 # Valid values for system_prompt_mode.
 _VALID_PROMPT_MODES = {"full", "minimal"}
+
+# Valid 2-char language codes for seed_language.
+_VALID_SEED_LANGUAGES = {"en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "ja", "zh", "ko"}
 
 
 # ---------------------------------------------------------------------------
@@ -86,15 +113,9 @@ def _parse_bool(value: Any) -> bool:
     raise ValueError(f"Cannot parse {value!r} as bool")
 
 
-def _parse_optional_int(value: Any) -> Optional[int]:
-    """Parse an optional int (None / null / 'null' all mean None)."""
-    if value is None:
-        return None
-    if isinstance(value, str):
-        if value.lower() in ("null", "none", ""):
-            return None
-        return int(value)
-    return int(value)
+def _parse_float(value: Any) -> float:
+    """Parse a required float."""
+    return float(value)
 
 
 # ---------------------------------------------------------------------------
@@ -151,11 +172,26 @@ class ThreadConfigManager:
             return _HARDCODED_DEFAULTS[key]
 
         sub_enabled = _pick("sub_sessions_enabled")
+
+        # Normalize seed_language so that both per-thread overrides and
+        # global defaults are treated consistently (e.g. "EN" → "en").
+        raw_seed_language = _pick("seed_language") or "en"
+        if isinstance(raw_seed_language, str):
+            normalized_seed_language = raw_seed_language.strip().lower() or "en"
+        else:
+            normalized_seed_language = "en"
+
         return ResolvedThreadConfig(
             backend_name=_pick("backend_name"),
             session_timeout_minutes=_pick("session_timeout_minutes"),
             sub_sessions_enabled=bool(sub_enabled) if sub_enabled is not None else True,
             system_prompt_mode=_pick("system_prompt_mode") or "full",
+            seed_language=normalized_seed_language,
+            nl_translation_enabled=bool(_pick("nl_translation_enabled")),
+            memory_top_k=int(_pick("memory_top_k")),
+            memory_score_threshold=float(_pick("memory_score_threshold")),
+            compaction_keep_recent=int(_pick("compaction_keep_recent")),
+            max_inline_tool_rounds=int(_pick("max_inline_tool_rounds")),
         )
 
     def resolve_as_dict(self, thread_id: str) -> dict:
@@ -174,6 +210,54 @@ class ThreadConfigManager:
                 source = "default"
             result[f.name] = {"value": val, "source": source}
         return result
+
+    def _coerce_global_default(self, key: str, value: Any) -> Any:
+        """Validate/coerce a single global default value based on hardcoded defaults.
+
+        This keeps _global_defaults consistent with the types expected by resolve().
+        """
+        # If we don't have a hardcoded baseline, we can't infer a type reliably.
+        if key not in _HARDCODED_DEFAULTS:
+            return value
+
+        baseline = _HARDCODED_DEFAULTS[key]
+        # If the baseline is None, accept the value as-is.
+        if baseline is None:
+            return value
+
+        target_type = type(baseline)
+        try:
+            if target_type is bool:
+                # Normalize truthy/falsy into a proper bool.
+                return bool(value)
+            if target_type is int:
+                return int(value)
+            if target_type is float:
+                return float(value)
+            if target_type is str:
+                return str(value)
+            # Fallback: leave value unchanged for unsupported types.
+            return value
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid global default for %s: %r (expected %s) — ignoring",
+                key,
+                value,
+                target_type.__name__,
+            )
+            # Preserve any existing value or fall back to the hardcoded baseline.
+            return self._global_defaults.get(key, baseline)
+
+    def update_global_defaults(self, defaults: dict[str, Any]) -> None:
+        """Merge additional global defaults (e.g. from tuning config).
+
+        Values are validated/coerced to the types implied by _HARDCODED_DEFAULTS
+        to avoid type errors later in resolve().
+        """
+        coerced: dict[str, Any] = {}
+        for key, value in defaults.items():
+            coerced[key] = self._coerce_global_default(key, value)
+        self._global_defaults.update(coerced)
 
     def get_available_backends(self) -> list[str]:
         """Return the list of configured backend names."""
@@ -206,18 +290,18 @@ class ThreadConfigManager:
             valid_keys = ", ".join(f.name for f in fields(ThreadConfig))
             raise ValueError(f"Unknown config key {key!r}. Valid keys: {valid_keys}")
 
-        # Validate + coerce value per key.
-        if key == "backend_name":
-            if value is None or (isinstance(value, str) and value.lower() in ("null", "none", "")):
-                value = None
-            elif value not in self._available_backends:
+        # Treat null / "null" / "" as "clear override" for any key.
+        if value is None or (isinstance(value, str) and value.strip().lower() in ("null", "none", "")):
+            value = None
+        elif key == "backend_name":
+            if value not in self._available_backends:
                 raise ValueError(
                     f"Unknown backend {value!r}. Available: {', '.join(self._available_backends)}"
                 )
         elif key == "session_timeout_minutes":
-            value = _parse_optional_int(value)
-            if value is not None and value < 1:
-                raise ValueError("session_timeout_minutes must be >= 1 (or null to disable)")
+            value = int(value)
+            if value < 1:
+                raise ValueError("session_timeout_minutes must be >= 1 (or null to clear override)")
         elif key == "sub_sessions_enabled":
             value = _parse_bool(value)
         elif key == "system_prompt_mode":
@@ -225,6 +309,29 @@ class ThreadConfigManager:
                 raise ValueError(
                     f"Invalid system_prompt_mode {value!r}. Valid: {', '.join(sorted(_VALID_PROMPT_MODES))}"
                 )
+        elif key == "seed_language":
+            value = str(value).lower().strip()
+            if value not in _VALID_SEED_LANGUAGES:
+                allowed = ", ".join(sorted(_VALID_SEED_LANGUAGES))
+                raise ValueError(f"Invalid seed_language {value!r}. Allowed: {allowed}")
+        elif key == "nl_translation_enabled":
+            value = _parse_bool(value)
+        elif key == "memory_top_k":
+            value = int(value)
+            if value < 1:
+                raise ValueError("memory_top_k must be >= 1 (or null to use default)")
+        elif key == "memory_score_threshold":
+            value = _parse_float(value)
+            if not (0.0 <= value <= 1.0):
+                raise ValueError("memory_score_threshold must be between 0.0 and 1.0")
+        elif key == "compaction_keep_recent":
+            value = int(value)
+            if value < 1:
+                raise ValueError("compaction_keep_recent must be >= 1 (or null to use default)")
+        elif key == "max_inline_tool_rounds":
+            value = int(value)
+            if value < 0:
+                raise ValueError("max_inline_tool_rounds must be >= 0 (or null to use default)")
 
         old_value = getattr(tc, key, None)
         setattr(tc, key, value)

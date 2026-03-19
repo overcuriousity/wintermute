@@ -689,10 +689,17 @@ class LLMThread:
         # Pre-fetch memories and predictions off the event loop to avoid blocking I/O.
         from wintermute.infra import memory_store
 
+        # Per-thread memory search overrides.
+        _mem_top_k = resolved_cfg.memory_top_k if resolved_cfg else None
+        _mem_threshold = resolved_cfg.memory_score_threshold if resolved_cfg else None
+
         async def _fetch_memories():
             if memory_store.is_memory_backend_initialized() and _memory_query:
                 try:
-                    return await asyncio.to_thread(memory_store.search, _memory_query)
+                    return await asyncio.to_thread(
+                        memory_store.search, _memory_query,
+                        top_k=_mem_top_k, threshold=_mem_threshold,
+                    )
                 except Exception as e:
                     logger.warning("Memory search failed, continuing without memory context: %s", e)
                     return []  # empty list (not None) so assembler won't retry
@@ -714,7 +721,7 @@ class LLMThread:
             )
 
         # Assemble system prompt first so we can measure its real token cost.
-        nl_enabled = self._nl_translation_config.get("enabled", False)
+        nl_enabled = resolved_cfg.nl_translation_enabled if resolved_cfg else self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
         summary = None if item.ephemeral else self._store.compaction_summaries.get(thread_id)
         # Determine tool exclusions based on sub_sessions_enabled flag.
@@ -760,7 +767,8 @@ class LLMThread:
                 "History at %d tokens (overhead %d, threshold %d) – compacting before inference (thread=%s)",
                 history_tokens, overhead_tokens, compaction_threshold, thread_id,
             )
-            await self._compactor.compact(thread_id)
+            _keep_recent_override = resolved_cfg.compaction_keep_recent if resolved_cfg else None
+            await self._compactor.compact(thread_id, keep_recent=_keep_recent_override)
             messages = await self._store.build_messages(
                 item.text, item.is_system_event, thread_id, item.content,
                 ephemeral=item.ephemeral,
@@ -1001,6 +1009,11 @@ class LLMThread:
         cp_enabled = self._convergence_protocol_pool.enabled
 
         # Build a shared context for tool-call processing.
+        # Build per-thread CP extra context for inline_tool_limit override.
+        _cp_extra_context = {}
+        if resolved_cfg:
+            _cp_extra_context["max_inline_tool_rounds"] = resolved_cfg.max_inline_tool_rounds
+
         async def _cp_check_main(phase, *, tool_name=None, tool_args=None,
                                  tool_result=None, assistant_response="",
                                  tool_calls_made=None, nl_tools=None):
@@ -1011,6 +1024,7 @@ class LLMThread:
                 tool_name=tool_name, tool_args=tool_args,
                 tool_result=tool_result, nl_tools=nl_tools,
                 exclude_tool_names=exclude_tool_names,
+                extra_context=_cp_extra_context,
             )
 
         tc_ctx = make_tool_context(
@@ -1204,6 +1218,7 @@ class LLMThread:
         tool_result: Optional[str] = None,
         nl_tools: "set[str] | None" = None,
         exclude_tool_names: "set[str] | None" = None,
+        extra_context: Optional[dict] = None,
     ) -> Optional["convergence_protocol_module.ConvergenceResult"]:
         """Run Convergence Protocol hooks for a specific phase.
 
@@ -1220,5 +1235,6 @@ class LLMThread:
             tool_result=tool_result,
             nl_tools=nl_tools,
             exclude_tool_names=exclude_tool_names,
+            extra_context=extra_context,
         )
 

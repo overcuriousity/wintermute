@@ -982,38 +982,46 @@ async function showThreadConfig() {
     const cfg = await cfgR.json();
     const meta = await metaR.json();
     if (cfg.error) { document.getElementById('tc-body').textContent = cfg.error; return; }
-    const keys = meta.keys || [];
-    const backends = meta.available_backends || [];
+    const keyDefs = meta.keys || [];
     const resolved = cfg.resolved || {};
     const overrides = cfg.overrides || {};
     let html = '<table style="width:100%;border-collapse:collapse">';
     html += '<tr style="border-bottom:1px solid #0f3460"><th style="text-align:left;padding:.4rem;color:#a8d8ea">Key</th><th style="text-align:left;padding:.4rem;color:#a8d8ea">Value</th><th style="text-align:left;padding:.4rem;color:#a8d8ea">Source</th><th style="padding:.4rem"></th></tr>';
-    for (const key of keys) {
+    const inputStyle = 'background:#0a1020;color:#ccc;border:1px solid #0f3460;padding:.2rem .4rem;width:100%';
+    for (const def of keyDefs) {
+      const key = typeof def === 'string' ? def : def.name;
+      const ktype = typeof def === 'string' ? 'str' : (def.type || 'str');
       const info = resolved[key] || {};
       const val = info.value ?? '';
       const src = info.source || 'default';
-      const srcColor = src === 'override' ? '#6fe06f' : (src === 'config' ? '#e0c96f' : '#888');
+      const srcColor = src === 'override' ? '#6fe06f' : (src === 'global' ? '#e0c96f' : '#888');
       let inputHtml;
-      if (key === 'backend_name') {
-        inputHtml = '<select id="tc-' + key + '" style="background:#0a1020;color:#ccc;border:1px solid #0f3460;padding:.2rem .4rem;width:100%">';
+      if (ktype === 'select') {
+        const opts = def.options || [];
+        inputHtml = '<select id="tc-' + key + '" style="' + inputStyle + '">';
         inputHtml += '<option value="">(default)</option>';
-        for (const b of backends) inputHtml += '<option value="' + esc(b) + '"' + (overrides[key] === b ? ' selected' : '') + '>' + esc(b) + '</option>';
+        for (const o of opts) inputHtml += '<option value="' + esc(o) + '"' + (overrides[key] === o ? ' selected' : '') + '>' + esc(o) + '</option>';
         inputHtml += '</select>';
-      } else if (key === 'sub_sessions_enabled') {
-        inputHtml = '<select id="tc-' + key + '" style="background:#0a1020;color:#ccc;border:1px solid #0f3460;padding:.2rem .4rem;width:100%">';
+      } else if (ktype === 'bool') {
+        inputHtml = '<select id="tc-' + key + '" style="' + inputStyle + '">';
         inputHtml += '<option value="">(default)</option>';
         inputHtml += '<option value="true"' + (overrides[key] === true ? ' selected' : '') + '>true</option>';
         inputHtml += '<option value="false"' + (overrides[key] === false ? ' selected' : '') + '>false</option>';
         inputHtml += '</select>';
-      } else if (key === 'system_prompt_mode') {
-        inputHtml = '<select id="tc-' + key + '" style="background:#0a1020;color:#ccc;border:1px solid #0f3460;padding:.2rem .4rem;width:100%">';
-        inputHtml += '<option value="">(default)</option>';
-        inputHtml += '<option value="full"' + (overrides[key] === 'full' ? ' selected' : '') + '>full</option>';
-        inputHtml += '<option value="minimal"' + (overrides[key] === 'minimal' ? ' selected' : '') + '>minimal</option>';
-        inputHtml += '</select>';
+      } else if (ktype === 'int') {
+        const ovVal = key in overrides ? overrides[key] : '';
+        const minAttr = def.min != null ? ' min="' + def.min + '"' : '';
+        inputHtml = '<input id="tc-' + key + '" type="number" step="1"' + minAttr + ' value="' + esc(String(ovVal)) + '" placeholder="(default)" style="' + inputStyle + '">';
+      } else if (ktype === 'float') {
+        const ovVal = key in overrides ? overrides[key] : '';
+        const minAttr = def.min != null ? ' min="' + def.min + '"' : '';
+        const maxAttr = def.max != null ? ' max="' + def.max + '"' : '';
+        const stepAttr = def.step != null ? ' step="' + def.step + '"' : ' step="any"';
+        inputHtml = '<input id="tc-' + key + '" type="number"' + minAttr + maxAttr + stepAttr + ' value="' + esc(String(ovVal)) + '" placeholder="(default)" style="' + inputStyle + '">';
       } else {
         const ovVal = key in overrides ? overrides[key] : '';
-        inputHtml = '<input id="tc-' + key + '" type="text" value="' + esc(String(ovVal)) + '" placeholder="(default)" style="background:#0a1020;color:#ccc;border:1px solid #0f3460;padding:.2rem .4rem;width:100%">';
+        const ph = def.placeholder ? def.placeholder : '(default)';
+        inputHtml = '<input id="tc-' + key + '" type="text" value="' + esc(String(ovVal)) + '" placeholder="' + esc(ph) + '" style="' + inputStyle + '">';
       }
       html += '<tr style="border-bottom:1px solid #0a1020">' +
         '<td style="padding:.4rem;font-family:monospace;font-size:.8rem">' + esc(key) + '</td>' +
@@ -1026,6 +1034,8 @@ async function showThreadConfig() {
     html += '<button class="btn btn-primary btn-sm" onclick="saveThreadConfig()">Save</button>';
     html += '<button class="btn btn-danger btn-sm" onclick="resetThreadConfig()">Reset All</button>';
     html += '</div>';
+    // Store key definitions for saveThreadConfig.
+    window._tcKeyDefs = keyDefs;
     document.getElementById('tc-body').innerHTML = html;
   } catch (e) {
     document.getElementById('tc-body').textContent = 'Failed to load: ' + e;
@@ -1034,15 +1044,18 @@ async function showThreadConfig() {
 
 async function saveThreadConfig() {
   if (!selectedSession) return;
-  const keys = ['backend_name', 'session_timeout_minutes', 'sub_sessions_enabled', 'system_prompt_mode'];
+  const keyDefs = window._tcKeyDefs || [];
   const body = {};
-  for (const key of keys) {
+  for (const def of keyDefs) {
+    const key = typeof def === 'string' ? def : def.name;
+    const ktype = typeof def === 'string' ? 'str' : (def.type || 'str');
     const el = document.getElementById('tc-' + key);
     if (!el) continue;
     const val = el.value.trim();
     if (val === '') { body[key] = null; continue; }
-    if (key === 'session_timeout_minutes') { body[key] = parseInt(val, 10) || null; continue; }
-    if (key === 'sub_sessions_enabled') { body[key] = val === 'true'; continue; }
+    if (ktype === 'bool') { body[key] = val === 'true'; continue; }
+    if (ktype === 'int') { const n = parseInt(val, 10); body[key] = isNaN(n) ? null : n; continue; }
+    if (ktype === 'float') { const n = parseFloat(val); body[key] = isNaN(n) ? null : n; continue; }
     body[key] = val;
   }
   try {
@@ -1764,17 +1777,18 @@ async function loadSkills() {
     // Stats bar
     const statsBar = document.getElementById('skills-stats-bar');
     const totalReads = skills.reduce((a, s) => a + (s.read_count || 0), 0);
-    const totalSessions = skills.reduce((a, s) => a + (s.sessions_loaded || 0), 0);
     const totalSuccess = skills.reduce((a, s) => a + (s.success_count || 0), 0);
-    const avgRate = totalSessions > 0 ? Math.round(totalSuccess / totalSessions * 100) : 0;
+    const totalFailure = skills.reduce((a, s) => a + (s.failure_count || 0), 0);
+    const totalOutcomes = totalSuccess + totalFailure;
+    const avgRate = totalOutcomes > 0 ? Math.round(totalSuccess / totalOutcomes * 100) : 0;
     const backendLabel = _skillBackend === 'local_vector' ? '🧠 local_vector'
       : _skillBackend === 'qdrant' ? '🧠 qdrant' : _skillBackend;
     statsBar.innerHTML = [
       '<span>Backend: <strong>' + backendLabel + '</strong></span>',
       '<span>Skills: <strong>' + skills.length + '</strong></span>',
       '<span>Total reads: <strong>' + totalReads + '</strong></span>',
-      '<span>Sessions loaded: <strong>' + totalSessions + '</strong></span>',
-      totalSessions > 0 ? '<span>Success rate: <strong>' + avgRate + '%</strong></span>' : '',
+      totalOutcomes > 0 ? '<span>Outcomes: <strong>' + totalOutcomes + '</strong> (' + totalSuccess + ' ok / ' + totalFailure + ' fail)</span>' : '',
+      totalOutcomes > 0 ? '<span>Success rate: <strong>' + avgRate + '%</strong></span>' : '',
     ].filter(Boolean).join(' \u2502 ');
 
     // Skill cards
@@ -1787,8 +1801,9 @@ async function loadSkills() {
       const isExpanded = _expandedSkills.has(s.name);
       const lastAccessed = s.last_accessed ? new Date(s.last_accessed * 1000).toLocaleDateString() : 'never';
       const docChars = s.doc_chars != null ? (s.doc_chars < 1024 ? s.doc_chars + ' chars' : (s.doc_chars / 1024).toFixed(1) + 'k chars') : '-';
-      const successRate = s.sessions_loaded > 0
-        ? Math.round(s.success_count / s.sessions_loaded * 100) + '%' : '-';
+      const outcomeTotal = (s.success_count || 0) + (s.failure_count || 0);
+      const successRate = outcomeTotal > 0
+        ? Math.round(s.success_count / outcomeTotal * 100) + '%' : '-';
       return `<div class="skill-card">
         <div class="skill-card-header" onclick="toggleSkillCard('${esc(s.name)}')">
           <span class="skill-card-name">${esc(s.name)}</span>
@@ -1797,7 +1812,7 @@ async function loadSkills() {
         </div>
         <div class="skill-card-stats">
           <span>Reads: <strong>${s.read_count || 0}</strong></span>
-          <span>Sessions: <strong>${s.sessions_loaded || 0}</strong></span>
+          <span>Outcomes: <strong>${outcomeTotal}</strong></span>
           <span>Success: <strong>${successRate}</strong></span>
           <span>Version: <strong>${s.version || 1}</strong></span>
         </div>

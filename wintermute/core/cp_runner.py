@@ -71,6 +71,7 @@ class ConvergenceProtocolRunner:
         prior_tool_calls_made: Optional[list[str]] = None,
         recent_assistant_messages: Optional[list[str]] = None,
         exclude_tool_names: "set[str] | None" = None,
+        extra_context: Optional[dict] = None,
     ) -> Optional[convergence_protocol_module.ConvergenceResult]:
         """Run CP hooks for *phase* in the bound scope.
 
@@ -104,6 +105,7 @@ class ConvergenceProtocolRunner:
                 prior_tool_calls_made=prior_tool_calls_made,
                 recent_assistant_messages=recent_assistant_messages,
                 exclude_tool_names=exclude_tool_names,
+                extra_context=extra_context,
             ), timeout=60.0)  # 60s hard ceiling prevents CP from blocking inference
         except asyncio.TimeoutError:
             logger.warning(

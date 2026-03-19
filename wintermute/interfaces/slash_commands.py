@@ -113,9 +113,6 @@ class SlashCommandHandler:
         if text == "/memory-stats":
             await self._cmd_memory_stats(send_fn)
             return True
-        if text.startswith("/config"):
-            await self._cmd_config(text, thread_id, send_fn)
-            return True
         if text == "/commands":
             await self._cmd_commands(send_fn)
             return True
@@ -131,7 +128,13 @@ class SlashCommandHandler:
         await send_fn("Session reset. Starting fresh conversation.")
         from wintermute.infra import prompt_loader
         try:
-            seed_prompt = prompt_loader.load_seed(self._llm.seed_language)
+            # Use per-thread seed_language override if available.
+            mgr = self._thread_config_manager
+            seed_lang = self._llm.seed_language
+            if mgr:
+                resolved = mgr.resolve(thread_id)
+                seed_lang = resolved.seed_language
+            seed_prompt = prompt_loader.load_seed(seed_lang)
             await self._llm.enqueue_system_event(seed_prompt, thread_id)
         except Exception:  # noqa: BLE001
             logger.exception("Seed after /new failed (non-fatal)")
@@ -490,66 +493,6 @@ class SlashCommandHandler:
         except Exception as exc:
             await send_fn(f"Failed to get memory stats: {exc}")
 
-    async def _cmd_config(self, text: str, thread_id: str, send_fn: SendFn) -> None:
-        mgr = self._thread_config_manager
-        if mgr is None:
-            await send_fn("Thread configuration is not available.")
-            return
-
-        parts = text.strip().split(None, 2)  # ["/config", key?, value?]
-
-        # /config — show resolved config with sources
-        if len(parts) == 1:
-            resolved = mgr.resolve_as_dict(thread_id)
-            lines = [f"**Configuration** (thread: `{thread_id}`)\n"]
-            for key, info in resolved.items():
-                src_tag = f" _(from {info['source']})_" if info["source"] != "default" else ""
-                lines.append(f"- `{key}`: **{info['value']}**{src_tag}")
-            backends = mgr.get_available_backends()
-            if backends:
-                lines.append(f"\nAvailable backends: {', '.join(f'`{b}`' for b in sorted(backends))}")
-            await send_fn("\n".join(lines))
-            return
-
-        # /config reset [<key>]
-        if parts[1] == "reset":
-            if len(parts) == 3:
-                key = parts[2]
-                current = mgr.get(thread_id)
-                if current is None or getattr(current, key, None) is None:
-                    await send_fn(f"No override set for `{key}` on this thread.")
-                    return
-                try:
-                    mgr.set(thread_id, key, None)
-                    resolved = mgr.resolve(thread_id)
-                    new_val = getattr(resolved, key, "?")
-                    await send_fn(
-                        f"Override for `{key}` removed. Effective value: **{new_val}**"
-                    )
-                except (ValueError, AttributeError) as exc:
-                    await send_fn(f"Error: {exc}")
-            else:
-                mgr.reset(thread_id)
-                await send_fn("All per-thread overrides removed.")
-            return
-
-        # /config <key> <value>
-        if len(parts) < 3:
-            await send_fn(
-                "Usage: `/config <key> <value>` or `/config reset [<key>]`\n"
-                "Keys: `backend_name`, `session_timeout_minutes`, `sub_sessions_enabled`, `system_prompt_mode`"
-            )
-            return
-
-        key, value = parts[1], parts[2]
-        try:
-            mgr.set(thread_id, key, value)
-            resolved = mgr.resolve(thread_id)
-            new_val = getattr(resolved, key, "?")
-            await send_fn(f"`{key}` set to **{new_val}** for this thread.")
-        except (ValueError, TypeError) as exc:
-            await send_fn(f"Error: {exc}")
-
     async def _cmd_commands(self, send_fn: SendFn) -> None:
         await send_fn(
             "**Wintermute — Slash Commands**\n\n"
@@ -563,11 +506,6 @@ class SlashCommandHandler:
             "**Memory**\n"
             "- `/memory-stats` — Show memory store backend, entry count, and status\n"
             "- `/rebuild-index` — Rebuild the vector memory index\n\n"
-            "**Configuration**\n"
-            "- `/config` — Show current resolved config for this thread\n"
-            "- `/config <key> <value>` — Set a per-thread override (keys: backend_name, session_timeout_minutes, sub_sessions_enabled, system_prompt_mode)\n"
-            "- `/config reset` — Remove all per-thread overrides\n"
-            "- `/config reset <key>` — Remove a single per-thread override\n\n"
             "**System**\n"
             "- `/status` — Show runtime status: models, token budget, memory, loops, sub-sessions\n"
             "- `/commands` — Show this list\n\n"
