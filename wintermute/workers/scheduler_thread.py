@@ -825,6 +825,11 @@ class TaskScheduler:
                 next_run = next_run.astimezone(timezone.utc)
             if next_run > now_utc:
                 return False
+            # Job is past due; respect misfire_grace_time — the job may still fire
+            # if APScheduler picks it up within the grace window.
+            grace_seconds = job.misfire_grace_time or 0
+            if (now_utc - next_run).total_seconds() < grace_seconds:
+                return False
 
         if job is not None:
             try:
