@@ -750,8 +750,63 @@ class TaskScheduler:
             )
 
     async def _run_task_maintenance_async(self) -> None:
-        """Run task lifecycle maintenance without blocking the event loop."""
-        await database.async_call(self._run_task_maintenance)
+        """Run task lifecycle maintenance without blocking the event loop.
+
+        NOTE: All interactions with the APScheduler instance must remain on the
+        asyncio event loop thread because AsyncIOScheduler is not thread-safe.
+        Only the blocking database work is offloaded via database.async_call.
+        """
+        retention_days = max(0, int(self._cfg.task_completed_retention_days or 0))
+
+        purged = await database.async_call(database.delete_old_completed_tasks, days=retention_days)
+
+        reconciled = 0
+        if self._cfg.auto_complete_stale_once_tasks:
+            now_utc = datetime.now(timezone.utc)
+            active_tasks = await database.async_call(database.list_tasks, "active")
+
+            for task in active_tasks:
+                if (task.get("schedule_type") or "").strip().lower() != "once":
+                    continue
+                task_id = task.get("id")
+                if not task_id:
+                    continue
+                if not self._is_one_time_task_past_due(task, now_utc):
+                    continue
+
+                job = self._scheduler.get_job(task_id)
+                if job is not None and job.next_run_time is not None:
+                    next_run = job.next_run_time
+                    if next_run.tzinfo is None:
+                        next_run = next_run.replace(tzinfo=timezone.utc)
+                    else:
+                        next_run = next_run.astimezone(timezone.utc)
+                    if next_run > now_utc:
+                        continue
+
+                if job is not None:
+                    try:
+                        self.remove_job(task_id)
+                    except Exception:
+                        logger.debug(
+                            "[scheduler] Failed removing stale once-job %s", task_id, exc_info=True
+                        )
+
+                reason = (
+                    "Auto-completed by scheduler maintenance: one-time execution is in the past "
+                    "and no pending runnable job exists"
+                )
+                completed = await database.async_call(database.complete_task, task_id, reason=reason)
+                if completed:
+                    reconciled += 1
+
+        if purged or reconciled:
+            logger.info(
+                "[scheduler] Task maintenance: purged_completed=%d (retention_days=%d), auto_completed_stale_once=%d",
+                purged,
+                retention_days,
+                reconciled,
+            )
 
     def _reconcile_stale_one_time_tasks(self) -> int:
         """Complete active one-time tasks that are already due and no longer executable."""

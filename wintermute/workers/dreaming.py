@@ -494,7 +494,6 @@ async def _phase_task_consolidation(pool: "BackendPool", cfg: dict,
                         database.update_task, str(aid), **kwargs,
                     )
                     applied += 1
-    await database.async_call(database.delete_old_completed_tasks, 30)
     result.items_processed = applied
     result.summary = f"applied {applied} task actions"
     logger.info("Dreaming phase task_consolidation: %s", result.summary)
