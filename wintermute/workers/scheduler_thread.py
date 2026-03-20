@@ -166,7 +166,14 @@ class TaskScheduler:
 
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self._run_task_maintenance_async())
+
+            async def _startup_maintenance() -> None:
+                try:
+                    await self._run_task_maintenance_async()
+                except Exception:
+                    logger.exception("[scheduler] Task lifecycle maintenance failed at startup")
+
+            loop.create_task(_startup_maintenance())
         except RuntimeError:
             # No running loop (e.g. during tests); run synchronously.
             try:
@@ -771,37 +778,14 @@ class TaskScheduler:
             active_tasks = await database.async_call(database.list_tasks, "active")
 
             for task in active_tasks:
-                if (task.get("schedule_type") or "").strip().lower() != "once":
+                # _should_complete_stale_once runs scheduler.get_job/remove_job on the
+                # event-loop thread (here), then the DB write is offloaded below.
+                if not self._should_complete_stale_once(task, now_utc):
                     continue
-                task_id = task.get("id")
-                if not task_id:
-                    continue
-                if not self._is_one_time_task_past_due(task, now_utc):
-                    continue
-
-                job = self._scheduler.get_job(task_id)
-                if job is not None and job.next_run_time is not None:
-                    next_run = job.next_run_time
-                    if next_run.tzinfo is None:
-                        next_run = next_run.replace(tzinfo=timezone.utc)
-                    else:
-                        next_run = next_run.astimezone(timezone.utc)
-                    if next_run > now_utc:
-                        continue
-
-                if job is not None:
-                    try:
-                        self.remove_job(task_id)
-                    except Exception:
-                        logger.debug(
-                            "[scheduler] Failed removing stale once-job %s", task_id, exc_info=True
-                        )
-
-                reason = (
-                    "Auto-completed by scheduler maintenance: one-time execution is in the past "
-                    "and no pending runnable job exists"
+                task_id = task["id"]
+                completed = await database.async_call(
+                    database.complete_task, task_id, reason=self._STALE_ONCE_REASON
                 )
-                completed = await database.async_call(database.complete_task, task_id, reason=reason)
                 if completed:
                     reconciled += 1
 
@@ -813,39 +797,52 @@ class TaskScheduler:
                 reconciled,
             )
 
+    _STALE_ONCE_REASON = (
+        "Auto-completed by scheduler maintenance: one-time execution is in the past "
+        "and no pending runnable job exists"
+    )
+
+    def _should_complete_stale_once(self, task: dict, now_utc: datetime) -> bool:
+        """Return True (and remove any lingering job) when a once-task should be auto-completed.
+
+        All scheduler interactions stay on the calling thread/event-loop — safe for both
+        the synchronous fallback path and the async maintenance coroutine.
+        """
+        if (task.get("schedule_type") or "").strip().lower() != "once":
+            return False
+        task_id = task.get("id")
+        if not task_id:
+            return False
+        if not self._is_one_time_task_past_due(task, now_utc):
+            return False
+
+        job = self._scheduler.get_job(task_id)
+        if job is not None and job.next_run_time is not None:
+            next_run = job.next_run_time
+            if next_run.tzinfo is None:
+                next_run = next_run.replace(tzinfo=timezone.utc)
+            else:
+                next_run = next_run.astimezone(timezone.utc)
+            if next_run > now_utc:
+                return False
+
+        if job is not None:
+            try:
+                self.remove_job(task_id)
+            except Exception:
+                logger.debug("[scheduler] Failed removing stale once-job %s", task_id, exc_info=True)
+
+        return True
+
     def _reconcile_stale_one_time_tasks(self) -> int:
         """Complete active one-time tasks that are already due and no longer executable."""
         now_utc = datetime.now(timezone.utc)
         count = 0
         for task in database.list_tasks("active"):
-            if (task.get("schedule_type") or "").strip().lower() != "once":
+            if not self._should_complete_stale_once(task, now_utc):
                 continue
-            task_id = task.get("id")
-            if not task_id:
-                continue
-            if not self._is_one_time_task_past_due(task, now_utc):
-                continue
-
-            job = self._scheduler.get_job(task_id)
-            if job is not None and job.next_run_time is not None:
-                next_run = job.next_run_time
-                if next_run.tzinfo is None:
-                    next_run = next_run.replace(tzinfo=timezone.utc)
-                else:
-                    next_run = next_run.astimezone(timezone.utc)
-                if next_run > now_utc:
-                    continue
-
-            if job is not None:
-                try:
-                    self.remove_job(task_id)
-                except Exception:
-                    logger.debug("[scheduler] Failed removing stale once-job %s", task_id, exc_info=True)
-
-            reason = (
-                "Auto-completed by scheduler maintenance: one-time execution is in the past and no pending runnable job exists"
-            )
-            if database.complete_task(task_id, reason=reason):
+            task_id = task["id"]
+            if database.complete_task(task_id, reason=self._STALE_ONCE_REASON):
                 count += 1
         return count
 

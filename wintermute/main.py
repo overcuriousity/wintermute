@@ -459,14 +459,14 @@ async def main() -> None:
         logger.info("NL Translation enabled (tools=%s, model=%s)",
                      nl_translation_config["tools"], nl_translation_pool.primary.model)
 
+    scheduler_raw = cfg.get("scheduler", {}) or {}
     dreaming_raw = cfg.get("dreaming", {})
     dreaming_cfg = DreamingConfig(
         hour=dreaming_raw.get("hour", 1),
         minute=dreaming_raw.get("minute", 0),
-        timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
+        timezone=scheduler_raw.get("timezone", "UTC"),
     )
     memory_dreaming_raw = cfg.get("memory", {}).get("dreaming", {})
-    scheduler_raw = cfg.get("scheduler", {}) or {}
     scheduler_cfg = SchedulerConfig(
         timezone=scheduler_raw.get("timezone", "UTC"),
         prediction_proactive_scheduling=memory_dreaming_raw.get("prediction_proactive_scheduling", True),
