@@ -381,7 +381,20 @@ class TaskScheduler:
 
         if not schedule_type:
             task_row = await database.async_call(database.get_task, task_id)
-            schedule_type = (task_row or {}).get("schedule_type")
+            if not task_row:
+                logger.warning(
+                    "Scheduled task %s fired but no DB row found; skipping execution.", task_id
+                )
+                return
+            task_status = task_row.get("status")
+            if task_status and task_status != "active":
+                logger.info(
+                    "Scheduled task %s fired but status is %r; skipping execution and removing job.",
+                    task_id, task_status,
+                )
+                self.remove_job(task_id)
+                return
+            schedule_type = task_row.get("schedule_type")
 
         logger.info("Firing task %s (thread=%s, background=%s, execution_mode=%s)",
                     task_id, thread_id, background, mode)

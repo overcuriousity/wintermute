@@ -478,16 +478,18 @@ async def _phase_task_consolidation(pool: "BackendPool", cfg: dict,
             a = act.get("action")
             aid = act.get("id")
             if a == "complete" and aid is not None:
-                await database.async_call(
-                    database.complete_task, str(aid),
-                    reason="Completed via dreaming consolidation",
-                )
+                # Remove the scheduler job first so the task cannot fire again
+                # after being marked completed.
                 from wintermute.workers import scheduler_thread as _sched_mod
                 if _sched_mod._instance is not None:
                     try:
                         _sched_mod._instance.remove_job(str(aid))
                     except Exception:
-                        logger.debug("Dreaming: failed to remove scheduler job %s", aid, exc_info=True)
+                        logger.warning("Dreaming: failed to remove scheduler job %s", aid, exc_info=True)
+                await database.async_call(
+                    database.complete_task, str(aid),
+                    reason="Completed via dreaming consolidation",
+                )
                 applied += 1
             elif a == "update" and aid is not None:
                 kwargs = {}
