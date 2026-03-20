@@ -184,6 +184,7 @@ class SubSessionState:
     system_prompt_mode: str              # "full" | "base_only" | "minimal" | "none"
     status: str                          # "running" | "completed" | "failed" | "timeout"
     created_at: str                      # ISO-8601
+    started_at: Optional[str] = None     # ISO-8601; set when _start_node() fires
     root_thread_id: Optional[str] = None # original user-facing thread (for nested routing)
     nesting_depth: int = 1               # 1 = direct child, 2 = grandchild
     completed_at: Optional[str] = None
@@ -816,6 +817,7 @@ class SubSessionManager:
                 scratchpad_dir.mkdir(parents=True, exist_ok=True)
 
         existing = self._states.get(session_id)
+        now_iso = datetime.now(timezone.utc).isoformat()
         state = SubSessionState(
             session_id=session_id,
             objective=node.objective,
@@ -823,7 +825,8 @@ class SubSessionManager:
             root_thread_id=node.root_thread_id,
             system_prompt_mode=node.system_prompt_mode,
             status="running",
-            created_at=existing.created_at if existing else datetime.now(timezone.utc).isoformat(),
+            created_at=existing.created_at if existing else now_iso,
+            started_at=now_iso,
             nesting_depth=node.nesting_depth,
             messages=list(prior_messages) if prior_messages else [],
             continuation_depth=continuation_depth,
@@ -2071,6 +2074,7 @@ class SubSessionManager:
                 query=objective,
                 tool_profiles=tool_deps.tool_profiles if tool_deps else None,
                 nl_tools=nl_tools,
+                include_tasks=False,
             )
         else:  # "base_only"
             base_text = prompt_assembler._assemble_base(

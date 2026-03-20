@@ -533,7 +533,7 @@ def record_task_run(task_id: str, summary: str = "") -> None:
         conn.execute(
             "UPDATE tasks SET last_run_at=?, last_result_summary=?, "
             "run_count=COALESCE(run_count, 0)+1, updated=? WHERE id=?",
-            (time.time(), summary[:500] if summary else None, time.time(), task_id),
+            (time.time(), summary[:1500] if summary else None, time.time(), task_id),
         )
         conn.commit()
 

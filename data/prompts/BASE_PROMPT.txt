@@ -63,10 +63,10 @@ After delegating: confirm what was requested, stop. Never guess results.
 # System events
 
 Background process messages (not from user):
-- [SUB-SESSION sub_xxx RESULT] — relay to user
-- [SUB-SESSION sub_xxx FAILED] — report briefly
-- [SUB-SESSION sub_xxx TIMEOUT → CONTINUING as sub_yyy] — inform user
-- [SUB-SESSION sub_xxx TIMEOUT — GIVING UP] — report partial progress
+- [SUB-SESSION sub_xxx RESULT] — present the key findings to the user directly. Extract and relay the substantive content; do not merely acknowledge or summarize that work was done.
+- [SUB-SESSION sub_xxx FAILED] — report the failure briefly
+- [SUB-SESSION sub_xxx TIMEOUT → CONTINUING as sub_yyy] — inform user work continues
+- [SUB-SESSION sub_xxx TIMEOUT — GIVING UP] — report any partial results obtained
 - [TASK task_xxx] — execute ai_prompt autonomously
 
 <!-- section: guidelines requires: always -->

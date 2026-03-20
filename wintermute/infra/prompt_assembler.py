@@ -328,7 +328,8 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
              prompt_mode: str = "full",
              tool_profiles: Optional[dict[str, dict]] = None,  # deprecated — profiles now in tool schemas
              nl_tools: Optional[set[str]] = None,
-             prediction_results: Optional[list[str]] = None) -> str:
+             prediction_results: Optional[list[str]] = None,
+             include_tasks: bool = True) -> str:
     """
     Build and return the full system prompt string.
 
@@ -391,9 +392,10 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
                 memories_text = "\n".join(r["text"] for r in results)
                 sections.append(f"# User Memories (relevance-ranked)\n\n{memories_text}")
 
-        tasks_text = database.get_active_tasks_text(thread_id=thread_id)
-        if tasks_text:
-            sections.append(f"# Active Tasks\n\n{tasks_text}")
+        if include_tasks:
+            tasks_text = database.get_active_tasks_text(thread_id=thread_id)
+            if tasks_text:
+                sections.append(f"# Active Tasks\n\n{tasks_text}")
 
         # Reflection observations — main thread only
         if available_tools is None:
