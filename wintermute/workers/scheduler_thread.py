@@ -165,9 +165,14 @@ class TaskScheduler:
         self._recover_missed()
 
         try:
-            self._run_task_maintenance(startup=True)
-        except Exception:
-            logger.exception("[scheduler] Task lifecycle maintenance failed at startup")
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._run_task_maintenance_async())
+        except RuntimeError:
+            # No running loop (e.g. during tests); run synchronously.
+            try:
+                self._run_task_maintenance(startup=True)
+            except Exception:
+                logger.exception("[scheduler] Task lifecycle maintenance failed at startup")
 
         # Subscribe to task.created events to schedule new jobs immediately.
         if self._event_bus:
@@ -846,13 +851,23 @@ class TaskScheduler:
 
     def _is_one_time_task_past_due(self, task: dict, now_utc: datetime) -> bool:
         """Return True when a one-time task scheduled datetime is in the past."""
+        # For relative specs ("in 10 minutes") we need the task's creation time
+        # as the reference so the past-due check is stable across maintenance runs.
+        created_base: Optional[datetime] = None
+        created_ts = task.get("created")
+        if created_ts is not None:
+            try:
+                created_base = datetime.fromtimestamp(float(created_ts), tz=timezone.utc)
+            except (TypeError, ValueError):
+                pass
+
         raw_config = task.get("schedule_config")
         if raw_config:
             try:
                 cfg = json.loads(raw_config) if isinstance(raw_config, str) else raw_config
                 at = (cfg or {}).get("at")
                 if at:
-                    fire_at = _parse_once_at(str(at), tz_name=self._cfg.timezone)
+                    fire_at = _parse_once_at(str(at), tz_name=self._cfg.timezone, base_time=created_base)
                     if fire_at.tzinfo is None:
                         fire_at = fire_at.replace(tzinfo=timezone.utc)
                     else:
@@ -869,7 +884,7 @@ class TaskScheduler:
         match = re.search(r"once at\s+(.+)$", desc, re.IGNORECASE)
         if match:
             try:
-                fire_at = _parse_once_at(match.group(1).strip(), tz_name=self._cfg.timezone)
+                fire_at = _parse_once_at(match.group(1).strip(), tz_name=self._cfg.timezone, base_time=created_base)
                 if fire_at.tzinfo is None:
                     fire_at = fire_at.replace(tzinfo=timezone.utc)
                 else:
@@ -1047,8 +1062,13 @@ def _parse_hhmm(s: str) -> tuple[int, int]:
     return 9, 0
 
 
-def _parse_once_at(spec: str, tz_name: str = "UTC") -> datetime:
-    """Parse a one-time fire datetime from natural language or ISO-8601."""
+def _parse_once_at(spec: str, tz_name: str = "UTC", base_time: Optional[datetime] = None) -> datetime:
+    """Parse a one-time fire datetime from natural language or ISO-8601.
+
+    For relative specs like "in 10 minutes", the optional *base_time* is used
+    as the reference instant instead of the current wall-clock time.  Pass the
+    task's ``created`` timestamp so past-due checks remain stable.
+    """
     try:
         local_tz = ZoneInfo(tz_name)
     except Exception:
@@ -1063,7 +1083,8 @@ def _parse_once_at(spec: str, tz_name: str = "UTC") -> datetime:
         delta  = {"minute": timedelta(minutes=amount),
                   "hour":   timedelta(hours=amount),
                   "day":    timedelta(days=amount)}[unit]
-        return now + delta
+        ref = base_time if base_time is not None else now
+        return ref + delta
 
     if s.startswith("tomorrow"):
         h, minute = _parse_hhmm(spec)
