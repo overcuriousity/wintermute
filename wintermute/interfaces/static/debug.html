@@ -1085,7 +1085,7 @@ async function resetThreadConfig() {
 let _expandedWorkers = new Set();
 
 function _workerSessionRow(s, indent) {
-  const duration = fmtDuration(s.created_at, s.completed_at);
+  const duration = fmtDuration(s.started_at || s.created_at, s.completed_at);
   const resultText = s.result
     ? s.result.slice(0, 120) + (s.result.length > 120 ? '\u2026' : '')
     : (s.error ? '\u26a0 ' + s.error.slice(0, 80) : '');

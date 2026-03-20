@@ -1412,6 +1412,18 @@ class SubSessionManager:
         except Exception:
             logger.debug("Failed to persist outcome for %s", state.session_id, exc_info=True)
 
+        # Back-fill last_result_summary with actual sub-session output so recurring
+        # tasks get useful prior-run context (record_task_run fires before completion).
+        if state.task_id and status == "completed" and state.result:
+            try:
+                await database.async_call(
+                    database.update_task_result_summary,
+                    state.task_id,
+                    state.result,
+                )
+            except Exception:
+                logger.debug("Failed to update task result summary for %s", state.task_id, exc_info=True)
+
         # Detect skill reads in this session and record outcome (success/failure)
         # in skill_store for per-skill success rate tracking.  Never raises.
         try:
