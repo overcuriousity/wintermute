@@ -52,6 +52,7 @@ async def _fire_task_job(task_id: str, message: str, ai_prompt: Optional[str],
                           thread_id: Optional[str] = None,
                           background: bool = False,
                           execution_mode: Optional[str] = None,
+                          schedule_type: Optional[str] = None,
                           **_extra) -> None:
     """
     Module-level coroutine used as the APScheduler job callable.
@@ -61,7 +62,7 @@ async def _fire_task_job(task_id: str, message: str, ai_prompt: Optional[str],
     """
     if _instance is not None:
         await _instance._fire_task(
-            task_id, message, ai_prompt, thread_id, background, execution_mode
+            task_id, message, ai_prompt, thread_id, background, execution_mode, schedule_type
         )
 
 
@@ -72,10 +73,11 @@ async def _fire_routine_job(job_id: str, message: str, ai_prompt: Optional[str],
                              thread_id: Optional[str] = None,
                              background: bool = False,
                              execution_mode: Optional[str] = None,
+                             schedule_type: Optional[str] = None,
                              **_extra) -> None:
     if _instance is not None:
         await _instance._fire_task(
-            job_id, message, ai_prompt, thread_id, background, execution_mode
+            job_id, message, ai_prompt, thread_id, background, execution_mode, schedule_type
         )
 
 _fire_reminder_job = _fire_routine_job
@@ -97,12 +99,21 @@ async def _check_session_timeouts_job(**_extra) -> None:
         await _instance._enforce_session_timeouts()
 
 
+async def _task_maintenance_job(**_extra) -> None:
+    """Module-level coroutine for periodic task lifecycle maintenance."""
+    if _instance is not None:
+        await _instance._run_task_maintenance_async()
+
+
 @dataclass
 class SchedulerConfig:
     timezone: str = "UTC"
     prediction_proactive_scheduling: bool = True
     prediction_proactive_cooldown_hours: int = 4
     proactive_target_thread_id: str = "default"
+    task_completed_retention_days: int = 30
+    task_maintenance_interval_hours: int = 6
+    auto_complete_stale_once_tasks: bool = True
 
 
 class TaskScheduler:
@@ -153,6 +164,11 @@ class TaskScheduler:
 
         self._recover_missed()
 
+        try:
+            self._run_task_maintenance(startup=True)
+        except Exception:
+            logger.exception("[scheduler] Task lifecycle maintenance failed at startup")
+
         # Subscribe to task.created events to schedule new jobs immediately.
         if self._event_bus:
             sub_id = self._event_bus.subscribe("task.created", self._on_task_created)
@@ -189,6 +205,19 @@ class TaskScheduler:
                 misfire_grace_time=600,
             )
             logger.info("[scheduler] Session timeout check scheduled (every 5 min)")
+
+        maintenance_interval_hours = max(1, int(self._cfg.task_maintenance_interval_hours or 6))
+        self._scheduler.add_job(
+            _task_maintenance_job,
+            trigger=IntervalTrigger(hours=maintenance_interval_hours),
+            id="_task_lifecycle_maintenance",
+            replace_existing=True,
+            misfire_grace_time=max(3600, maintenance_interval_hours * 3600),
+        )
+        logger.info(
+            "[scheduler] Task lifecycle maintenance scheduled (every %dh)",
+            maintenance_interval_hours,
+        )
 
     async def _on_task_created(self, event) -> None:
         """React to task.created events — schedule the job if it has schedule_config."""
@@ -318,7 +347,8 @@ class TaskScheduler:
     async def _fire_task(self, task_id: str, message: str, ai_prompt: Optional[str],
                           thread_id: Optional[str] = None,
                           background: bool = False,
-                          execution_mode: Optional[str] = None) -> None:
+                          execution_mode: Optional[str] = None,
+                          schedule_type: Optional[str] = None) -> None:
         raw_mode = execution_mode
         mode = (execution_mode or "").strip() or None
         if mode not in {"reminder", "autonomous_notify", "autonomous_silent"}:
@@ -336,6 +366,10 @@ class TaskScheduler:
                 mode = "autonomous_notify" if background else "autonomous_silent"
             else:
                 mode = "reminder"
+
+        if not schedule_type:
+            task_row = await database.async_call(database.get_task, task_id)
+            schedule_type = (task_row or {}).get("schedule_type")
 
         logger.info("Firing task %s (thread=%s, background=%s, execution_mode=%s)",
                     task_id, thread_id, background, mode)
@@ -444,6 +478,11 @@ class TaskScheduler:
                 )
             except Exception:  # noqa: BLE001
                 logger.debug("Failed to log task firing for %s", task_id)
+
+            if (schedule_type or "").strip().lower() == "once":
+                state = "executed" if executed else "skipped"
+                reason = f"Auto-completed after one-time schedule fired ({state})"
+                await database.async_call(database.complete_task, task_id, reason)
 
             if self._scheduler.get_job(task_id) is None:
                 logger.info("One-time task %s completed", task_id)
@@ -697,6 +736,106 @@ class TaskScheduler:
             pass
         return "\n".join(lines) if lines else ""
 
+    def _run_task_maintenance(self, startup: bool = False) -> None:
+        """Reconcile task lifecycle state and purge old completed rows."""
+        retention_days = max(0, int(self._cfg.task_completed_retention_days or 0))
+        purged = database.delete_old_completed_tasks(days=retention_days)
+        reconciled = self._reconcile_stale_one_time_tasks() if self._cfg.auto_complete_stale_once_tasks else 0
+        if purged or reconciled or startup:
+            logger.info(
+                "[scheduler] Task maintenance: purged_completed=%d (retention_days=%d), auto_completed_stale_once=%d",
+                purged,
+                retention_days,
+                reconciled,
+            )
+
+    async def _run_task_maintenance_async(self) -> None:
+        """Run task lifecycle maintenance without blocking the event loop."""
+        await database.async_call(self._run_task_maintenance)
+
+    def _reconcile_stale_one_time_tasks(self) -> int:
+        """Complete active one-time tasks that are already due and no longer executable."""
+        now_utc = datetime.now(timezone.utc)
+        count = 0
+        for task in database.list_tasks("active"):
+            if (task.get("schedule_type") or "").strip().lower() != "once":
+                continue
+            task_id = task.get("id")
+            if not task_id:
+                continue
+            if not self._is_one_time_task_past_due(task, now_utc):
+                continue
+
+            job = self._scheduler.get_job(task_id)
+            if job is not None and job.next_run_time is not None:
+                next_run = job.next_run_time
+                if next_run.tzinfo is None:
+                    next_run = next_run.replace(tzinfo=timezone.utc)
+                else:
+                    next_run = next_run.astimezone(timezone.utc)
+                if next_run > now_utc:
+                    continue
+
+            if job is not None:
+                try:
+                    self.remove_job(task_id)
+                except Exception:
+                    logger.debug("[scheduler] Failed removing stale once-job %s", task_id, exc_info=True)
+
+            reason = (
+                "Auto-completed by scheduler maintenance: one-time execution is in the past and no pending runnable job exists"
+            )
+            if database.complete_task(task_id, reason=reason):
+                count += 1
+        return count
+
+    def _is_one_time_task_past_due(self, task: dict, now_utc: datetime) -> bool:
+        """Return True when a one-time task scheduled datetime is in the past."""
+        raw_config = task.get("schedule_config")
+        if raw_config:
+            try:
+                cfg = json.loads(raw_config) if isinstance(raw_config, str) else raw_config
+                at = (cfg or {}).get("at")
+                if at:
+                    fire_at = _parse_once_at(str(at), tz_name=self._cfg.timezone)
+                    if fire_at.tzinfo is None:
+                        fire_at = fire_at.replace(tzinfo=timezone.utc)
+                    else:
+                        fire_at = fire_at.astimezone(timezone.utc)
+                    return fire_at <= now_utc
+            except Exception:
+                logger.debug(
+                    "[scheduler] Failed parsing schedule_config for task %s",
+                    task.get("id"),
+                    exc_info=True,
+                )
+
+        desc = (task.get("schedule_desc") or "").strip()
+        match = re.search(r"once at\s+(.+)$", desc, re.IGNORECASE)
+        if match:
+            try:
+                fire_at = _parse_once_at(match.group(1).strip(), tz_name=self._cfg.timezone)
+                if fire_at.tzinfo is None:
+                    fire_at = fire_at.replace(tzinfo=timezone.utc)
+                else:
+                    fire_at = fire_at.astimezone(timezone.utc)
+                return fire_at <= now_utc
+            except Exception:
+                logger.debug(
+                    "[scheduler] Failed parsing schedule_desc for task %s",
+                    task.get("id"),
+                    exc_info=True,
+                )
+
+        last_run_at = task.get("last_run_at")
+        if last_run_at is not None:
+            try:
+                return float(last_run_at) <= now_utc.timestamp()
+            except (TypeError, ValueError):
+                return False
+
+        return False
+
     # ------------------------------------------------------------------
     # Crash recovery
     # ------------------------------------------------------------------
@@ -745,6 +884,7 @@ class TaskScheduler:
             thread_id = kw.get("thread_id")
             background = kw.get("background", False)
             execution_mode = kw.get("execution_mode")
+            schedule_type = kw.get("schedule_type")
             message = kw.get("message", task_id)
 
             if not ai_prompt and not thread_id:
@@ -760,7 +900,7 @@ class TaskScheduler:
             )
             # Schedule immediate async execution via the event loop.
             self._loop_call_soon(
-                task_id, message, ai_prompt, thread_id, background, execution_mode,
+                task_id, message, ai_prompt, thread_id, background, execution_mode, schedule_type,
             )
             recovered += 1
 
@@ -769,12 +909,13 @@ class TaskScheduler:
 
     def _loop_call_soon(self, task_id: str, message: str,
                         ai_prompt: str | None, thread_id: str | None,
-                        background: bool, execution_mode: str | None) -> None:
+                        background: bool, execution_mode: str | None,
+                        schedule_type: str | None) -> None:
         """Schedule _fire_task on the event loop from the synchronous start() context."""
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(
-                self._fire_task(task_id, message, ai_prompt, thread_id, background, execution_mode),
+                self._fire_task(task_id, message, ai_prompt, thread_id, background, execution_mode, schedule_type),
                 name=f"recover_{task_id}",
             )
         except RuntimeError:
