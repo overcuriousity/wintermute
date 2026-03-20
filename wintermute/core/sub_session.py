@@ -182,7 +182,7 @@ class SubSessionState:
     objective: str
     parent_thread_id: Optional[str]      # None = fire-and-forget
     system_prompt_mode: str              # "full" | "base_only" | "minimal" | "none"
-    status: str                          # "running" | "completed" | "failed" | "timeout"
+    status: str                          # "pending" | "running" | "completed" | "failed" | "timeout"
     created_at: str                      # ISO-8601
     started_at: Optional[str] = None     # ISO-8601; set when _start_node() fires
     root_thread_id: Optional[str] = None # original user-facing thread (for nested routing)

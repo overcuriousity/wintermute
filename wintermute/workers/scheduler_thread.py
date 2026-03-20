@@ -384,13 +384,12 @@ class TaskScheduler:
                             f"{capped}\n\n"
                         )
                     # Inject run history so recurring tasks can build on prior runs.
-                    task_record = database.get_task(task_id)
+                    task_record = await database.async_call(database.get_task, task_id)
                     if task_record:
                         run_count = task_record.get("run_count") or 0
                         last_run_at = task_record.get("last_run_at")
                         last_summary = task_record.get("last_result_summary")
                         if run_count > 0 and last_run_at:
-                            from datetime import datetime, timezone
                             try:
                                 last_dt = datetime.fromtimestamp(last_run_at, tz=timezone.utc)
                                 last_run_fmt = last_dt.strftime("%Y-%m-%d %H:%M UTC")
@@ -398,7 +397,7 @@ class TaskScheduler:
                                 last_run_fmt = "unknown"
                             objective += f"## Prior run context\nRun #{run_count + 1}. Last run: {last_run_fmt}.\n"
                             if last_summary:
-                                objective += f"Last result: {last_summary[:500]}\n\n"
+                                objective += f"Last result: {last_summary[:1500]}\n\n"
                             else:
                                 objective += "\n"
 

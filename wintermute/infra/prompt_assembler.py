@@ -356,6 +356,9 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
     ``prompt_mode`` controls how much context is injected:
       - ``"full"`` (default): all sections (memories, tasks, skills, etc.)
       - ``"minimal"``: only Core Instructions + Current Time + Conversation Summary
+
+    ``include_tasks``, when False, skips the "# Active Tasks" section.  Useful
+    for sub-sessions that should not see the main thread's task list.
     """
     from wintermute.infra import memory_store
 
