@@ -533,7 +533,17 @@ def record_task_run(task_id: str, summary: str = "") -> None:
         conn.execute(
             "UPDATE tasks SET last_run_at=?, last_result_summary=?, "
             "run_count=COALESCE(run_count, 0)+1, updated=? WHERE id=?",
-            (time.time(), summary[:500] if summary else None, time.time(), task_id),
+            (time.time(), summary[:1500] if summary else None, time.time(), task_id),
+        )
+        conn.commit()
+
+
+def update_task_result_summary(task_id: str, summary: str) -> None:
+    """Overwrite last_result_summary with actual sub-session output (no run_count change)."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE tasks SET last_result_summary=?, updated=? WHERE id=?",
+            (summary[:1500] if summary else None, time.time(), task_id),
         )
         conn.commit()
 

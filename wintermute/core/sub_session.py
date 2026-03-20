@@ -182,8 +182,9 @@ class SubSessionState:
     objective: str
     parent_thread_id: Optional[str]      # None = fire-and-forget
     system_prompt_mode: str              # "full" | "base_only" | "minimal" | "none"
-    status: str                          # "running" | "completed" | "failed" | "timeout"
+    status: str                          # "pending" | "running" | "completed" | "failed" | "timeout"
     created_at: str                      # ISO-8601
+    started_at: Optional[str] = None     # ISO-8601; set when _start_node() fires
     root_thread_id: Optional[str] = None # original user-facing thread (for nested routing)
     nesting_depth: int = 1               # 1 = direct child, 2 = grandchild
     completed_at: Optional[str] = None
@@ -816,6 +817,7 @@ class SubSessionManager:
                 scratchpad_dir.mkdir(parents=True, exist_ok=True)
 
         existing = self._states.get(session_id)
+        now_iso = datetime.now(timezone.utc).isoformat()
         state = SubSessionState(
             session_id=session_id,
             objective=node.objective,
@@ -823,7 +825,8 @@ class SubSessionManager:
             root_thread_id=node.root_thread_id,
             system_prompt_mode=node.system_prompt_mode,
             status="running",
-            created_at=existing.created_at if existing else datetime.now(timezone.utc).isoformat(),
+            created_at=existing.created_at if existing else now_iso,
+            started_at=now_iso,
             nesting_depth=node.nesting_depth,
             messages=list(prior_messages) if prior_messages else [],
             continuation_depth=continuation_depth,
@@ -1408,6 +1411,21 @@ class SubSessionManager:
             )
         except Exception:
             logger.debug("Failed to persist outcome for %s", state.session_id, exc_info=True)
+
+        # Back-fill last_result_summary with actual sub-session output so recurring
+        # tasks get useful prior-run context (record_task_run fires before completion).
+        # Skip the no-op sentinel — it would overwrite a meaningful prior summary.
+        if state.task_id and status == "completed" and state.result:
+            cleaned_result = state.result.strip()
+            if cleaned_result and cleaned_result != self._TASK_REVIEW_NO_ACTION:
+                try:
+                    await database.async_call(
+                        database.update_task_result_summary,
+                        state.task_id,
+                        cleaned_result,
+                    )
+                except Exception:
+                    logger.debug("Failed to update task result summary for %s", state.task_id, exc_info=True)
 
         # Detect skill reads in this session and record outcome (success/failure)
         # in skill_store for per-skill success rate tracking.  Never raises.
@@ -2071,6 +2089,7 @@ class SubSessionManager:
                 query=objective,
                 tool_profiles=tool_deps.tool_profiles if tool_deps else None,
                 nl_tools=nl_tools,
+                include_tasks=False,
             )
         else:  # "base_only"
             base_text = prompt_assembler._assemble_base(
