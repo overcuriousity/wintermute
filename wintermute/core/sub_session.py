@@ -1414,15 +1414,18 @@ class SubSessionManager:
 
         # Back-fill last_result_summary with actual sub-session output so recurring
         # tasks get useful prior-run context (record_task_run fires before completion).
+        # Skip the no-op sentinel — it would overwrite a meaningful prior summary.
         if state.task_id and status == "completed" and state.result:
-            try:
-                await database.async_call(
-                    database.update_task_result_summary,
-                    state.task_id,
-                    state.result,
-                )
-            except Exception:
-                logger.debug("Failed to update task result summary for %s", state.task_id, exc_info=True)
+            cleaned_result = state.result.strip()
+            if cleaned_result and cleaned_result != self._TASK_REVIEW_NO_ACTION:
+                try:
+                    await database.async_call(
+                        database.update_task_result_summary,
+                        state.task_id,
+                        cleaned_result,
+                    )
+                except Exception:
+                    logger.debug("Failed to update task result summary for %s", state.task_id, exc_info=True)
 
         # Detect skill reads in this session and record outcome (success/failure)
         # in skill_store for per-skill success rate tracking.  Never raises.
