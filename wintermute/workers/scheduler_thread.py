@@ -361,6 +361,32 @@ class TaskScheduler:
                           background: bool = False,
                           execution_mode: Optional[str] = None,
                           schedule_type: Optional[str] = None) -> None:
+        # Always fetch the latest task row: validate status and use DB schedule_type
+        # as authoritative so stale APScheduler job kwargs never cause a zombie execution.
+        task_row = await database.async_call(database.get_task, task_id)
+        if not task_row:
+            logger.warning(
+                "Scheduled task %s fired but no DB row found; skipping execution and removing job.",
+                task_id,
+            )
+            try:
+                self.remove_job(task_id)
+            except Exception:
+                logger.exception("Failed to remove orphaned scheduled job for missing task %s", task_id)
+            return
+        task_status = task_row.get("status")
+        if task_status and task_status != "active":
+            logger.info(
+                "Scheduled task %s fired but status is %r; skipping execution and removing job.",
+                task_id, task_status,
+            )
+            self.remove_job(task_id)
+            return
+        # Prefer DB schedule_type as the authoritative value; fall back to job kwargs.
+        db_schedule_type = task_row.get("schedule_type")
+        if db_schedule_type:
+            schedule_type = db_schedule_type
+
         raw_mode = execution_mode
         mode = (execution_mode or "").strip() or None
         if mode not in {"reminder", "autonomous_notify", "autonomous_silent"}:
@@ -378,23 +404,6 @@ class TaskScheduler:
                 mode = "autonomous_notify" if background else "autonomous_silent"
             else:
                 mode = "reminder"
-
-        if not schedule_type:
-            task_row = await database.async_call(database.get_task, task_id)
-            if not task_row:
-                logger.warning(
-                    "Scheduled task %s fired but no DB row found; skipping execution.", task_id
-                )
-                return
-            task_status = task_row.get("status")
-            if task_status and task_status != "active":
-                logger.info(
-                    "Scheduled task %s fired but status is %r; skipping execution and removing job.",
-                    task_id, task_status,
-                )
-                self.remove_job(task_id)
-                return
-            schedule_type = task_row.get("schedule_type")
 
         logger.info("Firing task %s (thread=%s, background=%s, execution_mode=%s)",
                     task_id, thread_id, background, mode)
