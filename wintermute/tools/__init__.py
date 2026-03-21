@@ -79,7 +79,7 @@ _DISPATCH: dict[str, Any] = {
 
 def execute_tool(name: str, inputs: dict, thread_id: Optional[str] = None,
                  nesting_depth: int = 0, parent_thread_id: Optional[str] = None,
-                 tool_deps: Optional[ToolDeps] = None) -> str:
+                 tool_deps: Optional[ToolDeps] = None, **kwargs) -> str:
     """Execute a tool by name and return its JSON-string result."""
     fn = _DISPATCH.get(name)
     if fn is None:
@@ -88,7 +88,8 @@ def execute_tool(name: str, inputs: dict, thread_id: Optional[str] = None,
     t0 = time.monotonic()
     try:
         result = fn(inputs, thread_id=thread_id, nesting_depth=nesting_depth,
-                    parent_thread_id=parent_thread_id, tool_deps=tool_deps)
+                    parent_thread_id=parent_thread_id, tool_deps=tool_deps,
+                    **kwargs)
         error_flag = None
     except (KeyError, TypeError, ValueError) as exc:
         result = json.dumps({"error": f"Tool '{name}' called with invalid arguments: {exc}"})

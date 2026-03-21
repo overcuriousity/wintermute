@@ -198,6 +198,8 @@ class SubSessionState:
     continued_from: Optional[str] = None # session_id of predecessor, if any
     tool_names: Optional[list[str]] = None  # explicit tool whitelist (bypasses category filter)
     pool_override: Optional[object] = None   # per-session BackendPool override
+    cp_pool_override: Optional[object] = None   # per-session CP pool override
+    nl_pool_override: Optional[object] = None   # per-session NL translation pool override
     max_rounds: Optional[int] = None        # None = unlimited inference rounds
     skip_cp_on_exit: bool = False           # skip CP post_inference on terminal response
     timeout_value: int = DEFAULT_TIMEOUT    # configured timeout for this session
@@ -223,6 +225,8 @@ class TaskNode:
     not_before: Optional[datetime] = None # time gate: don't start before this
     tool_names: Optional[list[str]] = None  # explicit tool whitelist (bypasses category filter)
     pool_override: Optional[object] = None   # per-session BackendPool override
+    cp_pool_override: Optional[object] = None   # per-session CP pool override
+    nl_pool_override: Optional[object] = None   # per-session NL translation pool override
     max_rounds: Optional[int] = None        # None = unlimited inference rounds
     skip_cp_on_exit: bool = False           # skip CP post_inference on terminal response
     task_id: Optional[str] = None          # originating scheduled task id (for reflection)
@@ -280,6 +284,7 @@ class SubSessionManager:
         self._cfg = pool.primary
         self._enqueue = enqueue_system_event
         self._cp_pool = convergence_protocol_pool
+        self._cp_validators = convergence_protocol_validators
         self._cp_runner = ConvergenceProtocolRunner(
             convergence_protocol_pool, "sub_session", convergence_protocol_validators,
         )
@@ -363,6 +368,8 @@ class SubSessionManager:
         not_before: Optional[str] = None,
         tool_names: Optional[list[str]] = None,
         pool: Optional[object] = None,
+        cp_pool: Optional[object] = None,
+        nl_pool: Optional[object] = None,
         max_rounds: Optional[int] = None,
         skip_cp_on_exit: bool = False,
         profile: Optional[str] = None,
@@ -452,6 +459,8 @@ class SubSessionManager:
             not_before=not_before_dt,
             tool_names=tool_names,
             pool_override=pool,
+            cp_pool_override=cp_pool,
+            nl_pool_override=nl_pool,
             max_rounds=max_rounds,
             skip_cp_on_exit=skip_cp_on_exit,
             task_id=task_id,
@@ -833,6 +842,8 @@ class SubSessionManager:
             continued_from=continued_from,
             tool_names=node.tool_names,
             pool_override=node.pool_override,
+            cp_pool_override=node.cp_pool_override,
+            nl_pool_override=node.nl_pool_override,
             max_rounds=node.max_rounds,
             skip_cp_on_exit=node.skip_cp_on_exit,
             timeout_value=node.timeout,
@@ -1192,7 +1203,7 @@ class SubSessionManager:
 
     def _serialise(self, state: SubSessionState) -> dict:
         """Return state as a dict, omitting the (potentially large) messages list."""
-        d = {k: v for k, v in state.__dict__.items() if k not in ("messages", "pool_override")}
+        d = {k: v for k, v in state.__dict__.items() if k not in ("messages", "pool_override", "cp_pool_override", "nl_pool_override")}
         d["tool_call_count"] = len(state.tool_calls_log)
         # Enrich with workflow metadata.
         wf_id = self._session_to_workflow.get(state.session_id)
@@ -1292,6 +1303,9 @@ class SubSessionManager:
                     continuation_depth=state.continuation_depth + 1,
                     continued_from=state.session_id,
                     tool_names=state.tool_names,
+                    pool=state.pool_override,
+                    cp_pool=state.cp_pool_override,
+                    nl_pool=state.nl_pool_override,
                 )
                 # Move the continuation into the original workflow so it
                 # doesn't create an orphaned single-node workflow.
@@ -1681,15 +1695,25 @@ class SubSessionManager:
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
             )
 
-        cp_enabled = bool(self._cp_pool and self._cp_pool.enabled)
+        # Resolve per-session pool overrides for CP and NL translation.
+        _effective_cp_pool = state.cp_pool_override or self._cp_pool
+        _effective_nl_pool = state.nl_pool_override or self._nl_translation_pool
+        cp_enabled = bool(_effective_cp_pool and _effective_cp_pool.enabled)
         cp_correction_depth = 0  # depth-2 re-check: 0=unchecked, 1=corrected once, >=2=graceful fallback
         tool_calls_made: list[str] = []  # accumulated across the session
+
+        # Build a per-session CP runner if an override pool is active.
+        _cp_runner = self._cp_runner
+        if state.cp_pool_override:
+            _cp_runner = ConvergenceProtocolRunner(
+                state.cp_pool_override, "sub_session", self._cp_validators,
+            )
 
         # Build shared tool-call context for the inference engine.
         async def _cp_check_sub(phase, *, tool_name=None, tool_args=None,
                                 tool_result=None, assistant_response="",
                                 tool_calls_made=None, nl_tools=None):
-            return await self._cp_runner.run_phase(
+            return await _cp_runner.run_phase(
                 phase,
                 thread_id=state.session_id,
                 tool_calls_made=tool_calls_made or [],
@@ -1710,7 +1734,7 @@ class SubSessionManager:
             event_bus=self._event_bus,
             nl_enabled=nl_enabled,
             nl_tools=nl_tools,
-            nl_translation_pool=self._nl_translation_pool,
+            nl_translation_pool=_effective_nl_pool,
             timezone_str=get_timezone(),
             cp_enabled=cp_enabled,
             cp_check=_cp_check_sub if cp_enabled else None,
@@ -1977,7 +2001,7 @@ class SubSessionManager:
                                 break
                 _recent_assistant.reverse()
 
-                pi_result = await self._cp_runner.run_phase(
+                pi_result = await _cp_runner.run_phase(
                     "post_inference",
                     thread_id=state.session_id,
                     tool_calls_made=tool_calls_made,

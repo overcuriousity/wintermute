@@ -677,6 +677,10 @@ class LLMThread:
         pool = self._session_mgr.resolve_pool(thread_id)
         pool_cfg = pool.primary if pool.enabled else self._cfg
         prompt_mode = resolved_cfg.system_prompt_mode if resolved_cfg else "full"
+        # Resolve per-session compaction pool override for pre-compaction.
+        _compaction_pool = self._session_mgr.resolve_role_pool(
+            thread_id, "compaction", self._compactor.pool,
+        )
 
         # Build a query for vector memory retrieval (user message + last assistant reply).
         _query_parts = [item.text] if item.text else []
@@ -768,7 +772,10 @@ class LLMThread:
                 history_tokens, overhead_tokens, compaction_threshold, thread_id,
             )
             _keep_recent_override = resolved_cfg.compaction_keep_recent if resolved_cfg else None
-            await self._compactor.compact(thread_id, keep_recent=_keep_recent_override)
+            await self._compactor.compact(
+                thread_id, keep_recent=_keep_recent_override,
+                pool_override=_compaction_pool if _compaction_pool is not self._compactor.pool else None,
+            )
             messages = await self._store.build_messages(
                 item.text, item.is_system_event, thread_id, item.content,
                 ephemeral=item.ephemeral,
@@ -893,7 +900,13 @@ class LLMThread:
             )
         except ContextTooLargeError:
             logger.warning("Context too large for thread %s — forcing compaction", thread_id)
-            await self._compactor.compact(thread_id)
+            _comp_pool = self._session_mgr.resolve_role_pool(
+                thread_id, "compaction", self._compactor.pool,
+            )
+            await self._compactor.compact(
+                thread_id,
+                pool_override=_comp_pool if _comp_pool is not self._compactor.pool else None,
+            )
             messages = await self._store.build_messages(
                 item.text, item.is_system_event, thread_id, item.content,
                 ephemeral=item.ephemeral,
@@ -1007,7 +1020,31 @@ class LLMThread:
         tool_calls_made: list[str] = []
         tool_call_details: list[dict] = []
 
-        cp_enabled = self._convergence_protocol_pool.enabled
+        # Resolve per-session pool overrides for all roles.
+        _cp_pool = self._session_mgr.resolve_role_pool(
+            thread_id, "convergence_protocol", self._convergence_protocol_pool,
+        )
+        _nl_pool = self._nl_translation_pool
+        if self._nl_translation_pool:
+            _nl_pool = self._session_mgr.resolve_role_pool(
+                thread_id, "nl_translation", self._nl_translation_pool,
+            )
+        # Sub-sessions pool override: None means "use SubSessionManager default".
+        _sub_sessions_pool = self._session_mgr.resolve_role_pool_override(
+            thread_id, "sub_sessions",
+        )
+
+        cp_enabled = _cp_pool.enabled if _cp_pool else False
+
+        # Build per-turn CP runner with the (possibly overridden) pool.
+        if _cp_pool is not self._convergence_protocol_pool and cp_enabled:
+            from wintermute.core.cp_runner import ConvergenceProtocolRunner as _CPRunner
+            _cp_runner_main = _CPRunner(
+                pool=_cp_pool, scope="main",
+                enabled_validators=self._cp_validators,
+            )
+        else:
+            _cp_runner_main = self._cp_runner
 
         # Build a shared context for tool-call processing.
         # Build per-thread CP extra context for inline_tool_limit override.
@@ -1018,8 +1055,9 @@ class LLMThread:
         async def _cp_check_main(phase, *, tool_name=None, tool_args=None,
                                  tool_result=None, assistant_response="",
                                  tool_calls_made=None, nl_tools=None):
-            return await self._run_phase_check(
-                phase=phase, thread_id=thread_id,
+            return await _cp_runner_main.run_phase(
+                phase,
+                thread_id=thread_id,
                 tool_calls_made=tool_calls_made or [],
                 assistant_response=assistant_response,
                 tool_name=tool_name, tool_args=tool_args,
@@ -1035,12 +1073,15 @@ class LLMThread:
             event_bus=self._event_bus,
             nl_enabled=nl_enabled,
             nl_tools=nl_tools,
-            nl_translation_pool=getattr(self, "_nl_translation_pool", None),
+            nl_translation_pool=_nl_pool,
             timezone_str=prompt_assembler.get_timezone(),
             cp_enabled=cp_enabled,
             cp_check=_cp_check_main if cp_enabled else None,
             max_tool_output_chars=active_cfg.context_size * 4,  # tokens → approx chars
             tool_deps=self._tool_deps,
+            sub_sessions_pool_override=_sub_sessions_pool,
+            cp_pool_override=_cp_pool if _cp_pool is not self._convergence_protocol_pool else None,
+            nl_pool_override=_nl_pool if _nl_pool is not self._nl_translation_pool else None,
         )
 
         empty_retries = 0

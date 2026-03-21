@@ -105,6 +105,11 @@ class ToolCallContext:
     # Dependency container for tool execution.
     tool_deps: Optional[ToolDeps] = None
 
+    # Per-session pool overrides for sub-system delegation.
+    sub_sessions_pool_override: Optional[Any] = None
+    cp_pool_override: Optional[Any] = None
+    nl_pool_override: Optional[Any] = None
+
 
 def make_tool_context(
     *,
@@ -122,6 +127,9 @@ def make_tool_context(
     cp_check: Optional[CPCheckFn] = None,
     max_tool_output_chars: int = 0,
     tool_deps: Optional[ToolDeps] = None,
+    sub_sessions_pool_override: Any = None,
+    cp_pool_override: Any = None,
+    nl_pool_override: Any = None,
 ) -> ToolCallContext:
     """Create a ToolCallContext — single factory used by both inference loops."""
     return ToolCallContext(
@@ -139,6 +147,9 @@ def make_tool_context(
         cp_check=cp_check,
         max_tool_output_chars=max_tool_output_chars,
         tool_deps=tool_deps,
+        sub_sessions_pool_override=sub_sessions_pool_override,
+        cp_pool_override=cp_pool_override,
+        nl_pool_override=nl_pool_override,
     )
 
 
@@ -249,6 +260,9 @@ async def _execute_multi_item(
                 nesting_depth=ctx.nesting_depth,
                 parent_thread_id=ctx.parent_thread_id,
                 tool_deps=ctx.tool_deps,
+                sub_sessions_pool_override=ctx.sub_sessions_pool_override,
+                cp_pool_override=ctx.cp_pool_override,
+                nl_pool_override=ctx.nl_pool_override,
             ),
         )
         # Truncate individual item results (same logic as Step 4b).
@@ -446,6 +460,9 @@ async def process_tool_call(
             nesting_depth=ctx.nesting_depth,
             parent_thread_id=ctx.parent_thread_id,
             tool_deps=ctx.tool_deps,
+            sub_sessions_pool_override=ctx.sub_sessions_pool_override,
+            cp_pool_override=ctx.cp_pool_override,
+            nl_pool_override=ctx.nl_pool_override,
         ),
     )
     tool_calls_made.append(name)
