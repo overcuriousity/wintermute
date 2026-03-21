@@ -636,6 +636,18 @@ memory:
     prediction_proactive_cooldown_hours: 4 # Min hours between proactive fires per prediction
     # proactive_target_thread_id: "default"  # Thread to deliver proactive results to (default: main thread)
 
+    # ── Confidence Gating (weak-model resilience) ──
+    # Programmatic validators reject garbage dreaming outputs before memory writes.
+    confidence_min_text_length: 20        # Reject dreaming outputs shorter than this
+    confidence_max_input_overlap: 0.7     # Reject outputs that parrot >70% of input
+
+    # ── Quality Metrics ──
+    # Track dreaming output survival rates; auto-disable phases with high rejection.
+    quality_survival_threshold: 0.3       # Auto-disable creative phases below this survival rate
+    quality_min_cycles: 3                 # Require N checked cycles before auto-disabling
+    quality_lookback_cycles: 5            # Compute survival over last N cycles
+    quality_force_enable_phases: []       # Override auto-disable, e.g. ["association"]
+
   # Qdrant connection (required for qdrant backend only).
   # api_key is optional — only needed for Qdrant Cloud or instances
   # configured with authentication. Leave empty for local unauthenticated.

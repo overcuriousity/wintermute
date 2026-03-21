@@ -133,6 +133,96 @@ async def _consolidate(pool: "BackendPool",
 
 
 
+def _validate_dreaming_output(
+    text: str, phase: str, parsed: dict, context: dict,
+) -> tuple[bool, str]:
+    """Programmatic structural validation for creative-phase outputs.
+
+    Returns ``(True, "")`` on pass or ``(False, reason)`` on reject.
+    Fail-open: exceptions inside validation allow the entry through.
+    """
+    try:
+        # ── Common checks ──────────────────────────────────────────
+        min_len = 20 if phase == "prediction" else 15
+        if len(text) < min_len:
+            return False, f"too_short ({len(text)}<{min_len})"
+
+        # 3+ consecutive identical words → hallucination loop
+        words = text.split()
+        for i in range(len(words) - 2):
+            if words[i] == words[i + 1] == words[i + 2]:
+                return False, "consecutive_repeat"
+
+        # JSON / markdown fragments in output
+        if '{"' in text or "```" in text or text.lstrip().startswith("##"):
+            return False, "formatting_fragment"
+
+        # ── Association-specific ───────────────────────────────────
+        if phase == "association":
+            source_indices = parsed.get("source_indices", [])
+            seed_texts = context.get("seed_texts", [])
+            if seed_texts and isinstance(source_indices, list):
+                if len(source_indices) < 2:
+                    return False, "too_few_sources"
+                if any(
+                    not isinstance(idx, int) or idx >= len(seed_texts)
+                    for idx in source_indices
+                ):
+                    return False, "invalid_source_index"
+            # Near-substring of a single seed → model copied input
+            if seed_texts:
+                from difflib import SequenceMatcher
+                for st in seed_texts:
+                    if st and SequenceMatcher(None, text.lower(), st.lower()).ratio() > 0.6:
+                        return False, "near_copy_of_seed"
+
+        # ── Schema-specific ────────────────────────────────────────
+        elif phase == "schema":
+            cluster_texts = context.get("cluster_texts", [])
+            # Schema should generalise, not copy a single member
+            for ct in cluster_texts:
+                if ct and text.strip().lower() in ct.lower():
+                    return False, "substring_of_cluster_member"
+            # Force-downgrade replaces if confidence isn't high
+            if parsed.get("replaces_entries") and parsed.get("confidence") != "high":
+                parsed["replaces_entries"] = False
+
+        # ── Prediction-specific ────────────────────────────────────
+        elif phase == "prediction":
+            # Input-parrot detection
+            activity = context.get("activity_summary", "")
+            if activity:
+                from difflib import SequenceMatcher
+                if SequenceMatcher(None, text.lower(), activity.lower()).ratio() > 0.7:
+                    return False, "parrots_input"
+            # Duplicate detection
+            existing = context.get("existing_texts", set())
+            if text.strip().lower() in existing:
+                return False, "duplicate_prediction"
+            # Temporal suffix validation
+            pred_type = parsed.get("type", "behavioral")
+            if pred_type == "temporal" and "||" in text:
+                import re as _re
+                hour_match = _re.findall(r'\|\|hours?=([\d,\-]+)\|\|', text)
+                day_match = _re.findall(r'\|\|days?=([\w,\-]+)\|\|', text)
+                valid_days = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
+                malformed = False
+                for hm in hour_match:
+                    for h in hm.replace("-", ",").split(","):
+                        if h and (not h.isdigit() or not (0 <= int(h) <= 23)):
+                            malformed = True
+                for dm in day_match:
+                    for d in dm.split(","):
+                        if d.strip().lower() not in valid_days:
+                            malformed = True
+                if malformed:
+                    parsed["type"] = "behavioral"  # downgrade, don't reject
+    except Exception:
+        logger.debug("Dreaming output validation error (fail-open)", exc_info=True)
+
+    return True, ""
+
+
 def _load_dreaming_config() -> dict:
     """Load dreaming-specific config from config.yaml with defaults."""
     defaults = {
@@ -759,6 +849,7 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
             return result
 
         insights = parsed.get("insights", [])
+        collected_ids: list[str] = []
         for insight in insights:
             if insights_created >= max_insights:
                 break
@@ -766,12 +857,23 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
             if confidence not in ("high", "medium"):
                 continue
             text = insight.get("text", "").strip()
+            valid, reason = _validate_dreaming_output(
+                text, "association", insight, {"seed_texts": seed_texts},
+            )
+            if not valid:
+                logger.info("Dreaming association rejected: %s", reason)
+                continue
             if text:
-                await asyncio.to_thread(
+                eid = await asyncio.to_thread(
                     memory_store.add, text, None, "dreaming_association"
                 )
+                collected_ids.append(eid)
                 insights_created += 1
                 logger.info("Dreaming association insight: %s", text[:100])
+        if collected_ids:
+            await database.async_call(
+                database.record_dreaming_entries, "association", collected_ids,
+            )
     except Exception:  # noqa: BLE001
         logger.exception("Dreaming: association phase LLM failed")
         result.error = "LLM call failed"
@@ -842,6 +944,7 @@ async def _phase_schema(pool: "BackendPool", cfg: dict,
     schema_prompt = prompt_loader.load("DREAM_SCHEMA_PROMPT.txt")
     max_clusters = cfg["schema_max_clusters"]
     schemas_formed = 0
+    schema_collected_ids: list[str] = []
 
     # Sort clusters by size (largest first), cap at max.
     clusters = sorted(sim_data.schema_clusters, key=len, reverse=True)[:max_clusters]
@@ -881,10 +984,19 @@ async def _phase_schema(pool: "BackendPool", cfg: dict,
             if confidence not in ("high", "medium"):
                 continue
 
+            valid, reason = _validate_dreaming_output(
+                schema_text, "schema", parsed,
+                {"cluster_texts": cluster_texts},
+            )
+            if not valid:
+                logger.info("Dreaming schema rejected: %s", reason)
+                continue
+
             # Store the schema.
-            await asyncio.to_thread(
+            eid = await asyncio.to_thread(
                 memory_store.add, schema_text, None, "dreaming_schema"
             )
+            schema_collected_ids.append(eid)
             schemas_formed += 1
             logger.info("Dreaming schema: %s (replaces=%s)",
                         schema_text[:100], replaces)
@@ -908,6 +1020,10 @@ async def _phase_schema(pool: "BackendPool", cfg: dict,
             logger.debug("Dreaming: schema extraction failed for cluster",
                          exc_info=True)
 
+    if schema_collected_ids:
+        await database.async_call(
+            database.record_dreaming_entries, "schema", schema_collected_ids,
+        )
     result.items_processed = schemas_formed
     result.summary = f"formed {schemas_formed} schemas from {len(clusters)} clusters"
     await database.async_call(
@@ -1033,7 +1149,16 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
         parsed = parse_json_from_llm(raw, dict)
         predictions = parsed.get("predictions", [])
 
+        # Pre-fetch existing prediction texts for duplicate detection.
+        _existing_raw = await asyncio.to_thread(
+            memory_store.get_by_source, "dreaming_prediction", 100, False,
+        )
+        existing_pred_texts = {
+            e.get("text", "").strip().lower() for e in _existing_raw
+        }
+
         predictions_added = 0
+        pred_collected_ids: list[str] = []
         for pred in predictions:
             if predictions_added >= max_predictions:
                 break
@@ -1042,6 +1167,13 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
                 continue
             text = pred.get("text", "").strip()
             pred_type = pred.get("type", "behavioral")
+            valid, reason = _validate_dreaming_output(
+                text, "prediction", pred,
+                {"activity_summary": content, "existing_texts": existing_pred_texts},
+            )
+            if not valid:
+                logger.info("Dreaming prediction rejected: %s", reason)
+                continue
             if text:
                 # Validate structured temporal suffix if present.
                 if pred_type == "temporal" and "||" not in text:
@@ -1070,8 +1202,13 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
                     )
                 except Exception:  # noqa: BLE001
                     logger.debug("Dreaming: prediction accuracy upsert failed", exc_info=True)
+                pred_collected_ids.append(entry_id)
                 predictions_added += 1
                 logger.info("Dreaming prediction: %s", text[:100])
+        if pred_collected_ids:
+            await database.async_call(
+                database.record_dreaming_entries, "prediction", pred_collected_ids,
+            )
         result.items_processed = predictions_added
         result.summary = f"added {predictions_added} predictions"
     except Exception:  # noqa: BLE001
@@ -1165,6 +1302,58 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
 # Dream Cycle Runner
 # ═══════════════════════════════════════════════════════════════════════════════
 
+async def _check_survival(cfg: dict) -> dict[str, bool]:
+    """Check dreaming entry survival rates and decide which phases to run.
+
+    Returns ``{phase_name: should_run}`` for each creative phase.
+    Phases with insufficient data default to enabled.
+    """
+    threshold = cfg.get("quality_survival_threshold", 0.3)
+    min_cycles = cfg.get("quality_min_cycles", 3)
+    lookback = cfg.get("quality_lookback_cycles", 5)
+    force_enable = set(cfg.get("quality_force_enable_phases", []))
+
+    result: dict[str, bool] = {}
+    for phase in ("association", "schema", "prediction"):
+        if phase in force_enable:
+            result[phase] = True
+            continue
+        try:
+            # Check unchecked rows and update survival counts.
+            unchecked = await database.async_call(
+                database.get_unchecked_dreaming_entries, phase,
+            )
+            for row in unchecked:
+                entry_ids = _json.loads(row["entry_ids"])
+                surviving = await asyncio.to_thread(
+                    memory_store.exists_batch, entry_ids,
+                )
+                await database.async_call(
+                    database.update_dreaming_survival, row["id"], len(surviving),
+                )
+
+            # Compute rate and decide.
+            rate = await database.async_call(
+                database.get_phase_survival_rate, phase, lookback,
+            )
+            if rate is not None and rate < threshold:
+                # Need enough cycles before auto-disabling.
+                total_checked = len(unchecked)  # approximate
+                if total_checked >= min_cycles or rate == 0.0:
+                    logger.warning(
+                        "Dreaming: auto-disabling phase '%s' "
+                        "(survival rate %.1f%% < %.1f%% threshold)",
+                        phase, rate * 100, threshold * 100,
+                    )
+                    result[phase] = False
+                    continue
+            result[phase] = True
+        except Exception:  # noqa: BLE001
+            logger.debug("Dreaming: survival check failed for %s", phase, exc_info=True)
+            result[phase] = True  # fail-open
+    return result
+
+
 async def run_dream_cycle(
     pool: "BackendPool",
     event_bus: "EventBus | None" = None,
@@ -1199,29 +1388,60 @@ async def run_dream_cycle(
         logger.exception("Dreaming: similarity computation failed")
         report.errors.append("similarity computation failed")
 
-    # Define phase roster.
-    phases: list[tuple[str, Any]] = []
+    # Define phase roster: housekeeping first, then creative.
+    housekeeping_phases: list[tuple[str, Any]] = [
+        ("dedup", lambda: _phase_dedup(pool, cfg, sim_data)),
+        ("contradiction", lambda: _phase_contradiction(pool, cfg, sim_data)),
+        ("stale_pruning", lambda: _phase_stale_pruning(pool, cfg, sim_data)),
+        ("task_consolidation", lambda: _phase_task_consolidation(pool, cfg, sim_data)),
+        ("skill_consolidation", lambda: _phase_skill_consolidation(pool, cfg, sim_data)),
+    ]
 
-    phases.append(("dedup", lambda: _phase_dedup(pool, cfg, sim_data)))
-    phases.append(("contradiction",
-                    lambda: _phase_contradiction(pool, cfg, sim_data)))
-    phases.append(("stale_pruning",
-                    lambda: _phase_stale_pruning(pool, cfg, sim_data)))
-    phases.append(("task_consolidation",
-                    lambda: _phase_task_consolidation(pool, cfg, sim_data)))
-    phases.append(("skill_consolidation",
-                    lambda: _phase_skill_consolidation(pool, cfg, sim_data)))
+    creative_phases: list[tuple[str, Any]] = [
+        ("association", lambda: _phase_association(pool, cfg, sim_data)),
+        ("schema", lambda: _phase_schema(pool, cfg, sim_data)),
+        ("prediction", lambda: _phase_prediction(pool, cfg, sim_data)),
+    ]
 
-    # Creative phases (gated by conditions).
-    phases.append(("association",
-                    lambda: _phase_association(pool, cfg, sim_data)))
-    phases.append(("schema",
-                    lambda: _phase_schema(pool, cfg, sim_data)))
-    phases.append(("prediction",
-                    lambda: _phase_prediction(pool, cfg, sim_data)))
+    # Run housekeeping first (deletions may affect survival checks).
+    phases: list[tuple[str, Any]] = list(housekeeping_phases)
 
-    # Execute phases sequentially.
+    # Execute housekeeping, then check survival to gate creative phases.
     for phase_name, phase_fn in phases:
+        logger.info("Dreaming: starting phase '%s'", phase_name)
+        if event_bus:
+            event_bus.emit("dreaming.phase_started", phase=phase_name)
+        try:
+            phase_result = await phase_fn()
+            report.results.append(phase_result)
+            report.phases_run.append(phase_name)
+            if event_bus:
+                event_bus.emit(
+                    "dreaming.phase_completed",
+                    phase=phase_name,
+                    items=phase_result.items_processed,
+                    summary=phase_result.summary,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Dreaming: phase '%s' failed: %s", phase_name, exc)
+            report.errors.append(f"{phase_name}: {exc}")
+            report.results.append(PhaseResult(
+                phase_name=phase_name, error=str(exc),
+                summary=f"failed: {exc}",
+            ))
+
+    # Check quality metrics to gate creative phases.
+    should_run = await _check_survival(cfg)
+
+    # Execute creative phases, filtered by survival check.
+    for phase_name, phase_fn in creative_phases:
+        if not should_run.get(phase_name, True):
+            logger.info("Dreaming: skipping phase '%s' (auto-disabled by quality metrics)", phase_name)
+            report.results.append(PhaseResult(
+                phase_name=phase_name,
+                summary="auto-disabled (low survival rate)",
+            ))
+            continue
         logger.info("Dreaming: starting phase '%s'", phase_name)
         if event_bus:
             event_bus.emit("dreaming.phase_started", phase=phase_name)
