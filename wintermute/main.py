@@ -459,18 +459,22 @@ async def main() -> None:
         logger.info("NL Translation enabled (tools=%s, model=%s)",
                      nl_translation_config["tools"], nl_translation_pool.primary.model)
 
+    scheduler_raw = cfg.get("scheduler", {}) or {}
     dreaming_raw = cfg.get("dreaming", {})
     dreaming_cfg = DreamingConfig(
         hour=dreaming_raw.get("hour", 1),
         minute=dreaming_raw.get("minute", 0),
-        timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
+        timezone=scheduler_raw.get("timezone", "UTC"),
     )
     memory_dreaming_raw = cfg.get("memory", {}).get("dreaming", {})
     scheduler_cfg = SchedulerConfig(
-        timezone=cfg.get("scheduler", {}).get("timezone", "UTC"),
+        timezone=scheduler_raw.get("timezone", "UTC"),
         prediction_proactive_scheduling=memory_dreaming_raw.get("prediction_proactive_scheduling", True),
         prediction_proactive_cooldown_hours=memory_dreaming_raw.get("prediction_proactive_cooldown_hours", 4),
         proactive_target_thread_id=memory_dreaming_raw.get("proactive_target_thread_id", "default"),
+        task_completed_retention_days=scheduler_raw.get("task_completed_retention_days", 30),
+        task_maintenance_interval_hours=scheduler_raw.get("task_maintenance_interval_hours", 6),
+        auto_complete_stale_once_tasks=scheduler_raw.get("auto_complete_stale_once_tasks", True),
     )
     # --- Tuning constants (optional overrides from config) ---
     _tuning_raw = cfg.get("tuning")

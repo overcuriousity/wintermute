@@ -469,6 +469,9 @@ Operational self-awareness profiler that runs inside the reflection cycle. Aggre
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
 | `timezone` | no | `"UTC"` | IANA timezone for all task scheduling (also affects `dreaming` schedule). Examples: `Europe/Berlin`, `America/New_York` |
+| `task_completed_retention_days` | no | `30` | Delete completed tasks older than N days during scheduler maintenance (`0` = delete immediately on next maintenance pass) |
+| `task_maintenance_interval_hours` | no | `6` | Interval for scheduler task lifecycle maintenance (purge + stale one-time reconciliation) |
+| `auto_complete_stale_once_tasks` | no | `true` | Auto-complete active one-time tasks that are already past due and have no runnable pending job |
 
 ### Per-Thread Configuration
 

@@ -422,14 +422,16 @@ def complete_task(task_id: str, reason: str = "", thread_id: Optional[str] = Non
         if thread_id:
             n = conn.execute(
                 "UPDATE tasks SET status='completed', completed_at=?, updated=?, reason=?, "
-                "schedule_type=NULL, schedule_desc=NULL, schedule_config=NULL "
+                "schedule_type=NULL, schedule_desc=NULL, schedule_config=NULL, "
+                "apscheduler_job_id=NULL "
                 "WHERE id=? AND thread_id=?",
                 (now, now, reason, task_id, thread_id),
             ).rowcount
         else:
             n = conn.execute(
                 "UPDATE tasks SET status='completed', completed_at=?, updated=?, reason=?, "
-                "schedule_type=NULL, schedule_desc=NULL, schedule_config=NULL "
+                "schedule_type=NULL, schedule_desc=NULL, schedule_config=NULL, "
+                "apscheduler_job_id=NULL "
                 "WHERE id=?",
                 (now, now, reason, task_id),
             ).rowcount
@@ -553,7 +555,8 @@ def delete_old_completed_tasks(days: int = 30) -> int:
     cutoff = time.time() - days * 86400
     with _connect() as conn:
         n = conn.execute(
-            "DELETE FROM tasks WHERE status='completed' AND created < ?",
+            "DELETE FROM tasks WHERE status='completed' "
+            "AND COALESCE(completed_at, created) < ?",
             (cutoff,),
         ).rowcount
         conn.commit()

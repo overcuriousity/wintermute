@@ -551,6 +551,9 @@ scheduler:
   timezone: "UTC"                         # IANA timezone for all scheduling
                                           # Examples: Europe/Berlin, America/New_York, Asia/Tokyo
                                           # Also affects dreaming schedule above
+  task_completed_retention_days: 30       # Auto-delete completed tasks older than N days (0 = immediate)
+  task_maintenance_interval_hours: 6      # How often lifecycle cleanup/reconciliation runs
+  auto_complete_stale_once_tasks: true    # Mark past-due one-time tasks done if no runnable job exists
 
 
 # ── Memory Retrieval (Vector-Indexed Memories) ──────────────────────
