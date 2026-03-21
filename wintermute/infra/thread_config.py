@@ -195,8 +195,14 @@ class ThreadConfigManager:
         global_overrides = self._global_defaults.get("backend_overrides")
         if isinstance(global_overrides, dict):
             raw_overrides.update(global_overrides)
-        if tc.backend_overrides:
-            raw_overrides.update(tc.backend_overrides)
+        if isinstance(tc.backend_overrides, dict):
+            if tc.backend_overrides:
+                raw_overrides.update(tc.backend_overrides)
+        elif tc.backend_overrides is not None:
+            logger.warning(
+                "Ignoring invalid backend_overrides: expected dict, got %s",
+                type(tc.backend_overrides).__name__,
+            )
         # If backend_overrides["main"] is set, it takes precedence over backend_name.
         resolved_backend_name = raw_overrides.get("main") or _pick("backend_name")
 
@@ -227,8 +233,9 @@ class ThreadConfigManager:
                 for role in sorted(_VALID_BACKEND_OVERRIDE_ROLES):
                     dotted = f"backend_overrides.{role}"
                     role_val = val.get(role) if isinstance(val, dict) else None
-                    tc_overrides = tc.backend_overrides or {}
-                    global_overrides = self._global_defaults.get("backend_overrides") or {}
+                    tc_overrides = tc.backend_overrides if isinstance(tc.backend_overrides, dict) else {}
+                    _raw_global = self._global_defaults.get("backend_overrides")
+                    global_overrides = _raw_global if isinstance(_raw_global, dict) else {}
                     if role in tc_overrides:
                         src = "override"
                     elif role in global_overrides:
