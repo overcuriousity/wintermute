@@ -1030,12 +1030,9 @@ class LLMThread:
                 thread_id, "nl_translation", self._nl_translation_pool,
             )
         # Sub-sessions pool override: None means "use SubSessionManager default".
-        _sub_sessions_pool = None
-        if resolved_cfg and resolved_cfg.backend_overrides.get("sub_sessions"):
-            _bname = resolved_cfg.backend_overrides["sub_sessions"]
-            _pools = self._session_mgr._backend_pools_by_name
-            if _bname in _pools:
-                _sub_sessions_pool = _pools[_bname]
+        _sub_sessions_pool = self._session_mgr.resolve_role_pool_override(
+            thread_id, "sub_sessions",
+        )
 
         cp_enabled = _cp_pool.enabled if _cp_pool else False
 

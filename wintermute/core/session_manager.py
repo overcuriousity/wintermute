@@ -67,6 +67,16 @@ class SessionManager:
             return self._backend_pools_by_name[override_name]
         return default_pool
 
+    def resolve_role_pool_override(self, thread_id: str, role: str) -> "Optional[BackendPool]":
+        """Return the override pool for a role, or None if no override is set."""
+        if not self._thread_config_manager:
+            return None
+        resolved = self._thread_config_manager.resolve(thread_id)
+        override_name = resolved.backend_overrides.get(role)
+        if override_name and override_name in self._backend_pools_by_name:
+            return self._backend_pools_by_name[override_name]
+        return None
+
     def resolve_config(self, thread_id: str) -> "Optional[ResolvedThreadConfig]":
         """Return resolved per-thread config, or None if no manager is set."""
         if not self._thread_config_manager:

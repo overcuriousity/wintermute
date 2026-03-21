@@ -110,7 +110,7 @@ class ContextCompactor:
             await database.async_call(
                 database.save_interaction_log,
                 _time.time(), "compaction", thread_id,
-                self._compaction_pool.last_used,
+                _pool.last_used,
                 summary_prompt, summary, "ok",
             )
         except Exception:  # noqa: BLE001
