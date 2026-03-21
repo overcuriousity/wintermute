@@ -849,8 +849,14 @@ class TaskScheduler:
                 return False
             # Job is past due; respect misfire_grace_time — the job may still fire
             # if APScheduler picks it up within the grace window.
-            grace_seconds = job.misfire_grace_time or 0
-            if (now_utc - next_run).total_seconds() < grace_seconds:
+            # None means "unlimited" in APScheduler, so only enforce the window when
+            # we have a concrete numeric value; otherwise assume the job may still run.
+            grace_seconds = getattr(job, "misfire_grace_time", None)
+            if isinstance(grace_seconds, (int, float)):
+                if (now_utc - next_run).total_seconds() < grace_seconds:
+                    return False
+            elif grace_seconds is None:
+                # No grace limit set — job could still be picked up; don't auto-complete.
                 return False
 
         if job is not None:
