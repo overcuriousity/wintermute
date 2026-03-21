@@ -5,10 +5,71 @@ Memory entries are stored exclusively in the vector memory store.
 The deprecated MEMORIES.txt flat file has been removed.
 """
 
+import json
 import logging
+import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Phrases that indicate the model is echoing system/infrastructure instructions.
+_SYSTEM_ECHO_PHRASES = (
+    "you are an ai",
+    "your task is",
+    "respond in json",
+    "convergence protocol",
+    "system prompt",
+    "sub-session",
+    "function calling",
+)
+
+
+def _validate_memory_entry(entry: str) -> tuple[bool, str]:
+    """Programmatic quality gate for memory writes.
+
+    Returns ``(True, "")`` when the entry is acceptable, or
+    ``(False, reason)`` when it should be rejected.  Fail-open: if
+    validation itself throws, the entry is allowed through.
+    """
+    try:
+        text = entry.strip()
+
+        # --- length bounds ---
+        if len(text) < 10:
+            return False, "too_short"
+        if len(text) > 2000:
+            return False, "too_long"
+
+        # --- raw JSON / code dump ---
+        if text[0] in ("{", "["):
+            try:
+                json.loads(text)
+                return False, "raw_json"
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        # --- system prompt echo (3+ phrase matches) ---
+        lower = text.lower()
+        matches = sum(1 for p in _SYSTEM_ECHO_PHRASES if p in lower)
+        if matches >= 3:
+            return False, "system_echo"
+
+        # --- repetitive content (any word > 5 occurrences) ---
+        words = lower.split()
+        if words:
+            from collections import Counter
+            counts = Counter(words)
+            if counts.most_common(1)[0][1] > 5:
+                return False, "repetitive"
+
+        # --- encoding artifacts ---
+        if "\x00" in text or re.search(r"\\{3,}", text):
+            return False, "encoding_artifacts"
+
+    except Exception:
+        logger.debug("Memory validation error (fail-open)", exc_info=True)
+
+    return True, ""
 
 
 def read_text_safe(path: Path, default: str = "") -> str:
@@ -41,6 +102,11 @@ def append_memory(
     ``"fallback"`` (dedup failed, plain add used).
     """
     from wintermute.infra import memory_store
+
+    valid, reason = _validate_memory_entry(entry)
+    if not valid:
+        logger.warning("Memory entry rejected: %s (entry: %.100s)", reason, entry)
+        return 0, "rejected"
 
     status = "ok"
     _entry_preview = entry[:200]
