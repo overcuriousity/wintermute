@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.14.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.13.1-alpha...v0.14.0-alpha) (2026-03-21)
+
+
+### Features
+
+* expand per-thread config overrides and wire skill success tracking ([ac8cd39](https://github.com/overcuriousity/wintermute/commit/ac8cd39e95839b9d4c1eb1d8c6bbcc763fc159cb))
+* expand per-thread config overrides and wire skill success tracking ([89c679b](https://github.com/overcuriousity/wintermute/commit/89c679b881d9523a2dbde6343fe5f03b935e8846))
+* per-session backend overrides for all role-based pools ([29048a6](https://github.com/overcuriousity/wintermute/commit/29048a629c54a2bea23f81a1838e426d2011235a))
+* per-session backend overrides for all role-based pools ([05726d5](https://github.com/overcuriousity/wintermute/commit/05726d5e193ab6c5f82e025c29248aafe1cf183e))
+
+
+### Bug Fixes
+
+* address Copilot review feedback on thread config and skill store ([d412ad2](https://github.com/overcuriousity/wintermute/commit/d412ad2f9c457d0aba84f615c164a15d3f22b141))
+* address PR review feedback for per-session backend overrides ([df6959c](https://github.com/overcuriousity/wintermute/commit/df6959c90a34a735336346fe1488aef971a10a7d))
+* guard backend_overrides type in resolve/resolve_as_dict ([40b2c3d](https://github.com/overcuriousity/wintermute/commit/40b2c3df15355a3bda030495e99acc24fc4133cc))
+* **scheduler:** address additional copilot review comments ([07c28fa](https://github.com/overcuriousity/wintermute/commit/07c28fae2c7152822085f4522b25fa1ad2a26bcb))
+* **scheduler:** address copilot review - startup blocking and relative past-due check ([fe97584](https://github.com/overcuriousity/wintermute/commit/fe975842a800899630cf2e9e2dcec16d26e9f449))
+* **scheduler:** always check task status in _fire_task regardless of schedule_type ([9116b6a](https://github.com/overcuriousity/wintermute/commit/9116b6aeb68e5e7f515b78fdc10749bc2787c510))
+* **scheduler:** guard non-active task firing and fix dreaming job removal order ([d5ce0c4](https://github.com/overcuriousity/wintermute/commit/d5ce0c430fdb098132f4a32e9830694ebf2a9e9d))
+* **scheduler:** handle None misfire_grace_time in _should_complete_stale_once ([19c53a1](https://github.com/overcuriousity/wintermute/commit/19c53a108d417dc4bda741352b7b3b4a024a6575))
+* **scheduler:** respect misfire_grace_time before auto-completing stale once-tasks ([911fcb6](https://github.com/overcuriousity/wintermute/commit/911fcb697be6292ccd7ec082dc8580843da0f6c6))
+* **scheduler:** thread-safe async maintenance and remove dreaming.py retention duplicate ([e73ae4e](https://github.com/overcuriousity/wintermute/commit/e73ae4e8f9d48192d871f5c0d82203a4d6d4f4e3))
+* **sub-session:** address copilot review comments on PR [#221](https://github.com/overcuriousity/wintermute/issues/221) ([a4bdcb0](https://github.com/overcuriousity/wintermute/commit/a4bdcb0b619f1509375bc57f194d03f131a8347c))
+* **sub-session:** address second round of copilot review comments on PR [#221](https://github.com/overcuriousity/wintermute/issues/221) ([f8c04cb](https://github.com/overcuriousity/wintermute/commit/f8c04cbc758d442054c2f5319531e5087bd20b37))
+* **sub-session:** improve timing accuracy, context efficiency, and result relay ([c84681a](https://github.com/overcuriousity/wintermute/commit/c84681a7101354258ea416f7a0e948771d3a3bb8))
+* **sub-session:** improve timing, context efficiency, and result relay ([832a276](https://github.com/overcuriousity/wintermute/commit/832a2766ed37300667d166241ec7022f590e1fa7))
+* **sub-session:** skip [NO_ACTION] sentinel when back-filling task result summary ([b2a2a8b](https://github.com/overcuriousity/wintermute/commit/b2a2a8b021ec64c2ace036cf7b5689c7d5fc733a))
+* **task:** align execution-mode runtime/logging semantics ([4eb82ce](https://github.com/overcuriousity/wintermute/commit/4eb82ce291e749d14d06ad30d2a94ee3b31746ce))
+* **task:** keep scheduled reminders passive unless ai_prompt is explicit ([674fcf0](https://github.com/overcuriousity/wintermute/commit/674fcf00ec64584d6f52a583747d3b85bf938b7c))
+* **task:** keep scheduled reminders passive unless ai_prompt is explicit ([e29fc2a](https://github.com/overcuriousity/wintermute/commit/e29fc2a50e8680ec004f53f719c425a858d2d9d1))
+* **task:** preserve legacy default notify + record attempted failures ([2a72ffd](https://github.com/overcuriousity/wintermute/commit/2a72ffd7028584d1eb0c524c8e34e4f8e1255f06))
+* **task:** preserve notify semantics and accurate delivery labels ([c623741](https://github.com/overcuriousity/wintermute/commit/c623741440c946bf8236ff91d0dc9e46cb28cc71))
+
 ## [0.13.1-alpha](https://github.com/overcuriousity/wintermute/compare/v0.13.0-alpha...v0.13.1-alpha) (2026-03-18)
 
 
