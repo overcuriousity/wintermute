@@ -494,6 +494,10 @@ class WebInterface:
             "available_backends": backends,
             "keys": [
                 {"name": "backend_name", "type": "select", "options": backends},
+                {"name": "backend_overrides.compaction", "type": "select", "options": backends, "nullable": True},
+                {"name": "backend_overrides.sub_sessions", "type": "select", "options": backends, "nullable": True},
+                {"name": "backend_overrides.convergence_protocol", "type": "select", "options": backends, "nullable": True},
+                {"name": "backend_overrides.nl_translation", "type": "select", "options": backends, "nullable": True},
                 {"name": "session_timeout_minutes", "type": "int", "min": 1, "nullable": True},
                 {"name": "sub_sessions_enabled", "type": "bool"},
                 {"name": "system_prompt_mode", "type": "select", "options": ["full", "minimal"]},
@@ -514,11 +518,21 @@ class WebInterface:
         thread_id = request.match_info["thread_id"]
         resolved_dict = mgr.resolve_as_dict(thread_id)
         raw = mgr.get(thread_id)
+        # Flatten backend_overrides dict into dotted keys for UI compatibility.
+        flat_overrides: dict = {}
+        if raw:
+            for k, v in raw.__dict__.items():
+                if v is None:
+                    continue
+                if k == "backend_overrides" and isinstance(v, dict):
+                    for role, bname in v.items():
+                        flat_overrides[f"backend_overrides.{role}"] = bname
+                else:
+                    flat_overrides[k] = v
         return self._json({
             "thread_id": thread_id,
             "resolved": resolved_dict,
-            "overrides": {k: v for k, v in (raw.__dict__ if raw else {}).items()
-                          if v is not None} if raw else {},
+            "overrides": flat_overrides,
         })
 
     async def _api_thread_config_set(self, request: web.Request) -> web.Response:

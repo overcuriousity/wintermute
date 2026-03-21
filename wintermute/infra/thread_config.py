@@ -4,7 +4,8 @@ Provides a three-layer config resolution model:
   per-thread override (SQLite)  →  global config default  →  hardcoded default
 
 Each thread can independently override:
-  - ``backend_name``              — pin inference to a named backend
+  - ``backend_name``              — pin main inference to a named backend
+  - ``backend_overrides``         — per-role backend overrides (dict: role → backend name)
   - ``session_timeout_minutes``   — auto-session-renewal timeout (plumbing for #58)
   - ``sub_sessions_enabled``      — enable/disable sub-session spawning
   - ``system_prompt_mode``        — 'full' or 'minimal' prompt assembly
@@ -38,6 +39,7 @@ logger = logging.getLogger(__name__)
 class ThreadConfig:
     """Per-thread config overrides.  ``None`` means 'use global default'."""
     backend_name: Optional[str] = None
+    backend_overrides: Optional[dict[str, str]] = None  # role → backend name
     session_timeout_minutes: Optional[int] = None
     sub_sessions_enabled: Optional[bool] = None
     system_prompt_mode: Optional[str] = None          # 'full' | 'minimal'
@@ -64,6 +66,7 @@ class ThreadConfig:
 class ResolvedThreadConfig:
     """Fully resolved config — no ``None`` values remain."""
     backend_name: Optional[str]          # None means "use role-based pool"
+    backend_overrides: dict[str, str]    # role → backend name (empty = no overrides)
     session_timeout_minutes: Optional[int]  # None means "no auto-renewal"
     sub_sessions_enabled: bool
     system_prompt_mode: str              # 'full' | 'minimal'
@@ -78,6 +81,7 @@ class ResolvedThreadConfig:
 # Hardcoded fallback defaults (baseline when no per-thread override exists).
 _HARDCODED_DEFAULTS = {
     "backend_name": None,
+    "backend_overrides": {},
     "session_timeout_minutes": None,
     "sub_sessions_enabled": True,
     "system_prompt_mode": "full",
@@ -91,6 +95,11 @@ _HARDCODED_DEFAULTS = {
 
 # Valid values for system_prompt_mode.
 _VALID_PROMPT_MODES = {"full", "minimal"}
+
+# Valid role names for backend_overrides (session-scoped roles only).
+_VALID_BACKEND_OVERRIDE_ROLES = {
+    "main", "compaction", "sub_sessions", "convergence_protocol", "nl_translation",
+}
 
 # Valid 2-char language codes for seed_language.
 _VALID_SEED_LANGUAGES = {"en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "ja", "zh", "ko"}
@@ -181,8 +190,19 @@ class ThreadConfigManager:
         else:
             normalized_seed_language = "en"
 
+        # Merge backend_overrides: per-thread dict wins over global dict.
+        raw_overrides = {}
+        global_overrides = self._global_defaults.get("backend_overrides")
+        if isinstance(global_overrides, dict):
+            raw_overrides.update(global_overrides)
+        if tc.backend_overrides:
+            raw_overrides.update(tc.backend_overrides)
+        # If backend_overrides["main"] is set, it takes precedence over backend_name.
+        resolved_backend_name = raw_overrides.get("main") or _pick("backend_name")
+
         return ResolvedThreadConfig(
-            backend_name=_pick("backend_name"),
+            backend_name=resolved_backend_name,
+            backend_overrides=raw_overrides,
             session_timeout_minutes=_pick("session_timeout_minutes"),
             sub_sessions_enabled=bool(sub_enabled) if sub_enabled is not None else True,
             system_prompt_mode=_pick("system_prompt_mode") or "full",
@@ -202,6 +222,21 @@ class ThreadConfigManager:
         for f in fields(ResolvedThreadConfig):
             val = getattr(resolved, f.name)
             override = getattr(tc, f.name, None)
+            if f.name == "backend_overrides":
+                # Emit per-role source annotations for each override role.
+                for role in sorted(_VALID_BACKEND_OVERRIDE_ROLES):
+                    dotted = f"backend_overrides.{role}"
+                    role_val = val.get(role) if isinstance(val, dict) else None
+                    tc_overrides = tc.backend_overrides or {}
+                    global_overrides = self._global_defaults.get("backend_overrides") or {}
+                    if role in tc_overrides:
+                        src = "override"
+                    elif role in global_overrides:
+                        src = "global"
+                    else:
+                        src = "default"
+                    result[dotted] = {"value": role_val, "source": src}
+                continue
             if override is not None:
                 source = "override"
             elif f.name in self._global_defaults and self._global_defaults[f.name] is not None:
@@ -269,7 +304,10 @@ class ThreadConfigManager:
         for tid, tc in self._cache.items():
             # Only include threads that actually have at least one override.
             d = asdict(tc)
-            has_override = any(v is not None for v in d.values())
+            has_override = any(
+                (v is not None and v != {}) if isinstance(v, (dict, type(None))) else v is not None
+                for v in d.values()
+            )
             if has_override:
                 result[tid] = self.resolve_as_dict(tid)
         return result
@@ -280,14 +318,43 @@ class ThreadConfigManager:
             source: str = "api") -> ResolvedThreadConfig:
         """Validate and set a single config key for a thread.
 
+        Supports dotted keys for backend_overrides (e.g. ``backend_overrides.compaction``).
+
         Returns the updated resolved config.
         Raises ``ValueError`` on invalid key or value.
         """
         tc = self._cache.get(thread_id, ThreadConfig())
 
+        # Handle dotted backend_overrides keys (e.g. "backend_overrides.compaction").
+        if key.startswith("backend_overrides."):
+            role = key.split(".", 1)[1]
+            if role not in _VALID_BACKEND_OVERRIDE_ROLES:
+                raise ValueError(
+                    f"Unknown backend override role {role!r}. "
+                    f"Valid: {', '.join(sorted(_VALID_BACKEND_OVERRIDE_ROLES))}"
+                )
+            overrides = dict(tc.backend_overrides or {})
+            is_clear = value is None or (isinstance(value, str) and value.strip().lower() in ("null", "none", ""))
+            old_value = overrides.get(role)
+            if is_clear:
+                overrides.pop(role, None)
+            else:
+                if value not in self._available_backends:
+                    raise ValueError(
+                        f"Unknown backend {value!r}. Available: {', '.join(self._available_backends)}"
+                    )
+                overrides[role] = value
+            tc.backend_overrides = overrides or None
+            self._cache[thread_id] = tc
+            self._persist(thread_id, tc)
+            self._log_change(thread_id, key, old_value, value if not is_clear else None, source)
+            return self.resolve(thread_id)
+
         # Validate key.
-        if key not in {f.name for f in fields(ThreadConfig)}:
-            valid_keys = ", ".join(f.name for f in fields(ThreadConfig))
+        known = {f.name for f in fields(ThreadConfig)}
+        if key not in known:
+            # Also accept "backend_overrides" as a whole-dict key.
+            valid_keys = ", ".join(sorted(known))
             raise ValueError(f"Unknown config key {key!r}. Valid keys: {valid_keys}")
 
         # Treat null / "null" / "" as "clear override" for any key.
@@ -298,6 +365,28 @@ class ThreadConfigManager:
                 raise ValueError(
                     f"Unknown backend {value!r}. Available: {', '.join(self._available_backends)}"
                 )
+        elif key == "backend_overrides":
+            # Accept a dict or JSON string mapping role → backend name.
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except json.JSONDecodeError:
+                    raise ValueError("backend_overrides must be a JSON dict (role → backend name)")
+            if not isinstance(value, dict):
+                raise ValueError("backend_overrides must be a dict (role → backend name)")
+            for role, bname in value.items():
+                if role not in _VALID_BACKEND_OVERRIDE_ROLES:
+                    raise ValueError(
+                        f"Unknown role {role!r} in backend_overrides. "
+                        f"Valid: {', '.join(sorted(_VALID_BACKEND_OVERRIDE_ROLES))}"
+                    )
+                if bname is not None and bname not in self._available_backends:
+                    raise ValueError(
+                        f"Unknown backend {bname!r} for role {role!r}. "
+                        f"Available: {', '.join(self._available_backends)}"
+                    )
+            # Strip None values.
+            value = {r: b for r, b in value.items() if b is not None} or None
         elif key == "session_timeout_minutes":
             value = int(value)
             if value < 1:

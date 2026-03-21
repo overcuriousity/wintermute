@@ -63,10 +63,12 @@ class ContextCompactor:
         return self._compaction_pool
 
     async def compact(self, thread_id: str = "default",
-                      keep_recent: int | None = None) -> None:
+                      keep_recent: int | None = None,
+                      pool_override: "BackendPool | None" = None) -> None:
         """Summarise and archive old messages for the given thread.
 
         *keep_recent* overrides the instance default when provided (per-thread config).
+        *pool_override* uses the given pool instead of the instance compaction pool.
         """
         effective_keep = keep_recent if keep_recent is not None else self._keep_recent
         if effective_keep < 1:
@@ -94,7 +96,8 @@ class ContextCompactor:
         summary_prompt = prompt_loader.load("COMPACTION_PROMPT.txt", history=history_text)
 
         try:
-            summary_response = await self._compaction_pool.call(
+            _pool = pool_override or self._compaction_pool
+            summary_response = await _pool.call(
                 messages=[{"role": "user", "content": summary_prompt}],
                 max_tokens_override=2048,
             )

@@ -116,6 +116,13 @@ def tool_worker_delegation(inputs: dict, thread_id: Optional[str] = None,
             kwargs["profile"] = inputs["profile"]
         if "_spawn_batch_id" in inputs:
             kwargs["spawn_batch_id"] = inputs["_spawn_batch_id"]
+        # Forward per-session pool overrides from the calling thread.
+        if _kw.get("sub_sessions_pool_override"):
+            kwargs["pool"] = _kw["sub_sessions_pool_override"]
+        if _kw.get("cp_pool_override"):
+            kwargs["cp_pool"] = _kw["cp_pool_override"]
+        if _kw.get("nl_pool_override"):
+            kwargs["nl_pool"] = _kw["nl_pool_override"]
         session_id = deps.sub_session_manager.spawn(**kwargs)
         has_deps = bool(inputs.get("depends_on")) or bool(inputs.get("depends_on_previous"))
         has_gate = bool(inputs.get("not_before"))

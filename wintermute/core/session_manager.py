@@ -48,13 +48,24 @@ class SessionManager:
         return self._thread_config_manager
 
     def resolve_pool(self, thread_id: str) -> BackendPool:
-        """Return the inference pool for a thread, respecting per-thread overrides."""
+        """Return the main inference pool for a thread, respecting per-thread overrides."""
         if not self._thread_config_manager:
             return self._main_pool
         resolved = self._thread_config_manager.resolve(thread_id)
         if resolved.backend_name and resolved.backend_name in self._backend_pools_by_name:
             return self._backend_pools_by_name[resolved.backend_name]
         return self._main_pool
+
+    def resolve_role_pool(self, thread_id: str, role: str,
+                          default_pool: BackendPool) -> BackendPool:
+        """Return the pool for a specific role, respecting per-thread backend_overrides."""
+        if not self._thread_config_manager:
+            return default_pool
+        resolved = self._thread_config_manager.resolve(thread_id)
+        override_name = resolved.backend_overrides.get(role)
+        if override_name and override_name in self._backend_pools_by_name:
+            return self._backend_pools_by_name[override_name]
+        return default_pool
 
     def resolve_config(self, thread_id: str) -> "Optional[ResolvedThreadConfig]":
         """Return resolved per-thread config, or None if no manager is set."""
