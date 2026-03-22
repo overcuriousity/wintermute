@@ -939,8 +939,11 @@ def validate_inline_tool_limit(context: dict, detection_result: dict) -> bool:
 
     Returns True if the violation is confirmed (limit exceeded).
     """
-    # Per-thread override takes precedence over module-level global.
-    limit = context.get("max_inline_tool_rounds", _max_inline_tool_rounds)
+    # Per-thread override (forwarded via extra_context) takes precedence over
+    # the module-level global.  extra_context is stored under a dedicated
+    # namespace key to avoid collisions with canonical CP context fields.
+    _ec = context.get("extra_context") or {}
+    limit = _ec.get("max_inline_tool_rounds", _max_inline_tool_rounds)
     if limit <= 0:
         return False  # disabled
 
