@@ -342,18 +342,16 @@ class WebInterface:
         return self._json({})
 
     async def _api_system_prompt(self, _request: web.Request) -> web.Response:
-        from wintermute.infra import prompt_assembler
-        # Prefer the exact system prompt last sent to the LLM (includes
+        # Show the exact system prompt last sent to the LLM (includes
         # vector-ranked memories, compaction summary, etc.).
+        # Never fall back to re-assembling — a re-assembled prompt would show
+        # (all) skills instead of the actual ranked subset, no memories, etc.
         thread_id = _request.query.get("thread", "default")
         prompt = None
         if self._llm:
             prompt = self._llm.get_last_system_prompt(thread_id)
         if prompt is None:
-            try:
-                prompt = prompt_assembler.assemble()
-            except Exception as exc:  # noqa: BLE001
-                return self._json({"error": str(exc)})
+            return self._json({"error": f"No system prompt cached yet for thread '{thread_id}'. Send a message first."})
         from wintermute.core.llm_thread import _count_tokens
         _cfg = self._main_pool.primary if (self._main_pool and self._main_pool.enabled) else None
         model = _cfg.model if _cfg else "gpt-4"
