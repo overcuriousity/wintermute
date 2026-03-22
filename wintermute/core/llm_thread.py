@@ -1021,9 +1021,12 @@ class LLMThread:
         tool_call_details: list[dict] = []
 
         # Resolve per-session pool overrides for all roles.
-        _cp_pool = self._session_mgr.resolve_role_pool(
-            thread_id, "convergence_protocol", self._convergence_protocol_pool,
+        # Use resolve_role_pool_override (returns None when no override is set)
+        # for an explicit check — avoids fragile object-identity comparisons.
+        _cp_pool_override = self._session_mgr.resolve_role_pool_override(
+            thread_id, "convergence_protocol",
         )
+        _cp_pool = _cp_pool_override or self._convergence_protocol_pool
         _nl_pool = self._nl_translation_pool
         if self._nl_translation_pool:
             _nl_pool = self._session_mgr.resolve_role_pool(
@@ -1037,10 +1040,10 @@ class LLMThread:
         cp_enabled = _cp_pool.enabled if _cp_pool else False
 
         # Build per-turn CP runner with the (possibly overridden) pool.
-        if _cp_pool is not self._convergence_protocol_pool and cp_enabled:
+        if _cp_pool_override and cp_enabled:
             from wintermute.core.cp_runner import ConvergenceProtocolRunner as _CPRunner
             _cp_runner_main = _CPRunner(
-                pool=_cp_pool, scope="main",
+                pool=_cp_pool_override, scope="main",
                 enabled_validators=self._cp_validators,
             )
         else:
@@ -1080,7 +1083,7 @@ class LLMThread:
             max_tool_output_chars=active_cfg.context_size * 4,  # tokens → approx chars
             tool_deps=self._tool_deps,
             sub_sessions_pool_override=_sub_sessions_pool,
-            cp_pool_override=_cp_pool if _cp_pool is not self._convergence_protocol_pool else None,
+            cp_pool_override=_cp_pool_override,
             nl_pool_override=_nl_pool if _nl_pool is not self._nl_translation_pool else None,
         )
 
