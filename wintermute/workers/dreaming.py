@@ -143,7 +143,9 @@ def _validate_dreaming_output(
     """
     try:
         # ── Common checks ──────────────────────────────────────────
-        min_len = 20 if phase == "prediction" else 15
+        cfg = _load_dreaming_config()
+        default_min = 20 if phase == "prediction" else 15
+        min_len = cfg.get("confidence_min_text_length", default_min)
         if len(text) < min_len:
             return False, f"too_short ({len(text)}<{min_len})"
 
@@ -193,7 +195,8 @@ def _validate_dreaming_output(
             activity = context.get("activity_summary", "")
             if activity:
                 from difflib import SequenceMatcher
-                if SequenceMatcher(None, text.lower(), activity.lower()).ratio() > 0.7:
+                max_overlap = cfg.get("confidence_max_input_overlap", 0.7)
+                if SequenceMatcher(None, text.lower(), activity.lower()).ratio() > max_overlap:
                     return False, "parrots_input"
             # Duplicate detection
             existing = context.get("existing_texts", set())
@@ -1174,6 +1177,8 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
             if not valid:
                 logger.info("Dreaming prediction rejected: %s", reason)
                 continue
+            # Re-read type — validator may have downgraded temporal → behavioral.
+            pred_type = pred.get("type", "behavioral")
             if text:
                 # Validate structured temporal suffix if present.
                 if pred_type == "temporal" and "||" not in text:
@@ -1202,9 +1207,13 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
                     )
                 except Exception:  # noqa: BLE001
                     logger.debug("Dreaming: prediction accuracy upsert failed", exc_info=True)
+                # Update duplicate-detection set so later iterations catch repeats.
+                existing_pred_texts.add(text.strip().lower())
                 pred_collected_ids.append(entry_id)
                 predictions_added += 1
                 logger.info("Dreaming prediction: %s", text[:100])
+        # Deduplicate entry IDs before recording (model may repeat itself).
+        pred_collected_ids = list(dict.fromkeys(pred_collected_ids))
         if pred_collected_ids:
             await database.async_call(
                 database.record_dreaming_entries, "prediction", pred_collected_ids,
@@ -1337,9 +1346,10 @@ async def _check_survival(cfg: dict) -> dict[str, bool]:
                 database.get_phase_survival_rate, phase, lookback,
             )
             if rate is not None and rate < threshold:
-                # Need enough cycles before auto-disabling.
-                total_checked = len(unchecked)  # approximate
-                if total_checked >= min_cycles or rate == 0.0:
+                # Use the configured lookback window as an approximation of
+                # how many cycles contribute to the computed survival rate,
+                # rather than the number of newly checked rows in this run.
+                if lookback >= min_cycles or rate == 0.0:
                     logger.warning(
                         "Dreaming: auto-disabling phase '%s' "
                         "(survival rate %.1f%% < %.1f%% threshold)",

@@ -154,9 +154,9 @@ New query functions:
 
 **`wintermute/infra/memory_store.py`**
 
-Add `exists(entry_id: str) -> bool` to both `LocalVectorStore` and `QdrantStore`:
-- LocalVectorStore: `SELECT 1 FROM local_vectors WHERE entry_id = ?`
-- QdrantStore: `qdrant_client.retrieve(ids=[entry_id])`
+Add `exists_batch(entry_ids: list[str]) -> set[str]` to both `LocalVectorStore` and `QdrantStore`:
+- LocalVectorStore: query `local_vectors` for all `entry_id` values in `entry_ids` (e.g., `WHERE entry_id IN (...)`) and return the set of found IDs.
+- QdrantStore: `qdrant_client.retrieve(ids=entry_ids)` and return the set of IDs that exist.
 
 ### Dreaming integration
 
@@ -187,7 +187,7 @@ quality_force_enable_phases: []     # Override auto-disable for specific phases,
 ```
 
 ### Risk notes
-- `exists()` calls should be batched where possible (collect all IDs, query once)
+- `exists_batch()` is already batched (collect all IDs, query once)
 - `quality_force_enable_phases` provides a manual override to re-enable phases
 
 ---
@@ -259,5 +259,5 @@ These demonstrate: merging prior summary with new info, superseding old informat
 | `wintermute/infra/memory_io.py` | 2 | New validation function + gate |
 | `wintermute/workers/dreaming.py` | 1, 3 | Validation functions + survival tracking |
 | `wintermute/infra/database.py` | 3 | New table + 4 query functions |
-| `wintermute/infra/memory_store.py` | 3 | New `exists()` method on both backends |
+| `wintermute/infra/memory_store.py` | 3 | New `exists_batch()` method on both backends |
 | `config.yaml.example` | 1, 2, 3 | New config keys documented |

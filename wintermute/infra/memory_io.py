@@ -98,15 +98,16 @@ def append_memory(
     - Deferred ``memory.appended`` via done-callback on timeout.
 
     Returns ``(total_entry_count, status)`` where *status* is one of
-    ``"ok"``, ``"pending"`` (timeout — coroutine still in-flight), or
-    ``"fallback"`` (dedup failed, plain add used).
+    ``"ok"``, ``"pending"`` (timeout — coroutine still in-flight),
+    ``"rejected"`` (entry failed validation gate), or ``"fallback"``
+    (dedup failed, plain add used).
     """
     from wintermute.infra import memory_store
 
     valid, reason = _validate_memory_entry(entry)
     if not valid:
         logger.warning("Memory entry rejected: %s (entry: %.100s)", reason, entry)
-        return 0, "rejected"
+        return memory_store.count(), "rejected"
 
     status = "ok"
     _entry_preview = entry[:200]
