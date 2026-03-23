@@ -87,7 +87,7 @@ SelfModelProfiler (inside reflection) ---> metrics aggregation + auto-tuning + s
 2. Message enters the LLMThread queue
 3. LLMThread builds the message list from the SQLite DB
 4. System prompt is assembled fresh (BASE + MEMORIES + TASKS + PREDICTIONS + SKILLS TOC + compaction summary). Only the top-K most relevant memories are retrieved from the vector store (via embedding search) per turn
-5. If history tokens exceed the compaction threshold, context is compacted first
+5. If history tokens exceed the compaction threshold, context is compacted first: oversized individual messages are condensed in-place, then old messages are archived into a rolling summary if the count exceeds `compaction_keep_recent`
 6. Message is saved to the DB, then inference runs
 7. If the model returns tool calls:
    - If NL translation is enabled and the call uses a simplified schema, the translator LLM expands the description into structured arguments
@@ -168,7 +168,7 @@ These are some architectural choices, which should make it better for local LLMs
 
 **Tool profiles.** Named presets (e.g. `researcher`, `file_worker`) reduce cognitive load on the orchestrating model when spawning focused workers. Instead of reasoning about which individual tools to include, the model selects a profile name.
 
-**Context compaction.** When conversation history approaches the context window, older messages are summarised via a chained rolling summary rather than truncated. This keeps the model oriented without requiring a large context window.
+**Context compaction.** Two-phase approach when context fills up: first, individual messages exceeding their per-message token budget (≈ available_context / keep_recent) are atomically condensed in-place by the compaction LLM, with kept messages persisted back to the DB. Then, if there are more messages than `compaction_keep_recent`, the oldest ones are summarised into a chained rolling summary and archived. This handles both the "few very large messages" and "many messages" cases without truncation.
 
 **Role-segregated backends.** Heavy tasks (compaction, dreaming, Convergence Protocol detection) can be routed to different, purpose-sized backends. A small 3B model can serve as the Convergence Protocol validator while a 7B model handles the main conversation.
 

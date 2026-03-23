@@ -79,6 +79,13 @@ class ContextCompactor:
             )
             effective_keep = 1
         rows = await database.async_call(database.load_active_messages, thread_id)
+
+        # Pre-pass: atomically shrink individual messages that exceed their fair-share
+        # token budget.  This handles the case where a small number of very large
+        # messages fills the context window (count-based compaction can't help there).
+        _pool = pool_override or self._compaction_pool
+        rows = await self._shrink_large_messages(rows, effective_keep, _pool, thread_id)
+
         if len(rows) <= effective_keep:
             return
 
@@ -130,6 +137,75 @@ class ContextCompactor:
             )
         except Exception:  # noqa: BLE001
             pass
+
+    async def _shrink_large_messages(
+        self,
+        rows: list[dict],
+        keep_recent: int,
+        pool: BackendPool,
+        thread_id: str,
+    ) -> list[dict]:
+        """Atomically summarise individual messages that exceed their per-message budget.
+
+        Threshold = max(300, available_context // keep_recent).  Any message
+        whose content exceeds this is condensed via a single LLM call, preserving
+        all facts while removing verbosity.
+
+        Messages in the keep_recent tail are also persisted to the DB so that
+        subsequent build_messages() calls load the smaller content.  Messages
+        that will be archived are updated in-memory only — they are discarded
+        anyway after the count-based compaction step.
+        """
+        available = pool.primary.context_size - pool.primary.max_tokens
+        threshold = max(300, available // keep_recent)
+        model = pool.primary.model
+        keep_start_idx = max(0, len(rows) - keep_recent)
+        shrink_template = prompt_loader.load("MESSAGE_SHRINK_PROMPT.txt")
+        updated = list(rows)
+
+        for i, row in enumerate(updated):
+            content = row.get("content") or ""
+            if not isinstance(content, str):
+                content = str(content)
+            tokens = count_tokens(content, model)
+            if tokens <= threshold:
+                continue
+
+            try:
+                shrink_prompt = shrink_template.format(role=row["role"], content=content)
+                response = await pool.call(
+                    messages=[{"role": "user", "content": shrink_prompt}],
+                    max_tokens_override=512,
+                )
+                shrunken = (response.content or "").strip()
+                if not shrunken:
+                    logger.warning(
+                        "Empty shrink response for message %d in thread %s — skipping",
+                        row["id"], thread_id,
+                    )
+                    continue
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to shrink message %d for thread %s — skipping",
+                    row["id"], thread_id,
+                )
+                continue
+
+            new_tokens = count_tokens(shrunken, model)
+            logger.info(
+                "Shrank message %d (%s) from %d to %d tokens for thread %s",
+                row["id"], row["role"], tokens, new_tokens, thread_id,
+            )
+            updated[i] = {**row, "content": shrunken, "token_count": new_tokens}
+
+            # Persist only kept messages — archived ones are summarised then discarded.
+            if i >= keep_start_idx:
+                await database.async_call(
+                    database.update_message_content,
+                    row["id"], shrunken, new_tokens,
+                )
+
+        return updated
 
     async def maybe_summarise_components(
         self, thread_id: str = "default",
