@@ -54,12 +54,16 @@ def _validate_memory_entry(entry: str) -> tuple[bool, str]:
         if matches >= 3:
             return False, "system_echo"
 
-        # --- repetitive content (any word > 5 occurrences) ---
-        words = lower.split()
-        if words:
+        # --- repetitive content (single word dominates the text) ---
+        # Filter out tokens ≤2 chars to avoid false-positives from stopwords.
+        # Require ≥20 filtered tokens before applying, and flag only when a
+        # single word both appears >5 times AND makes up ≥20% of the text.
+        tokens = re.findall(r"\b\w+\b", lower)
+        filtered = [t for t in tokens if len(t) > 2]
+        if len(filtered) >= 20:
             from collections import Counter
-            counts = Counter(words)
-            if counts.most_common(1)[0][1] > 5:
+            top_word, top_count = Counter(filtered).most_common(1)[0]
+            if top_count > 5 and top_count / len(filtered) >= 0.2:
                 return False, "repetitive"
 
         # --- encoding artifacts ---

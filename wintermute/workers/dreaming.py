@@ -135,15 +135,18 @@ async def _consolidate(pool: "BackendPool",
 
 def _validate_dreaming_output(
     text: str, phase: str, parsed: dict, context: dict,
+    *, cfg: dict | None = None,
 ) -> tuple[bool, str]:
     """Programmatic structural validation for creative-phase outputs.
 
     Returns ``(True, "")`` on pass or ``(False, reason)`` on reject.
     Fail-open: exceptions inside validation allow the entry through.
+    Pass *cfg* to avoid redundant config file reads inside tight loops.
     """
     try:
         # ── Common checks ──────────────────────────────────────────
-        cfg = _load_dreaming_config()
+        if cfg is None:
+            cfg = _load_dreaming_config()
         default_min = 20 if phase == "prediction" else 15
         min_len = cfg.get("confidence_min_text_length", default_min)
         if len(text) < min_len:
@@ -840,6 +843,7 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
     assoc_prompt = prompt_loader.load("DREAM_ASSOCIATION_PROMPT.txt")
     max_insights = cfg["association_max_insights"]
     insights_created = 0
+    collected_ids: list[str] = []
 
     try:
         raw = await _consolidate(
@@ -852,7 +856,6 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
             return result
 
         insights = parsed.get("insights", [])
-        collected_ids: list[str] = []
         for insight in insights:
             if insights_created >= max_insights:
                 break
@@ -861,7 +864,7 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
                 continue
             text = insight.get("text", "").strip()
             valid, reason = _validate_dreaming_output(
-                text, "association", insight, {"seed_texts": seed_texts},
+                text, "association", insight, {"seed_texts": seed_texts}, cfg=cfg,
             )
             if not valid:
                 logger.info("Dreaming association rejected: %s", reason)
@@ -873,15 +876,20 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
                 collected_ids.append(eid)
                 insights_created += 1
                 logger.info("Dreaming association insight: %s", text[:100])
-        if collected_ids:
-            await database.async_call(
-                database.record_dreaming_entries, "association",
-                list(dict.fromkeys(collected_ids)),
-            )
     except Exception:  # noqa: BLE001
         logger.exception("Dreaming: association phase LLM failed")
         result.error = "LLM call failed"
         result.summary = "LLM call failed"
+
+    # Record outside the try block so already-added IDs are tracked even on
+    # partial failure (e.g. embedding backend error midway through the loop).
+    if collected_ids:
+        await database.async_call(
+            database.record_dreaming_entries, "association",
+            list(dict.fromkeys(collected_ids)),
+        )
+
+    if result.error:
         return result
 
     result.items_processed = insights_created
@@ -989,7 +997,7 @@ async def _phase_schema(pool: "BackendPool", cfg: dict,
 
             valid, reason = _validate_dreaming_output(
                 schema_text, "schema", parsed,
-                {"cluster_texts": cluster_texts},
+                {"cluster_texts": cluster_texts}, cfg=cfg,
             )
             if not valid:
                 logger.info("Dreaming schema rejected: %s", reason)
@@ -1147,6 +1155,7 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
     # Call LLM for pattern synthesis.
     pred_prompt = prompt_loader.load("DREAM_PREDICTION_PROMPT.txt")
     max_predictions = cfg["prediction_max_predictions"]
+    pred_collected_ids: list[str] = []
 
     try:
         raw = await _consolidate(
@@ -1172,7 +1181,6 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
                 existing_pred_texts.add(_normalized)
 
         predictions_added = 0
-        pred_collected_ids: list[str] = []
         for pred in predictions:
             if predictions_added >= max_predictions:
                 break
@@ -1184,6 +1192,7 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
             valid, reason = _validate_dreaming_output(
                 text, "prediction", pred,
                 {"activity_summary": content, "existing_texts": existing_pred_texts},
+                cfg=cfg,
             )
             if not valid:
                 logger.info("Dreaming prediction rejected: %s", reason)
@@ -1223,18 +1232,20 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
                 pred_collected_ids.append(entry_id)
                 predictions_added += 1
                 logger.info("Dreaming prediction: %s", text[:100])
-        # Deduplicate entry IDs before recording (model may repeat itself).
-        pred_collected_ids = list(dict.fromkeys(pred_collected_ids))
-        if pred_collected_ids:
-            await database.async_call(
-                database.record_dreaming_entries, "prediction", pred_collected_ids,
-            )
         result.items_processed = predictions_added
         result.summary = f"added {predictions_added} predictions"
     except Exception:  # noqa: BLE001
         logger.exception("Dreaming: prediction phase LLM failed")
         result.summary = "LLM call failed"
         result.error = "LLM call failed"
+
+    # Record outside the try block so already-added IDs are tracked even on
+    # partial failure (e.g. embedding backend error midway through the loop).
+    if pred_collected_ids:
+        unique_pred_ids = list(dict.fromkeys(pred_collected_ids))
+        await database.async_call(
+            database.record_dreaming_entries, "prediction", unique_pred_ids,
+        )
 
     # Validate old predictions: prune unaccessed ones older than 30 days,
     # promote frequently-accessed ones (>= 5 accesses) to dreaming_schema.
@@ -1343,14 +1354,24 @@ async def _check_survival(cfg: dict) -> dict[str, bool]:
             unchecked = await database.async_call(
                 database.get_unchecked_dreaming_entries, phase,
             )
-            for row in unchecked:
-                entry_ids = _json.loads(row["entry_ids"])
-                surviving = await asyncio.to_thread(
-                    memory_store.exists_batch, entry_ids,
-                )
-                await database.async_call(
-                    database.update_dreaming_survival, row["id"], len(surviving),
-                )
+            if unchecked:
+                # Decode all entry IDs and issue a single batched lookup to
+                # avoid one backend round-trip per row.
+                row_entry_ids: dict = {
+                    row["id"]: _json.loads(row["entry_ids"]) for row in unchecked
+                }
+                all_entry_ids = [eid for ids in row_entry_ids.values() for eid in ids]
+                surviving_set: set[str] = set()
+                if all_entry_ids:
+                    surviving_set = await asyncio.to_thread(
+                        memory_store.exists_batch, all_entry_ids,
+                    )
+                for row in unchecked:
+                    ids = row_entry_ids.get(row["id"], [])
+                    survived = sum(1 for eid in ids if eid in surviving_set)
+                    await database.async_call(
+                        database.update_dreaming_survival, row["id"], survived,
+                    )
 
             # Compute rate and decide.
             rate_info = await database.async_call(

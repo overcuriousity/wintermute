@@ -146,17 +146,23 @@ class LocalVectorBackend:
         """Return the subset of *entry_ids* that still exist in the store."""
         if not entry_ids:
             return set()
-        placeholders = ",".join("?" for _ in entry_ids)
+        # SQLite has a ~999-variable limit per query; chunk to stay within it.
+        chunk_size = 900
+        existing: set[str] = set()
         with self._lock:
             conn = self._connect()
             try:
-                rows = conn.execute(
-                    f"SELECT entry_id FROM local_vectors WHERE entry_id IN ({placeholders})",
-                    entry_ids,
-                ).fetchall()
+                for i in range(0, len(entry_ids), chunk_size):
+                    chunk = entry_ids[i : i + chunk_size]
+                    placeholders = ",".join("?" for _ in chunk)
+                    rows = conn.execute(
+                        f"SELECT entry_id FROM local_vectors WHERE entry_id IN ({placeholders})",
+                        chunk,
+                    ).fetchall()
+                    existing.update(r[0] for r in rows)
             finally:
                 conn.close()
-        return {r[0] for r in rows}
+        return existing
 
     def search(self, query: str, top_k: int, threshold: float,
                *, bump_access: bool = True) -> list[dict]:

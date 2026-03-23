@@ -642,7 +642,7 @@ memory:
     confidence_max_input_overlap: 0.7     # Reject outputs that parrot >70% of input
 
     # ── Quality Metrics ──
-    # Track dreaming output survival rates; auto-disable phases with high rejection.
+    # Track dreaming output survival rates; auto-disable phases with low survival.
     quality_survival_threshold: 0.3       # Auto-disable creative phases below this survival rate
     quality_min_cycles: 3                 # Require N checked cycles before auto-disabling
     quality_lookback_cycles: 5            # Compute survival over last N cycles
