@@ -158,18 +158,41 @@ class ContextCompactor:
         """
         available = pool.primary.context_size - pool.primary.max_tokens
         threshold = max(300, available // keep_recent)
+        # Reserve headroom for the shrink prompt wrapper and the 512-token response.
+        shrink_input_limit = max(threshold, available - 768)
         model = pool.primary.model
         keep_start_idx = max(0, len(rows) - keep_recent)
         shrink_template = prompt_loader.load("MESSAGE_SHRINK_PROMPT.txt")
         updated = list(rows)
 
+        # Cap LLM calls to avoid runaway cost on threads with many large messages.
+        _MAX_SHRINK_OPS = 20
+        shrink_ops = 0
+
         for i, row in enumerate(updated):
+            # Once the cap is reached, skip messages that will be archived anyway.
+            # Kept messages (tail) are always processed so compaction can still succeed.
+            if shrink_ops >= _MAX_SHRINK_OPS and i < keep_start_idx:
+                continue
+
             content = row.get("content") or ""
             if not isinstance(content, str):
                 content = str(content)
             tokens = count_tokens(content, model)
             if tokens <= threshold:
                 continue
+
+            # Truncate content that would exceed the backend's context window so
+            # the LLM call doesn't fail with ContextTooLargeError.
+            if tokens > shrink_input_limit:
+                # Rough chars-per-token estimate (≈4) to produce a safe slice.
+                char_limit = shrink_input_limit * 4
+                content = content[:char_limit] + "\n[truncated for compaction]"
+                logger.warning(
+                    "Message %d (%d tokens) exceeds shrink input limit (%d) — "
+                    "truncating before LLM call for thread %s",
+                    row["id"], tokens, shrink_input_limit, thread_id,
+                )
 
             try:
                 shrink_prompt = shrink_template.format(role=row["role"], content=content)
@@ -191,6 +214,7 @@ class ContextCompactor:
                 )
                 continue
 
+            shrink_ops += 1
             new_tokens = count_tokens(shrunken, model)
             logger.info(
                 "Shrank message %d (%s) from %d to %d tokens for thread %s",

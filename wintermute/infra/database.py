@@ -270,17 +270,23 @@ def load_active_messages(thread_id: str = "default") -> list[dict]:
 
 
 def update_message_content(msg_id: int, content: str, token_count: int | None = None) -> None:
-    """Replace the content and token count of a message row in-place.
+    """Replace the content and, if provided, the token count of a message row in-place.
 
     Used by the per-message compaction pre-pass to persist shrunken summaries
     of kept messages so that subsequent build_messages() calls see the smaller
     content.
     """
     with _connect() as conn:
-        conn.execute(
-            "UPDATE messages SET content=?, token_count=? WHERE id=?",
-            (content, token_count, msg_id),
-        )
+        if token_count is None:
+            conn.execute(
+                "UPDATE messages SET content=? WHERE id=?",
+                (content, msg_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE messages SET content=?, token_count=? WHERE id=?",
+                (content, token_count, msg_id),
+            )
         conn.commit()
 
 
