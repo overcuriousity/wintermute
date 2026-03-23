@@ -875,7 +875,8 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
                 logger.info("Dreaming association insight: %s", text[:100])
         if collected_ids:
             await database.async_call(
-                database.record_dreaming_entries, "association", collected_ids,
+                database.record_dreaming_entries, "association",
+                list(dict.fromkeys(collected_ids)),
             )
     except Exception:  # noqa: BLE001
         logger.exception("Dreaming: association phase LLM failed")
@@ -979,7 +980,6 @@ async def _phase_schema(pool: "BackendPool", cfg: dict,
             )
             parsed = parse_json_from_llm(raw, dict)
             schema_text = parsed.get("schema", "").strip()
-            replaces = parsed.get("replaces_entries", False)
             confidence = parsed.get("confidence", "medium")
 
             if not schema_text:
@@ -994,6 +994,9 @@ async def _phase_schema(pool: "BackendPool", cfg: dict,
             if not valid:
                 logger.info("Dreaming schema rejected: %s", reason)
                 continue
+
+            # Re-read replaces after validation (validator may have downgraded it).
+            replaces = parsed.get("replaces_entries", False)
 
             # Store the schema.
             eid = await asyncio.to_thread(
@@ -1025,7 +1028,8 @@ async def _phase_schema(pool: "BackendPool", cfg: dict,
 
     if schema_collected_ids:
         await database.async_call(
-            database.record_dreaming_entries, "schema", schema_collected_ids,
+            database.record_dreaming_entries, "schema",
+            list(dict.fromkeys(schema_collected_ids)),
         )
     result.items_processed = schemas_formed
     result.summary = f"formed {schemas_formed} schemas from {len(clusters)} clusters"
@@ -1156,9 +1160,16 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
         _existing_raw = await asyncio.to_thread(
             memory_store.get_by_source, "dreaming_prediction", 100, False,
         )
-        existing_pred_texts = {
-            e.get("text", "").strip().lower() for e in _existing_raw
-        }
+        _pred_tag_re = re.compile(r'^\[prediction:[^\]]+\]\s*', re.IGNORECASE)
+        existing_pred_texts: set[str] = set()
+        for _e in _existing_raw:
+            _raw = (_e.get("text", "") or "").strip()
+            # Stored predictions are tagged "[prediction:<type>] <text>"; strip
+            # the tag so duplicate detection compares plain text (as the
+            # validator receives it).
+            _normalized = _pred_tag_re.sub("", _raw).strip().lower()
+            if _normalized:
+                existing_pred_texts.add(_normalized)
 
         predictions_added = 0
         pred_collected_ids: list[str] = []
@@ -1342,14 +1353,13 @@ async def _check_survival(cfg: dict) -> dict[str, bool]:
                 )
 
             # Compute rate and decide.
-            rate = await database.async_call(
+            rate_info = await database.async_call(
                 database.get_phase_survival_rate, phase, lookback,
             )
+            rate = rate_info[0] if rate_info is not None else None
+            checked_count = rate_info[1] if rate_info is not None else 0
             if rate is not None and rate < threshold:
-                # Use the configured lookback window as an approximation of
-                # how many cycles contribute to the computed survival rate,
-                # rather than the number of newly checked rows in this run.
-                if lookback >= min_cycles or rate == 0.0:
+                if checked_count >= min_cycles or rate == 0.0:
                     logger.warning(
                         "Dreaming: auto-disabling phase '%s' "
                         "(survival rate %.1f%% < %.1f%% threshold)",

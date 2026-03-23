@@ -1188,10 +1188,12 @@ def update_dreaming_survival(row_id: int, survived_count: int) -> None:
 
 def get_phase_survival_rate(
     phase_name: str, lookback_cycles: int = 5,
-) -> float | None:
+) -> tuple[float, int] | None:
     """Compute survival rate for a phase over the last N checked cycles.
 
-    Returns ``None`` if fewer than 2 data points are available.
+    Returns ``(rate, count)`` where *count* is the number of checked cycles
+    that contributed to *rate*, or ``None`` if fewer than 2 data points are
+    available.
     """
     with _connect() as conn:
         row = conn.execute(
@@ -1205,7 +1207,7 @@ def get_phase_survival_rate(
         ).fetchone()
     if not row or row[2] < 2 or not row[1]:
         return None
-    return row[0] / row[1]
+    return row[0] / row[1], row[2]
 
 
 def count_memories_added_since(since: float) -> int:
