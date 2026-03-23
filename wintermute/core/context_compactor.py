@@ -156,10 +156,12 @@ class ContextCompactor:
         that will be archived are updated in-memory only — they are discarded
         anyway after the count-based compaction step.
         """
-        available = pool.primary.context_size - pool.primary.max_tokens
+        available = max(1, pool.primary.context_size - pool.primary.max_tokens)
         threshold = max(300, available // keep_recent)
-        # Reserve headroom for the shrink prompt wrapper and the 512-token response.
-        shrink_input_limit = max(threshold, available - 768)
+        # Cap the content sent to the shrink LLM: must fit within the backend
+        # context window (minus headroom for the prompt wrapper + 512-token response)
+        # and never exceed the per-message budget.
+        shrink_input_limit = min(threshold, max(1, available - 768))
         model = pool.primary.model
         keep_start_idx = max(0, len(rows) - keep_recent)
         shrink_template = prompt_loader.load("MESSAGE_SHRINK_PROMPT.txt")
