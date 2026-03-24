@@ -549,7 +549,7 @@ Behavioral constants that control core limits. Defaults work well for most setup
 
 | Key | Required | Default | Description |
 |-----|----------|---------|-------------|
-| `compaction_keep_recent` | no | `10` | Messages preserved verbatim during count-based compaction. Also controls the per-message shrink threshold: individual messages exceeding `available_context / compaction_keep_recent` tokens are atomically condensed in-place before the count-based step runs |
+| `compaction_keep_recent` | no | `10` | Number of most-recent messages kept from count-based archiving during compaction. Also controls the per-message shrink threshold: individual messages exceeding `available_context / compaction_keep_recent` tokens may still be atomically condensed in-place before the count-based step runs |
 | `max_continuation_depth` | no | `3` | Auto-continuation hops before a sub-session gives up |
 | `max_nesting_depth` | no | `2` | Maximum sub-session nesting (0=main, 1=sub, 2=sub-sub) |
 | `max_blob_chars` | no | `60000` | Max chars in memory-harvest conversation blob |

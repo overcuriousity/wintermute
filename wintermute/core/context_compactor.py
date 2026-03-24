@@ -176,13 +176,20 @@ class ContextCompactor:
         updated = list(rows)
 
         # Cap LLM calls to avoid runaway cost on threads with many large messages.
+        # Archivable messages (to-be-summarised) and kept messages each get their
+        # own counter so that a large keep_recent value can't cause an unbounded
+        # number of calls while still ensuring kept messages are always attempted.
         _MAX_SHRINK_OPS = 20
-        shrink_attempts = 0
+        archive_shrink_attempts = 0
+        kept_shrink_attempts = 0
         for i, row in enumerate(updated):
-            # Once the attempt cap is reached, skip messages that will be archived anyway.
-            # Kept messages (tail) are always processed so compaction can still succeed.
-            if shrink_attempts >= _MAX_SHRINK_OPS and i < keep_start_idx:
-                continue
+            is_kept = i >= keep_start_idx
+            if is_kept:
+                if kept_shrink_attempts >= _MAX_SHRINK_OPS:
+                    continue
+            else:
+                if archive_shrink_attempts >= _MAX_SHRINK_OPS:
+                    continue
 
             content = row.get("content") or ""
             if not isinstance(content, str):
@@ -201,13 +208,17 @@ class ContextCompactor:
                     content = content[: max(1, len(content) // 2)]
                     tokens = count_tokens(content, model)
                 content = content + "\n[truncated for compaction]"
+                tokens = count_tokens(content, model)
                 logger.warning(
                     "Message %d (%d tokens) exceeds shrink input limit (%d) — "
                     "truncating before LLM call for thread %s",
                     row["id"], original_tokens, shrink_input_limit, thread_id,
                 )
 
-            shrink_attempts += 1
+            if is_kept:
+                kept_shrink_attempts += 1
+            else:
+                archive_shrink_attempts += 1
             try:
                 shrink_prompt = shrink_template.format(role=row["role"], content=content)
                 response = await pool.call(
@@ -236,10 +247,10 @@ class ContextCompactor:
             updated[i] = {**row, "content": shrunken, "token_count": new_tokens}
 
             # Persist only kept messages — archived ones are summarised then discarded.
-            if i >= keep_start_idx:
+            if is_kept:
                 await database.async_call(
                     database.update_message_content,
-                    row["id"], shrunken, new_tokens,
+                    row["id"], shrunken, new_tokens, thread_id,
                 )
 
         return updated

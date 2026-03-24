@@ -269,24 +269,44 @@ def load_active_messages(thread_id: str = "default") -> list[dict]:
     ]
 
 
-def update_message_content(msg_id: int, content: str, token_count: int | None = None) -> None:
+def update_message_content(
+    msg_id: int,
+    content: str,
+    token_count: int | None = None,
+    thread_id: str | None = None,
+) -> None:
     """Replace the content and, if provided, the token count of a message row in-place.
 
     Used by the per-message compaction pre-pass to persist shrunken summaries
     of kept messages so that subsequent build_messages() calls see the smaller
     content.
+
+    If *thread_id* is provided the update is additionally scoped to that thread,
+    acting as an ownership guard consistent with other message mutations.
     """
     with _connect() as conn:
         if token_count is None:
-            conn.execute(
-                "UPDATE messages SET content=? WHERE id=?",
-                (content, msg_id),
-            )
+            if thread_id is None:
+                conn.execute(
+                    "UPDATE messages SET content=? WHERE id=?",
+                    (content, msg_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE messages SET content=? WHERE id=? AND thread_id=?",
+                    (content, msg_id, thread_id),
+                )
         else:
-            conn.execute(
-                "UPDATE messages SET content=?, token_count=? WHERE id=?",
-                (content, token_count, msg_id),
-            )
+            if thread_id is None:
+                conn.execute(
+                    "UPDATE messages SET content=?, token_count=? WHERE id=?",
+                    (content, token_count, msg_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE messages SET content=?, token_count=? WHERE id=? AND thread_id=?",
+                    (content, token_count, msg_id, thread_id),
+                )
         conn.commit()
 
 
