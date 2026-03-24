@@ -170,7 +170,7 @@ def _validate_dreaming_output(
                 if len(source_indices) < 2:
                     return False, "too_few_sources"
                 if any(
-                    not isinstance(idx, int) or idx >= len(seed_texts)
+                    not isinstance(idx, int) or idx < 0 or idx >= len(seed_texts)
                     for idx in source_indices
                 ):
                     return False, "invalid_source_index"
@@ -1188,6 +1188,17 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
             if confidence not in ("high", "medium"):
                 continue
             text = pred.get("text", "").strip()
+            # Normalize temporal suffix BEFORE duplicate detection so the
+            # comparison uses the same canonical form as stored entries.
+            # e.g. "foo||hours=1||days=mon||" → "foo ||hours=1|| ||days=mon||"
+            if "||" in text:
+                suffix_match = re.search(r'(?:\s*\|\|\w+=[\w,\-]+\|\|)+\s*$', text)
+                if suffix_match:
+                    suffix_parts = re.findall(r'\|\|(\w+=[\w,\-]+)\|\|', suffix_match.group(0))
+                    if suffix_parts:
+                        normalized_suffix = " ".join(f"||{p}||" for p in suffix_parts)
+                        base_text = text[:suffix_match.start()].rstrip()
+                        text = f"{base_text} {normalized_suffix}" if base_text else normalized_suffix
             pred_type = pred.get("type", "behavioral")
             valid, reason = _validate_dreaming_output(
                 text, "prediction", pred,
@@ -1200,22 +1211,6 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
             # Re-read type — validator may have downgraded temporal → behavioral.
             pred_type = pred.get("type", "behavioral")
             if text:
-                # Validate structured temporal suffix if present.
-                if pred_type == "temporal" and "||" not in text:
-                    # No structured suffix — leave as-is for legacy compat.
-                    pass
-                elif "||" in text:
-                    # Normalize: ensure suffix is well-formed.
-                    # Match trailing block of one or more segments, supporting
-                    # both spaced (||hours=..|| ||days=..||) and adjacent
-                    # (||hours=..||days=..||) forms.
-                    suffix_match = re.search(r'(?:\s*\|\|\w+=[\w,\-]+\|\|)+\s*$', text)
-                    if suffix_match:
-                        suffix_parts = re.findall(r'\|\|(\w+=[\w,\-]+)\|\|', suffix_match.group(0))
-                        if suffix_parts:
-                            normalized = " ".join(f"||{p}||" for p in suffix_parts)
-                            base_text = text[:suffix_match.start()].rstrip()
-                            text = f"{base_text} {normalized}" if base_text else normalized
                 tagged = f"[prediction:{pred_type}] {text}"
                 entry_id = await asyncio.to_thread(
                     memory_store.add, tagged, None, "dreaming_prediction"
@@ -1360,7 +1355,9 @@ async def _check_survival(cfg: dict) -> dict[str, bool]:
                 row_entry_ids: dict = {
                     row["id"]: _json.loads(row["entry_ids"]) for row in unchecked
                 }
-                all_entry_ids = [eid for ids in row_entry_ids.values() for eid in ids]
+                all_entry_ids = list(dict.fromkeys(
+                    eid for ids in row_entry_ids.values() for eid in ids
+                ))
                 surviving_set: set[str] = set()
                 if all_entry_ids:
                     surviving_set = await asyncio.to_thread(
