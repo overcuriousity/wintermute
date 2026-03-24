@@ -148,8 +148,10 @@ class ContextCompactor:
         """Atomically summarise individual messages that exceed their per-message budget.
 
         Threshold = max(300, available_context // keep_recent).  Any message
-        whose content exceeds this is condensed via a single LLM call, preserving
-        all facts while removing verbosity.
+        whose content exceeds this is condensed via a single LLM call to reduce
+        verbosity.  Messages that exceed shrink_input_limit are truncated before
+        the LLM call to avoid ContextTooLargeError; very large messages may lose
+        information beyond that limit.
 
         Messages in the keep_recent tail are also persisted to the DB so that
         subsequent build_messages() calls load the smaller content.  Messages
@@ -171,10 +173,11 @@ class ContextCompactor:
         _MAX_SHRINK_OPS = 20
         shrink_ops = 0
 
+        shrink_attempts = 0
         for i, row in enumerate(updated):
-            # Once the cap is reached, skip messages that will be archived anyway.
+            # Once the attempt cap is reached, skip messages that will be archived anyway.
             # Kept messages (tail) are always processed so compaction can still succeed.
-            if shrink_ops >= _MAX_SHRINK_OPS and i < keep_start_idx:
+            if shrink_attempts >= _MAX_SHRINK_OPS and i < keep_start_idx:
                 continue
 
             content = row.get("content") or ""
@@ -196,6 +199,7 @@ class ContextCompactor:
                     row["id"], tokens, shrink_input_limit, thread_id,
                 )
 
+            shrink_attempts += 1
             try:
                 shrink_prompt = shrink_template.format(role=row["role"], content=content)
                 response = await pool.call(

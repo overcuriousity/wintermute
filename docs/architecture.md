@@ -168,7 +168,7 @@ These are some architectural choices, which should make it better for local LLMs
 
 **Tool profiles.** Named presets (e.g. `researcher`, `file_worker`) reduce cognitive load on the orchestrating model when spawning focused workers. Instead of reasoning about which individual tools to include, the model selects a profile name.
 
-**Context compaction.** Two-phase approach when context fills up: first, individual messages exceeding their per-message token budget (≈ available_context / keep_recent) are atomically condensed in-place by the compaction LLM, with kept messages persisted back to the DB. Then, if there are more messages than `compaction_keep_recent`, the oldest ones are summarised into a chained rolling summary and archived. This handles both the "few very large messages" and "many messages" cases without truncation.
+**Context compaction.** Two-phase approach when context fills up: first, individual messages exceeding their per-message token budget (≈ available_context / keep_recent) are atomically condensed in-place by the compaction LLM, with kept messages persisted back to the DB. Then, if there are more messages than `compaction_keep_recent`, the oldest ones are summarised into a chained rolling summary and archived. This handles both the "few very large messages" and "many messages" cases. Very large messages that exceed the backend's safe input window are truncated before the shrink LLM call, so extreme cases may lose information beyond that limit.
 
 **Role-segregated backends.** Heavy tasks (compaction, dreaming, Convergence Protocol detection) can be routed to different, purpose-sized backends. A small 3B model can serve as the Convergence Protocol validator while a 7B model handles the main conversation.
 
