@@ -1196,6 +1196,20 @@ def update_dreaming_survival(row_id: int, survived_count: int) -> None:
         conn.commit()
 
 
+def batch_update_dreaming_survival(updates: list[tuple[int, int]]) -> None:
+    """Update survival counts for multiple dreaming quality rows in one transaction."""
+    if not updates:
+        return
+    now = time.time()
+    with _connect() as conn:
+        conn.executemany(
+            "UPDATE dreaming_quality SET survived_count = ?, checked_at = ? "
+            "WHERE id = ?",
+            [(survived_count, now, row_id) for row_id, survived_count in updates],
+        )
+        conn.commit()
+
+
 def get_phase_survival_rate(
     phase_name: str, lookback_cycles: int = 5,
 ) -> tuple[float, int] | None:

@@ -164,9 +164,11 @@ def _validate_dreaming_output(
 
         # ── Association-specific ───────────────────────────────────
         if phase == "association":
-            source_indices = parsed.get("source_indices", [])
+            source_indices = parsed.get("source_indices")
             seed_texts = context.get("seed_texts", [])
-            if seed_texts and isinstance(source_indices, list):
+            if seed_texts:
+                if not isinstance(source_indices, list):
+                    return False, "missing_source_indices"
                 if len(source_indices) < 2:
                     return False, "too_few_sources"
                 if any(
@@ -1230,9 +1232,9 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
         result.items_processed = predictions_added
         result.summary = f"added {predictions_added} predictions"
     except Exception:  # noqa: BLE001
-        logger.exception("Dreaming: prediction phase LLM failed")
-        result.summary = "LLM call failed"
-        result.error = "LLM call failed"
+        logger.exception("Dreaming: prediction phase failed")
+        result.summary = "phase failed"
+        result.error = "phase failed"
 
     # Record outside the try block so already-added IDs are tracked even on
     # partial failure (e.g. embedding backend error midway through the loop).
@@ -1363,11 +1365,14 @@ async def _check_survival(cfg: dict) -> dict[str, bool]:
                     surviving_set = await asyncio.to_thread(
                         memory_store.exists_batch, all_entry_ids,
                     )
+                survival_updates = []
                 for row in unchecked:
                     ids = row_entry_ids.get(row["id"], [])
                     survived = sum(1 for eid in ids if eid in surviving_set)
+                    survival_updates.append((row["id"], survived))
+                if survival_updates:
                     await database.async_call(
-                        database.update_dreaming_survival, row["id"], survived,
+                        database.batch_update_dreaming_survival, survival_updates,
                     )
 
             # Compute rate and decide.
