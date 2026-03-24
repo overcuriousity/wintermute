@@ -158,10 +158,16 @@ class ContextCompactor:
         that will be archived are updated in-memory only — they are discarded
         anyway after the count-based compaction step.
         """
-        available = max(1, pool.primary.context_size - pool.primary.max_tokens)
-        threshold = max(300, available // keep_recent)
+        # The shrink call uses max_tokens_override=512, so reserve exactly that
+        # (not pool.primary.max_tokens) when computing available input space.
+        _SHRINK_MAX_TOKENS = 512
+        available = max(1, pool.primary.context_size - _SHRINK_MAX_TOKENS)
+        # Use the actual message count as the denominator so a keep_recent value
+        # larger than the history doesn't produce an artificially tiny threshold.
+        effective_divisor = max(1, min(keep_recent, len(rows)))
+        threshold = max(300, available // effective_divisor)
         # Cap the content sent to the shrink LLM: must fit within the backend
-        # context window (minus headroom for the prompt wrapper + 512-token response)
+        # context window (minus headroom for the prompt wrapper + response)
         # and never exceed the per-message budget.
         shrink_input_limit = min(threshold, max(1, available - 768))
         model = pool.primary.model
@@ -171,8 +177,6 @@ class ContextCompactor:
 
         # Cap LLM calls to avoid runaway cost on threads with many large messages.
         _MAX_SHRINK_OPS = 20
-        shrink_ops = 0
-
         shrink_attempts = 0
         for i, row in enumerate(updated):
             # Once the attempt cap is reached, skip messages that will be archived anyway.
@@ -189,14 +193,18 @@ class ContextCompactor:
 
             # Truncate content that would exceed the backend's context window so
             # the LLM call doesn't fail with ContextTooLargeError.
+            # Use iterative halving with token recount to handle CJK/symbol-heavy
+            # text where the ≈4 chars-per-token estimate doesn't hold.
             if tokens > shrink_input_limit:
-                # Rough chars-per-token estimate (≈4) to produce a safe slice.
-                char_limit = shrink_input_limit * 4
-                content = content[:char_limit] + "\n[truncated for compaction]"
+                original_tokens = tokens
+                while tokens > shrink_input_limit and len(content) > 1:
+                    content = content[: max(1, len(content) // 2)]
+                    tokens = count_tokens(content, model)
+                content = content + "\n[truncated for compaction]"
                 logger.warning(
                     "Message %d (%d tokens) exceeds shrink input limit (%d) — "
                     "truncating before LLM call for thread %s",
-                    row["id"], tokens, shrink_input_limit, thread_id,
+                    row["id"], original_tokens, shrink_input_limit, thread_id,
                 )
 
             shrink_attempts += 1
@@ -220,7 +228,6 @@ class ContextCompactor:
                 )
                 continue
 
-            shrink_ops += 1
             new_tokens = count_tokens(shrunken, model)
             logger.info(
                 "Shrank message %d (%s) from %d to %d tokens for thread %s",
