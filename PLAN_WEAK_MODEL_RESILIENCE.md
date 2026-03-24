@@ -20,8 +20,10 @@ No graduated feature tiers. No keyword-based NL parsing.
 Add a validation function around line 95 (after helpers):
 
 ```python
-def _validate_dreaming_output(text: str, phase: str, parsed: dict, context: dict) -> tuple[bool, str]:
+def _validate_dreaming_output(text: str, phase: str, parsed: dict, context: dict, *, cfg: dict | None = None) -> tuple[bool, str]:
 ```
+
+Pass `cfg=cfg` from the caller to avoid redundant config file reads inside tight loops.
 
 #### Prediction validation (lines ~1036-1073, `_phase_prediction`):
 
@@ -52,7 +54,7 @@ Insert at line ~879 after `schema_text = parsed.get("schema", "").strip()`.
 #### Association validation (lines ~761-773, `_phase_association`):
 
 1. `text` must be >= 15 characters
-2. `source_indices` must reference valid indices within the seed set (reject if any index >= len(seed_texts))
+2. `source_indices` must reference valid indices within the seed set (reject if any index < 0 or >= len(seed_texts))
 3. `source_indices` must have >= 2 entries
 4. Reject if `text` is a near-substring of any single seed entry (>0.6 overlap ratio)
 
@@ -81,22 +83,22 @@ confidence_max_input_overlap: 0.7   # Reject outputs that parrot >70% of input
 
 **`wintermute/infra/memory_io.py`**
 
-Add `_validate_memory_entry(entry: str, cfg: dict) -> tuple[bool, str]` before `append_memory()` (around line 24).
+Add `_validate_memory_entry(entry: str) -> tuple[bool, str]` before `append_memory()` (around line 24). No config parameter — thresholds are hardcoded with sensible defaults to keep the function self-contained.
 
 #### Validation rules:
 
 1. **Minimum length:** `len(entry.strip()) < 10` → reject
 2. **Maximum length:** `len(entry.strip()) > 2000` → reject (model dumping conversation/system prompt)
 3. **JSON/code detection:** Reject if entry starts with `{` or `[` and is valid JSON (`json.loads` succeeds)
-4. **System prompt echo:** Reject if entry contains any 2+ of: `"you are"`, `"your task"`, `"return json"`, `"convergence protocol"`, `"system event"`, `"sub-session"` (case-insensitive). These indicate the model is echoing instructions.
-5. **Repetitive content:** Reject if any single word appears > 5 times (split whitespace, casefold, count). Catches looping hallucinations.
+4. **System prompt echo:** Reject if entry matches 3+ of a fixed phrase list (`"you are an ai"`, `"your task is"`, `"respond in json"`, `"convergence protocol"`, `"system prompt"`, `"sub-session"`, `"function calling"`) — case-insensitive. 3+ matches avoids false positives from coincidental mention of one phrase.
+5. **Repetitive content:** Reject if a single filtered word (len > 2) appears > 5 times AND makes up >= 20% of filtered tokens, and only when there are >= 20 filtered tokens total. This prevents false positives on longer legitimate text.
 6. **Encoding artifacts:** Reject if entry contains `\x00` or 3+ consecutive backslashes.
 
 In `append_memory()` at line ~45 (before `status = "ok"`):
 ```python
-valid, reason = _validate_memory_entry(entry, validation_cfg)
+valid, reason = _validate_memory_entry(entry)
 if not valid:
-    logger.warning("Memory entry rejected: %s (entry: %s)", reason, entry[:100])
+    logger.warning("Memory entry rejected: %s (entry: %.100s)", reason, entry)
     return memory_store.count(), "rejected"
 ```
 
@@ -104,16 +106,9 @@ The `"rejected"` status propagates to the tool response via `tool_append_memory`
 
 **Fail-open:** Wrap the entire validation in try/except. If validation itself throws, log the error and allow the write.
 
-### Config additions (`config.yaml.example`)
+### No new config keys for Feature 2.
 
-Under `memory_harvest`:
-```yaml
-validation:
-  min_length: 10
-  max_length: 2000
-  reject_json: true
-  reject_system_echoes: true
-```
+Thresholds are hardcoded. The validation is fail-open, transparent, and not intended to be tuned per-deployment.
 
 ### No new database tables.
 
@@ -146,9 +141,9 @@ CREATE TABLE IF NOT EXISTS dreaming_quality (
 New query functions:
 
 1. `record_dreaming_entries(phase_name: str, entry_ids: list[str]) -> None`
-2. `get_unchecked_dreaming_entries(phase_name: str) -> list[dict]` — rows where `survived_count IS NULL` and `cycle_timestamp` older than 24h
+2. `get_unchecked_dreaming_entries(phase_name: str, limit: int = 500) -> list[dict]` — rows where `survived_count IS NULL` and `cycle_timestamp` older than 24h, ordered oldest-first, bounded by `limit` to prevent unbounded backlogs
 3. `update_dreaming_survival(row_id: int, survived_count: int) -> None`
-4. `get_phase_survival_rate(phase_name: str, lookback_cycles: int) -> float | None` — `SUM(survived_count) / SUM(entries_count)` for last N checked cycles. Returns None if < 2 data points.
+4. `get_phase_survival_rate(phase_name: str, lookback_cycles: int) -> tuple[float, int] | None` — returns `(rate, count)` where `rate = SUM(survived_count) / SUM(entries_count)` and `count` is the number of checked cycles that contributed. Returns None if < 2 data points.
 
 ### Memory store changes
 
@@ -171,9 +166,9 @@ New function `_check_survival(cfg: dict) -> dict[str, bool]`:
 2. For each row, check which entry_ids still exist in memory_store
 3. Update survival count
 4. Compute survival rate
-5. Return `{phase_name: should_run}` — `False` if rate < threshold (default 0.3) over >= 3 cycles
+5. Return `{phase_name: should_run}` — `False` if rate < threshold (default 0.3) and the actual checked-cycle count (from `get_phase_survival_rate`) >= `quality_min_cycles`, or if rate == 0.0
 
-Call `_check_survival` at the beginning of `run_dream_cycle()` (around line 1178). Use the returned dict to skip phases. Log clearly when a phase is auto-disabled.
+Call `_check_survival` **after housekeeping phases** in `run_dream_cycle()`. Housekeeping deletions (dedup, contradiction, stale pruning) must run first so the survival check reflects real quality, not entries that were always going to be pruned. Use the returned dict to gate creative phases. Log clearly when a phase is auto-disabled.
 
 ### Config additions (`config.yaml.example`)
 

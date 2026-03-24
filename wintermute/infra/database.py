@@ -1159,8 +1159,16 @@ def record_dreaming_entries(phase_name: str, entry_ids: list[str]) -> None:
         conn.commit()
 
 
-def get_unchecked_dreaming_entries(phase_name: str) -> list[dict]:
-    """Return rows where survival has not yet been checked (>24h old)."""
+def get_unchecked_dreaming_entries(
+    phase_name: str, limit: int = 500,
+) -> list[dict]:
+    """Return rows where survival has not yet been checked (>24h old).
+
+    Results are ordered oldest-first so that long backlogs (e.g. after
+    extended downtime) are drained incrementally rather than all at once.
+    *limit* bounds the number of rows returned per call to prevent excessive
+    memory use and backend round-trips when the backlog is large.
+    """
     cutoff = time.time() - 86400
     with _connect() as conn:
         conn.row_factory = sqlite3.Row
@@ -1168,8 +1176,10 @@ def get_unchecked_dreaming_entries(phase_name: str) -> list[dict]:
             "SELECT id, cycle_timestamp, entry_ids, entries_count "
             "FROM dreaming_quality "
             "WHERE phase_name = ? AND survived_count IS NULL "
-            "AND cycle_timestamp < ?",
-            (phase_name, cutoff),
+            "AND cycle_timestamp < ? "
+            "ORDER BY cycle_timestamp ASC "
+            "LIMIT ?",
+            (phase_name, cutoff, limit),
         ).fetchall()
     return [dict(r) for r in rows]
 
