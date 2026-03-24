@@ -287,27 +287,32 @@ def update_message_content(
     with _connect() as conn:
         if token_count is None:
             if thread_id is None:
-                conn.execute(
+                cur = conn.execute(
                     "UPDATE messages SET content=? WHERE id=?",
                     (content, msg_id),
                 )
             else:
-                conn.execute(
+                cur = conn.execute(
                     "UPDATE messages SET content=? WHERE id=? AND thread_id=?",
                     (content, msg_id, thread_id),
                 )
         else:
             if thread_id is None:
-                conn.execute(
+                cur = conn.execute(
                     "UPDATE messages SET content=?, token_count=? WHERE id=?",
                     (content, token_count, msg_id),
                 )
             else:
-                conn.execute(
+                cur = conn.execute(
                     "UPDATE messages SET content=?, token_count=? WHERE id=? AND thread_id=?",
                     (content, token_count, msg_id, thread_id),
                 )
         conn.commit()
+    if cur.rowcount == 0:
+        logger.warning(
+            "update_message_content matched no rows (msg_id=%s, thread_id=%s)",
+            msg_id, thread_id,
+        )
 
 
 def archive_messages(before_id: int, thread_id: str = "default") -> None:

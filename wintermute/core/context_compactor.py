@@ -195,6 +195,7 @@ class ContextCompactor:
             if not isinstance(content, str):
                 content = str(content)
             tokens = count_tokens(content, model)
+            original_tokens = tokens  # preserve pre-truncation count for logging
             if tokens <= threshold:
                 continue
 
@@ -202,12 +203,14 @@ class ContextCompactor:
             # the LLM call doesn't fail with ContextTooLargeError.
             # Use iterative halving with token recount to handle CJK/symbol-heavy
             # text where the ≈4 chars-per-token estimate doesn't hold.
+            # Include the suffix in the loop condition so the final content
+            # (with marker) is guaranteed to fit within shrink_input_limit.
             if tokens > shrink_input_limit:
-                original_tokens = tokens
+                suffix = "\n[truncated for compaction]"
                 while tokens > shrink_input_limit and len(content) > 1:
                     content = content[: max(1, len(content) // 2)]
-                    tokens = count_tokens(content, model)
-                content = content + "\n[truncated for compaction]"
+                    tokens = count_tokens(content + suffix, model)
+                content = content + suffix
                 tokens = count_tokens(content, model)
                 logger.warning(
                     "Message %d (%d tokens) exceeds shrink input limit (%d) — "
@@ -242,7 +245,7 @@ class ContextCompactor:
             new_tokens = count_tokens(shrunken, model)
             logger.info(
                 "Shrank message %d (%s) from %d to %d tokens for thread %s",
-                row["id"], row["role"], tokens, new_tokens, thread_id,
+                row["id"], row["role"], original_tokens, new_tokens, thread_id,
             )
             updated[i] = {**row, "content": shrunken, "token_count": new_tokens}
 
