@@ -382,10 +382,16 @@ class TaskScheduler:
             )
             self.remove_job(task_id)
             return
-        # Prefer DB schedule_type as the authoritative value; fall back to job kwargs.
+        # Prefer DB values as authoritative over stale APScheduler job kwargs.
         db_schedule_type = task_row.get("schedule_type")
         if db_schedule_type:
             schedule_type = db_schedule_type
+        db_ai_prompt = task_row.get("ai_prompt")
+        if db_ai_prompt is not None:
+            ai_prompt = db_ai_prompt or None
+        db_execution_mode = task_row.get("execution_mode")
+        if db_execution_mode is not None:
+            execution_mode = db_execution_mode or None
 
         raw_mode = execution_mode
         mode = (execution_mode or "").strip() or None
