@@ -205,6 +205,7 @@ class SubSessionState:
     timeout_value: int = DEFAULT_TIMEOUT    # configured timeout for this session
     cp_verdict: str = "skipped"             # CP verdict: 'pass' | 'fail' | 'skipped'
     task_id: Optional[str] = None          # originating scheduled task id (for reflection)
+    is_proactive: bool = False             # set by scheduler for proactive sessions
 
 
 @dataclass
@@ -230,6 +231,7 @@ class TaskNode:
     max_rounds: Optional[int] = None        # None = unlimited inference rounds
     skip_cp_on_exit: bool = False           # skip CP post_inference on terminal response
     task_id: Optional[str] = None          # originating scheduled task id (for reflection)
+    is_proactive: bool = False             # set by scheduler for proactive sessions
 
 
 @dataclass
@@ -375,6 +377,7 @@ class SubSessionManager:
         profile: Optional[str] = None,
         task_id: Optional[str] = None,
         spawn_batch_id: Optional[str] = None,
+        is_proactive: bool = False,
     ) -> str:
         """
         Register a sub-session and start it immediately (or defer if deps pending).
@@ -464,6 +467,7 @@ class SubSessionManager:
             max_rounds=max_rounds,
             skip_cp_on_exit=skip_cp_on_exit,
             task_id=task_id,
+            is_proactive=is_proactive,
         )
 
         if deps:
@@ -848,6 +852,7 @@ class SubSessionManager:
             skip_cp_on_exit=node.skip_cp_on_exit,
             timeout_value=node.timeout,
             task_id=node.task_id,
+            is_proactive=node.is_proactive,
         )
         self._states[session_id] = state
 
@@ -1564,7 +1569,7 @@ class SubSessionManager:
 
         if state.parent_thread_id:
             try:
-                is_proactive = state.objective.startswith("[PROACTIVE]")
+                is_proactive = state.is_proactive
                 await self._enqueue(text, state.parent_thread_id, is_proactive=is_proactive)
             except Exception as exc:  # noqa: BLE001
                 logger.error("Sub-session %s failed to report back: %s", state.session_id, exc)

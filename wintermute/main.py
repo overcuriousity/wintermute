@@ -593,16 +593,19 @@ async def main() -> None:
         # target room), ensuring regular messages are never duplicated.
         if is_proactive and thread_id == "default":
             opted_in = thread_config_mgr.get_proactive_thread_ids()
-            for tid in opted_in:
-                try:
-                    if si and tid.startswith("sig_"):
-                        await si.send_message(text, tid)
-                    elif mx and not tid.startswith("web_") and not tid.startswith("sig_"):
-                        await mx.send_message(text, tid)
-                    if wi:
-                        await wi.broadcast(text, tid, reasoning=reasoning)
-                except Exception:  # noqa: BLE001
-                    logger.warning("Failed to deliver proactive message to %s", tid)
+            if opted_in:
+                async def _send_to_room(tid: str) -> None:
+                    try:
+                        if si and tid.startswith("sig_"):
+                            await si.send_message(text, tid)
+                        elif mx and not tid.startswith("web_") and not tid.startswith("sig_"):
+                            await mx.send_message(text, tid)
+                    except Exception:  # noqa: BLE001
+                        logger.warning("Failed to deliver proactive message to %s", tid)
+
+                await asyncio.gather(*(_send_to_room(tid) for tid in opted_in))
+                if wi:
+                    await wi.broadcast(text, thread_id, reasoning=reasoning)
 
     # 2. LLMThread — uses a lazy getter for SubSessionManager (breaks cycle).
     seed_language = cfg.get("seed", {}).get("language", "en") if cfg.get("seed") else "en"

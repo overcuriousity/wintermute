@@ -116,7 +116,7 @@ class SlashCommandHandler:
         if text == "/commands":
             await self._cmd_commands(send_fn)
             return True
-        if text.startswith("/proactive"):
+        if text.split(maxsplit=1)[0] == "/proactive":
             await self._cmd_proactive(text, thread_id, send_fn)
             return True
 
