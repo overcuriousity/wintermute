@@ -59,6 +59,7 @@ class MemoryBackend(Protocol):
     def get_by_source(self, source: str, limit: int = 50, bump_access: bool = True) -> list[dict]: ...
     def track_access(self, entry_ids: list[str]) -> None: ...
     def promote_source(self, entry_id: str, new_source: str) -> None: ...
+    def exists_batch(self, entry_ids: list[str]) -> set[str]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +141,28 @@ class LocalVectorBackend:
                 conn.close()
         _log_interaction(t0, "local_vector_add", entry[:200], f"id={eid}", llm="local_vector")
         return eid
+
+    def exists_batch(self, entry_ids: list[str]) -> set[str]:
+        """Return the subset of *entry_ids* that still exist in the store."""
+        if not entry_ids:
+            return set()
+        # SQLite has a ~999-variable limit per query; chunk to stay within it.
+        chunk_size = 900
+        existing: set[str] = set()
+        with self._lock:
+            conn = self._connect()
+            try:
+                for i in range(0, len(entry_ids), chunk_size):
+                    chunk = entry_ids[i : i + chunk_size]
+                    placeholders = ",".join("?" for _ in chunk)
+                    rows = conn.execute(
+                        f"SELECT entry_id FROM local_vectors WHERE entry_id IN ({placeholders})",
+                        chunk,
+                    ).fetchall()
+                    existing.update(r[0] for r in rows)
+            finally:
+                conn.close()
+        return existing
 
     def search(self, query: str, top_k: int, threshold: float,
                *, bump_access: bool = True) -> list[dict]:
@@ -676,6 +699,19 @@ class QdrantBackend:
         _log_interaction(t0, "qdrant_add", entry[:200], f"id={eid}", llm="qdrant")
         return eid
 
+    def exists_batch(self, entry_ids: list[str]) -> set[str]:
+        """Return the subset of *entry_ids* that still exist in Qdrant."""
+        if not entry_ids:
+            return set()
+        with self._lock:
+            pts = self._client.retrieve(
+                collection_name=self._collection,
+                ids=entry_ids,
+                with_payload=False,
+                with_vectors=False,
+            )
+        return {str(p.id) for p in pts}
+
     def search(self, query: str, top_k: int, threshold: float,
                *, bump_access: bool = True) -> list[dict]:
         vectors = _embed([query], self._embed_cfg, task="query")
@@ -1187,6 +1223,11 @@ def get_stale(max_age_days: int, min_access: int) -> list[dict]:
 
 def bulk_delete(entry_ids: list[str]) -> int:
     return _backend.bulk_delete(entry_ids)
+
+
+def exists_batch(entry_ids: list[str]) -> set[str]:
+    """Return the subset of *entry_ids* that still exist in the store."""
+    return _backend.exists_batch(entry_ids)
 
 
 def get_dreaming_config() -> dict:

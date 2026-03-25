@@ -200,6 +200,15 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             config_json TEXT NOT NULL,
             updated_at  REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS dreaming_quality (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            cycle_timestamp REAL NOT NULL,
+            phase_name      TEXT NOT NULL,
+            entry_ids       TEXT NOT NULL,
+            entries_count   INTEGER NOT NULL,
+            survived_count  INTEGER,
+            checked_at      REAL
+        );
         CREATE TABLE IF NOT EXISTS prediction_accuracy (
             prediction_id   TEXT PRIMARY KEY,
             source_text     TEXT,
@@ -1130,6 +1139,99 @@ def update_dreaming_phase_state(
             (phase_name, now, items_processed, outcome_summary),
         )
         conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Dreaming Quality Metrics
+# ---------------------------------------------------------------------------
+
+def record_dreaming_entries(phase_name: str, entry_ids: list[str]) -> None:
+    """Record which memory entries were created by a dreaming phase."""
+    import json as _json
+    now = time.time()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO dreaming_quality "
+            "(cycle_timestamp, phase_name, entry_ids, entries_count) "
+            "VALUES (?, ?, ?, ?)",
+            (now, phase_name, _json.dumps(entry_ids), len(entry_ids)),
+        )
+        conn.commit()
+
+
+def get_unchecked_dreaming_entries(
+    phase_name: str, limit: int = 500,
+) -> list[dict]:
+    """Return rows where survival has not yet been checked (>24h old).
+
+    Results are ordered oldest-first so that long backlogs (e.g. after
+    extended downtime) are drained incrementally rather than all at once.
+    *limit* bounds the number of rows returned per call to prevent excessive
+    memory use and backend round-trips when the backlog is large.
+    """
+    cutoff = time.time() - 86400
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, cycle_timestamp, entry_ids, entries_count "
+            "FROM dreaming_quality "
+            "WHERE phase_name = ? AND survived_count IS NULL "
+            "AND cycle_timestamp < ? "
+            "ORDER BY cycle_timestamp ASC "
+            "LIMIT ?",
+            (phase_name, cutoff, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_dreaming_survival(row_id: int, survived_count: int) -> None:
+    """Update the survival count for a dreaming quality row."""
+    now = time.time()
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE dreaming_quality SET survived_count = ?, checked_at = ? "
+            "WHERE id = ?",
+            (survived_count, now, row_id),
+        )
+        conn.commit()
+
+
+def batch_update_dreaming_survival(updates: list[tuple[int, int]]) -> None:
+    """Update survival counts for multiple dreaming quality rows in one transaction."""
+    if not updates:
+        return
+    now = time.time()
+    with _connect() as conn:
+        conn.executemany(
+            "UPDATE dreaming_quality SET survived_count = ?, checked_at = ? "
+            "WHERE id = ?",
+            [(survived_count, now, row_id) for row_id, survived_count in updates],
+        )
+        conn.commit()
+
+
+def get_phase_survival_rate(
+    phase_name: str, lookback_cycles: int = 5,
+) -> tuple[float, int] | None:
+    """Compute survival rate for a phase over the last N checked cycles.
+
+    Returns ``(rate, count)`` where *count* is the number of checked cycles
+    that contributed to *rate*, or ``None`` if fewer than 2 data points are
+    available.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT SUM(survived_count), SUM(entries_count), COUNT(*) "
+            "FROM ("
+            "  SELECT survived_count, entries_count FROM dreaming_quality "
+            "  WHERE phase_name = ? AND survived_count IS NOT NULL "
+            "  ORDER BY cycle_timestamp DESC LIMIT ?"
+            ")",
+            (phase_name, lookback_cycles),
+        ).fetchone()
+    if not row or row[2] < 2 or not row[1]:
+        return None
+    return row[0] / row[1], row[2]
 
 
 def count_memories_added_since(since: float) -> int:

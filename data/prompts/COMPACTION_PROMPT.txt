@@ -16,5 +16,38 @@ Omit:
 
 Format as a concise bulleted list grouped by topic. Do not add commentary.
 
+--- example input ---
+[PRIOR SUMMARY]
+- User is developing a Python CLI tool called "netwatch"
+
+[NEW MESSAGES]
+USER: Can you add a --timeout flag to the CLI?
+ASSISTANT: Done. Added --timeout to netwatch/cli.py with a default of 30 seconds.
+USER: Perfect, make it 60 seconds default instead.
+ASSISTANT: Updated the default timeout to 60 seconds.
+
+--- example output ---
+**netwatch CLI tool**
+- User is developing a Python CLI tool called "netwatch"
+- Added --timeout flag to netwatch/cli.py (default: 60 seconds)
+
+--- example input ---
+[PRIOR SUMMARY]
+- User prefers dark mode in all applications
+- Working on a React dashboard for inventory management
+- Database is PostgreSQL 15 on localhost
+
+[NEW MESSAGES]
+USER: Actually let's switch to MySQL, the hosting provider doesn't support Postgres.
+ASSISTANT: I've updated the database connection in config.ts to use MySQL.
+
+--- example output ---
+**User preferences**
+- Prefers dark mode in all applications
+
+**Inventory dashboard (React)**
+- Switched from PostgreSQL to MySQL (hosting constraint)
+- Database connection updated in config.ts
+
 --- conversation history ---
 {history}
