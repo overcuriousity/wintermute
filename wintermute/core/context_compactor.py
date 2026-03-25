@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 # Keep the last N messages untouched during compaction (default; overridable via config).
 COMPACTION_KEEP_RECENT = 10
 
+# Token headroom reserved for the shrink prompt wrapper when computing the per-message
+# input limit.  The shrink prompt itself (role label + instruction framing) adds roughly
+# 100–200 tokens; the extra margin covers variance across templates and backends.
+_SHRINK_PROMPT_HEADROOM = 768
+
 
 class ContextCompactor:
     """Manages context window compaction and tool-result trimming."""
@@ -193,7 +198,7 @@ class ContextCompactor:
         # Cap the content sent to the shrink LLM: must fit within the backend
         # context window (minus headroom for the prompt wrapper + response)
         # and never exceed the per-message budget.
-        shrink_input_limit = min(threshold, max(1, available - 768))
+        shrink_input_limit = min(threshold, max(1, available - _SHRINK_PROMPT_HEADROOM))
         model = pool.primary.model
         keep_start_idx = max(0, len(rows) - keep_recent)
         shrink_template = prompt_loader.load("MESSAGE_SHRINK_PROMPT.txt")

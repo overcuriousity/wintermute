@@ -907,6 +907,7 @@ class LLMThread:
             await self._compactor.compact(
                 thread_id,
                 pool_override=_comp_pool if _comp_pool is not self._compactor.pool else None,
+                inference_context_size=pool.primary.context_size,
             )
             messages = await self._store.build_messages(
                 item.text, item.is_system_event, thread_id, item.content,
