@@ -152,8 +152,8 @@ def _validate_dreaming_output(
         if len(text) < min_len:
             return False, f"too_short ({len(text)}<{min_len})"
 
-        # 3+ consecutive identical words → hallucination loop
-        words = text.split()
+        # 3+ consecutive identical words → hallucination loop (case-insensitive)
+        words = [w.casefold() for w in text.split()]
         for i in range(len(words) - 2):
             if words[i] == words[i + 1] == words[i + 2]:
                 return False, "consecutive_repeat"
@@ -1201,7 +1201,6 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
                         normalized_suffix = " ".join(f"||{p}||" for p in suffix_parts)
                         base_text = text[:suffix_match.start()].rstrip()
                         text = f"{base_text} {normalized_suffix}" if base_text else normalized_suffix
-            pred_type = pred.get("type", "behavioral")
             valid, reason = _validate_dreaming_output(
                 text, "prediction", pred,
                 {"activity_summary": content, "existing_texts": existing_pred_texts},
@@ -1339,7 +1338,13 @@ async def _check_survival(cfg: dict) -> dict[str, bool]:
     threshold = cfg.get("quality_survival_threshold", 0.3)
     min_cycles = cfg.get("quality_min_cycles", 3)
     lookback = cfg.get("quality_lookback_cycles", 5)
-    force_enable = set(cfg.get("quality_force_enable_phases", []))
+    _raw_force = cfg.get("quality_force_enable_phases", [])
+    if _raw_force is None:
+        force_enable: set[str] = set()
+    elif isinstance(_raw_force, str):
+        force_enable = {_raw_force}
+    else:
+        force_enable = {v for v in _raw_force if isinstance(v, str)}
 
     result: dict[str, bool] = {}
     for phase in ("association", "schema", "prediction"):
