@@ -206,16 +206,26 @@ class ContextCompactor:
 
         # Cap LLM calls to avoid runaway cost on threads with many large messages.
         # Archivable messages get a hard cap of _MAX_SHRINK_OPS.  Kept messages
-        # get at least keep_recent attempts so every tail message can be shrunk
-        # even when keep_recent > _MAX_SHRINK_OPS.
+        # get at least keep_recent attempts (so every tail message is considered)
+        # but are bounded by _MAX_KEPT_SHRINK_OPS so a large compaction_keep_recent
+        # can't trigger an unbounded number of LLM calls in a single run.
         _MAX_SHRINK_OPS = 20
+        _MAX_KEPT_SHRINK_OPS = 50
         archive_shrink_attempts = 0
         kept_shrink_attempts = 0
-        kept_shrink_budget = max(_MAX_SHRINK_OPS, keep_recent)
+        kept_shrink_budget = min(_MAX_KEPT_SHRINK_OPS, max(_MAX_SHRINK_OPS, keep_recent))
+        kept_budget_warning_emitted = False
         for i, row in enumerate(updated):
             is_kept = i >= keep_start_idx
             if is_kept:
                 if kept_shrink_attempts >= kept_shrink_budget:
+                    if not kept_budget_warning_emitted:
+                        logger.warning(
+                            "Kept-message shrink budget (%d) reached during compaction "
+                            "for thread %s; remaining kept messages will not be shrunk",
+                            kept_shrink_budget, thread_id,
+                        )
+                        kept_budget_warning_emitted = True
                     continue
             else:
                 if archive_shrink_attempts >= _MAX_SHRINK_OPS:
