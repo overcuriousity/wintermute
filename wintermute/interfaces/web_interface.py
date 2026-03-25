@@ -177,6 +177,22 @@ class WebInterface:
     def _json(data, *, status: int = 200) -> web.Response:
         return web.Response(text=json.dumps(data), content_type="application/json", status=status)
 
+    def _error_response(
+        self,
+        message: str = "Internal server error",
+        *,
+        status: int = 500,
+        exc: Exception | None = None,
+    ) -> web.Response:
+        """
+        Build a generic JSON error response and log the underlying exception.
+
+        This avoids sending potentially sensitive exception details to clients.
+        """
+        if exc is not None:
+            logger.exception("Unhandled exception in API: %s", message)
+        return self._json({"error": message}, status=status)
+
     def _token_budget(self, thread_id: str = "default") -> dict:
         """Delegate to LLMThread.get_token_budget() for accurate accounting."""
         if self._llm:
@@ -291,7 +307,7 @@ class WebInterface:
             _task.add_done_callback(self._background_tasks.discard)
             return self._json({"ok": True, "thread_id": thread_id})
         except Exception as exc:  # noqa: BLE001
-            return self._json({"error": str(exc)}, status=500)
+            return self._error_response("Failed to send session request", status=500, exc=exc)
 
     async def _api_session_delete(self, request: web.Request) -> web.Response:
         thread_id = request.match_info["thread_id"]
@@ -305,7 +321,7 @@ class WebInterface:
                 pass
             return self._json({"ok": True, "thread_id": thread_id})
         except Exception as exc:  # noqa: BLE001
-            return self._json({"error": str(exc)}, status=500)
+            return self._error_response("Failed to delete session", status=500, exc=exc)
 
     async def _api_session_compact(self, request: web.Request) -> web.Response:
         thread_id = request.match_info["thread_id"]
@@ -313,7 +329,7 @@ class WebInterface:
             await self._llm.force_compact(thread_id)
             return self._json({"ok": True, "thread_id": thread_id})
         except Exception as exc:  # noqa: BLE001
-            return self._json({"error": str(exc)}, status=500)
+            return self._error_response("Failed to compact session", status=500, exc=exc)
 
     async def _api_config(self, _request: web.Request) -> web.Response:
         def _backend_list(configs):
@@ -471,7 +487,8 @@ class WebInterface:
                 try:
                     content = p.read_text(errors="replace")
                 except Exception as exc:
-                    content = f"[read error: {exc}]"
+                    logger.exception("Failed to read scratchpad file %s", p)
+                    content = "[read error]"
                 files.append({"name": p.name, "size": p.stat().st_size, "content": content})
         return self._json({"workflow_id": workflow_id, "files": files, "exists": True})
 
@@ -564,7 +581,8 @@ class WebInterface:
             for key, value in body.items():
                 mgr.set(thread_id, key, value)
         except (ValueError, TypeError) as exc:
-            return self._json({"error": str(exc)}, status=400)
+            logger.exception("Invalid thread configuration for %s", thread_id)
+            return self._json({"error": "Invalid thread configuration"}, status=400)
         resolved_dict = mgr.resolve_as_dict(thread_id)
         return self._json({"ok": True, "resolved": resolved_dict})
 
@@ -707,7 +725,8 @@ class WebInterface:
             all_skills = skill_store.get_all()
             store_stats = skill_store.stats()
         except Exception as exc:
-            return self._json({"error": str(exc), "skills": [], "count": 0}, status=500)
+            logger.exception("Failed to list skills")
+            return self._json({"error": "Failed to list skills", "skills": [], "count": 0}, status=500)
 
         for rec in all_skills:
             name = rec["name"]
