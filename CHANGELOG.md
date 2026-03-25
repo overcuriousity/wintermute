@@ -1,5 +1,75 @@
 # Changelog
 
+## [0.14.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.13.1-alpha...v0.14.0-alpha) (2026-03-25)
+
+
+### Features
+
+* expand per-thread config overrides and wire skill success tracking ([ac8cd39](https://github.com/overcuriousity/wintermute/commit/ac8cd39e95839b9d4c1eb1d8c6bbcc763fc159cb))
+* expand per-thread config overrides and wire skill success tracking ([89c679b](https://github.com/overcuriousity/wintermute/commit/89c679b881d9523a2dbde6343fe5f03b935e8846))
+* per-session backend overrides for all role-based pools ([29048a6](https://github.com/overcuriousity/wintermute/commit/29048a629c54a2bea23f81a1838e426d2011235a))
+* per-session backend overrides for all role-based pools ([05726d5](https://github.com/overcuriousity/wintermute/commit/05726d5e193ab6c5f82e025c29248aafe1cf183e))
+* weak-model resilience — programmatic validation for dreaming and memory writes ([b1c8c15](https://github.com/overcuriousity/wintermute/commit/b1c8c1501c0892159013b7e5c2e03dd343d7e84e))
+* weak-model resilience for dreaming and memory writes ([d075faa](https://github.com/overcuriousity/wintermute/commit/d075faa23c95e77143c26c3b29496b29927e546f))
+
+
+### Bug Fixes
+
+* address additional copilot reviews on weak-model resilience PR ([6608ad6](https://github.com/overcuriousity/wintermute/commit/6608ad67e6dfcce50164f4c5d9ea0f767f94028a))
+* address copilot review comments on context compaction PR ([36e6cd0](https://github.com/overcuriousity/wintermute/commit/36e6cd0dd1758771cbbc7aebfae023c9435e1d17))
+* address Copilot review feedback on thread config and skill store ([d412ad2](https://github.com/overcuriousity/wintermute/commit/d412ad2f9c457d0aba84f615c164a15d3f22b141))
+* address copilot review issues — case-insensitive repeat check, dead pred_type, force_enable normalization ([c0f64ec](https://github.com/overcuriousity/wintermute/commit/c0f64ec967bc12ede1a03c2103ef817df3482378))
+* address copilot review issues — unbounded query and stale plan docs ([5839b48](https://github.com/overcuriousity/wintermute/commit/5839b48d25e378b1a34cc6df361a439501ad2f43))
+* address copilot review issues on weak-model resilience PR ([b3cc1b3](https://github.com/overcuriousity/wintermute/commit/b3cc1b31f6bd509421973bc8ae32243616236f4f))
+* address fifth round of copilot review comments on context compaction ([96f54fa](https://github.com/overcuriousity/wintermute/commit/96f54fa9d72a3b2921fadeb7dee11248fec92e16))
+* address final copilot review issues — source_indices validation and batch survival updates ([6a0d1c1](https://github.com/overcuriousity/wintermute/commit/6a0d1c1276d3022864f78eb332fb0ff00be9be8a))
+* address fourth round of copilot review comments on context compaction ([34d4c30](https://github.com/overcuriousity/wintermute/commit/34d4c3017d23cf8773f4d1adc84623ec5f9b71fc))
+* address PR review feedback for per-session backend overrides ([df6959c](https://github.com/overcuriousity/wintermute/commit/df6959c90a34a735336346fe1488aef971a10a7d))
+* address remaining copilot review comments on context compaction ([b2cd43d](https://github.com/overcuriousity/wintermute/commit/b2cd43d98a78dc774ebf86664eede232a8f03f6f))
+* address remaining copilot review issues on weak-model resilience PR ([20b72f3](https://github.com/overcuriousity/wintermute/commit/20b72f39a067150ceab6534cf1f1e2c414d7cbee))
+* address second round of copilot review comments on shrink pre-pass ([2a110da](https://github.com/overcuriousity/wintermute/commit/2a110da96fa8c5f2e921590e368b1f167774ea10))
+* address seventh round of copilot review comments on context compaction ([d9febd3](https://github.com/overcuriousity/wintermute/commit/d9febd3d61a7c59af2ddd6003886cbf71cc6cbdf))
+* address sixth round of copilot review comments on context compaction ([1606e2e](https://github.com/overcuriousity/wintermute/commit/1606e2edda5bd7598c7f3c1b1c46f0c2b60ea7dd))
+* address third round of copilot review comments on context compaction ([999fbfd](https://github.com/overcuriousity/wintermute/commit/999fbfdec01e739d360669dbf81a38d552b698c8))
+* cap kept-message shrink ops at _MAX_KEPT_SHRINK_OPS=50 ([fe83575](https://github.com/overcuriousity/wintermute/commit/fe83575fbbcdf17d11800458f5df1e7fb80db2de))
+* correct shrink_input_limit computation in context compactor ([66b6fae](https://github.com/overcuriousity/wintermute/commit/66b6fae3d7daee8e8c932a846cba8bd61f593508))
+* debug panel always shows last actual LLM system prompt ([3bb9ff9](https://github.com/overcuriousity/wintermute/commit/3bb9ff9f0ee97f82769e5445f69df75426ac6d07))
+* debug panel always shows last actual LLM system prompt ([90267d2](https://github.com/overcuriousity/wintermute/commit/90267d2095d062c160c279513d2c80b7ec67f351))
+* guard backend_overrides type in resolve/resolve_as_dict ([40b2c3d](https://github.com/overcuriousity/wintermute/commit/40b2c3df15355a3bda030495e99acc24fc4133cc))
+* make thread_id required (default='default') in update_message_content ([28ccb92](https://github.com/overcuriousity/wintermute/commit/28ccb928112db795918db2380ea5391da131272f))
+* restore per-thread config overrides for CP validator and pool ([dcd3757](https://github.com/overcuriousity/wintermute/commit/dcd3757eb23207c15a3f1163a549350d6f92d672))
+* restore per-thread config overrides for CP validator and pool ([444f24f](https://github.com/overcuriousity/wintermute/commit/444f24f1af7cf13194b15897ed5dbf48a50673e4))
+* **scheduler:** address additional copilot review comments ([07c28fa](https://github.com/overcuriousity/wintermute/commit/07c28fae2c7152822085f4522b25fa1ad2a26bcb))
+* **scheduler:** address copilot review - startup blocking and relative past-due check ([fe97584](https://github.com/overcuriousity/wintermute/commit/fe975842a800899630cf2e9e2dcec16d26e9f449))
+* **scheduler:** always check task status in _fire_task regardless of schedule_type ([9116b6a](https://github.com/overcuriousity/wintermute/commit/9116b6aeb68e5e7f515b78fdc10749bc2787c510))
+* **scheduler:** guard non-active task firing and fix dreaming job removal order ([d5ce0c4](https://github.com/overcuriousity/wintermute/commit/d5ce0c430fdb098132f4a32e9830694ebf2a9e9d))
+* **scheduler:** handle None misfire_grace_time in _should_complete_stale_once ([19c53a1](https://github.com/overcuriousity/wintermute/commit/19c53a108d417dc4bda741352b7b3b4a024a6575))
+* **scheduler:** respect misfire_grace_time before auto-completing stale once-tasks ([911fcb6](https://github.com/overcuriousity/wintermute/commit/911fcb697be6292ccd7ec082dc8580843da0f6c6))
+* **scheduler:** thread-safe async maintenance and remove dreaming.py retention duplicate ([e73ae4e](https://github.com/overcuriousity/wintermute/commit/e73ae4e8f9d48192d871f5c0d82203a4d6d4f4e3))
+* **sub-session:** address copilot review comments on PR [#221](https://github.com/overcuriousity/wintermute/issues/221) ([a4bdcb0](https://github.com/overcuriousity/wintermute/commit/a4bdcb0b619f1509375bc57f194d03f131a8347c))
+* **sub-session:** address second round of copilot review comments on PR [#221](https://github.com/overcuriousity/wintermute/issues/221) ([f8c04cb](https://github.com/overcuriousity/wintermute/commit/f8c04cbc758d442054c2f5319531e5087bd20b37))
+* **sub-session:** improve timing accuracy, context efficiency, and result relay ([c84681a](https://github.com/overcuriousity/wintermute/commit/c84681a7101354258ea416f7a0e948771d3a3bb8))
+* **sub-session:** improve timing, context efficiency, and result relay ([832a276](https://github.com/overcuriousity/wintermute/commit/832a2766ed37300667d166241ec7022f590e1fa7))
+* **sub-session:** skip [NO_ACTION] sentinel when back-filling task result summary ([b2a2a8b](https://github.com/overcuriousity/wintermute/commit/b2a2a8b021ec64c2ace036cf7b5689c7d5fc733a))
+* **task:** align execution-mode runtime/logging semantics ([4eb82ce](https://github.com/overcuriousity/wintermute/commit/4eb82ce291e749d14d06ad30d2a94ee3b31746ce))
+* **task:** keep scheduled reminders passive unless ai_prompt is explicit ([674fcf0](https://github.com/overcuriousity/wintermute/commit/674fcf00ec64584d6f52a583747d3b85bf938b7c))
+* **task:** keep scheduled reminders passive unless ai_prompt is explicit ([e29fc2a](https://github.com/overcuriousity/wintermute/commit/e29fc2a50e8680ec004f53f719c425a858d2d9d1))
+* **task:** preserve legacy default notify + record attempted failures ([2a72ffd](https://github.com/overcuriousity/wintermute/commit/2a72ffd7028584d1eb0c524c8e34e4f8e1255f06))
+* **task:** preserve notify semantics and accurate delivery labels ([c623741](https://github.com/overcuriousity/wintermute/commit/c623741440c946bf8236ff91d0dc9e46cb28cc71))
+* **tasks:** address copilot review comments ([89b10d1](https://github.com/overcuriousity/wintermute/commit/89b10d1c2e84aa590722ecfbaf988acf8f168dc6))
+* **tasks:** make DB authoritative for ai_prompt/execution_mode; support updating them ([1d2125b](https://github.com/overcuriousity/wintermute/commit/1d2125bf5b6cfe6869298f984b9ab68df168fc5a))
+* **tasks:** support updating ai_prompt/execution_mode; make DB authoritative at fire time ([f7e36d3](https://github.com/overcuriousity/wintermute/commit/f7e36d3212f23681489f0e0d00f5c6019dd6fd5d))
+* two-phase context compaction for few very large messages ([f31ae80](https://github.com/overcuriousity/wintermute/commit/f31ae80a38063acd46d3d32db16585cb884df7d5))
+* two-phase context compaction handles few very large messages ([5987ae1](https://github.com/overcuriousity/wintermute/commit/5987ae18c851d9f4deb6a5d5219c06fcd879bba8))
+
+
+### Dependencies
+
+* **python:** bump anthropic from 0.84.0 to 0.86.0 ([f7bf808](https://github.com/overcuriousity/wintermute/commit/f7bf808432d6f4fba4ed7a8480640aa1ccb92134))
+* **python:** bump json-repair from 0.58.5 to 0.58.6 ([9894b25](https://github.com/overcuriousity/wintermute/commit/9894b25efdeef94cd4febc154155ba82ea20bf52))
+* **python:** bump openai from 2.28.0 to 2.29.0 ([1cc61ad](https://github.com/overcuriousity/wintermute/commit/1cc61adba0602e4cca842effb2bc1c98de4c7553))
+* **python:** bump ruff from 0.15.6 to 0.15.7 ([74f65ef](https://github.com/overcuriousity/wintermute/commit/74f65ef002b52f6af1087ea1d5914d22b01148bd))
+
 ## [0.13.1-alpha](https://github.com/overcuriousity/wintermute/compare/v0.13.0-alpha...v0.13.1-alpha) (2026-03-18)
 
 
