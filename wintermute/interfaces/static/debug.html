@@ -722,6 +722,7 @@ async function loadTab(name) {
 // ── SSE stream ──
 function connectStream() {
   const es = new EventSource('/api/stream');
+  window.addEventListener('beforeunload', () => es.close());
   const statusEl = document.getElementById('stream-status');
   es.onopen = () => {
     statusEl.innerHTML = '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor"></span> live';
@@ -751,6 +752,7 @@ function renderSessions(sessions) {
 
 async function loadSessions() {
   const r = await fetch('/api/sessions');
+  if (!r.ok) return;
   const d = await r.json();
   renderSessions(d.sessions || []);
 }
@@ -808,6 +810,7 @@ async function loadSessionMessages(threadId) {
   const type = sessionType(threadId);
 
   const r = await fetch('/api/sessions/' + encodeURIComponent(threadId) + '/messages');
+  if (!r.ok) return;
   const data = await r.json();
   const msgs = data.messages || [];
 
@@ -880,6 +883,7 @@ async function deleteSession() {
   if (!selectedSession) return;
   if (!confirm('Archive all messages for session ' + selectedSession + '? (Same as /new in chat)')) return;
   const r = await fetch('/api/sessions/' + encodeURIComponent(selectedSession) + '/delete', {method: 'POST'});
+  if (!r.ok) { alert('Error: server returned ' + r.status); return; }
   const data = await r.json();
   if (data.ok) { selectedSession = null; await loadSessions(); }
   else alert('Error: ' + (data.error || JSON.stringify(data)));
@@ -892,6 +896,7 @@ async function compactSession() {
   btn.textContent = 'Compacting\u2026';
   try {
     const r = await fetch('/api/sessions/' + encodeURIComponent(selectedSession) + '/compact', {method: 'POST'});
+    if (!r.ok) { alert('Error: server returned ' + r.status); return; }
     const data = await r.json();
     if (data.ok) await loadSessionMessages(selectedSession);
     else alert('Error: ' + (data.error || JSON.stringify(data)));
@@ -927,6 +932,11 @@ async function showSystemPrompt() {
   document.body.appendChild(modal);
   try {
     const r = await fetch('/api/system-prompt');
+    if (!r.ok) {
+      document.getElementById('sp-section').textContent = 'Error: server returned ' + r.status;
+      document.getElementById('tools-section').textContent = '';
+      return;
+    }
     const data = await r.json();
     if (data.error) {
       document.getElementById('sp-section').textContent = 'Error: ' + data.error;
@@ -936,9 +946,11 @@ async function showSystemPrompt() {
     const spTok    = data.sp_tokens || 0;
     const toolsTok = data.tools_tokens || 0;
     const total    = data.tokens || (spTok + toolsTok);
+    const fallbackNote = data.fallback ? ' (approximate \u2014 no inference has run yet)' : '';
     document.getElementById('sp-stats').textContent =
-      `${fmtTokens(total)} tok total \u2022 ${data.pct}% of context`;
+      `${fmtTokens(total)} tok total \u2022 ${data.pct}% of context` + fallbackNote;
     document.getElementById('sp-token-bar').innerHTML =
+      (data.fallback ? '<span style="color:#f0ad4e;font-size:.72rem">\u26a0 Assembled from template \u2014 memories and ranked skills not included</span>' : '') +
       `<span style="color:#8899aa">SP: <strong>${fmtTokens(spTok)}</strong> tok</span>` +
       `<span style="color:#c9b0ff">Tools: <strong>${fmtTokens(toolsTok)}</strong> tok</span>` +
       `<span style="color:#666">Limit: ${fmtTokens(data.total_limit)} tok</span>`;
@@ -1157,8 +1169,9 @@ function renderWorkers(sessions, workflows) {
 
   const wfIds = Object.keys(wfSessions);
   wfIds.sort((a, b) => {
-    const ta = Math.max(...wfSessions[a].map(s => new Date(s.created_at)));
-    const tb = Math.max(...wfSessions[b].map(s => new Date(s.created_at)));
+    const sa = wfSessions[a], sb = wfSessions[b];
+    const ta = sa.length ? Math.max(...sa.map(s => new Date(s.created_at))) : 0;
+    const tb = sb.length ? Math.max(...sb.map(s => new Date(s.created_at))) : 0;
     return tb - ta;
   });
 
@@ -1230,6 +1243,7 @@ async function loadWorkers() {
     fetch('/api/subsessions'),
     fetch('/api/workflows'),
   ]);
+  if (!r1.ok || !r2.ok) return;
   const [d1, d2] = await Promise.all([r1.json(), r2.json()]);
   renderWorkers(d1.sessions || [], d2.workflows || []);
 }
@@ -1257,6 +1271,7 @@ async function fetchWorkerDetail(sid) {
   if (!el) return;
   try {
     const r = await fetch('/api/subsessions/' + encodeURIComponent(sid) + '/messages');
+    if (!r.ok) { el.innerHTML = '<span style="color:#ff9090">Server error (' + r.status + ')</span>'; return; }
     const data = await r.json();
     const msgs = data.messages || [];
     if (!msgs.length) {
@@ -1314,6 +1329,7 @@ async function fetchScratchpad(wfId) {
   el.innerHTML = 'Loading\u2026';
   try {
     const r = await fetch('/api/workflows/' + encodeURIComponent(wfId) + '/scratchpad');
+    if (!r.ok) { el.innerHTML = '<span style="color:#ff9090">Server error (' + r.status + ')</span>'; return; }
     const data = await r.json();
     if (data.error) {
       el.innerHTML = '<span style="color:#ff9090">' + esc(data.error) + '</span>';
@@ -1379,6 +1395,7 @@ function renderJobs(jobs) {
 
 async function loadJobs() {
   const r = await fetch('/api/jobs');
+  if (!r.ok) return;
   const d = await r.json();
   renderJobs(d.jobs || []);
 }
@@ -1410,6 +1427,7 @@ function renderTasks(items) {
 
 async function loadTasks() {
   const r = await fetch('/api/tasks');
+  if (!r.ok) return;
   const d = await r.json();
   renderTasks(d.items || []);
 }
@@ -1457,13 +1475,15 @@ function _fetchIL({limit = 200, before_id, after_id} = {}) {
   if (before_id != null) params.set('before_id', before_id);
   if (after_id != null)  params.set('after_id', after_id);
   return fetch('/api/interaction-log?' + params)
-    .then(r => r.json()).then(d => d.entries || []);
+    .then(r => { if (!r.ok) return {entries: []}; return r.json(); })
+    .then(d => d.entries || []);
 }
 
 async function _refreshILSessions() {
   const filterSel = document.getElementById('il-filter-session');
   const currentFilter = filterSel.value;
   const r = await fetch('/api/interaction-log?limit=1000&offset=0');
+  if (!r.ok) return;
   const d = await r.json();
   const sessions = [...new Set((d.entries || []).map(e => e.session).filter(Boolean))];
   const existing = new Set([...filterSel.options].map(o => o.value));
@@ -1552,6 +1572,7 @@ async function toggleILDetail(row, id) {
     return;
   }
   const r = await fetch('/api/interaction-log/' + id);
+  if (!r.ok) return;
   const e = await r.json();
   const detail = document.createElement('tr');
   detail.className = 'il-detail';
@@ -1654,6 +1675,7 @@ async function loadOutcomes() {
       fetch('/api/outcomes?' + params),
       fetch('/api/cp-violations'),
     ]);
+    if (!r.ok || !tpR.ok) return;
     const d = await r.json();
     const tpData = await tpR.json();
     const entries = d.entries || [];
@@ -2028,6 +2050,7 @@ async function deleteSkill(name) {
 async function loadConfig() {
   try {
     const r = await fetch('/api/config');
+    if (!r.ok) return;
     const d = await r.json();
     const el = document.getElementById('cfg-info');
     const parts = [];
