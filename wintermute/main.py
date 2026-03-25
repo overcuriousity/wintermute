@@ -577,7 +577,8 @@ async def main() -> None:
     _signal_ref: list[Optional[SignalThread]] = [None]
 
     async def broadcast(text: str, thread_id: Optional[str] = None, *,
-                        reasoning: Optional[str] = None) -> None:
+                        reasoning: Optional[str] = None,
+                        is_proactive: bool = False) -> None:
         mx = _matrix_ref[0]
         wi = _web_ref[0]
         si = _signal_ref[0]
@@ -587,6 +588,21 @@ async def main() -> None:
             await mx.send_message(text, thread_id)
         if wi and thread_id:
             await wi.broadcast(text, thread_id, reasoning=reasoning)
+        # Proactive results: deliver to all rooms that have opted in via /proactive on.
+        # This fires only when thread_id == "default" (proactive sessions have no specific
+        # target room), ensuring regular messages are never duplicated.
+        if is_proactive and thread_id == "default":
+            opted_in = thread_config_mgr.get_proactive_thread_ids()
+            for tid in opted_in:
+                try:
+                    if si and tid.startswith("sig_"):
+                        await si.send_message(text, tid)
+                    elif mx and not tid.startswith("web_") and not tid.startswith("sig_"):
+                        await mx.send_message(text, tid)
+                    if wi:
+                        await wi.broadcast(text, tid, reasoning=reasoning)
+                except Exception:  # noqa: BLE001
+                    logger.warning("Failed to deliver proactive message to %s", tid)
 
     # 2. LLMThread — uses a lazy getter for SubSessionManager (breaks cycle).
     seed_language = cfg.get("seed", {}).get("language", "en") if cfg.get("seed") else "en"

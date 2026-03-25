@@ -1564,7 +1564,8 @@ class SubSessionManager:
 
         if state.parent_thread_id:
             try:
-                await self._enqueue(text, state.parent_thread_id)
+                is_proactive = state.objective.startswith("[PROACTIVE]")
+                await self._enqueue(text, state.parent_thread_id, is_proactive=is_proactive)
             except Exception as exc:  # noqa: BLE001
                 logger.error("Sub-session %s failed to report back: %s", state.session_id, exc)
         else:

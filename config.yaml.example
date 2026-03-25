@@ -634,7 +634,10 @@ memory:
     prediction_inject_prompt: true       # Inject predictions into the system prompt
     prediction_proactive_scheduling: true # Spawn proactive sessions at predicted active times
     prediction_proactive_cooldown_hours: 4 # Min hours between proactive fires per prediction
-    # proactive_target_thread_id: "default"  # Thread to deliver proactive results to (default: main thread)
+    # proactive_target_thread_id: "default"  # Deprecated: use /proactive on in each room instead
+    # Proactive delivery (experimental): use the /proactive on slash command in any Matrix/Signal
+    # room to opt that room in to receiving proactive check-in results. Multiple rooms can be
+    # opted in independently. Use /proactive off to remove a room. No config change required.
 
   # Qdrant connection (required for qdrant backend only).
   # api_key is optional — only needed for Qdrant Cloud or instances

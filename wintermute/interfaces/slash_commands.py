@@ -116,6 +116,9 @@ class SlashCommandHandler:
         if text == "/commands":
             await self._cmd_commands(send_fn)
             return True
+        if text.startswith("/proactive"):
+            await self._cmd_proactive(text, thread_id, send_fn)
+            return True
 
         return False
 
@@ -493,6 +496,45 @@ class SlashCommandHandler:
         except Exception as exc:
             await send_fn(f"Failed to get memory stats: {exc}")
 
+    async def _cmd_proactive(self, text: str, thread_id: str, send_fn: SendFn) -> None:
+        """[experimental] Opt this room in or out of proactive message delivery."""
+        mgr = self._thread_config_manager
+        if not mgr:
+            await send_fn("Thread config manager not available.")
+            return
+
+        parts = text.strip().split()
+        if len(parts) == 1:
+            # Show current status.
+            resolved = mgr.resolve(thread_id)
+            state = "on" if resolved.proactive_enabled else "off"
+            await send_fn(
+                f"Proactive delivery for this room is currently **{state}**.\n"
+                f"Use `/proactive on` or `/proactive off` to change it.\n"
+                f"*(experimental)*"
+            )
+            return
+
+        arg = parts[1].lower()
+        if arg not in ("on", "off"):
+            await send_fn("Usage: `/proactive on` or `/proactive off`")
+            return
+
+        try:
+            mgr.set(thread_id, "proactive_enabled", arg, source="slash")
+        except ValueError as exc:
+            await send_fn(f"Error: {exc}")
+            return
+
+        if arg == "on":
+            await send_fn(
+                "Proactive delivery **enabled** for this room. "
+                "Scheduled proactive check-ins will be delivered here.\n"
+                "*(experimental — use `/proactive off` to disable)*"
+            )
+        else:
+            await send_fn("Proactive delivery **disabled** for this room.")
+
     async def _cmd_commands(self, send_fn: SendFn) -> None:
         await send_fn(
             "**Wintermute — Slash Commands**\n\n"
@@ -502,7 +544,8 @@ class SlashCommandHandler:
             "**Autonomy**\n"
             "- `/tasks` — List all active tasks\n"
             "- `/dream` — Run a dream cycle (memory consolidation + task pruning)\n"
-            "- `/reflect` — Trigger a reflection cycle; shows findings and self-model update\n\n"
+            "- `/reflect` — Trigger a reflection cycle; shows findings and self-model update\n"
+            "- `/proactive [on|off]` — Opt this room in/out of proactive check-ins *(experimental)*\n\n"
             "**Memory**\n"
             "- `/memory-stats` — Show memory store backend, entry count, and status\n"
             "- `/rebuild-index` — Rebuild the vector memory index\n\n"
