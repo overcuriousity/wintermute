@@ -299,7 +299,8 @@ def update_message_content(
         conn.commit()
     if n_updated == 0:
         logger.warning(
-            "update_message_content matched no rows (msg_id=%s, thread_id=%s)",
+            "update_message_content updated 0 rows (msg_id=%s, thread_id=%s; "
+            "row may not exist or values were unchanged)",
             msg_id, thread_id,
         )
 

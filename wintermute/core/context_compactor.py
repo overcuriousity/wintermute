@@ -205,16 +205,17 @@ class ContextCompactor:
         updated = list(rows)
 
         # Cap LLM calls to avoid runaway cost on threads with many large messages.
-        # Archivable messages (to-be-summarised) and kept messages each get their
-        # own counter so that a large keep_recent value can't cause an unbounded
-        # number of calls while still ensuring kept messages are always attempted.
+        # Archivable messages get a hard cap of _MAX_SHRINK_OPS.  Kept messages
+        # get at least keep_recent attempts so every tail message can be shrunk
+        # even when keep_recent > _MAX_SHRINK_OPS.
         _MAX_SHRINK_OPS = 20
         archive_shrink_attempts = 0
         kept_shrink_attempts = 0
+        kept_shrink_budget = max(_MAX_SHRINK_OPS, keep_recent)
         for i, row in enumerate(updated):
             is_kept = i >= keep_start_idx
             if is_kept:
-                if kept_shrink_attempts >= _MAX_SHRINK_OPS:
+                if kept_shrink_attempts >= kept_shrink_budget:
                     continue
             else:
                 if archive_shrink_attempts >= _MAX_SHRINK_OPS:
@@ -236,16 +237,34 @@ class ContextCompactor:
             # (with marker) is guaranteed to fit within shrink_input_limit.
             if tokens > shrink_input_limit:
                 suffix = "\n[truncated for compaction]"
-                while tokens > shrink_input_limit and len(content) > 1:
-                    content = content[: max(1, len(content) // 2)]
-                    tokens = count_tokens(content + suffix, model)
-                content = content + suffix
-                tokens = count_tokens(content, model)
+                suffix_tokens = count_tokens(suffix, model)
+                if shrink_input_limit > suffix_tokens:
+                    # Normal path: suffix fits; count tokens on content+suffix while
+                    # halving so the final result is within shrink_input_limit.
+                    while tokens > shrink_input_limit and len(content) > 1:
+                        content = content[: max(1, len(content) // 2)]
+                        tokens = count_tokens(content + suffix, model)
+                    content = content + suffix
+                    tokens = count_tokens(content, model)
+                else:
+                    # Edge case: shrink_input_limit is smaller than the suffix itself
+                    # (extremely small context window).  Truncate without suffix.
+                    while tokens > shrink_input_limit and len(content) > 1:
+                        content = content[: max(1, len(content) // 2)]
+                        tokens = count_tokens(content, model)
                 logger.warning(
                     "Message %d (%d tokens) exceeds shrink input limit (%d) — "
                     "truncating before LLM call for thread %s",
                     row["id"], original_tokens, shrink_input_limit, thread_id,
                 )
+                # Safety check: skip the LLM call if truncation still couldn't fit.
+                if tokens > shrink_input_limit:
+                    logger.warning(
+                        "Message %d still exceeds shrink input limit after truncation "
+                        "(%d > %d) — skipping shrink for thread %s",
+                        row["id"], tokens, shrink_input_limit, thread_id,
+                    )
+                    continue
 
             if is_kept:
                 kept_shrink_attempts += 1
