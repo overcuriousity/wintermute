@@ -653,10 +653,19 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
             )
             raw = await _consolidate(pool, "skills_dedup", dedup_prompt, formatted)
             actions = parse_json_from_llm(raw, list)
+            # Protect merge targets from contradictory delete instructions.
+            merge_targets = {
+                act.get("into") for act in actions if act.get("action") == "merge"
+            }
             for act in actions:
                 action = act.get("action")
                 name = act.get("file", "")
                 if action == "delete":
+                    if name in merge_targets:
+                        logger.warning(
+                            "Dreaming: skipping delete of merge target '%s'", name
+                        )
+                        continue
                     if name in skills:
                         skill_store.delete(name)
                         del skills[name]
