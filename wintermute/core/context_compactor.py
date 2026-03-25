@@ -64,11 +64,16 @@ class ContextCompactor:
 
     async def compact(self, thread_id: str = "default",
                       keep_recent: int | None = None,
-                      pool_override: "BackendPool | None" = None) -> None:
+                      pool_override: "BackendPool | None" = None,
+                      inference_context_size: int | None = None) -> None:
         """Summarise and archive old messages for the given thread.
 
         *keep_recent* overrides the instance default when provided (per-thread config).
         *pool_override* uses the given pool instead of the instance compaction pool.
+        *inference_context_size* is the context window of the inference backend that
+        triggered compaction.  When provided it is used as the basis for the per-message
+        shrink threshold so messages that are oversized for inference are always condensed,
+        even when the compaction backend has a larger context window.
         """
         effective_keep = keep_recent if keep_recent is not None else self._keep_recent
         if effective_keep < 1:
@@ -84,7 +89,10 @@ class ContextCompactor:
         # token budget.  This handles the case where a small number of very large
         # messages fills the context window (count-based compaction can't help there).
         _pool = pool_override or self._compaction_pool
-        rows = await self._shrink_large_messages(rows, effective_keep, _pool, thread_id)
+        rows = await self._shrink_large_messages(
+            rows, effective_keep, _pool, thread_id,
+            inference_context_size=inference_context_size,
+        )
 
         if len(rows) <= effective_keep:
             return
@@ -144,6 +152,8 @@ class ContextCompactor:
         keep_recent: int,
         pool: BackendPool,
         thread_id: str,
+        *,
+        inference_context_size: int | None = None,
     ) -> list[dict]:
         """Atomically summarise individual messages that exceed their per-message budget.
 
@@ -157,11 +167,25 @@ class ContextCompactor:
         subsequent build_messages() calls load the smaller content.  Messages
         that will be archived are updated in-memory only — they are discarded
         anyway after the count-based compaction step.
+
+        *inference_context_size* pins the threshold to the inference backend's
+        context window when it differs from the compaction pool's.  This ensures
+        messages that are oversized for inference are condensed even when the
+        compaction backend has a larger context window.  The compaction pool's
+        context_size still caps the content sent to the shrink LLM.
         """
         # The shrink call uses max_tokens_override=512, so reserve exactly that
         # (not pool.primary.max_tokens) when computing available input space.
         _SHRINK_MAX_TOKENS = 512
-        available = max(1, pool.primary.context_size - _SHRINK_MAX_TOKENS)
+        # Use the inference backend's context window for the per-message threshold
+        # so messages oversized for inference are always shrunk, even when the
+        # compaction backend has a larger window.  Take the minimum to never
+        # exceed what the shrink LLM can handle.
+        _threshold_context = min(
+            inference_context_size or pool.primary.context_size,
+            pool.primary.context_size,
+        )
+        available = max(1, _threshold_context - _SHRINK_MAX_TOKENS)
         # Use the actual message count as the denominator so a keep_recent value
         # larger than the history doesn't produce an artificially tiny threshold.
         effective_divisor = max(1, min(keep_recent, len(rows)))

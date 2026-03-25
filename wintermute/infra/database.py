@@ -295,8 +295,9 @@ def update_message_content(
                 "UPDATE messages SET content=?, token_count=? WHERE id=? AND thread_id=?",
                 (content, token_count, msg_id, thread_id),
             )
+        n_updated = cur.rowcount
         conn.commit()
-    if cur.rowcount == 0:
+    if n_updated == 0:
         logger.warning(
             "update_message_content matched no rows (msg_id=%s, thread_id=%s)",
             msg_id, thread_id,
