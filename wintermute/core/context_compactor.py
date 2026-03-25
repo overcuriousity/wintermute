@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 # Keep the last N messages untouched during compaction (default; overridable via config).
 COMPACTION_KEEP_RECENT = 10
 
+# Token headroom reserved for the shrink prompt wrapper when computing the per-message
+# input limit.  The shrink prompt itself (role label + instruction framing) adds roughly
+# 100–200 tokens; the extra margin covers variance across templates and backends.
+_SHRINK_PROMPT_HEADROOM = 768
+
 
 class ContextCompactor:
     """Manages context window compaction and tool-result trimming."""
@@ -64,11 +69,16 @@ class ContextCompactor:
 
     async def compact(self, thread_id: str = "default",
                       keep_recent: int | None = None,
-                      pool_override: "BackendPool | None" = None) -> None:
+                      pool_override: "BackendPool | None" = None,
+                      inference_context_size: int | None = None) -> None:
         """Summarise and archive old messages for the given thread.
 
         *keep_recent* overrides the instance default when provided (per-thread config).
         *pool_override* uses the given pool instead of the instance compaction pool.
+        *inference_context_size* is the context window of the inference backend that
+        triggered compaction.  When provided it is used as the basis for the per-message
+        shrink threshold so messages that are oversized for inference are always condensed,
+        even when the compaction backend has a larger context window.
         """
         effective_keep = keep_recent if keep_recent is not None else self._keep_recent
         if effective_keep < 1:
@@ -79,6 +89,16 @@ class ContextCompactor:
             )
             effective_keep = 1
         rows = await database.async_call(database.load_active_messages, thread_id)
+
+        # Pre-pass: atomically shrink individual messages that exceed their fair-share
+        # token budget.  This handles the case where a small number of very large
+        # messages fills the context window (count-based compaction can't help there).
+        _pool = pool_override or self._compaction_pool
+        rows = await self._shrink_large_messages(
+            rows, effective_keep, _pool, thread_id,
+            inference_context_size=inference_context_size,
+        )
+
         if len(rows) <= effective_keep:
             return
 
@@ -130,6 +150,171 @@ class ContextCompactor:
             )
         except Exception:  # noqa: BLE001
             pass
+
+    async def _shrink_large_messages(
+        self,
+        rows: list[dict],
+        keep_recent: int,
+        pool: BackendPool,
+        thread_id: str,
+        *,
+        inference_context_size: int | None = None,
+    ) -> list[dict]:
+        """Atomically summarise individual messages that exceed their per-message budget.
+
+        Threshold = max(300, available_context // keep_recent).  Any message
+        whose content exceeds this is condensed via a single LLM call to reduce
+        verbosity.  Messages that exceed shrink_input_limit are truncated before
+        the LLM call to avoid ContextTooLargeError; very large messages may lose
+        information beyond that limit.
+
+        Messages in the keep_recent tail are also persisted to the DB so that
+        subsequent build_messages() calls load the smaller content.  Messages
+        that will be archived are updated in-memory only — they are discarded
+        anyway after the count-based compaction step.
+
+        *inference_context_size* pins the threshold to the inference backend's
+        context window when it differs from the compaction pool's.  This ensures
+        messages that are oversized for inference are condensed even when the
+        compaction backend has a larger context window.  The compaction pool's
+        context_size still caps the content sent to the shrink LLM.
+        """
+        # The shrink call uses max_tokens_override=512, so reserve exactly that
+        # (not pool.primary.max_tokens) when computing available input space.
+        _SHRINK_MAX_TOKENS = 512
+        # Use the inference backend's context window for the per-message threshold
+        # so messages oversized for inference are always shrunk, even when the
+        # compaction backend has a larger window.  Take the minimum to never
+        # exceed what the shrink LLM can handle.
+        _threshold_context = min(
+            inference_context_size or pool.primary.context_size,
+            pool.primary.context_size,
+        )
+        available = max(1, _threshold_context - _SHRINK_MAX_TOKENS)
+        # Use the actual message count as the denominator so a keep_recent value
+        # larger than the history doesn't produce an artificially tiny threshold.
+        effective_divisor = max(1, min(keep_recent, len(rows)))
+        threshold = max(300, available // effective_divisor)
+        # Cap the content sent to the shrink LLM: must fit within the backend
+        # context window (minus headroom for the prompt wrapper + response)
+        # and never exceed the per-message budget.
+        shrink_input_limit = min(threshold, max(1, available - _SHRINK_PROMPT_HEADROOM))
+        model = pool.primary.model
+        keep_start_idx = max(0, len(rows) - keep_recent)
+        shrink_template = prompt_loader.load("MESSAGE_SHRINK_PROMPT.txt")
+        updated = list(rows)
+
+        # Cap LLM calls to avoid runaway cost on threads with many large messages.
+        # Archivable messages get a hard cap of _MAX_SHRINK_OPS.  Kept messages
+        # get at least keep_recent attempts (so every tail message is considered)
+        # but are bounded by _MAX_KEPT_SHRINK_OPS so a large compaction_keep_recent
+        # can't trigger an unbounded number of LLM calls in a single run.
+        _MAX_SHRINK_OPS = 20
+        _MAX_KEPT_SHRINK_OPS = 50
+        archive_shrink_attempts = 0
+        kept_shrink_attempts = 0
+        kept_shrink_budget = min(_MAX_KEPT_SHRINK_OPS, max(_MAX_SHRINK_OPS, keep_recent))
+        kept_budget_warning_emitted = False
+        for i, row in enumerate(updated):
+            is_kept = i >= keep_start_idx
+            if is_kept:
+                if kept_shrink_attempts >= kept_shrink_budget:
+                    if not kept_budget_warning_emitted:
+                        logger.warning(
+                            "Kept-message shrink budget (%d) reached during compaction "
+                            "for thread %s; remaining kept messages will not be shrunk",
+                            kept_shrink_budget, thread_id,
+                        )
+                        kept_budget_warning_emitted = True
+                    continue
+            else:
+                if archive_shrink_attempts >= _MAX_SHRINK_OPS:
+                    continue
+
+            content = row.get("content") or ""
+            if not isinstance(content, str):
+                content = str(content)
+            tokens = count_tokens(content, model)
+            original_tokens = tokens  # preserve pre-truncation count for logging
+            if tokens <= threshold:
+                continue
+
+            # Truncate content that would exceed the backend's context window so
+            # the LLM call doesn't fail with ContextTooLargeError.
+            # Use iterative halving with token recount to handle CJK/symbol-heavy
+            # text where the ≈4 chars-per-token estimate doesn't hold.
+            # Include the suffix in the loop condition so the final content
+            # (with marker) is guaranteed to fit within shrink_input_limit.
+            if tokens > shrink_input_limit:
+                suffix = "\n[truncated for compaction]"
+                suffix_tokens = count_tokens(suffix, model)
+                if shrink_input_limit > suffix_tokens:
+                    # Normal path: suffix fits; count tokens on content+suffix while
+                    # halving so the final result is within shrink_input_limit.
+                    while tokens > shrink_input_limit and len(content) > 1:
+                        content = content[: max(1, len(content) // 2)]
+                        tokens = count_tokens(content + suffix, model)
+                    content = content + suffix
+                    tokens = count_tokens(content, model)
+                else:
+                    # Edge case: shrink_input_limit is smaller than the suffix itself
+                    # (extremely small context window).  Truncate without suffix.
+                    while tokens > shrink_input_limit and len(content) > 1:
+                        content = content[: max(1, len(content) // 2)]
+                        tokens = count_tokens(content, model)
+                logger.warning(
+                    "Message %d (%d tokens) exceeds shrink input limit (%d) — "
+                    "truncating before LLM call for thread %s",
+                    row["id"], original_tokens, shrink_input_limit, thread_id,
+                )
+                # Safety check: skip the LLM call if truncation still couldn't fit.
+                if tokens > shrink_input_limit:
+                    logger.warning(
+                        "Message %d still exceeds shrink input limit after truncation "
+                        "(%d > %d) — skipping shrink for thread %s",
+                        row["id"], tokens, shrink_input_limit, thread_id,
+                    )
+                    continue
+
+            if is_kept:
+                kept_shrink_attempts += 1
+            else:
+                archive_shrink_attempts += 1
+            try:
+                shrink_prompt = shrink_template.format(role=row["role"], content=content)
+                response = await pool.call(
+                    messages=[{"role": "user", "content": shrink_prompt}],
+                    max_tokens_override=512,
+                )
+                shrunken = (response.content or "").strip()
+                if not shrunken:
+                    logger.warning(
+                        "Empty shrink response for message %d in thread %s — skipping",
+                        row["id"], thread_id,
+                    )
+                    continue
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to shrink message %d for thread %s — skipping",
+                    row["id"], thread_id,
+                )
+                continue
+
+            new_tokens = count_tokens(shrunken, model)
+            logger.info(
+                "Shrank message %d (%s) from %d to %d tokens for thread %s",
+                row["id"], row["role"], original_tokens, new_tokens, thread_id,
+            )
+            updated[i] = {**row, "content": shrunken, "token_count": new_tokens}
+
+            # Persist only kept messages — archived ones are summarised then discarded.
+            if is_kept:
+                await database.async_call(
+                    database.update_message_content,
+                    row["id"], shrunken, new_tokens, thread_id,
+                )
+
+        return updated
 
     async def maybe_summarise_components(
         self, thread_id: str = "default",

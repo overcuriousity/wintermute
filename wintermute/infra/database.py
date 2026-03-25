@@ -278,6 +278,42 @@ def load_active_messages(thread_id: str = "default") -> list[dict]:
     ]
 
 
+def update_message_content(
+    msg_id: int,
+    content: str,
+    token_count: int | None = None,
+    thread_id: str = "default",
+) -> None:
+    """Replace the content and, if provided, the token count of a message row in-place.
+
+    Used by the per-message compaction pre-pass to persist shrunken summaries
+    of kept messages so that subsequent build_messages() calls see the smaller
+    content.
+
+    The update is always scoped to *thread_id* (consistent with other message
+    mutations in this module) to prevent accidental cross-thread updates.
+    """
+    with _connect() as conn:
+        if token_count is None:
+            cur = conn.execute(
+                "UPDATE messages SET content=? WHERE id=? AND thread_id=?",
+                (content, msg_id, thread_id),
+            )
+        else:
+            cur = conn.execute(
+                "UPDATE messages SET content=?, token_count=? WHERE id=? AND thread_id=?",
+                (content, token_count, msg_id, thread_id),
+            )
+        n_updated = cur.rowcount
+        conn.commit()
+    if n_updated == 0:
+        logger.warning(
+            "update_message_content updated 0 rows (msg_id=%s, thread_id=%s; "
+            "row may not exist or values were unchanged)",
+            msg_id, thread_id,
+        )
+
+
 def archive_messages(before_id: int, thread_id: str = "default") -> None:
     """Mark messages with id <= before_id as archived for a specific thread.
 

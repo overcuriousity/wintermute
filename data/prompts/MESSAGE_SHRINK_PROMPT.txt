@@ -1,0 +1,6 @@
+Condense the following {role} message into a compact but faithful summary. Preserve all factual content, decisions, file paths, technical details, tool outputs, and outcomes. Remove verbosity, pleasantries, repetition, and filler.
+
+Return only the condensed message text with no preamble or explanation.
+
+--- original message ---
+{content}
