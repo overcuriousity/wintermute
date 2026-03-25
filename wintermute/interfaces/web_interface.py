@@ -174,8 +174,8 @@ class WebInterface:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _json(data) -> web.Response:
-        return web.Response(text=json.dumps(data), content_type="application/json")
+    def _json(data, *, status: int = 200) -> web.Response:
+        return web.Response(text=json.dumps(data), content_type="application/json", status=status)
 
     def _token_budget(self, thread_id: str = "default") -> dict:
         """Delegate to LLMThread.get_token_budget() for accurate accounting."""
@@ -291,7 +291,7 @@ class WebInterface:
             _task.add_done_callback(self._background_tasks.discard)
             return self._json({"ok": True, "thread_id": thread_id})
         except Exception as exc:  # noqa: BLE001
-            return self._json({"error": str(exc)})
+            return self._json({"error": str(exc)}, status=500)
 
     async def _api_session_delete(self, request: web.Request) -> web.Response:
         thread_id = request.match_info["thread_id"]
@@ -305,7 +305,7 @@ class WebInterface:
                 pass
             return self._json({"ok": True, "thread_id": thread_id})
         except Exception as exc:  # noqa: BLE001
-            return self._json({"error": str(exc)})
+            return self._json({"error": str(exc)}, status=500)
 
     async def _api_session_compact(self, request: web.Request) -> web.Response:
         thread_id = request.match_info["thread_id"]
@@ -313,7 +313,7 @@ class WebInterface:
             await self._llm.force_compact(thread_id)
             return self._json({"ok": True, "thread_id": thread_id})
         except Exception as exc:  # noqa: BLE001
-            return self._json({"error": str(exc)})
+            return self._json({"error": str(exc)}, status=500)
 
     async def _api_config(self, _request: web.Request) -> web.Response:
         def _backend_list(configs):
@@ -344,14 +344,28 @@ class WebInterface:
     async def _api_system_prompt(self, _request: web.Request) -> web.Response:
         # Show the exact system prompt last sent to the LLM (includes
         # vector-ranked memories, compaction summary, etc.).
-        # Never fall back to re-assembling — a re-assembled prompt would show
-        # (all) skills instead of the actual ranked subset, no memories, etc.
+        # Falls back to a freshly assembled prompt (without ranked memories)
+        # when no cached version exists yet (e.g. after a restart).
         thread_id = _request.query.get("thread", "default")
         prompt = None
+        is_fallback = False
         if self._llm:
             prompt = self._llm.get_last_system_prompt(thread_id)
         if prompt is None:
-            return self._json({"error": f"No system prompt cached yet for thread '{thread_id}'. Send a message first."})
+            # Assemble an approximate prompt so the debug panel is useful
+            # even before the first inference call (e.g. after restart).
+            try:
+                from wintermute.infra import prompt_assembler
+                summary = None
+                if self._llm and hasattr(self._llm, '_store'):
+                    summary = self._llm._store.compaction_summaries.get(thread_id)
+                prompt = prompt_assembler.assemble(extra_summary=summary)
+                is_fallback = True
+            except Exception:  # noqa: BLE001
+                return self._json(
+                    {"error": f"Could not assemble system prompt for thread '{thread_id}'."},
+                    status=503,
+                )
         from wintermute.core.llm_thread import _count_tokens
         _cfg = self._main_pool.primary if (self._main_pool and self._main_pool.enabled) else None
         model = _cfg.model if _cfg else "gpt-4"
@@ -382,7 +396,7 @@ class WebInterface:
         tools_tokens = _count_tokens(json.dumps(active_schemas), model)
         total_limit = max(_cfg.context_size - _cfg.max_tokens, 1) if _cfg else 4096
         combined_tokens = sp_tokens + tools_tokens
-        return self._json({
+        result = {
             "prompt": prompt,
             "sp_tokens": sp_tokens,
             "tools_tokens": tools_tokens,
@@ -390,7 +404,10 @@ class WebInterface:
             "total_limit": total_limit,
             "pct": round(min(combined_tokens / total_limit * 100, 100), 1),
             "tool_schemas": active_schemas,
-        })
+        }
+        if is_fallback:
+            result["fallback"] = True
+        return self._json(result)
 
     # ------------------------------------------------------------------
     # REST API — sub-sessions
@@ -444,7 +461,7 @@ class WebInterface:
         workflow_id = request.match_info["workflow_id"]
         # Sanitise: only allow alphanumeric, dash, underscore
         if not all(c.isalnum() or c in "-_" for c in workflow_id):
-            return self._json({"error": "invalid workflow_id"})
+            return self._json({"error": "invalid workflow_id"}, status=400)
         scratchpad_dir = Path("data/scratchpad") / workflow_id
         if not scratchpad_dir.is_dir():
             return self._json({"workflow_id": workflow_id, "files": [], "exists": False})
@@ -484,7 +501,7 @@ class WebInterface:
         """GET /api/thread-config — list all overrides + available backends."""
         mgr = getattr(self, "_thread_config_manager", None)
         if mgr is None:
-            return self._json({"error": "Thread config not available"})
+            return self._json({"error": "Thread config not available"}, status=503)
         overrides = mgr.get_all_overrides()
         backends = sorted(mgr.get_available_backends())
         return self._json({
@@ -512,7 +529,7 @@ class WebInterface:
         """GET /api/thread-config/{thread_id} — resolved config with sources."""
         mgr = getattr(self, "_thread_config_manager", None)
         if mgr is None:
-            return self._json({"error": "Thread config not available"})
+            return self._json({"error": "Thread config not available"}, status=503)
         thread_id = request.match_info["thread_id"]
         resolved_dict = mgr.resolve_as_dict(thread_id)
         raw = mgr.get(thread_id)
@@ -537,7 +554,7 @@ class WebInterface:
         """POST /api/thread-config/{thread_id} — set overrides (JSON body)."""
         mgr = getattr(self, "_thread_config_manager", None)
         if mgr is None:
-            return self._json({"error": "Thread config not available"})
+            return self._json({"error": "Thread config not available"}, status=503)
         thread_id = request.match_info["thread_id"]
         try:
             body = await request.json()
@@ -547,7 +564,7 @@ class WebInterface:
             for key, value in body.items():
                 mgr.set(thread_id, key, value)
         except (ValueError, TypeError) as exc:
-            return self._json({"error": str(exc)})
+            return self._json({"error": str(exc)}, status=400)
         resolved_dict = mgr.resolve_as_dict(thread_id)
         return self._json({"ok": True, "resolved": resolved_dict})
 
@@ -555,7 +572,7 @@ class WebInterface:
         """DELETE /api/thread-config/{thread_id} — remove all overrides."""
         mgr = getattr(self, "_thread_config_manager", None)
         if mgr is None:
-            return self._json({"error": "Thread config not available"})
+            return self._json({"error": "Thread config not available"}, status=503)
         thread_id = request.match_info["thread_id"]
         mgr.reset(thread_id)
         return self._json({"ok": True})
@@ -690,7 +707,7 @@ class WebInterface:
             all_skills = skill_store.get_all()
             store_stats = skill_store.stats()
         except Exception as exc:
-            return self._json({"error": str(exc), "skills": [], "count": 0})
+            return self._json({"error": str(exc), "skills": [], "count": 0}, status=500)
 
         for rec in all_skills:
             name = rec["name"]
