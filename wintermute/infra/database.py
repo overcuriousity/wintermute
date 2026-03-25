@@ -273,7 +273,7 @@ def update_message_content(
     msg_id: int,
     content: str,
     token_count: int | None = None,
-    thread_id: str | None = None,
+    thread_id: str = "default",
 ) -> None:
     """Replace the content and, if provided, the token count of a message row in-place.
 
@@ -281,32 +281,20 @@ def update_message_content(
     of kept messages so that subsequent build_messages() calls see the smaller
     content.
 
-    If *thread_id* is provided the update is additionally scoped to that thread,
-    acting as an ownership guard consistent with other message mutations.
+    The update is always scoped to *thread_id* (consistent with other message
+    mutations in this module) to prevent accidental cross-thread updates.
     """
     with _connect() as conn:
         if token_count is None:
-            if thread_id is None:
-                cur = conn.execute(
-                    "UPDATE messages SET content=? WHERE id=?",
-                    (content, msg_id),
-                )
-            else:
-                cur = conn.execute(
-                    "UPDATE messages SET content=? WHERE id=? AND thread_id=?",
-                    (content, msg_id, thread_id),
-                )
+            cur = conn.execute(
+                "UPDATE messages SET content=? WHERE id=? AND thread_id=?",
+                (content, msg_id, thread_id),
+            )
         else:
-            if thread_id is None:
-                cur = conn.execute(
-                    "UPDATE messages SET content=?, token_count=? WHERE id=?",
-                    (content, token_count, msg_id),
-                )
-            else:
-                cur = conn.execute(
-                    "UPDATE messages SET content=?, token_count=? WHERE id=? AND thread_id=?",
-                    (content, token_count, msg_id, thread_id),
-                )
+            cur = conn.execute(
+                "UPDATE messages SET content=?, token_count=? WHERE id=? AND thread_id=?",
+                (content, token_count, msg_id, thread_id),
+            )
         conn.commit()
     if cur.rowcount == 0:
         logger.warning(
