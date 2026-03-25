@@ -215,6 +215,35 @@ def _task_update(inputs: dict, effective_scope: Optional[str],
         kwargs["content"] = inputs["content"]
     if "priority" in inputs:
         kwargs["priority"] = int(inputs["priority"])
+    if "ai_prompt" in inputs or "execution_mode" in inputs:
+        task = database.get_task(task_id)
+        if not task:
+            return json.dumps({"status": "not_found"})
+        if task.get("thread_id") != effective_scope:
+            return json.dumps({"status": "not_found"})
+        if "ai_prompt" in inputs:
+            raw_ai_prompt = (inputs.get("ai_prompt") or "").strip()
+            new_ai_prompt = raw_ai_prompt or None
+        else:
+            new_ai_prompt = task.get("ai_prompt")
+        if "execution_mode" in inputs:
+            raw_execution_mode = (inputs.get("execution_mode") or "").strip()
+            new_execution_mode = raw_execution_mode or None
+        else:
+            new_execution_mode = task.get("execution_mode")
+        try:
+            resolved_mode, _ = _resolve_execution_mode(
+                schedule_type=task.get("schedule_type"),
+                ai_prompt=new_ai_prompt,
+                execution_mode=new_execution_mode,
+                background=bool(task.get("background")),
+            )
+        except ValueError as exc:
+            return json.dumps({"error": str(exc)})
+        if "ai_prompt" in inputs:
+            kwargs["ai_prompt"] = new_ai_prompt
+        if "execution_mode" in inputs:
+            kwargs["execution_mode"] = resolved_mode
     ok = database.update_task(task_id, thread_id=effective_scope, **kwargs)
     return json.dumps({"status": "ok" if ok else "not_found"})
 
