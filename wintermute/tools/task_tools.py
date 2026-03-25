@@ -218,9 +218,19 @@ def _task_update(inputs: dict, effective_scope: Optional[str],
     if "ai_prompt" in inputs or "execution_mode" in inputs:
         task = database.get_task(task_id)
         if not task:
-            return json.dumps({"error": "task not found"})
-        new_ai_prompt = (inputs.get("ai_prompt") or "").strip() or task.get("ai_prompt") or None
-        new_execution_mode = (inputs.get("execution_mode") or "").strip() or task.get("execution_mode") or None
+            return json.dumps({"status": "not_found"})
+        if task.get("thread_id") != effective_scope:
+            return json.dumps({"status": "not_found"})
+        if "ai_prompt" in inputs:
+            raw_ai_prompt = (inputs.get("ai_prompt") or "").strip()
+            new_ai_prompt = raw_ai_prompt or None
+        else:
+            new_ai_prompt = task.get("ai_prompt")
+        if "execution_mode" in inputs:
+            raw_execution_mode = (inputs.get("execution_mode") or "").strip()
+            new_execution_mode = raw_execution_mode or None
+        else:
+            new_execution_mode = task.get("execution_mode")
         try:
             resolved_mode, _ = _resolve_execution_mode(
                 schedule_type=task.get("schedule_type"),
