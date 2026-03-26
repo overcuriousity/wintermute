@@ -68,7 +68,11 @@ def _resolve_delivery_thread(thread_id: Optional[str],
     """
     if parent_thread_id:
         return parent_thread_id
-    return thread_id or ""
+    # Sub-session IDs (sub_xxx) are internal and not user-routable;
+    # returning "" causes callers to surface a "No target thread" error.
+    if thread_id and not thread_id.startswith("sub_"):
+        return thread_id
+    return ""
 
 
 def tool_send_file(inputs: dict, *, tool_deps: Optional["ToolDeps"] = None,
