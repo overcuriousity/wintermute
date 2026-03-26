@@ -169,7 +169,8 @@ TOOL_SCHEMAS = [
                     "description": (
                         "Instruction for autonomous execution. Required when "
                         "execution_mode is autonomous_notify or "
-                        "autonomous_silent."
+                        "autonomous_silent. Do NOT use for simple reminders — "
+                        "reminder mode already delivers the content as a chat message."
                     ),
                 },
                 "execution_mode": {
@@ -378,6 +379,21 @@ TOOL_SCHEMAS = [
         },
     ),
     _fn(
+        "send_message",
+        "Send a text message directly to the user's chat. "
+        "Use this for notifications, alerts, and reminders — NOT for normal conversation replies.",
+        {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The message text to send to the user.",
+                },
+            },
+            "required": ["text"],
+        },
+    ),
+    _fn(
         "fetch_url",
         "Fetch a web page and return it as plain text (HTML stripped).",
         {
@@ -425,7 +441,7 @@ TOOL_CATEGORIES: dict[str, str] = {
     "read_file":          "execution",
     "write_file":         "execution",
     "search_web":         "research",
-    "send_file":          "execution",
+    "send_message":       "execution",
     "fetch_url":          "research",
     "worker_delegation":  "orchestration",
     "task":               "orchestration",

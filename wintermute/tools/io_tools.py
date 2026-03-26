@@ -57,8 +57,23 @@ def tool_write_file(inputs: dict, **_kw) -> str:
         return json.dumps({"error": str(exc)})
 
 
+def _resolve_delivery_thread(thread_id: Optional[str],
+                             parent_thread_id: Optional[str]) -> str:
+    """Pick the user-facing thread for delivery.
+
+    Sub-sessions have ``thread_id=sub_xxx`` (their own session ID) and
+    ``parent_thread_id`` pointing at the originating chat thread.  Tools that
+    deliver content to the user must target the chat thread, not the
+    sub-session.
+    """
+    if parent_thread_id:
+        return parent_thread_id
+    return thread_id or ""
+
+
 def tool_send_file(inputs: dict, *, tool_deps: Optional["ToolDeps"] = None,
-                   thread_id: Optional[str] = None, **_kw) -> str:
+                   thread_id: Optional[str] = None,
+                   parent_thread_id: Optional[str] = None, **_kw) -> str:
     """Validate a file and emit a ``send_file`` event for frontends to handle."""
     import mimetypes
 
@@ -69,6 +84,7 @@ def tool_send_file(inputs: dict, *, tool_deps: Optional["ToolDeps"] = None,
     mime_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
     file_size = path.stat().st_size
     caption = inputs.get("caption", "")
+    delivery_thread = _resolve_delivery_thread(thread_id, parent_thread_id)
 
     if tool_deps and tool_deps.event_bus:
         tool_deps.event_bus.emit(
@@ -78,7 +94,7 @@ def tool_send_file(inputs: dict, *, tool_deps: Optional["ToolDeps"] = None,
             mime_type=mime_type,
             file_size=file_size,
             caption=caption,
-            thread_id=thread_id or "",
+            thread_id=delivery_thread,
         )
         logger.info("send_file: emitted event for %s (%s, %d bytes)", path.name, mime_type, file_size)
         return json.dumps({
@@ -90,4 +106,30 @@ def tool_send_file(inputs: dict, *, tool_deps: Optional["ToolDeps"] = None,
         })
 
     logger.warning("send_file: no event_bus available, file not delivered")
+    return json.dumps({"error": "No delivery channel available (event_bus not configured)"})
+
+
+def tool_send_message(inputs: dict, *, tool_deps: Optional["ToolDeps"] = None,
+                      thread_id: Optional[str] = None,
+                      parent_thread_id: Optional[str] = None, **_kw) -> str:
+    """Emit a ``send_message`` event for frontends to deliver directly."""
+    text = (inputs.get("text") or "").strip()
+    if not text:
+        return json.dumps({"error": "text is required"})
+
+    delivery_thread = _resolve_delivery_thread(thread_id, parent_thread_id)
+    if not delivery_thread:
+        return json.dumps({"error": "No target thread available"})
+
+    if tool_deps and tool_deps.event_bus:
+        tool_deps.event_bus.emit(
+            "send_message",
+            text=text,
+            thread_id=delivery_thread,
+        )
+        logger.info("send_message: emitted event for thread %s (%d chars)",
+                     delivery_thread, len(text))
+        return json.dumps({"status": "ok", "thread_id": delivery_thread})
+
+    logger.warning("send_message: no event_bus available, message not delivered")
     return json.dumps({"error": "No delivery channel available (event_bus not configured)"})

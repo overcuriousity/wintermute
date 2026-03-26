@@ -1,6 +1,6 @@
 # Tools
 
-Wintermute exposes 11 tools as OpenAI-compatible function-calling schemas, compatible with any OpenAI-compatible endpoint (llama-server, vLLM, LM Studio, OpenAI, etc.).
+Wintermute exposes 12 tools as OpenAI-compatible function-calling schemas, compatible with any OpenAI-compatible endpoint (llama-server, vLLM, LM Studio, OpenAI, etc.).
 
 ## Tool Categories
 
@@ -8,9 +8,10 @@ Tools are grouped into three categories that control which tools are available i
 
 | Category | Available To | Tools |
 |----------|-------------|-------|
-| **execution** | All agents | `execute_shell`, `read_file`, `write_file`, `send_file` |
+| **execution** | All agents | `execute_shell`, `read_file`, `write_file`, `send_message` |
 | **research** | All agents | `search_web`, `fetch_url`, `skill` |
 | **orchestration** | Main agent + `full`-mode sub-sessions | `worker_delegation`, `task`, `append_memory`, `query_telemetry` |
+| *(uncategorized)* | Main agent only | `send_file`, `restart_self` |
 
 ## Tool Filtering by Sub-session Mode
 
@@ -83,9 +84,21 @@ Write content to a file, creating parent directories as needed.
 | `path` | string | yes | Absolute or relative file path |
 | `content` | string | yes | Text content to write |
 
+#### `send_message`
+
+Send a text message directly to the user's chat. Use for notifications, alerts, and reminders from sub-sessions — not for normal conversation replies (those go through the standard inference flow). Frontend-agnostic: emits a `send_message` event on the EventBus; each frontend (Matrix, Signal) subscribes and handles delivery independently.
+
+When called from a sub-session, the message is routed to the originating chat thread (via `parent_thread_id`), not the sub-session itself.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `text` | string | yes | The message text to send to the user |
+
+Returns: `status`, `thread_id`
+
 #### `send_file`
 
-Send a file to the user. Images are sent inline; other files as downloads. Frontend-agnostic: emits a `send_file` event on the EventBus; each frontend (Matrix, web) subscribes and handles delivery independently.
+Send a file to the user. Images are sent inline; other files as downloads. Frontend-agnostic: emits a `send_file` event on the EventBus; each frontend (Matrix, Signal) subscribes and handles delivery independently. Main agent only — not available in sub-sessions.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
