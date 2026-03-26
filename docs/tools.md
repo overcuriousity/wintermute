@@ -1,6 +1,6 @@
 # Tools
 
-Wintermute exposes 12 tools as OpenAI-compatible function-calling schemas, compatible with any OpenAI-compatible endpoint (llama-server, vLLM, LM Studio, OpenAI, etc.).
+Wintermute exposes 13 tools as OpenAI-compatible function-calling schemas, compatible with any OpenAI-compatible endpoint (llama-server, vLLM, LM Studio, OpenAI, etc.).
 
 ## Tool Categories
 
@@ -8,10 +8,11 @@ Tools are grouped into three categories that control which tools are available i
 
 | Category | Available To | Tools |
 |----------|-------------|-------|
-| **execution** | All agents | `execute_shell`, `read_file`, `write_file`, `send_message` |
+| **execution** | All agents | `execute_shell`, `read_file`, `write_file`, `send_file`*, `send_message` |
 | **research** | All agents | `search_web`, `fetch_url`, `skill` |
 | **orchestration** | Main agent + `full`-mode sub-sessions | `worker_delegation`, `task`, `append_memory`, `query_telemetry`, `restart_self` |
-| *(uncategorized)* | Main agent only | `send_file` |
+
+\* `send_file` is categorized as execution but excluded from sub-sessions by default (`SUB_SESSION_EXCLUDE`). Sub-sessions can still receive it via an explicit `tool_names` whitelist or custom profile.
 
 ## Tool Filtering by Sub-session Mode
 
@@ -98,7 +99,7 @@ Returns: `status`, `thread_id`
 
 #### `send_file`
 
-Send a file to the user. Images are sent inline; other files as downloads. Frontend-agnostic: emits a `send_file` event on the EventBus; each frontend (Matrix, Signal) subscribes and handles delivery independently. Main agent only — not available in sub-sessions.
+Send a file to the user. Images are sent inline; other files as downloads. Frontend-agnostic: emits a `send_file` event on the EventBus; each frontend (Matrix, Signal) subscribes and handles delivery independently. Excluded from sub-sessions by default; only available if explicitly granted via `tool_names` or a custom profile.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

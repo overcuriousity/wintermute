@@ -85,6 +85,8 @@ def tool_send_file(inputs: dict, *, tool_deps: Optional["ToolDeps"] = None,
     file_size = path.stat().st_size
     caption = inputs.get("caption", "")
     delivery_thread = _resolve_delivery_thread(thread_id, parent_thread_id)
+    if not delivery_thread:
+        return json.dumps({"error": "No target thread available"})
 
     if tool_deps and tool_deps.event_bus:
         tool_deps.event_bus.emit(

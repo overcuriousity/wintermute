@@ -23,6 +23,7 @@ from wintermute.core.tool_deps import ToolDeps
 from wintermute.core.tool_schemas import (  # noqa: F401 — re-exported
     TOOL_SCHEMAS,
     TOOL_CATEGORIES,
+    SUB_SESSION_EXCLUDE,
     NL_TOOL_SCHEMAS,
     NL_SCHEMA_MAP,
     get_tool_schemas,

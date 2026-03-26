@@ -441,6 +441,7 @@ TOOL_CATEGORIES: dict[str, str] = {
     "read_file":          "execution",
     "write_file":         "execution",
     "search_web":         "research",
+    "send_file":          "execution",
     "send_message":       "execution",
     "fetch_url":          "research",
     "worker_delegation":  "orchestration",
@@ -450,6 +451,10 @@ TOOL_CATEGORIES: dict[str, str] = {
     "query_telemetry":    "orchestration",
     "restart_self":       "orchestration",
 }
+
+# Tools excluded from sub-sessions by default (main-agent only).
+# Sub-sessions can still receive these via explicit tool_names whitelist.
+SUB_SESSION_EXCLUDE: frozenset[str] = frozenset({"send_file"})
 
 
 NL_TOOL_SCHEMAS = [
