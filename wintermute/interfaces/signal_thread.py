@@ -94,7 +94,7 @@ class SignalThread:
         self._whisper_language: str = whisper_language
         # Shared slash-command handler.
         self._slash_handler = slash_handler
-        # Subscribe to send_file events from the tool.
+        # Subscribe to tool delivery events (send_file, send_message).
         self._event_bus = event_bus
         self._send_file_sub_id: Optional[str] = None
         self._send_message_sub_id: Optional[str] = None
