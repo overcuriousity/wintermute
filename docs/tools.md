@@ -10,8 +10,8 @@ Tools are grouped into three categories that control which tools are available i
 |----------|-------------|-------|
 | **execution** | All agents | `execute_shell`, `read_file`, `write_file`, `send_message` |
 | **research** | All agents | `search_web`, `fetch_url`, `skill` |
-| **orchestration** | Main agent + `full`-mode sub-sessions | `worker_delegation`, `task`, `append_memory`, `query_telemetry` |
-| *(uncategorized)* | Main agent only | `send_file`, `restart_self` |
+| **orchestration** | Main agent + `full`-mode sub-sessions | `worker_delegation`, `task`, `append_memory`, `query_telemetry`, `restart_self` |
+| *(uncategorized)* | Main agent only | `send_file` |
 
 ## Tool Filtering by Sub-session Mode
 

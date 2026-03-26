@@ -276,11 +276,13 @@ class MatrixThread:
         self._slash_handler = slash_handler
         # Kimi-Code client for interactive auth flow.
         self._kimi_client = kimi_client
-        # Subscribe to send_file events from the tool.
+        # Subscribe to tool delivery events.
         self._event_bus = event_bus
+        self._send_file_sub_id: Optional[str] = None
+        self._send_message_sub_id: Optional[str] = None
         if event_bus is not None:
-            event_bus.subscribe("send_file", self._handle_send_file_event)
-            event_bus.subscribe("send_message", self._handle_send_message_event)
+            self._send_file_sub_id = event_bus.subscribe("send_file", self._handle_send_file_event)
+            self._send_message_sub_id = event_bus.subscribe("send_message", self._handle_send_message_event)
 
     # ------------------------------------------------------------------
     # Public interface
@@ -518,6 +520,13 @@ class MatrixThread:
 
     def stop(self) -> None:
         self._running = False
+        if self._event_bus is not None:
+            if self._send_file_sub_id is not None:
+                self._event_bus.unsubscribe(self._send_file_sub_id)
+                self._send_file_sub_id = None
+            if self._send_message_sub_id is not None:
+                self._event_bus.unsubscribe(self._send_message_sub_id)
+                self._send_message_sub_id = None
         if self._client is not None:
             self._client.stop()
 
