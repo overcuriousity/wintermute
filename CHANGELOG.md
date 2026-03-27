@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.15.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.14.0-alpha...v0.15.0-alpha) (2026-03-27)
+
+
+### Features
+
+* add send_message tool, fix send_file sub-session routing ([c550a2c](https://github.com/overcuriousity/wintermute/commit/c550a2c6c4567c7e4c69efda2dac23fa8fe4e1e1))
+* add send_message tool, fix send_file sub-session routing, strengthen NL task translation ([c034f39](https://github.com/overcuriousity/wintermute/commit/c034f3965934909c35dacb7f728049a610058e04))
+
+
+### Bug Fixes
+
+* address PR review — store Matrix event_bus sub IDs, fix restart_self category in docs ([9f4d00a](https://github.com/overcuriousity/wintermute/commit/9f4d00a99c5fa500f900d13837ab8b8fc462d3cf))
+* address PR review round 2 — keep send_file categorized, use exclude_names ([04a48e7](https://github.com/overcuriousity/wintermute/commit/04a48e783e47c8d8a70058791956f3c1b967473e))
+* protect skill merge targets from contradictory delete instructions ([4e7e044](https://github.com/overcuriousity/wintermute/commit/4e7e04453a446e7659648757d617ac3615a78e7f))
+* protect skill merge targets from contradictory deletes ([798232e](https://github.com/overcuriousity/wintermute/commit/798232ece206018a1ed1bbfbeb87bf26c91785c5))
+* reject sub_xxx thread IDs as non-routable in delivery thread resolution ([3743006](https://github.com/overcuriousity/wintermute/commit/37430061dbb53e825fe6c4dd97aaad9df7ae82d0))
+* update Signal event_bus subscription comment to reflect both events ([6ab3d4c](https://github.com/overcuriousity/wintermute/commit/6ab3d4cb3654bb1b2908eb140a9e9610ac3d405a))
+* web interface bugs — HTTP status codes, system prompt fallback, frontend error handling ([faa6e86](https://github.com/overcuriousity/wintermute/commit/faa6e8655eec88af91483a14f334fb82084c3a53))
+* web interface bugs — proper HTTP status codes, system prompt fallback, frontend error handling ([10c47fa](https://github.com/overcuriousity/wintermute/commit/10c47faa22f37c6a81d6930115c33c1a5ea882f7))
+
 ## [0.14.0-alpha](https://github.com/overcuriousity/wintermute/compare/v0.13.1-alpha...v0.14.0-alpha) (2026-03-25)
 
 
