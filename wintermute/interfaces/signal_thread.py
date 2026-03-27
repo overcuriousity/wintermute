@@ -94,11 +94,13 @@ class SignalThread:
         self._whisper_language: str = whisper_language
         # Shared slash-command handler.
         self._slash_handler = slash_handler
-        # Subscribe to send_file events from the tool.
+        # Subscribe to tool delivery events (send_file, send_message).
         self._event_bus = event_bus
         self._send_file_sub_id: Optional[str] = None
+        self._send_message_sub_id: Optional[str] = None
         if event_bus is not None:
             self._send_file_sub_id = event_bus.subscribe("send_file", self._handle_send_file_event)
+            self._send_message_sub_id = event_bus.subscribe("send_message", self._handle_send_message_event)
 
     # ------------------------------------------------------------------
     # Public interface
@@ -186,6 +188,9 @@ class SignalThread:
         if self._event_bus is not None and self._send_file_sub_id is not None:
             self._event_bus.unsubscribe(self._send_file_sub_id)
             self._send_file_sub_id = None
+        if self._event_bus is not None and self._send_message_sub_id is not None:
+            self._event_bus.unsubscribe(self._send_message_sub_id)
+            self._send_message_sub_id = None
         self._kill_process_sync()
 
     # ------------------------------------------------------------------
@@ -724,6 +729,18 @@ class SignalThread:
         if not thread_id.startswith("sig_"):
             return
         await self._send_file(file_path, thread_id)
+
+    async def _handle_send_message_event(self, event) -> None:
+        """EventBus handler for ``send_message`` events — filter by sig_ prefix."""
+        data = event.data if hasattr(event, "data") else event
+        text = data.get("text", "")
+        thread_id = data.get("thread_id", "")
+        if not text or not thread_id:
+            logger.warning("send_message event missing text or thread_id: %s", data)
+            return
+        if not thread_id.startswith("sig_"):
+            return
+        await self.send_message(text, thread_id)
 
     async def _send_file(self, file_path: str, thread_id: str,
                          _retries: int = 3, _delay: float = 2.0) -> None:

@@ -31,8 +31,8 @@ Translate natural-language task descriptions into JSON arguments. Output ONLY va
 6. "reason" is mandatory for complete. Infer from context if not stated.
 7. Emit `execution_mode` for every scheduled task. Use `reminder` for reminders/notifications, `autonomous_notify` when autonomous output should be posted to chat, and `autonomous_silent` only when the user explicitly asks for silent background maintenance.
 8. Scheduled autonomous work (`autonomous_notify`/`autonomous_silent`) requires `ai_prompt` with a self-contained instruction including tool names (search_web, fetch_url, execute_shell, read_file).
-9. For reminder/notification phrasing (e.g., 'remind me', 'send a reminder', 'water reminder', 'notify me to'), default to `execution_mode=reminder`.
-10. Add `ai_prompt` only when user intent clearly asks autonomous execution (e.g., research, summarize, analyze, fetch data, modify files, run commands). If ambiguous, prefer `execution_mode=reminder`.
+9. For reminder/notification phrasing (e.g., 'remind me', 'send a reminder', 'water reminder', 'notify me to', 'medication reminder', 'remind me to take'), default to `execution_mode=reminder`. The `reminder` mode already sends the `content` as a chat message — there is NO need for ai_prompt to "send" or "deliver" a message.
+10. Add `ai_prompt` only when user intent clearly asks for autonomous *computation* the AI must perform (e.g., research, summarize, analyze, fetch data, modify files, run commands). Sending a message, displaying a notification, or reminding the user is NOT autonomous computation — use `reminder`. If ambiguous, prefer `execution_mode=reminder`.
 11. Do not emit `background` unless explicitly asked to generate legacy-compatible payloads.
 
 ## Examples
@@ -73,3 +73,9 @@ CORRECT — genuine reminder, no action verb the AI can execute:
 "send a water reminder notification to user now"
 CORRECT — this is a reminder/notification task, keep it passive:
 {{"action": "add", "content": "Drink water", "schedule_type": "once", "at": "2026-03-02T10:00:00+01:00", "execution_mode": "reminder"}}
+
+"medication reminder daily at 6am — send 'Zeit für deine Tabletten! 💊'"
+WRONG — autonomous_notify with ai_prompt that just sends a message (reminder mode already does this):
+{{"action": "add", "content": "Medication reminder - tablets", "schedule_type": "daily", "at": "06:00", "execution_mode": "autonomous_notify", "ai_prompt": "Check current time. If it's 06:00 CET, send chat message 'Zeit für deine Tabletten! 💊' and mark task complete."}}
+CORRECT — simple reminder, the content IS the message:
+{{"action": "add", "content": "Zeit für deine Tabletten! 💊", "schedule_type": "daily", "at": "06:00", "execution_mode": "reminder"}}

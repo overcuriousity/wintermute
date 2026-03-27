@@ -23,13 +23,14 @@ from wintermute.core.tool_deps import ToolDeps
 from wintermute.core.tool_schemas import (  # noqa: F401 — re-exported
     TOOL_SCHEMAS,
     TOOL_CATEGORIES,
+    SUB_SESSION_EXCLUDE,
     NL_TOOL_SCHEMAS,
     NL_SCHEMA_MAP,
     get_tool_schemas,
 )
 from wintermute.tools.task_tools import tool_task, _describe_schedule  # noqa: F401
 from wintermute.tools.memory_tools import tool_append_memory, tool_skill
-from wintermute.tools.io_tools import tool_execute_shell, tool_read_file, tool_write_file, tool_send_file
+from wintermute.tools.io_tools import tool_execute_shell, tool_read_file, tool_write_file, tool_send_file, tool_send_message
 from wintermute.tools.web_tools import tool_search_web, tool_fetch_url
 from wintermute.tools.session_tools import tool_worker_delegation, tool_query_telemetry
 
@@ -70,6 +71,7 @@ _DISPATCH: dict[str, Any] = {
     "read_file":          tool_read_file,
     "write_file":         tool_write_file,
     "send_file":          tool_send_file,
+    "send_message":       tool_send_message,
     "search_web":         tool_search_web,
     "fetch_url":          tool_fetch_url,
     "query_telemetry":    tool_query_telemetry,

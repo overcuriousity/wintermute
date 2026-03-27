@@ -276,10 +276,13 @@ class MatrixThread:
         self._slash_handler = slash_handler
         # Kimi-Code client for interactive auth flow.
         self._kimi_client = kimi_client
-        # Subscribe to send_file events from the tool.
+        # Subscribe to tool delivery events.
         self._event_bus = event_bus
+        self._send_file_sub_id: Optional[str] = None
+        self._send_message_sub_id: Optional[str] = None
         if event_bus is not None:
-            event_bus.subscribe("send_file", self._handle_send_file_event)
+            self._send_file_sub_id = event_bus.subscribe("send_file", self._handle_send_file_event)
+            self._send_message_sub_id = event_bus.subscribe("send_message", self._handle_send_message_event)
 
     # ------------------------------------------------------------------
     # Public interface
@@ -343,6 +346,19 @@ class MatrixThread:
         if thread_id.startswith("sig_") or thread_id.startswith("web_"):
             return
         await self._send_file(file_path, thread_id)
+
+    async def _handle_send_message_event(self, event) -> None:
+        """EventBus handler for ``send_message`` events emitted by the tool."""
+        data = event.data if hasattr(event, "data") else event
+        text = data.get("text", "")
+        thread_id = data.get("thread_id", "")
+        if not text or not thread_id:
+            logger.warning("send_message event missing text or thread_id: %s", data)
+            return
+        # Ignore events targeting other interfaces.
+        if thread_id.startswith("sig_") or thread_id.startswith("web_"):
+            return
+        await self.send_message(text, thread_id)
 
     async def _send_file(self, file_path: str, room_id: str,
                          _retries: int = 3, _delay: float = 2.0) -> None:
@@ -504,6 +520,13 @@ class MatrixThread:
 
     def stop(self) -> None:
         self._running = False
+        if self._event_bus is not None:
+            if self._send_file_sub_id is not None:
+                self._event_bus.unsubscribe(self._send_file_sub_id)
+                self._send_file_sub_id = None
+            if self._send_message_sub_id is not None:
+                self._event_bus.unsubscribe(self._send_message_sub_id)
+                self._send_message_sub_id = None
         if self._client is not None:
             self._client.stop()
 

@@ -1693,6 +1693,7 @@ class SubSessionManager:
             tool_schemas = tool_module.get_tool_schemas(
                 categories, nl_tools=nl_tools,
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
+                exclude_names=tool_module.SUB_SESSION_EXCLUDE,
             )
 
         # Resolve per-session pool overrides for CP and NL translation.
