@@ -7,7 +7,6 @@ Translate natural-language task descriptions into JSON arguments. Output ONLY va
   "content": "(string) Task description. Required for add.",
   "task_id": "(string) Required for update/complete/pause/resume/delete.",
   "reason": "(string) Required for complete: why the task is finished.",
-  "priority": "(integer, 1-10) 1=urgent, 10=low, default 5.",
   "status": "(string) For list: active | paused | completed | all. Default: active.",
   "schedule_type": "once | daily | weekly | monthly | interval. Omit for unscheduled goals.",
   "at": "(string) once: ISO-8601 datetime. Recurring: HH:MM (24h).",

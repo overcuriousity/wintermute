@@ -226,9 +226,8 @@ class SlashCommandHandler:
                 lines.append(f"Tasks ({len(task_items)} active):")
                 for item in task_items:
                     content = (item["content"] or "")[:80]
-                    prio = item.get("priority", "?")
                     sched = f" [{item['schedule_desc']}]" if item.get("schedule_desc") else ""
-                    lines.append(f"- [P{prio}] #{item['id']}: {content}{sched}")
+                    lines.append(f"- #{item['id']}: {content}{sched}")
             else:
                 lines.append("Tasks: none")
         except Exception:  # noqa: BLE001

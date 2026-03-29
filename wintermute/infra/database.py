@@ -406,7 +406,7 @@ def _new_task_id() -> str:
     return f"task_{_uuid.uuid4().hex[:8]}"
 
 
-def add_task(content: str, priority: int = 5, thread_id: Optional[str] = None,
+def add_task(content: str, thread_id: Optional[str] = None,
              schedule_type: Optional[str] = None, schedule_desc: Optional[str] = None,
              schedule_config: Optional[str] = None, ai_prompt: Optional[str] = None,
              background: bool = False, execution_mode: Optional[str] = None) -> str:
@@ -414,10 +414,10 @@ def add_task(content: str, priority: int = 5, thread_id: Optional[str] = None,
     task_id = _new_task_id()
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO tasks (id, thread_id, content, priority, status, created, "
+            "INSERT INTO tasks (id, thread_id, content, status, created, "
             "schedule_type, schedule_desc, schedule_config, ai_prompt, execution_mode, background) "
-            "VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)",
-            (task_id, thread_id, content, priority, time.time(),
+            "VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)",
+            (task_id, thread_id, content, time.time(),
              schedule_type, schedule_desc, schedule_config, ai_prompt, execution_mode,
              1 if background else 0),
         )
@@ -434,13 +434,13 @@ def get_task(task_id: str) -> Optional[dict]:
 
 
 def update_task(task_id: str, thread_id: Optional[str] = None, **kwargs) -> bool:
-    """Update fields on a task. Supported: content, priority, status, ai_prompt,
+    """Update fields on a task. Supported: content, status, ai_prompt,
     execution_mode, schedule_type, schedule_desc, schedule_config, background,
     apscheduler_job_id.
 
     When *thread_id* is given the task must belong to that thread (ownership guard).
     """
-    allowed = {"content", "priority", "status", "ai_prompt", "execution_mode",
+    allowed = {"content", "status", "ai_prompt", "execution_mode",
                "schedule_type", "schedule_desc", "schedule_config", "background",
                "apscheduler_job_id"}
     updates = {k: v for k, v in kwargs.items() if k in allowed}
@@ -518,7 +518,7 @@ def delete_task(task_id: str) -> bool:
 
 
 def list_tasks(status: str = "active", thread_id: Optional[str] = None) -> list[dict]:
-    """Return tasks filtered by status, ordered by priority then id."""
+    """Return tasks filtered by status, ordered by creation time (newest first)."""
     conditions: list[str] = []
     params: list = []
     if status == "all":
@@ -529,7 +529,7 @@ def list_tasks(status: str = "active", thread_id: Optional[str] = None) -> list[
     if thread_id:
         conditions.append("thread_id = ?")
         params.append(thread_id)
-    sql = f"SELECT * FROM tasks WHERE {' AND '.join(conditions)} ORDER BY priority ASC, id ASC"
+    sql = f"SELECT * FROM tasks WHERE {' AND '.join(conditions)} ORDER BY created DESC, id ASC"
     with _connect() as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(sql, params).fetchall()
@@ -561,7 +561,7 @@ def get_active_tasks_text(thread_id: Optional[str] = None) -> str:
         if it.get("background"):
             tags.append("background")
         tag_str = " " + " ".join(f"[{t}]" for t in tags) if tags else ""
-        line = f"[P{it['priority']}] #{it['id']}: {it['content']}{tag_str}"
+        line = f"#{it['id']}: {it['content']}{tag_str}"
         if it.get("schedule_desc"):
             next_info = ""
             if it.get("last_run_at"):

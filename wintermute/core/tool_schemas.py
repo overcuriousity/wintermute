@@ -120,12 +120,6 @@ TOOL_SCHEMAS = [
                     "type": "string",
                     "description": "Required for complete: evidence why this task is truly finished.",
                 },
-                "priority": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 10,
-                    "description": "1 (urgent) to 10 (low), default 5.",
-                },
                 "status": {
                     "type": "string",
                     "enum": ["active", "paused", "completed", "all"],
@@ -471,7 +465,7 @@ NL_TOOL_SCHEMAS = [
                     "type": "string",
                     "description": (
                         "Plain-English description of the task operation. "
-                        "Examples: 'add a high-priority task to fix the login bug', "
+                        "Examples: 'add a task to fix the login bug', "
                         "'remind me daily at 9am to check email', "
                         "'every morning at 8 search for news and summarize', "
                         "'complete task_abc because the server is fixed', "
