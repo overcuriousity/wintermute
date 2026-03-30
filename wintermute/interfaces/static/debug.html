@@ -1491,17 +1491,19 @@ async function createTask() {
   const content = document.getElementById('task-new-content').value.trim();
   if (!content) return alert('Content is required');
   const mode = document.getElementById('task-new-mode').value;
+  const schedType = document.getElementById('task-new-schedule-type').value;
+  // execution_mode is only valid for scheduled tasks
+  if (mode && !schedType) return alert('Please select a schedule when choosing an execution mode');
   const body = { content };
-  if (mode) {
+  if (schedType) {
+    body.schedule_type = schedType;
+    const at = document.getElementById('task-new-at').value.trim();
+    if (at) body.at = at;
+  }
+  if (mode && schedType) {
     body.execution_mode = mode;
     const aiPrompt = document.getElementById('task-new-ai-prompt').value.trim();
     if (aiPrompt) body.ai_prompt = aiPrompt;
-    const schedType = document.getElementById('task-new-schedule-type').value;
-    if (schedType) {
-      body.schedule_type = schedType;
-      const at = document.getElementById('task-new-at').value.trim();
-      if (at) body.at = at;
-    }
   }
   const r = await fetch('/api/tasks', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
   if (r.ok) {
@@ -1766,7 +1768,7 @@ function _renderMemoryTable(items, showScore) {
     const id = esc(r.id || '');
     const text = esc(r.text || '');
     const source = esc(r.source || 'unknown');
-    return '<tr>' +
+    return '<tr data-entry-id="' + id + '">' +
       '<td class="mono" style="font-size:.7rem">' + id.slice(0, 12) + '</td>' +
       scoreCell +
       '<td class="dim" style="font-size:.72rem">' + source + '</td>' +
@@ -1802,20 +1804,12 @@ async function deleteMemory(entryId) {
 }
 
 async function editMemory(entryId) {
-  // Find the text from the DOM
-  const tables = document.querySelectorAll('#memory-results table, #memory-all table');
+  // Find the text from the DOM using the full entry ID stored in data-entry-id.
   let currentText = '';
-  for (const table of tables) {
-    for (const row of table.querySelectorAll('tr')) {
-      const idCell = row.querySelector('td.mono');
-      if (idCell && idCell.textContent === entryId.slice(0, 12)) {
-        // Text is in the 2nd-to-last td (before actions)
-        const cells = row.querySelectorAll('td');
-        currentText = cells[cells.length - 2].textContent;
-        break;
-      }
-    }
-    if (currentText) break;
+  const row = document.querySelector('[data-entry-id="' + CSS.escape(entryId) + '"]');
+  if (row) {
+    const cells = row.querySelectorAll('td');
+    if (cells.length >= 2) currentText = cells[cells.length - 2].textContent;
   }
   const newText = prompt('Edit memory:', currentText);
   if (newText === null || newText.trim() === '' || newText === currentText) return;
