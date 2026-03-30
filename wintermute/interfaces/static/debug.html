@@ -495,14 +495,43 @@
     <!-- Tasks -->
     <div class="tab-panel" id="panel-tasks">
       <div class="scroll-area">
+        <div style="padding:.6rem 1rem;display:flex;gap:.5rem;flex-wrap:wrap">
+          <button class="action-btn" onclick="showTaskCreateForm()">+ New Task</button>
+          <button class="action-btn" style="background:var(--danger);color:#fff" onclick="purgeCompletedTasks()">Purge Completed</button>
+        </div>
+        <div id="task-create-form" style="display:none;padding:.6rem 1rem;background:var(--bg-elevated);border:1px solid var(--border);margin:.5rem 1rem;border-radius:var(--radius)">
+          <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.5rem">
+            <input type="text" id="task-new-content" placeholder="Task content\u2026" style="flex:1;min-width:200px">
+            <select id="task-new-mode" style="min-width:140px">
+              <option value="">No schedule</option>
+              <option value="reminder">Reminder</option>
+              <option value="autonomous_notify">Autonomous (notify)</option>
+              <option value="autonomous_silent">Autonomous (silent)</option>
+            </select>
+            <button class="action-btn" onclick="createTask()">Create</button>
+            <button class="action-btn" onclick="document.getElementById('task-create-form').style.display='none'">Cancel</button>
+          </div>
+          <div id="task-new-extra" style="display:none;gap:.5rem;flex-wrap:wrap">
+            <input type="text" id="task-new-ai-prompt" placeholder="AI prompt (for autonomous modes)\u2026" style="flex:1;min-width:200px">
+            <select id="task-new-schedule-type" style="min-width:100px">
+              <option value="">None</option>
+              <option value="once">Once</option>
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="interval">Interval</option>
+            </select>
+            <input type="text" id="task-new-at" placeholder="HH:MM or ISO-8601" style="width:160px">
+          </div>
+        </div>
         <table class="data-table">
           <thead>
             <tr>
-              <th>ID</th><th>Priority</th><th>Status</th><th>Content</th><th>Schedule</th><th>Thread</th><th>Created</th><th>Last Run</th><th>Runs</th>
+              <th>ID</th><th>Status</th><th>Content</th><th>Mode</th><th>Schedule</th><th>Thread</th><th>Created</th><th>Last Run</th><th>Runs</th><th>Actions</th>
             </tr>
           </thead>
           <tbody id="tasks-body">
-            <tr><td colspan="9" class="empty">Loading\u2026</td></tr>
+            <tr><td colspan="10" class="empty">Loading\u2026</td></tr>
           </tbody>
         </table>
       </div>
@@ -516,7 +545,7 @@
         </div>
         <div class="form-bar" style="gap:.6rem;margin-bottom:1rem">
           <div class="form-group" style="flex:1">
-            <label>Test search query</label>
+            <label>Search query</label>
             <input type="text" id="memory-search-q" placeholder="Enter query\u2026" style="width:100%">
           </div>
           <div class="form-group">
@@ -526,8 +555,12 @@
           <div class="form-group" style="align-self:flex-end">
             <button class="action-btn" onclick="doMemorySearch()">Search</button>
           </div>
+          <div class="form-group" style="align-self:flex-end">
+            <button class="action-btn" onclick="loadAllMemories()">Browse All</button>
+          </div>
         </div>
         <div id="memory-results"></div>
+        <div id="memory-all" style="margin-top:1rem"></div>
       </div>
     </div>
 
@@ -1405,22 +1438,31 @@ function renderTasks(items) {
   document.getElementById('cnt-tasks').textContent = items.filter(i => i.status === 'active').length;
   const tbody = document.getElementById('tasks-body');
   if (!items.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty">No tasks</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">No tasks</td></tr>';
     return;
   }
-  const priorityLabel = p => p <= 1 ? 'P1 \u2605\u2605\u2605' : p <= 2 ? 'P2 \u2605\u2605' : p <= 3 ? 'P3 \u2605' : 'P' + p;
   tbody.innerHTML = items.map(it => {
     const statusColor = it.status === 'active' ? '#4caf8a' : it.status === 'paused' ? '#f0ad4e' : '#888';
+    const mode = it.execution_mode || '\u2014';
+    let actions = '';
+    if (it.status === 'active') {
+      actions += `<button class="action-btn" style="font-size:.65rem;padding:2px 6px" onclick="taskAction('${esc(it.id)}','pause')">Pause</button> `;
+      actions += `<button class="action-btn" style="font-size:.65rem;padding:2px 6px" onclick="taskAction('${esc(it.id)}','complete')">Complete</button> `;
+    } else if (it.status === 'paused') {
+      actions += `<button class="action-btn" style="font-size:.65rem;padding:2px 6px" onclick="taskAction('${esc(it.id)}','resume')">Resume</button> `;
+    }
+    actions += `<button class="action-btn" style="font-size:.65rem;padding:2px 6px;background:var(--danger);color:#fff" onclick="deleteTask('${esc(it.id)}')">Delete</button>`;
     return `<tr>
       <td class="mono">${esc(String(it.id))}</td>
-      <td class="dim">${esc(priorityLabel(it.priority))}</td>
       <td style="color:${statusColor}">${esc(it.status)}</td>
       <td class="trunc" title="${esc(it.content)}">${esc(it.content.slice(0, 100))}${it.content.length > 100 ? '\u2026' : ''}</td>
+      <td class="dim">${esc(mode)}</td>
       <td class="dim">${esc(it.schedule_desc || '\u2014')}</td>
       <td class="mono dim">${esc(it.thread_id || '\u2014')}</td>
       <td class="dim" style="white-space:nowrap">${it.created ? new Date(it.created * 1000).toLocaleString() : '\u2014'}</td>
       <td class="dim" style="white-space:nowrap">${it.last_run_at ? new Date(it.last_run_at * 1000).toLocaleString() : '\u2014'}</td>
       <td class="dim">${it.run_count || 0}</td>
+      <td style="white-space:nowrap">${actions}</td>
     </tr>`;
   }).join('');
 }
@@ -1430,6 +1472,71 @@ async function loadTasks() {
   if (!r.ok) return;
   const d = await r.json();
   renderTasks(d.items || []);
+}
+
+function showTaskCreateForm() {
+  const form = document.getElementById('task-create-form');
+  form.style.display = form.style.display === 'none' ? '' : 'none';
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const modeSelect = document.getElementById('task-new-mode');
+  if (modeSelect) modeSelect.addEventListener('change', () => {
+    const extra = document.getElementById('task-new-extra');
+    extra.style.display = modeSelect.value ? 'flex' : 'none';
+  });
+});
+
+async function createTask() {
+  const content = document.getElementById('task-new-content').value.trim();
+  if (!content) return alert('Content is required');
+  const mode = document.getElementById('task-new-mode').value;
+  const schedType = document.getElementById('task-new-schedule-type').value;
+  // execution_mode is only valid for scheduled tasks
+  if (mode && !schedType) return alert('Please select a schedule when choosing an execution mode');
+  const body = { content };
+  if (schedType) {
+    body.schedule_type = schedType;
+    const at = document.getElementById('task-new-at').value.trim();
+    if (at) body.at = at;
+  }
+  if (mode && schedType) {
+    body.execution_mode = mode;
+    const aiPrompt = document.getElementById('task-new-ai-prompt').value.trim();
+    if (aiPrompt) body.ai_prompt = aiPrompt;
+  }
+  const r = await fetch('/api/tasks', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
+  if (r.ok) {
+    document.getElementById('task-create-form').style.display = 'none';
+    document.getElementById('task-new-content').value = '';
+    await loadTasks();
+  } else {
+    const d = await r.json().catch(() => ({}));
+    alert(d.error || 'Failed to create task');
+  }
+}
+
+async function taskAction(taskId, action) {
+  const r = await fetch(`/api/tasks/${taskId}/${action}`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' });
+  if (r.ok) await loadTasks();
+  else alert('Action failed');
+}
+
+async function deleteTask(taskId) {
+  if (!confirm('Delete task ' + taskId + '?')) return;
+  const r = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
+  if (r.ok) await loadTasks();
+  else alert('Delete failed');
+}
+
+async function purgeCompletedTasks() {
+  if (!confirm('Delete ALL completed tasks?')) return;
+  const r = await fetch('/api/tasks/purge', { method: 'POST' });
+  if (r.ok) {
+    const d = await r.json();
+    alert('Purged ' + (d.deleted || 0) + ' tasks');
+    await loadTasks();
+  }
 }
 
 function toggleSection(hdr) {
@@ -1648,15 +1755,73 @@ async function doMemorySearch() {
       el.innerHTML = '<div class="empty">No results</div>';
       return;
     }
-    const html = '<table class="data-table"><thead><tr><th>#</th><th>Score</th><th>Text</th></tr></thead><tbody>' +
-      results.map((r, i) =>
-        '<tr><td>' + (i+1) + '</td><td style="color:#6fe06f">' + (r.score != null ? r.score.toFixed(4) : '-') + '</td>' +
-        '<td style="white-space:pre-wrap;word-break:break-word">' + esc(r.text || '') + '</td></tr>'
-      ).join('') + '</tbody></table>';
-    el.innerHTML = html;
+    el.innerHTML = _renderMemoryTable(results, true);
   } catch(e) {
     el.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>';
   }
+}
+
+function _renderMemoryTable(items, showScore) {
+  const scoreHeader = showScore ? '<th>Score</th>' : '';
+  const rows = items.map((r, i) => {
+    const scoreCell = showScore ? '<td style="color:#6fe06f">' + (r.score != null ? r.score.toFixed(4) : '-') + '</td>' : '';
+    const id = esc(r.id || '');
+    const text = esc(r.text || '');
+    const source = esc(r.source || 'unknown');
+    return '<tr data-entry-id="' + id + '">' +
+      '<td class="mono" style="font-size:.7rem">' + id.slice(0, 12) + '</td>' +
+      scoreCell +
+      '<td class="dim" style="font-size:.72rem">' + source + '</td>' +
+      '<td style="white-space:pre-wrap;word-break:break-word;max-width:500px">' + text + '</td>' +
+      '<td style="white-space:nowrap">' +
+        '<button class="action-btn" style="font-size:.6rem;padding:1px 5px" onclick="editMemory(\'' + id + '\')">Edit</button> ' +
+        '<button class="action-btn" style="font-size:.6rem;padding:1px 5px;background:var(--danger);color:#fff" onclick="deleteMemory(\'' + id + '\')">Delete</button>' +
+      '</td></tr>';
+  }).join('');
+  return '<table class="data-table"><thead><tr><th>ID</th>' + scoreHeader + '<th>Source</th><th>Text</th><th>Actions</th></tr></thead><tbody>' + rows + '</tbody></table>';
+}
+
+async function loadAllMemories() {
+  const el = document.getElementById('memory-all');
+  el.innerHTML = '<div class="empty">Loading all memories\u2026</div>';
+  try {
+    const r = await fetch('/api/memory/all');
+    const d = await r.json();
+    const items = d.items || [];
+    document.getElementById('cnt-memory').textContent = items.length;
+    if (!items.length) { el.innerHTML = '<div class="empty">No memories</div>'; return; }
+    el.innerHTML = '<div style="margin-bottom:.5rem;color:var(--text-dim)">' + items.length + ' entries</div>' + _renderMemoryTable(items, false);
+  } catch(e) { el.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
+}
+
+async function deleteMemory(entryId) {
+  if (!confirm('Delete memory ' + entryId.slice(0, 12) + '?')) return;
+  const r = await fetch('/api/memory/' + entryId, { method: 'DELETE' });
+  if (r.ok) {
+    await loadMemory();
+    await loadAllMemories();
+  } else alert('Delete failed');
+}
+
+async function editMemory(entryId) {
+  // Find the text from the DOM using the full entry ID stored in data-entry-id.
+  let currentText = '';
+  const row = document.querySelector('[data-entry-id="' + CSS.escape(entryId) + '"]');
+  if (row) {
+    const cells = row.querySelectorAll('td');
+    if (cells.length >= 2) currentText = cells[cells.length - 2].textContent;
+  }
+  const newText = prompt('Edit memory:', currentText);
+  if (newText === null || newText.trim() === '' || newText === currentText) return;
+  const r = await fetch('/api/memory/' + entryId, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ text: newText.trim() })
+  });
+  if (r.ok) {
+    await loadMemory();
+    await loadAllMemories();
+  } else alert('Update failed');
 }
 
 function updateMemoryCount(count) {

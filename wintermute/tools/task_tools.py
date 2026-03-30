@@ -111,7 +111,6 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
 
     task_id = database.add_task(
         content=content,
-        priority=int(inputs.get("priority", 5)),
         thread_id=add_thread,
         schedule_type=schedule_type,
         schedule_desc=schedule_desc,
@@ -213,8 +212,6 @@ def _task_update(inputs: dict, effective_scope: Optional[str],
     kwargs = {}
     if "content" in inputs:
         kwargs["content"] = inputs["content"]
-    if "priority" in inputs:
-        kwargs["priority"] = int(inputs["priority"])
     if "ai_prompt" in inputs or "execution_mode" in inputs:
         task = database.get_task(task_id)
         if not task:
@@ -257,7 +254,6 @@ def _task_list(inputs: dict, effective_scope: Optional[str],
         entry = {
             "id": it["id"],
             "content": it["content"],
-            "priority": it["priority"],
             "status": it["status"],
         }
         if it.get("schedule_desc"):
