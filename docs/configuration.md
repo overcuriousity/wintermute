@@ -415,7 +415,9 @@ Controls the dreaming pipeline parameters.
 | `prediction_inject_prompt` | no | `true` | Inject predictions into the main-thread system prompt |
 | `prediction_proactive_scheduling` | no | `true` | Spawn proactive sub-sessions at predicted active times |
 | `prediction_proactive_cooldown_hours` | no | `4` | Minimum hours between proactive fires per prediction |
-| `proactive_target_thread_id` | no | `"default"` | Thread ID to deliver proactive sub-session results to (e.g. a Matrix room thread); defaults to the main LLM thread |
+| `proactive_target_thread_id` | no | `"default"` | When `"default"` (recommended), proactive results are eligible for broadcast to rooms opted in via `/proactive on`. When set to any other thread ID, proactive sub-sessions deliver only to that thread and room opt-in broadcast is bypassed. |
+
+> **Experimental — Proactive delivery to rooms:** Proactive sub-sessions can deliver their results to specific Matrix/Signal rooms when `proactive_target_thread_id` is `"default"` (or unset). Each room must opt in via the `/proactive on` slash command. Results are delivered to all opted-in rooms simultaneously. Disable delivery for a room with `/proactive off`. If `proactive_target_thread_id` is set to a non-`"default"` thread, proactive results go only to that thread and room opt-in is bypassed. Because proactive sessions run with full tool access (including the ability to spawn sub-workers), they can take autonomous actions — not just summarise. Users will see the final LLM-processed response in their opted-in room.
 
 **Access tracking:** Every `search()` call updates `last_accessed` and `access_count` for returned entries. This metadata drives stale pruning during dreaming.
 

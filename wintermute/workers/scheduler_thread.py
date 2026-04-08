@@ -719,6 +719,7 @@ class TaskScheduler:
                 ),
                 system_prompt_mode="full",
                 parent_thread_id=self._cfg.proactive_target_thread_id,
+                is_proactive=True,
             )
 
             if self._event_bus:
