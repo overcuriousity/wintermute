@@ -554,6 +554,21 @@ class WebInterface:
             _sched_keys = ("schedule_type", "at", "day_of_week", "day_of_month",
                            "interval_seconds", "window_start", "window_end")
             sched_inputs = {k: data[k] for k in _sched_keys if k in data}
+            _required: tuple[str, ...] = ()
+            if schedule_type == "interval":
+                _required = ("interval_seconds",)
+            elif schedule_type == "weekly":
+                _required = ("day_of_week", "at")
+            elif schedule_type == "monthly":
+                _required = ("day_of_month", "at")
+            if _required:
+                missing = [f for f in _required if f not in sched_inputs]
+                if missing:
+                    return web.json_response(
+                        {"error": f"Missing required field(s) for {schedule_type!r} schedule: "
+                                  + ", ".join(sorted(missing))},
+                        status=400,
+                    )
             schedule_config = json.dumps(sched_inputs)
             schedule_desc = _describe_schedule(sched_inputs)
 
@@ -595,6 +610,9 @@ class WebInterface:
         except Exception:
             return web.json_response({"error": "Invalid JSON body"}, status=400)
         allowed = {"content", "status", "ai_prompt", "execution_mode"}
+        _allowed_statuses = {"active", "paused", "completed", "deleted"}
+        if "status" in data and data["status"] not in _allowed_statuses:
+            return web.json_response({"error": f"Invalid status value: {data['status']!r}"}, status=400)
         kwargs = {k: v for k, v in data.items() if k in allowed and v is not None}
         if not kwargs:
             return web.json_response({"error": "No valid fields to update"}, status=400)
@@ -630,7 +648,7 @@ class WebInterface:
         if not task:
             return web.json_response({"error": "not found"}, status=404)
         if task.get("apscheduler_job_id") and self._scheduler:
-            self._scheduler.remove_job(task_id)
+            self._scheduler.remove_job(task["apscheduler_job_id"])
         ok = await database.async_call(database.delete_task, task_id)
         return self._json({"ok": ok})
 
@@ -643,7 +661,7 @@ class WebInterface:
             task = await database.async_call(database.get_task, task_id)
             if task and task.get("apscheduler_job_id") and self._scheduler:
                 try:
-                    self._scheduler.remove_job(task_id)
+                    self._scheduler.remove_job(task["apscheduler_job_id"])
                 except Exception:
                     logger.warning("Could not remove APScheduler job for paused task %s", task_id)
             ok = await database.async_call(database.pause_task, task_id)
@@ -668,7 +686,7 @@ class WebInterface:
             reason = (data.get("reason") or "Completed via web interface").strip()
             task = await database.async_call(database.get_task, task_id)
             if task and task.get("apscheduler_job_id") and self._scheduler:
-                self._scheduler.remove_job(task_id)
+                self._scheduler.remove_job(task["apscheduler_job_id"])
             ok = await database.async_call(database.complete_task, task_id, reason)
         else:
             return web.json_response({"error": f"Unknown action: {action}"}, status=400)
@@ -874,12 +892,20 @@ class WebInterface:
         result = await asyncio.get_running_loop().run_in_executor(None, _build_result)
         return self._json(result)
 
-    async def _api_memory_list(self, _request: web.Request) -> web.Response:
-        """GET /api/memory/all — return all memory entries."""
+    async def _api_memory_list(self, request: web.Request) -> web.Response:
+        """GET /api/memory/all — return memory entries with optional pagination.
+
+        Query params: limit (default 100, max 1000), offset (default 0).
+        """
         from wintermute.infra import memory_store
+        limit = min(max(self._int_param(request, "limit", 100), 1), 1000)
+        offset = max(self._int_param(request, "offset", 0), 0)
         loop = asyncio.get_running_loop()
         items = await loop.run_in_executor(None, memory_store.get_all)
-        return self._json({"items": items, "count": len(items)})
+        total = len(items)
+        page = items[offset:offset + limit]
+        return self._json({"items": page, "count": len(page), "total": total,
+                           "limit": limit, "offset": offset, "has_more": offset + limit < total})
 
     async def _api_memory_delete(self, request: web.Request) -> web.Response:
         """DELETE /api/memory/{entry_id} — delete a single memory entry."""
@@ -892,7 +918,7 @@ class WebInterface:
         return self._json({"ok": True})
 
     async def _api_memory_update(self, request: web.Request) -> web.Response:
-        """PUT /api/memory/{entry_id} — update a memory entry (delete + re-add)."""
+        """PUT /api/memory/{entry_id} — update a memory entry in-place (upsert)."""
         from wintermute.infra import memory_store
         entry_id = request.match_info["entry_id"]
         try:
@@ -908,9 +934,7 @@ class WebInterface:
         if not existing:
             return web.json_response({"error": "not found"}, status=404)
         source = data.get("source", "user_explicit")
-        # memory_store.add uses ON CONFLICT DO UPDATE, so this is a safe upsert
-        # that preserves metadata (created_at, access stats) rather than
-        # deleting and re-inserting.
+        # Passing the existing entry_id causes add() to upsert in place.
         new_id = await loop.run_in_executor(None, memory_store.add, text, entry_id, source)
         return self._json({"ok": True, "id": new_id})
 
@@ -922,8 +946,11 @@ class WebInterface:
         except Exception:
             return web.json_response({"error": "Invalid JSON body"}, status=400)
         ids = data.get("ids", [])
+        if not isinstance(ids, list) or not ids:
+            return web.json_response({"error": "ids must be a non-empty list"}, status=400)
+        ids = [i for i in ids if isinstance(i, str)][:500]
         if not ids:
-            return web.json_response({"error": "ids list required"}, status=400)
+            return web.json_response({"error": "ids must contain string values"}, status=400)
         loop = asyncio.get_running_loop()
         count = await loop.run_in_executor(None, memory_store.bulk_delete, ids)
         return self._json({"ok": True, "deleted": count})

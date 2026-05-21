@@ -233,11 +233,11 @@ class LocalVectorBackend:
             conn = self._connect()
             try:
                 rows = conn.execute(
-                    "SELECT entry_id, text FROM local_vectors ORDER BY created_at"
+                    "SELECT entry_id, text, source FROM local_vectors ORDER BY created_at"
                 ).fetchall()
             finally:
                 conn.close()
-        return [{"id": r[0], "text": r[1], "score": 1.0} for r in rows]
+        return [{"id": r[0], "text": r[1], "score": 1.0, "source": r[2] or "unknown"} for r in rows]
 
     def replace_all(self, entries: list[str]) -> None:
         t0 = time.time()
@@ -787,7 +787,8 @@ class QdrantBackend:
             if offset is None:
                 break
         return [
-            {"id": str(p.id), "text": p.payload.get("text", ""), "score": 1.0}
+            {"id": str(p.id), "text": p.payload.get("text", ""), "score": 1.0,
+             "source": p.payload.get("source", "unknown")}
             for p in points
         ]
 
