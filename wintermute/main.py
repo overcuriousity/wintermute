@@ -598,14 +598,14 @@ async def main() -> None:
                     try:
                         if si and tid.startswith("sig_"):
                             await si.send_message(text, tid)
+                        elif wi and tid.startswith("web_"):
+                            await wi.broadcast(text, tid, reasoning=reasoning)
                         elif mx and not tid.startswith("web_") and not tid.startswith("sig_"):
                             await mx.send_message(text, tid)
                     except Exception:  # noqa: BLE001
                         logger.warning("Failed to deliver proactive message to %s", tid)
 
                 await asyncio.gather(*(_send_to_room(tid) for tid in opted_in))
-                if wi:
-                    await wi.broadcast(text, thread_id, reasoning=reasoning)
 
     # 2. LLMThread — uses a lazy getter for SubSessionManager (breaks cycle).
     seed_language = cfg.get("seed", {}).get("language", "en") if cfg.get("seed") else "en"
