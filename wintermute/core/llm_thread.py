@@ -92,6 +92,7 @@ class _QueueItem:
     # dequeued, the correction is stale and will be dropped.
     correction_for_seq: Optional[int] = None
     ephemeral: bool = False  # skip loading history (group mode: single-turn)
+    is_proactive: bool = False  # result of a proactive sub-session (routes to opted-in rooms)
 
 
 class LLMThread:
@@ -228,9 +229,11 @@ class LLMThread:
         ))
         return await fut
 
-    async def enqueue_system_event(self, text: str, thread_id: str = "default") -> None:
+    async def enqueue_system_event(self, text: str, thread_id: str = "default", *,
+                                   is_proactive: bool = False) -> None:
         """Submit an autonomous system event (heartbeat, scheduled task, etc.)."""
-        await self._dispatch(_QueueItem(text=text, thread_id=thread_id, is_system_event=True))
+        await self._dispatch(_QueueItem(text=text, thread_id=thread_id, is_system_event=True,
+                                        is_proactive=is_proactive))
 
     async def reset_session(self, thread_id: str = "default") -> None:
         await self._session_mgr.reset_session(thread_id)
@@ -444,12 +447,13 @@ class LLMThread:
                 elif item.is_system_event and not item.future and item.convergence_depth == 0:
                     text_to_send = reply.text or item.text
                     logger.info(
-                        "Broadcasting system-event reply for thread %s (%d chars, reply_empty=%s)",
-                        thread_id, len(text_to_send), not reply.text,
+                        "Broadcasting system-event reply for thread %s (%d chars, reply_empty=%s, proactive=%s)",
+                        thread_id, len(text_to_send), not reply.text, item.is_proactive,
                     )
                     try:
                         await self._broadcast(text_to_send, thread_id,
-                                              reasoning=reply.reasoning)
+                                              reasoning=reply.reasoning,
+                                              is_proactive=item.is_proactive)
                     except Exception:  # noqa: BLE001
                         logger.exception("Failed to broadcast system-event reply for thread %s",
                                          thread_id)

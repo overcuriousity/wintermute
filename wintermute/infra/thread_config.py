@@ -15,6 +15,7 @@ Each thread can independently override:
   - ``memory_score_threshold``    — minimum similarity score for memory retrieval
   - ``compaction_keep_recent``    — messages kept untouched during compaction
   - ``max_inline_tool_rounds``    — inline tool call limit before CP enforcement
+  - ``proactive_enabled``         — opt this room/thread into proactive message delivery [experimental]
 
 The ``ThreadConfigManager`` caches configs in memory and persists to SQLite.
 All mutations are logged to the interaction_log for auditability.
@@ -49,6 +50,7 @@ class ThreadConfig:
     memory_score_threshold: Optional[float] = None
     compaction_keep_recent: Optional[int] = None
     max_inline_tool_rounds: Optional[int] = None
+    proactive_enabled: Optional[bool] = None  # opt-in for proactive message delivery [experimental]
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -76,6 +78,7 @@ class ResolvedThreadConfig:
     memory_score_threshold: float
     compaction_keep_recent: int
     max_inline_tool_rounds: int
+    proactive_enabled: bool  # opt-in for proactive message delivery [experimental]
 
 
 # Hardcoded fallback defaults (baseline when no per-thread override exists).
@@ -91,6 +94,7 @@ _HARDCODED_DEFAULTS = {
     "memory_score_threshold": 0.3,
     "compaction_keep_recent": 10,
     "max_inline_tool_rounds": 3,
+    "proactive_enabled": False,
 }
 
 # Valid values for system_prompt_mode.
@@ -218,6 +222,7 @@ class ThreadConfigManager:
             memory_score_threshold=float(_pick("memory_score_threshold")),
             compaction_keep_recent=int(_pick("compaction_keep_recent")),
             max_inline_tool_rounds=int(_pick("max_inline_tool_rounds")),
+            proactive_enabled=bool(_pick("proactive_enabled")),
         )
 
     def resolve_as_dict(self, thread_id: str) -> dict:
@@ -304,6 +309,13 @@ class ThreadConfigManager:
     def get_available_backends(self) -> list[str]:
         """Return the list of configured backend names."""
         return list(self._available_backends)
+
+    def get_proactive_thread_ids(self) -> list[str]:
+        """Return thread_ids that have opted in to proactive message delivery."""
+        return [
+            tid for tid, tc in self._cache.items()
+            if tc.proactive_enabled is True
+        ]
 
     def get_all_overrides(self) -> dict[str, dict]:
         """Return all thread_ids that have custom config (for SSE/debug)."""
@@ -428,6 +440,8 @@ class ThreadConfigManager:
             value = int(value)
             if value < 0:
                 raise ValueError("max_inline_tool_rounds must be >= 0 (or null to use default)")
+        elif key == "proactive_enabled":
+            value = _parse_bool(value)
 
         old_value = getattr(tc, key, None)
         setattr(tc, key, value)
