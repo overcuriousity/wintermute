@@ -557,6 +557,8 @@ class WebInterface:
             _required: tuple[str, ...] = ()
             if schedule_type == "interval":
                 _required = ("interval_seconds",)
+            elif schedule_type == "once":
+                _required = ("at",)
             elif schedule_type == "weekly":
                 _required = ("at",)
             elif schedule_type == "monthly":
@@ -569,6 +571,10 @@ class WebInterface:
                                   + ", ".join(sorted(missing))},
                         status=400,
                     )
+            # For types with a static scheduler default, mirror it in the config so
+            # the stored description matches the actual trigger time.
+            if schedule_type == "daily" and "at" not in sched_inputs:
+                sched_inputs["at"] = "09:00"
             schedule_config = json.dumps(sched_inputs)
             schedule_desc = _describe_schedule(sched_inputs)
 
@@ -619,6 +625,12 @@ class WebInterface:
             )
         allowed = {"content", "ai_prompt", "execution_mode"}
         kwargs = {k: v for k, v in data.items() if k in allowed and v is not None}
+        # Strip whitespace; drop fields that became empty.
+        for field in list(kwargs):
+            if isinstance(kwargs[field], str):
+                kwargs[field] = kwargs[field].strip() or None
+                if kwargs[field] is None:
+                    del kwargs[field]
         if not kwargs:
             return web.json_response({"error": "No valid fields to update"}, status=400)
 
@@ -630,7 +642,7 @@ class WebInterface:
             merged_execution_mode = kwargs.get("execution_mode", task.get("execution_mode"))
             merged_ai_prompt = (kwargs.get("ai_prompt", task.get("ai_prompt")) or "").strip() or None
             try:
-                _resolve_execution_mode(
+                resolved_mode, _ = _resolve_execution_mode(
                     schedule_type=task.get("schedule_type"),
                     ai_prompt=merged_ai_prompt,
                     execution_mode=(merged_execution_mode or "").strip() or None,
@@ -639,6 +651,9 @@ class WebInterface:
                 )
             except ValueError as exc:
                 return web.json_response({"error": str(exc)}, status=400)
+            # Persist the canonical resolved mode, not the raw client value.
+            if "execution_mode" in kwargs:
+                kwargs["execution_mode"] = resolved_mode
 
         ok = await database.async_call(database.update_task, task_id, None, **kwargs)
         if not ok:
@@ -942,7 +957,7 @@ class WebInterface:
         # Passing the existing entry_id causes add() to upsert in place.
         new_id = await loop.run_in_executor(None, memory_store.add, text, entry_id, source)
         # add() preserves the existing source on upsert, so explicitly promote it.
-        await loop.run_in_executor(None, memory_store._promote_source, new_id, source)
+        await loop.run_in_executor(None, memory_store.promote_source, new_id, source)
         return self._json({"ok": True, "id": new_id})
 
     async def _api_memory_bulk_delete(self, request: web.Request) -> web.Response:

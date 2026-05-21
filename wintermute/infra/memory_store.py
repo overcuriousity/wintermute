@@ -1315,6 +1315,11 @@ def _promote_source(entry_id: str, new_source: str) -> None:
         _backend.promote_source(entry_id, new_source)
 
 
+def promote_source(entry_id: str, new_source: str) -> None:
+    """Public alias for :func:`_promote_source`."""
+    _promote_source(entry_id, new_source)
+
+
 async def add_with_dedup(entry: str, source: str = "unknown", *, pool=None) -> str:
     """Add a memory entry, merging with an existing near-duplicate if found.
 
