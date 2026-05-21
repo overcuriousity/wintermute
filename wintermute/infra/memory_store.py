@@ -183,7 +183,7 @@ class LocalVectorBackend:
             conn = self._connect()
             try:
                 rows = conn.execute(
-                    "SELECT entry_id, text, vector FROM local_vectors ORDER BY created_at"
+                    "SELECT entry_id, text, vector, source FROM local_vectors ORDER BY created_at"
                 ).fetchall()
             finally:
                 conn.close()
@@ -192,14 +192,14 @@ class LocalVectorBackend:
             return []
 
         results: list[dict] = []
-        for entry_id, text, blob in rows:
+        for entry_id, text, blob, source in rows:
             vec = np.frombuffer(blob, dtype=np.float32)
             norm = np.linalg.norm(vec)
             if norm == 0:
                 continue
             score = float(np.dot(q_vec, vec / norm))
             if score >= threshold:
-                results.append({"id": entry_id, "text": text, "score": score})
+                results.append({"id": entry_id, "text": text, "score": score, "source": source or "unknown"})
 
         results.sort(key=lambda x: x["score"], reverse=True)
         hits = results[:top_k]

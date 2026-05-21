@@ -558,9 +558,9 @@ class WebInterface:
             if schedule_type == "interval":
                 _required = ("interval_seconds",)
             elif schedule_type == "weekly":
-                _required = ("day_of_week", "at")
+                _required = ("at",)
             elif schedule_type == "monthly":
-                _required = ("day_of_month", "at")
+                _required = ("at",)
             if _required:
                 missing = [f for f in _required if f not in sched_inputs]
                 if missing:
@@ -584,6 +584,7 @@ class WebInterface:
             execution_mode,
         )
 
+        scheduled = False
         if schedule_type and self._scheduler is not None:
             try:
                 self._scheduler.ensure_job(
@@ -592,12 +593,14 @@ class WebInterface:
                 )
                 await database.async_call(database.update_task, task_id, None,
                                           apscheduler_job_id=task_id)
+                scheduled = True
             except Exception:
                 logger.exception("Failed to schedule APScheduler job for task %s", task_id)
 
         result: dict = {"ok": True, "task_id": task_id}
         if schedule_desc:
             result["schedule"] = schedule_desc
+            result["scheduled"] = scheduled
         return self._json(result)
 
     async def _api_task_update(self, request: web.Request) -> web.Response:
@@ -609,10 +612,12 @@ class WebInterface:
             data = await request.json()
         except Exception:
             return web.json_response({"error": "Invalid JSON body"}, status=400)
-        allowed = {"content", "status", "ai_prompt", "execution_mode"}
-        _allowed_statuses = {"active", "paused", "completed", "deleted"}
-        if "status" in data and data["status"] not in _allowed_statuses:
-            return web.json_response({"error": f"Invalid status value: {data['status']!r}"}, status=400)
+        if "status" in data:
+            return web.json_response(
+                {"error": "Task status must be changed via the task action endpoints"},
+                status=400,
+            )
+        allowed = {"content", "ai_prompt", "execution_mode"}
         kwargs = {k: v for k, v in data.items() if k in allowed and v is not None}
         if not kwargs:
             return web.json_response({"error": "No valid fields to update"}, status=400)
@@ -936,6 +941,8 @@ class WebInterface:
         source = data.get("source", "user_explicit")
         # Passing the existing entry_id causes add() to upsert in place.
         new_id = await loop.run_in_executor(None, memory_store.add, text, entry_id, source)
+        # add() preserves the existing source on upsert, so explicitly promote it.
+        await loop.run_in_executor(None, memory_store._promote_source, new_id, source)
         return self._json({"ok": True, "id": new_id})
 
     async def _api_memory_bulk_delete(self, request: web.Request) -> web.Response:

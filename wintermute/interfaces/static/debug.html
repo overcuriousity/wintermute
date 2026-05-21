@@ -517,9 +517,6 @@
               <option value="">None</option>
               <option value="once">Once</option>
               <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-              <option value="interval">Interval</option>
             </select>
             <input type="text" id="task-new-at" placeholder="HH:MM or ISO-8601" style="width:160px">
           </div>
@@ -1788,9 +1785,10 @@ async function loadAllMemories() {
     const r = await fetch('/api/memory/all');
     const d = await r.json();
     const items = d.items || [];
-    document.getElementById('cnt-memory').textContent = items.length;
+    const total = d.total != null ? d.total : items.length;
+    document.getElementById('cnt-memory').textContent = total;
     if (!items.length) { el.innerHTML = '<div class="empty">No memories</div>'; return; }
-    el.innerHTML = '<div style="margin-bottom:.5rem;color:var(--text-dim)">' + items.length + ' entries</div>' + _renderMemoryTable(items, false);
+    el.innerHTML = '<div style="margin-bottom:.5rem;color:var(--text-dim)">' + total + ' entries</div>' + _renderMemoryTable(items, false);
   } catch(e) { el.innerHTML = '<div class="empty">Error: ' + esc(e.message) + '</div>'; }
 }
 
