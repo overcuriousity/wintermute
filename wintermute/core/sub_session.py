@@ -1660,7 +1660,8 @@ class SubSessionManager:
             len(siblings), parent_sid, root_tid,
         )
         try:
-            await self._enqueue(text, root_tid)
+            is_proactive = parent_state.is_proactive if parent_state else False
+            await self._enqueue(text, root_tid, is_proactive=is_proactive)
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "Failed to deliver aggregated nested results to %s: %s",
