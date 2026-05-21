@@ -497,6 +497,7 @@ class SubSessionManager:
                     system_prompt_mode=system_prompt_mode,
                     status="failed", created_at=now,
                     error=node.error,
+                    is_proactive=is_proactive,
                 )
                 self._states[session_id] = state
                 report_coro = self._report(state, f"[SUB-SESSION {session_id} FAILED] dependency failed")
@@ -512,6 +513,7 @@ class SubSessionManager:
                     system_prompt_mode=system_prompt_mode,
                     status="pending", created_at=now,
                     nesting_depth=nesting_depth,
+                    is_proactive=is_proactive,
                 )
                 self._states[session_id] = state
                 logger.info(
@@ -544,6 +546,7 @@ class SubSessionManager:
                 system_prompt_mode=system_prompt_mode,
                 status="pending", created_at=now,
                 nesting_depth=nesting_depth,
+                is_proactive=is_proactive,
             )
             self._states[session_id] = state
             self._schedule_time_gate(session_id, node.not_before)
@@ -955,6 +958,7 @@ class SubSessionManager:
                     system_prompt_mode=n.system_prompt_mode,
                     status="failed", created_at="",
                     error=n.error,
+                    is_proactive=n.is_proactive,
                 ),
                 f"[SUB-SESSION {n.node_id} FAILED] dependency failed",
             )

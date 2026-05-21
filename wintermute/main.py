@@ -602,8 +602,8 @@ async def main() -> None:
                             await wi.broadcast(text, tid, reasoning=reasoning)
                         elif mx and not tid.startswith("web_") and not tid.startswith("sig_"):
                             await mx.send_message(text, tid)
-                    except Exception:  # noqa: BLE001
-                        logger.warning("Failed to deliver proactive message to %s", tid)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Failed to deliver proactive message to %s: %s", tid, exc, exc_info=True)
 
                 await asyncio.gather(*(_send_to_room(tid) for tid in opted_in))
 
