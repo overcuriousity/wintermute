@@ -205,6 +205,7 @@ class SubSessionState:
     timeout_value: int = DEFAULT_TIMEOUT    # configured timeout for this session
     cp_verdict: str = "skipped"             # CP verdict: 'pass' | 'fail' | 'skipped'
     task_id: Optional[str] = None          # originating scheduled task id (for reflection)
+    is_proactive: bool = False             # set by scheduler for proactive sessions
 
 
 @dataclass
@@ -230,6 +231,7 @@ class TaskNode:
     max_rounds: Optional[int] = None        # None = unlimited inference rounds
     skip_cp_on_exit: bool = False           # skip CP post_inference on terminal response
     task_id: Optional[str] = None          # originating scheduled task id (for reflection)
+    is_proactive: bool = False             # set by scheduler for proactive sessions
 
 
 @dataclass
@@ -375,6 +377,7 @@ class SubSessionManager:
         profile: Optional[str] = None,
         task_id: Optional[str] = None,
         spawn_batch_id: Optional[str] = None,
+        is_proactive: bool = False,
     ) -> str:
         """
         Register a sub-session and start it immediately (or defer if deps pending).
@@ -464,6 +467,7 @@ class SubSessionManager:
             max_rounds=max_rounds,
             skip_cp_on_exit=skip_cp_on_exit,
             task_id=task_id,
+            is_proactive=is_proactive,
         )
 
         if deps:
@@ -493,6 +497,7 @@ class SubSessionManager:
                     system_prompt_mode=system_prompt_mode,
                     status="failed", created_at=now,
                     error=node.error,
+                    is_proactive=is_proactive,
                 )
                 self._states[session_id] = state
                 report_coro = self._report(state, f"[SUB-SESSION {session_id} FAILED] dependency failed")
@@ -508,6 +513,7 @@ class SubSessionManager:
                     system_prompt_mode=system_prompt_mode,
                     status="pending", created_at=now,
                     nesting_depth=nesting_depth,
+                    is_proactive=is_proactive,
                 )
                 self._states[session_id] = state
                 logger.info(
@@ -540,6 +546,7 @@ class SubSessionManager:
                 system_prompt_mode=system_prompt_mode,
                 status="pending", created_at=now,
                 nesting_depth=nesting_depth,
+                is_proactive=is_proactive,
             )
             self._states[session_id] = state
             self._schedule_time_gate(session_id, node.not_before)
@@ -848,6 +855,7 @@ class SubSessionManager:
             skip_cp_on_exit=node.skip_cp_on_exit,
             timeout_value=node.timeout,
             task_id=node.task_id,
+            is_proactive=node.is_proactive,
         )
         self._states[session_id] = state
 
@@ -950,6 +958,7 @@ class SubSessionManager:
                     system_prompt_mode=n.system_prompt_mode,
                     status="failed", created_at="",
                     error=n.error,
+                    is_proactive=n.is_proactive,
                 ),
                 f"[SUB-SESSION {n.node_id} FAILED] dependency failed",
             )
@@ -1564,7 +1573,8 @@ class SubSessionManager:
 
         if state.parent_thread_id:
             try:
-                await self._enqueue(text, state.parent_thread_id)
+                is_proactive = state.is_proactive
+                await self._enqueue(text, state.parent_thread_id, is_proactive=is_proactive)
             except Exception as exc:  # noqa: BLE001
                 logger.error("Sub-session %s failed to report back: %s", state.session_id, exc)
         else:
@@ -1650,7 +1660,8 @@ class SubSessionManager:
             len(siblings), parent_sid, root_tid,
         )
         try:
-            await self._enqueue(text, root_tid)
+            is_proactive = parent_state.is_proactive if parent_state else False
+            await self._enqueue(text, root_tid, is_proactive=is_proactive)
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "Failed to deliver aggregated nested results to %s: %s",
