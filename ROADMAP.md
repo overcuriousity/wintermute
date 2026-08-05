@@ -166,6 +166,63 @@ Learned from hermes's repo audit. Do not do any of these, ever:
   integrations (Qdrant already is one) stay optional. Adopt hermes's one good
   habit here: pin versions with a written rationale.
 
+## Issue backlog (prioritized)
+
+All open issues were audited against the code on 2026-08-05 and tagged with
+`criticality`, `effort`, and `benefit` labels (high/medium/low each). This
+ordering maps them onto the roadmap phases. Two issues were closed in the
+audit: #58 (session auto-reset — implemented, notification gap noted) and #122
+(L4 autonomy meta-plan — superseded by this document).
+
+**Do first — high benefit, low effort:**
+
+- **#236** Remove skill documentation condensation from dreaming
+  (`criticality: high`) — the only actively harmful open issue: nightly
+  LLM-rewrites of skill docs cause compounding information loss for zero
+  prompt-size benefit. Fix is deletion. Precedes Phase 2b (dreaming quality
+  work assumes the pipeline stops damaging its inputs).
+- **#268** Hermes Sessions API compatibility (sync `/chat`, `POST
+  /api/sessions`, bearer auth) — unblocks external clients (hermes-pebble);
+  the issue contains near-complete implementation code.
+- **#180** Local embedding fallback — memory currently hard-fails at startup
+  without a configured endpoint; zero-config memory via an optional
+  onnxruntime extra. Fits Phase 1 (store hardening).
+
+**Strategic — Phase 2 alignment, high effort:**
+
+- **#248** Confidence scores on memories — the highest-value open feature;
+  implements the roadmap's outcome→memory-quality loop (2a/2b). Schema
+  migration + reflection integration + confidence-weighted ranking.
+- **#247** Episodic/semantic memory separation — same direction; design
+  should follow #248 rather than precede it.
+
+**When convenient:**
+
+- **#42** Dynamic backend selection by historical success — data
+  infrastructure exists (`get_outcome_stats()`), routing untouched. Only
+  relevant with 3+ backends, per its own prerequisite.
+- **#178** Progressive tool disclosure — fits weak-model resilience, but
+  needs evaluation against CP-hook interference first (noted in the issue).
+- **#207** Consolidate interface ACL/dispatch — rated above the other
+  refactors because duplicated auth-path logic is a drift risk, not just
+  aesthetics. Natural fit for Phase 3.
+- **#259** Config hot-reload — high effort (per-component `reconfigure()`)
+  for a gain `restart_self` mostly covers.
+
+**Mechanical refactors — good first contributions, no urgency:**
+
+- #210 (`tool_error()` helper; grew from 42 to 47 instances), #209 (Qdrant
+  payload index dedup), #208 (SQLite connect dedup), #206
+  (`retry_with_backoff`), #205 (OAuth refresh mixin), #204 (credential I/O
+  util). All confirmed still duplicated as of the audit. Bundle with Phase 3
+  or pick off individually; none should land before Phase 0 tests exist.
+
+**Deferred:**
+
+- **#249** Counterfactual dreaming phase — `benefit: low` on purpose: the
+  roadmap requires proving dreaming's value with the eval harness (2b) before
+  adding more speculative phases to it.
+
 ## Sequencing rationale
 
 Phase 0 first because nothing else is safe to change without tests. Phase 1 is
