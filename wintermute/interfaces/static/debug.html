@@ -513,6 +513,8 @@
           </div>
           <div id="task-new-extra" style="display:none;gap:.5rem;flex-wrap:wrap">
             <input type="text" id="task-new-ai-prompt" placeholder="AI prompt (for autonomous modes)\u2026" style="flex:1;min-width:200px">
+            <!-- The form only exposes once/daily; weekly, monthly and interval
+                 schedules remain available via the REST API and task tool. -->
             <select id="task-new-schedule-type" style="min-width:100px">
               <option value="">None</option>
               <option value="once">Once</option>

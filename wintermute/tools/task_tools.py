@@ -94,6 +94,17 @@ def _build_schedule(inputs: dict) -> tuple[dict, str]:
             f"Missing required field(s) for {schedule_type!r} schedule: "
             + ", ".join(sorted(missing))
         )
+    # Fields the scheduler parses with int() — validate them here so a bad
+    # value is rejected before the task row is inserted.
+    for key in ("interval_seconds", "day_of_month"):
+        if sched.get(key) in (None, ""):
+            continue
+        try:
+            sched[key] = int(sched[key])
+        except (TypeError, ValueError):
+            raise ValueError(f"{key} must be an integer, got {sched[key]!r}") from None
+    if schedule_type == "interval" and sched["interval_seconds"] <= 0:
+        raise ValueError("interval_seconds must be a positive integer")
     for key, value in _SCHEDULE_DEFAULTS.get(schedule_type, {}).items():
         sched.setdefault(key, value)
     return sched, _describe_schedule(sched)
@@ -164,12 +175,18 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     )
 
     deps = tool_deps or ToolDeps()
+    scheduled = False
     if schedule_type and deps.task_scheduler is not None:
-        deps.task_scheduler.ensure_job(
-            task_id, json.loads(schedule_config),
-            ai_prompt, add_thread, background, execution_mode,
-        )
-        database.update_task(task_id, apscheduler_job_id=task_id)
+        try:
+            deps.task_scheduler.ensure_job(
+                task_id, json.loads(schedule_config),
+                ai_prompt, add_thread, background, execution_mode,
+            )
+            database.update_task(task_id, apscheduler_job_id=task_id)
+            scheduled = True
+        except Exception:
+            logger.warning("Could not schedule APScheduler job for new task %s",
+                           task_id, exc_info=True)
 
     if deps.event_bus:
         deps.event_bus.emit("task.created", task_id=task_id,
@@ -180,6 +197,7 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
         result["schedule"] = schedule_desc
     if schedule_type:
         result["execution_mode"] = execution_mode
+        result["scheduled"] = scheduled
     return json.dumps(result)
 
 
@@ -193,9 +211,15 @@ def _task_complete(inputs: dict, effective_scope: Optional[str],
     if not reason:
         return json.dumps({"error": "reason is required for complete action — explain why this task is finished"})
     task = database.get_task(task_id)
-    if task and task.get("apscheduler_job_id") and deps.task_scheduler:
-        deps.task_scheduler.remove_job(task_id)
+    # Mutate the DB first — removing the scheduler job before a failed DB
+    # write would leave an active task that silently never fires.
     ok = database.complete_task(task_id, reason=reason, thread_id=effective_scope)
+    if ok and task and task.get("apscheduler_job_id") and deps.task_scheduler:
+        try:
+            deps.task_scheduler.remove_job(task["apscheduler_job_id"])
+        except Exception:
+            logger.warning("Could not remove APScheduler job for completed task %s",
+                           task_id, exc_info=True)
     if ok and deps.event_bus:
         deps.event_bus.emit("task.completed", task_id=task_id, reason=reason[:200])
     return json.dumps({"status": "ok" if ok else "not_found", "reason": reason})
@@ -208,9 +232,13 @@ def _task_pause(inputs: dict, effective_scope: Optional[str],
     if not task_id:
         return json.dumps({"error": "task_id is required for pause action"})
     task = database.get_task(task_id)
-    if task and task.get("apscheduler_job_id") and deps.task_scheduler:
-        deps.task_scheduler.remove_job(task_id)
     ok = database.pause_task(task_id)
+    if ok and task and task.get("apscheduler_job_id") and deps.task_scheduler:
+        try:
+            deps.task_scheduler.remove_job(task["apscheduler_job_id"])
+        except Exception:
+            logger.warning("Could not remove APScheduler job for paused task %s",
+                           task_id, exc_info=True)
     return json.dumps({"status": "ok" if ok else "not_found"})
 
 
@@ -241,9 +269,13 @@ def _task_delete(inputs: dict, effective_scope: Optional[str],
     if not task_id:
         return json.dumps({"error": "task_id is required for delete action"})
     task = database.get_task(task_id)
-    if task and task.get("apscheduler_job_id") and deps.task_scheduler:
-        deps.task_scheduler.remove_job(task_id)
     ok = database.delete_task(task_id)
+    if ok and task and task.get("apscheduler_job_id") and deps.task_scheduler:
+        try:
+            deps.task_scheduler.remove_job(task["apscheduler_job_id"])
+        except Exception:
+            logger.warning("Could not remove APScheduler job for deleted task %s",
+                           task_id, exc_info=True)
     return json.dumps({"status": "ok" if ok else "not_found"})
 
 
@@ -256,7 +288,10 @@ def _task_update(inputs: dict, effective_scope: Optional[str],
     if "content" in inputs:
         kwargs["content"] = inputs["content"]
     task = database.get_task(task_id)
-    if not task or task.get("thread_id") != effective_scope:
+    # Web-created tasks have no thread scope (thread_id NULL) and are editable
+    # from any scope; scoped tasks are only editable from their own thread.
+    task_thread = task.get("thread_id") if task else None
+    if not task or (task_thread is not None and task_thread != effective_scope):
         return json.dumps({"status": "not_found"})
     new_ai_prompt = (task.get("ai_prompt") or "").strip() or None
     new_execution_mode = (task.get("execution_mode") or "").strip() or None
@@ -265,6 +300,10 @@ def _task_update(inputs: dict, effective_scope: Optional[str],
         if "ai_prompt" in inputs:
             raw_ai_prompt = (inputs.get("ai_prompt") or "").strip()
             new_ai_prompt = raw_ai_prompt or None
+            # Clearing ai_prompt converts an autonomous task back into a plain
+            # reminder — reset the stored mode unless explicitly overridden.
+            if new_ai_prompt is None and "execution_mode" not in inputs:
+                new_execution_mode = None
         if "execution_mode" in inputs:
             raw_execution_mode = (inputs.get("execution_mode") or "").strip()
             new_execution_mode = raw_execution_mode or None
@@ -281,10 +320,12 @@ def _task_update(inputs: dict, effective_scope: Optional[str],
         new_execution_mode = resolved_mode
         if "ai_prompt" in inputs:
             kwargs["ai_prompt"] = new_ai_prompt
-        if "execution_mode" in inputs and task.get("schedule_type"):
+        # Persist the canonical resolved mode (as the web endpoint does), so
+        # the stored mode and the delivery semantics cannot diverge.
+        if task.get("schedule_type"):
             kwargs["execution_mode"] = resolved_mode
         kwargs["background"] = int(new_background)
-    ok = database.update_task(task_id, thread_id=effective_scope, **kwargs)
+    ok = database.update_task(task_id, thread_id=task_thread, **kwargs)
     if not ok:
         return json.dumps({"status": "not_found"})
 

@@ -527,6 +527,8 @@ class WebInterface:
             data = await request.json()
         except Exception:
             return web.json_response({"error": "Invalid JSON body"}, status=400)
+        if not isinstance(data, dict):
+            return web.json_response({"error": "JSON body must be an object"}, status=400)
         content = (data.get("content") or "").strip()
         if not content:
             return web.json_response({"error": "content is required"}, status=400)
@@ -597,6 +599,8 @@ class WebInterface:
             data = await request.json()
         except Exception:
             return web.json_response({"error": "Invalid JSON body"}, status=400)
+        if not isinstance(data, dict):
+            return web.json_response({"error": "JSON body must be an object"}, status=400)
         if "status" in data:
             return web.json_response(
                 {"error": "Task status must be changed via the task action endpoints"},
@@ -635,6 +639,11 @@ class WebInterface:
             kwargs["execution_mode"] if "execution_mode" in kwargs
             else (task.get("execution_mode") or "").strip() or None
         )
+        # Clearing ai_prompt converts an autonomous task back into a plain
+        # reminder — reset the stored mode unless explicitly overridden.
+        if ("ai_prompt" in kwargs and merged_ai_prompt is None
+                and "execution_mode" not in kwargs):
+            merged_execution_mode = None
         # Validate execution_mode/ai_prompt consistency when either is changing.
         if "execution_mode" in kwargs or "ai_prompt" in kwargs:
             try:
@@ -685,12 +694,14 @@ class WebInterface:
         task = await database.async_call(database.get_task, task_id)
         if not task:
             return web.json_response({"error": "not found"}, status=404)
-        if task.get("apscheduler_job_id") and self._scheduler:
+        # Mutate the DB first — removing the scheduler job before a failed DB
+        # write would leave an active task that silently never fires.
+        ok = await database.async_call(database.delete_task, task_id)
+        if ok and task.get("apscheduler_job_id") and self._scheduler:
             try:
                 self._scheduler.remove_job(task["apscheduler_job_id"])
             except Exception:
                 logger.warning("Could not remove APScheduler job for deleted task %s", task_id)
-        ok = await database.async_call(database.delete_task, task_id)
         return self._json({"ok": ok})
 
     async def _api_task_action(self, request: web.Request) -> web.Response:
@@ -700,12 +711,12 @@ class WebInterface:
         action = request.match_info["action"]
         if action == "pause":
             task = await database.async_call(database.get_task, task_id)
-            if task and task.get("apscheduler_job_id") and self._scheduler:
+            ok = await database.async_call(database.pause_task, task_id)
+            if ok and task and task.get("apscheduler_job_id") and self._scheduler:
                 try:
                     self._scheduler.remove_job(task["apscheduler_job_id"])
                 except Exception:
                     logger.warning("Could not remove APScheduler job for paused task %s", task_id)
-            ok = await database.async_call(database.pause_task, task_id)
         elif action == "resume":
             task = await database.async_call(database.get_task, task_id)
             ok = await database.async_call(database.resume_task, task_id)
@@ -724,14 +735,16 @@ class WebInterface:
                 data = await request.json()
             except Exception:
                 data = {}
+            if not isinstance(data, dict):
+                return web.json_response({"error": "JSON body must be an object"}, status=400)
             reason = (data.get("reason") or "Completed via web interface").strip()
             task = await database.async_call(database.get_task, task_id)
-            if task and task.get("apscheduler_job_id") and self._scheduler:
+            ok = await database.async_call(database.complete_task, task_id, reason)
+            if ok and task and task.get("apscheduler_job_id") and self._scheduler:
                 try:
                     self._scheduler.remove_job(task["apscheduler_job_id"])
                 except Exception:
                     logger.warning("Could not remove APScheduler job for completed task %s", task_id)
-            ok = await database.async_call(database.complete_task, task_id, reason)
         else:
             return web.json_response({"error": f"Unknown action: {action}"}, status=400)
         if not ok:
@@ -967,6 +980,8 @@ class WebInterface:
             data = await request.json()
         except Exception:
             return web.json_response({"error": "Invalid JSON body"}, status=400)
+        if not isinstance(data, dict):
+            return web.json_response({"error": "JSON body must be an object"}, status=400)
         text = (data.get("text") or "").strip()
         if not text:
             return web.json_response({"error": "text is required"}, status=400)
@@ -991,6 +1006,8 @@ class WebInterface:
             data = await request.json()
         except Exception:
             return web.json_response({"error": "Invalid JSON body"}, status=400)
+        if not isinstance(data, dict):
+            return web.json_response({"error": "JSON body must be an object"}, status=400)
         ids = data.get("ids", [])
         if not isinstance(ids, list) or not ids:
             return web.json_response({"error": "ids must be a non-empty list"}, status=400)

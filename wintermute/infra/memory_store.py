@@ -814,6 +814,8 @@ class QdrantBackend:
 
         Qdrant scroll offsets are point ids, not row numbers, so skipping ahead
         still walks the collection — but payload-less hops keep it cheap.
+        Entries are returned in Qdrant scroll order (arbitrary and unstable
+        under concurrent writes), unlike the local backend's created_at order.
         """
         total = self.count()
         next_offset = None
@@ -1252,12 +1254,12 @@ def get_all() -> list[dict]:
 
 
 def get_page(limit: int, offset: int = 0) -> tuple[list[dict], int]:
-    """Return ``(entries, total)`` for one page, without loading the whole store."""
-    getter = getattr(_backend, "get_page", None)
-    if getter is not None:
-        return getter(limit, offset)
-    items = _backend.get_all()
-    return items[offset:offset + limit], len(items)
+    """Return ``(entries, total)`` for one page, without loading the whole store.
+
+    Ordering is backend-specific: the local backend orders by creation time
+    (oldest first); Qdrant returns scroll order, which is arbitrary.
+    """
+    return _backend.get_page(limit, offset)
 
 
 def replace_all(entries: list[str]) -> None:

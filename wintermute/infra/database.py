@@ -140,7 +140,6 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             id                  TEXT PRIMARY KEY,
             thread_id           TEXT,
             content             TEXT NOT NULL,
-            priority            INTEGER DEFAULT 5,
             status              TEXT DEFAULT 'active',
             created             REAL NOT NULL,
             updated             REAL,
