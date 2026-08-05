@@ -560,7 +560,7 @@ async def _phase_task_consolidation(pool: "BackendPool", cfg: dict,
 
     task_prompt = prompt_loader.load("DREAM_TASK_PROMPT.txt")
     formatted = "\n".join(
-        f"[P{it['priority']}] #{it['id']}: {it['content']}"
+        f"#{it['id']}: {it['content']}"
         + (f" [{it['schedule_desc']}]" if it.get("schedule_desc") else "")
         for it in task_items
     )
@@ -593,8 +593,6 @@ async def _phase_task_consolidation(pool: "BackendPool", cfg: dict,
                 kwargs = {}
                 if "content" in act:
                     kwargs["content"] = act["content"]
-                if "priority" in act:
-                    kwargs["priority"] = int(act["priority"])
                 if kwargs:
                     await database.async_call(
                         database.update_task, str(aid), **kwargs,

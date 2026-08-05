@@ -870,7 +870,6 @@ class ReflectionLoop:
                 task_id = await database.async_call(
                     database.add_task,
                     content,
-                    5,  # priority
                     None,  # thread_id (silent background task)
                     None,  # schedule_type (reflection tasks are unscheduled)
                     None,  # schedule_desc

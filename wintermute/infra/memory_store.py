@@ -47,6 +47,7 @@ class MemoryBackend(Protocol):
     def search(self, query: str, top_k: int, threshold: float,
                *, bump_access: bool = True) -> list[dict]: ...
     def get_all(self) -> list[dict]: ...
+    def get_page(self, limit: int, offset: int) -> tuple[list[dict], int]: ...
     def replace_all(self, entries: list[str]) -> None: ...
     def delete(self, entry_id: str) -> bool: ...
     def count(self) -> int: ...
@@ -183,7 +184,7 @@ class LocalVectorBackend:
             conn = self._connect()
             try:
                 rows = conn.execute(
-                    "SELECT entry_id, text, vector FROM local_vectors ORDER BY created_at"
+                    "SELECT entry_id, text, vector, source FROM local_vectors ORDER BY created_at"
                 ).fetchall()
             finally:
                 conn.close()
@@ -192,14 +193,14 @@ class LocalVectorBackend:
             return []
 
         results: list[dict] = []
-        for entry_id, text, blob in rows:
+        for entry_id, text, blob, source in rows:
             vec = np.frombuffer(blob, dtype=np.float32)
             norm = np.linalg.norm(vec)
             if norm == 0:
                 continue
             score = float(np.dot(q_vec, vec / norm))
             if score >= threshold:
-                results.append({"id": entry_id, "text": text, "score": score})
+                results.append({"id": entry_id, "text": text, "score": score, "source": source or "unknown"})
 
         results.sort(key=lambda x: x["score"], reverse=True)
         hits = results[:top_k]
@@ -233,11 +234,27 @@ class LocalVectorBackend:
             conn = self._connect()
             try:
                 rows = conn.execute(
-                    "SELECT entry_id, text FROM local_vectors ORDER BY created_at"
+                    "SELECT entry_id, text, source FROM local_vectors ORDER BY created_at"
                 ).fetchall()
             finally:
                 conn.close()
-        return [{"id": r[0], "text": r[1], "score": 1.0} for r in rows]
+        return [{"id": r[0], "text": r[1], "score": 1.0, "source": r[2] or "unknown"} for r in rows]
+
+    def get_page(self, limit: int, offset: int) -> tuple[list[dict], int]:
+        with self._lock:
+            conn = self._connect()
+            try:
+                total = conn.execute("SELECT COUNT(*) FROM local_vectors").fetchone()[0]
+                rows = conn.execute(
+                    "SELECT entry_id, text, source FROM local_vectors "
+                    "ORDER BY created_at LIMIT ? OFFSET ?",
+                    (limit, offset),
+                ).fetchall()
+            finally:
+                conn.close()
+        items = [{"id": r[0], "text": r[1], "score": 1.0, "source": r[2] or "unknown"}
+                 for r in rows]
+        return items, total
 
     def replace_all(self, entries: list[str]) -> None:
         t0 = time.time()
@@ -787,9 +804,52 @@ class QdrantBackend:
             if offset is None:
                 break
         return [
-            {"id": str(p.id), "text": p.payload.get("text", ""), "score": 1.0}
+            {"id": str(p.id), "text": p.payload.get("text", ""), "score": 1.0,
+             "source": p.payload.get("source", "unknown")}
             for p in points
         ]
+
+    def get_page(self, limit: int, offset: int) -> tuple[list[dict], int]:
+        """Scroll one page without materialising the whole collection.
+
+        Qdrant scroll offsets are point ids, not row numbers, so skipping ahead
+        still walks the collection — but payload-less hops keep it cheap.
+        Entries are returned in Qdrant scroll order (arbitrary and unstable
+        under concurrent writes), unlike the local backend's created_at order.
+        """
+        total = self.count()
+        next_offset = None
+        remaining = offset
+        while remaining > 0:
+            hop = min(remaining, 1000)
+            with self._lock:
+                result = self._client.scroll(
+                    collection_name=self._collection,
+                    limit=hop,
+                    offset=next_offset,
+                    with_payload=False,
+                    with_vectors=False,
+                )
+            points = result[0] if result else []
+            next_offset = result[1] if result and len(result) > 1 else None
+            remaining -= hop
+            if next_offset is None or not points:
+                return [], total
+        with self._lock:
+            result = self._client.scroll(
+                collection_name=self._collection,
+                limit=limit,
+                offset=next_offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+        points = result[0] if result else []
+        items = [
+            {"id": str(p.id), "text": p.payload.get("text", ""), "score": 1.0,
+             "source": p.payload.get("source", "unknown")}
+            for p in points
+        ]
+        return items, total
 
     def replace_all(self, entries: list[str]) -> None:
         from qdrant_client.models import Filter, HasIdCondition, PointStruct
@@ -1193,6 +1253,15 @@ def get_all() -> list[dict]:
     return _backend.get_all()
 
 
+def get_page(limit: int, offset: int = 0) -> tuple[list[dict], int]:
+    """Return ``(entries, total)`` for one page, without loading the whole store.
+
+    Ordering is backend-specific: the local backend orders by creation time
+    (oldest first); Qdrant returns scroll order, which is arbitrary.
+    """
+    return _backend.get_page(limit, offset)
+
+
 def replace_all(entries: list[str]) -> None:
     _backend.replace_all(entries)
 
@@ -1312,6 +1381,11 @@ def _promote_source(entry_id: str, new_source: str) -> None:
     """
     if _backend is not None and hasattr(_backend, "promote_source"):
         _backend.promote_source(entry_id, new_source)
+
+
+def promote_source(entry_id: str, new_source: str) -> None:
+    """Public alias for :func:`_promote_source`."""
+    _promote_source(entry_id, new_source)
 
 
 async def add_with_dedup(entry: str, source: str = "unknown", *, pool=None) -> str:

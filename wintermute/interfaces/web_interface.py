@@ -116,7 +116,16 @@ class WebInterface:
         app.router.add_get("/api/config",                          self._api_config)
         app.router.add_get("/api/system-prompt",                  self._api_system_prompt)
         app.router.add_get("/api/tasks",                          self._api_tasks)
+        app.router.add_post("/api/tasks",                         self._api_task_create)
+        app.router.add_post("/api/tasks/purge",                   self._api_tasks_purge)
+        app.router.add_put("/api/tasks/{task_id}",                self._api_task_update)
+        app.router.add_delete("/api/tasks/{task_id}",             self._api_task_delete)
+        app.router.add_post("/api/tasks/{task_id}/{action}",      self._api_task_action)
         app.router.add_get("/api/memory",                           self._api_memory)
+        app.router.add_get("/api/memory/all",                      self._api_memory_list)
+        app.router.add_post("/api/memory/bulk-delete",             self._api_memory_bulk_delete)
+        app.router.add_put("/api/memory/{entry_id}",               self._api_memory_update)
+        app.router.add_delete("/api/memory/{entry_id}",            self._api_memory_delete)
         app.router.add_get("/api/interaction-log",                 self._api_interaction_log)
         app.router.add_get("/api/interaction-log/{id}",            self._api_interaction_log_entry)
         app.router.add_get("/api/outcomes",                        self._api_outcomes)
@@ -510,6 +519,244 @@ class WebInterface:
         items = await database.async_call(database.list_tasks, "all")
         return self._json({"items": items, "count": len(items)})
 
+    async def _api_task_create(self, request: web.Request) -> web.Response:
+        """POST /api/tasks — create a new task."""
+        from wintermute.infra import database
+        from wintermute.tools.task_tools import _build_schedule, _resolve_execution_mode
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON body"}, status=400)
+        if not isinstance(data, dict):
+            return web.json_response({"error": "JSON body must be an object"}, status=400)
+        content = (data.get("content") or "").strip()
+        if not content:
+            return web.json_response({"error": "content is required"}, status=400)
+
+        schedule_type = (data.get("schedule_type") or "").strip() or None
+        ai_prompt = (data.get("ai_prompt") or "").strip() or None
+        execution_mode = (data.get("execution_mode") or "").strip() or None
+        background_provided = "background" in data
+        background = bool(data.get("background", False))
+
+        try:
+            execution_mode, background = _resolve_execution_mode(
+                schedule_type=schedule_type,
+                ai_prompt=ai_prompt,
+                execution_mode=execution_mode,
+                background=background,
+                background_provided=background_provided,
+            )
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
+        schedule_config = None
+        schedule_desc = None
+        if schedule_type:
+            try:
+                sched_inputs, schedule_desc = _build_schedule({**data, "schedule_type": schedule_type})
+            except ValueError as exc:
+                return web.json_response({"error": str(exc)}, status=400)
+            schedule_config = json.dumps(sched_inputs)
+
+        task_id = await database.async_call(
+            database.add_task,
+            content,
+            data.get("thread_id"),
+            schedule_type,
+            schedule_desc,
+            schedule_config,
+            ai_prompt,
+            background,
+            execution_mode,
+        )
+
+        scheduled = False
+        if schedule_type and self._scheduler is not None:
+            try:
+                self._scheduler.ensure_job(
+                    task_id, json.loads(schedule_config),
+                    ai_prompt, data.get("thread_id"), background, execution_mode,
+                )
+                await database.async_call(database.update_task, task_id, None,
+                                          apscheduler_job_id=task_id)
+                scheduled = True
+            except Exception:
+                logger.exception("Failed to schedule APScheduler job for task %s", task_id)
+
+        result: dict = {"ok": True, "task_id": task_id}
+        if schedule_desc:
+            result["schedule"] = schedule_desc
+            result["scheduled"] = scheduled
+        return self._json(result)
+
+    async def _api_task_update(self, request: web.Request) -> web.Response:
+        """PUT /api/tasks/{task_id} — update task fields."""
+        from wintermute.infra import database
+        from wintermute.tools.task_tools import _resolve_execution_mode
+        task_id = request.match_info["task_id"]
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON body"}, status=400)
+        if not isinstance(data, dict):
+            return web.json_response({"error": "JSON body must be an object"}, status=400)
+        if "status" in data:
+            return web.json_response(
+                {"error": "Task status must be changed via the task action endpoints"},
+                status=400,
+            )
+        kwargs: dict = {}
+        for field in ("content", "ai_prompt", "execution_mode"):
+            if field not in data:
+                continue
+            value = data[field]
+            if value is None:
+                value = ""
+            if not isinstance(value, str):
+                return web.json_response({"error": f"{field} must be a string"}, status=400)
+            value = value.strip()
+            if field == "content":
+                if not value:
+                    return web.json_response({"error": "content cannot be empty"}, status=400)
+                kwargs["content"] = value
+            else:
+                # Empty string clears the field (e.g. dropping ai_prompt to make
+                # an autonomous task a plain reminder again).
+                kwargs[field] = value or None
+        if not kwargs:
+            return web.json_response({"error": "No valid fields to update"}, status=400)
+
+        task = await database.async_call(database.get_task, task_id)
+        if not task:
+            return web.json_response({"error": "not found"}, status=404)
+
+        merged_ai_prompt = (
+            kwargs["ai_prompt"] if "ai_prompt" in kwargs
+            else (task.get("ai_prompt") or "").strip() or None
+        )
+        merged_execution_mode = (
+            kwargs["execution_mode"] if "execution_mode" in kwargs
+            else (task.get("execution_mode") or "").strip() or None
+        )
+        # Clearing ai_prompt converts an autonomous task back into a plain
+        # reminder — reset the stored mode unless explicitly overridden.
+        if ("ai_prompt" in kwargs and merged_ai_prompt is None
+                and "execution_mode" not in kwargs):
+            merged_execution_mode = None
+        # Validate execution_mode/ai_prompt consistency when either is changing.
+        if "execution_mode" in kwargs or "ai_prompt" in kwargs:
+            try:
+                resolved_mode, resolved_background = _resolve_execution_mode(
+                    schedule_type=task.get("schedule_type"),
+                    ai_prompt=merged_ai_prompt,
+                    execution_mode=merged_execution_mode,
+                    background=bool(task.get("background", False)),
+                    background_provided=True,
+                )
+            except ValueError as exc:
+                return web.json_response({"error": str(exc)}, status=400)
+            # Persist the canonical resolved mode/background, not the raw client
+            # values — otherwise the stored mode and delivery semantics diverge.
+            merged_execution_mode = resolved_mode
+            if task.get("schedule_type"):
+                kwargs["execution_mode"] = resolved_mode
+            kwargs["background"] = int(resolved_background)
+        merged_background = bool(kwargs.get("background", task.get("background", False)))
+
+        ok = await database.async_call(database.update_task, task_id, None, **kwargs)
+        if not ok:
+            return web.json_response({"error": "not found"}, status=404)
+
+        # The APScheduler job bakes content/ai_prompt/background/execution_mode
+        # into its persisted kwargs, so it must be re-registered after an edit.
+        rescheduled = None
+        if task.get("schedule_config") and task.get("status") == "active" and self._scheduler:
+            rescheduled = False
+            try:
+                self._scheduler.ensure_job(
+                    task_id, json.loads(task["schedule_config"]),
+                    merged_ai_prompt, task.get("thread_id"),
+                    merged_background, merged_execution_mode,
+                )
+                rescheduled = True
+            except Exception:
+                logger.exception("Failed to re-schedule APScheduler job for task %s", task_id)
+        result: dict = {"ok": True}
+        if rescheduled is not None:
+            result["rescheduled"] = rescheduled
+        return self._json(result)
+
+    async def _api_task_delete(self, request: web.Request) -> web.Response:
+        """DELETE /api/tasks/{task_id} — soft-delete a task."""
+        from wintermute.infra import database
+        task_id = request.match_info["task_id"]
+        task = await database.async_call(database.get_task, task_id)
+        if not task:
+            return web.json_response({"error": "not found"}, status=404)
+        # Mutate the DB first — removing the scheduler job before a failed DB
+        # write would leave an active task that silently never fires.
+        ok = await database.async_call(database.delete_task, task_id)
+        if ok and task.get("apscheduler_job_id") and self._scheduler:
+            try:
+                self._scheduler.remove_job(task["apscheduler_job_id"])
+            except Exception:
+                logger.warning("Could not remove APScheduler job for deleted task %s", task_id)
+        return self._json({"ok": ok})
+
+    async def _api_task_action(self, request: web.Request) -> web.Response:
+        """POST /api/tasks/{task_id}/{action} — pause/resume/complete a task."""
+        from wintermute.infra import database
+        task_id = request.match_info["task_id"]
+        action = request.match_info["action"]
+        if action == "pause":
+            task = await database.async_call(database.get_task, task_id)
+            ok = await database.async_call(database.pause_task, task_id)
+            if ok and task and task.get("apscheduler_job_id") and self._scheduler:
+                try:
+                    self._scheduler.remove_job(task["apscheduler_job_id"])
+                except Exception:
+                    logger.warning("Could not remove APScheduler job for paused task %s", task_id)
+        elif action == "resume":
+            task = await database.async_call(database.get_task, task_id)
+            ok = await database.async_call(database.resume_task, task_id)
+            if ok and task and task.get("schedule_config") and self._scheduler:
+                try:
+                    sched_cfg = json.loads(task["schedule_config"])
+                    self._scheduler.ensure_job(
+                        task_id, sched_cfg,
+                        task.get("ai_prompt"), task.get("thread_id"),
+                        bool(task.get("background", False)), task.get("execution_mode"),
+                    )
+                except Exception:
+                    logger.warning("Could not re-schedule APScheduler job for resumed task %s", task_id)
+        elif action == "complete":
+            try:
+                data = await request.json()
+            except Exception:
+                data = {}
+            if not isinstance(data, dict):
+                return web.json_response({"error": "JSON body must be an object"}, status=400)
+            reason = (data.get("reason") or "Completed via web interface").strip()
+            task = await database.async_call(database.get_task, task_id)
+            ok = await database.async_call(database.complete_task, task_id, reason)
+            if ok and task and task.get("apscheduler_job_id") and self._scheduler:
+                try:
+                    self._scheduler.remove_job(task["apscheduler_job_id"])
+                except Exception:
+                    logger.warning("Could not remove APScheduler job for completed task %s", task_id)
+        else:
+            return web.json_response({"error": f"Unknown action: {action}"}, status=400)
+        if not ok:
+            return web.json_response({"error": "not found or no change"}, status=404)
+        return self._json({"ok": True})
+
+    async def _api_tasks_purge(self, _request: web.Request) -> web.Response:
+        """POST /api/tasks/purge — delete all completed tasks."""
+        from wintermute.infra import database
+        count = await database.async_call(database.delete_old_completed_tasks, 0)
+        return self._json({"ok": True, "deleted": count})
+
     # ------------------------------------------------------------------
     # Per-thread config API
     # ------------------------------------------------------------------
@@ -701,6 +948,75 @@ class WebInterface:
 
         result = await asyncio.get_running_loop().run_in_executor(None, _build_result)
         return self._json(result)
+
+    async def _api_memory_list(self, request: web.Request) -> web.Response:
+        """GET /api/memory/all — return memory entries with optional pagination.
+
+        Query params: limit (default 100, max 1000), offset (default 0).
+        """
+        from wintermute.infra import memory_store
+        limit = min(max(self._int_param(request, "limit", 100), 1), 1000)
+        offset = max(self._int_param(request, "offset", 0), 0)
+        loop = asyncio.get_running_loop()
+        page, total = await loop.run_in_executor(None, memory_store.get_page, limit, offset)
+        return self._json({"items": page, "count": len(page), "total": total,
+                           "limit": limit, "offset": offset, "has_more": offset + limit < total})
+
+    async def _api_memory_delete(self, request: web.Request) -> web.Response:
+        """DELETE /api/memory/{entry_id} — delete a single memory entry."""
+        from wintermute.infra import memory_store
+        entry_id = request.match_info["entry_id"]
+        loop = asyncio.get_running_loop()
+        ok = await loop.run_in_executor(None, memory_store.delete, entry_id)
+        if not ok:
+            return web.json_response({"error": "not found"}, status=404)
+        return self._json({"ok": True})
+
+    async def _api_memory_update(self, request: web.Request) -> web.Response:
+        """PUT /api/memory/{entry_id} — update a memory entry in-place (upsert)."""
+        from wintermute.infra import memory_store
+        entry_id = request.match_info["entry_id"]
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON body"}, status=400)
+        if not isinstance(data, dict):
+            return web.json_response({"error": "JSON body must be an object"}, status=400)
+        text = (data.get("text") or "").strip()
+        if not text:
+            return web.json_response({"error": "text is required"}, status=400)
+        loop = asyncio.get_running_loop()
+        # Verify the entry exists before updating.
+        existing = await loop.run_in_executor(None, memory_store.exists_batch, [entry_id])
+        if not existing:
+            return web.json_response({"error": "not found"}, status=404)
+        # A web edit is always an explicit user statement — which is also the
+        # highest-priority source, so the promotion below always applies.
+        source = "user_explicit"
+        # Passing the existing entry_id causes add() to upsert in place.
+        new_id = await loop.run_in_executor(None, memory_store.add, text, entry_id, source)
+        # add() preserves the existing source on upsert, so explicitly promote it.
+        await loop.run_in_executor(None, memory_store.promote_source, new_id, source)
+        return self._json({"ok": True, "id": new_id, "source": source})
+
+    async def _api_memory_bulk_delete(self, request: web.Request) -> web.Response:
+        """POST /api/memory/bulk-delete — delete multiple memory entries."""
+        from wintermute.infra import memory_store
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON body"}, status=400)
+        if not isinstance(data, dict):
+            return web.json_response({"error": "JSON body must be an object"}, status=400)
+        ids = data.get("ids", [])
+        if not isinstance(ids, list) or not ids:
+            return web.json_response({"error": "ids must be a non-empty list"}, status=400)
+        ids = [i for i in ids if isinstance(i, str)][:500]
+        if not ids:
+            return web.json_response({"error": "ids must contain string values"}, status=400)
+        loop = asyncio.get_running_loop()
+        count = await loop.run_in_executor(None, memory_store.bulk_delete, ids)
+        return self._json({"ok": True, "deleted": count})
 
     # ------------------------------------------------------------------
     # Prediction accuracy API
