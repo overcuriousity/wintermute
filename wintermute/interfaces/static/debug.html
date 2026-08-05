@@ -1481,6 +1481,13 @@ document.addEventListener('DOMContentLoaded', () => {
   if (modeSelect) modeSelect.addEventListener('change', () => {
     const extra = document.getElementById('task-new-extra');
     extra.style.display = modeSelect.value ? 'flex' : 'none';
+    // Reminders must not carry an ai_prompt — hide the field for that mode.
+    const aiPrompt = document.getElementById('task-new-ai-prompt');
+    if (aiPrompt) {
+      const autonomous = modeSelect.value.startsWith('autonomous_');
+      aiPrompt.style.display = autonomous ? '' : 'none';
+      if (!autonomous) aiPrompt.value = '';
+    }
   });
 });
 
@@ -1499,8 +1506,12 @@ async function createTask() {
   }
   if (mode && schedType) {
     body.execution_mode = mode;
-    const aiPrompt = document.getElementById('task-new-ai-prompt').value.trim();
-    if (aiPrompt) body.ai_prompt = aiPrompt;
+    // ai_prompt is rejected by the server for reminder mode, required for the rest.
+    if (mode.startsWith('autonomous_')) {
+      const aiPrompt = document.getElementById('task-new-ai-prompt').value.trim();
+      if (!aiPrompt) return alert('An AI prompt is required for autonomous modes');
+      body.ai_prompt = aiPrompt;
+    }
   }
   const r = await fetch('/api/tasks', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
   if (r.ok) {

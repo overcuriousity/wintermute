@@ -55,6 +55,50 @@ def _resolve_execution_mode(schedule_type: Optional[str], ai_prompt: Optional[st
     return "reminder", False
 
 
+_SCHEDULE_KEYS = ("schedule_type", "at", "day_of_week", "day_of_month",
+                  "interval_seconds", "window_start", "window_end")
+
+_SCHEDULE_TYPES = ("once", "daily", "weekly", "monthly", "interval")
+
+_SCHEDULE_REQUIRED: dict[str, tuple[str, ...]] = {
+    "once": ("at",),
+    "weekly": ("at",),
+    "monthly": ("at",),
+    "interval": ("interval_seconds",),
+}
+
+# Defaults the scheduler applies in _parse_trigger. Mirrored into the stored
+# config so schedule_desc describes the trigger that actually runs.
+_SCHEDULE_DEFAULTS: dict[str, dict] = {
+    "daily": {"at": "09:00"},
+    "weekly": {"day_of_week": "mon"},
+    "monthly": {"day_of_month": 1},
+}
+
+
+def _build_schedule(inputs: dict) -> tuple[dict, str]:
+    """Validate schedule inputs and return ``(schedule_config, description)``.
+
+    Raises ValueError for an unknown schedule_type or missing required fields.
+    """
+    schedule_type = inputs.get("schedule_type")
+    if schedule_type not in _SCHEDULE_TYPES:
+        raise ValueError(
+            "schedule_type must be one of: " + ", ".join(_SCHEDULE_TYPES)
+        )
+    sched = {k: inputs[k] for k in _SCHEDULE_KEYS if k in inputs}
+    missing = [f for f in _SCHEDULE_REQUIRED.get(schedule_type, ())
+               if sched.get(f) in (None, "")]
+    if missing:
+        raise ValueError(
+            f"Missing required field(s) for {schedule_type!r} schedule: "
+            + ", ".join(sorted(missing))
+        )
+    for key, value in _SCHEDULE_DEFAULTS.get(schedule_type, {}).items():
+        sched.setdefault(key, value)
+    return sched, _describe_schedule(sched)
+
+
 def _describe_schedule(inputs: dict) -> str:
     """Build a human-readable schedule string from structured inputs."""
     t = inputs.get("schedule_type", "once")
@@ -102,12 +146,11 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     schedule_config = None
     schedule_desc = None
     if schedule_type:
-        sched_inputs = {k: inputs[k] for k in
-            ("schedule_type", "at", "day_of_week", "day_of_month",
-             "interval_seconds", "window_start", "window_end")
-            if k in inputs}
+        try:
+            sched_inputs, schedule_desc = _build_schedule(inputs)
+        except ValueError as exc:
+            return json.dumps({"error": str(exc)})
         schedule_config = json.dumps(sched_inputs)
-        schedule_desc = _describe_schedule(sched_inputs)
 
     task_id = database.add_task(
         content=content,
@@ -212,37 +255,54 @@ def _task_update(inputs: dict, effective_scope: Optional[str],
     kwargs = {}
     if "content" in inputs:
         kwargs["content"] = inputs["content"]
+    task = database.get_task(task_id)
+    if not task or task.get("thread_id") != effective_scope:
+        return json.dumps({"status": "not_found"})
+    new_ai_prompt = (task.get("ai_prompt") or "").strip() or None
+    new_execution_mode = (task.get("execution_mode") or "").strip() or None
+    new_background = bool(task.get("background"))
     if "ai_prompt" in inputs or "execution_mode" in inputs:
-        task = database.get_task(task_id)
-        if not task:
-            return json.dumps({"status": "not_found"})
-        if task.get("thread_id") != effective_scope:
-            return json.dumps({"status": "not_found"})
         if "ai_prompt" in inputs:
             raw_ai_prompt = (inputs.get("ai_prompt") or "").strip()
             new_ai_prompt = raw_ai_prompt or None
-        else:
-            new_ai_prompt = task.get("ai_prompt")
         if "execution_mode" in inputs:
             raw_execution_mode = (inputs.get("execution_mode") or "").strip()
             new_execution_mode = raw_execution_mode or None
-        else:
-            new_execution_mode = task.get("execution_mode")
         try:
-            resolved_mode, _ = _resolve_execution_mode(
+            resolved_mode, new_background = _resolve_execution_mode(
                 schedule_type=task.get("schedule_type"),
                 ai_prompt=new_ai_prompt,
                 execution_mode=new_execution_mode,
                 background=bool(task.get("background")),
+                background_provided=True,
             )
         except ValueError as exc:
             return json.dumps({"error": str(exc)})
+        new_execution_mode = resolved_mode
         if "ai_prompt" in inputs:
             kwargs["ai_prompt"] = new_ai_prompt
-        if "execution_mode" in inputs:
+        if "execution_mode" in inputs and task.get("schedule_type"):
             kwargs["execution_mode"] = resolved_mode
+        kwargs["background"] = int(new_background)
     ok = database.update_task(task_id, thread_id=effective_scope, **kwargs)
-    return json.dumps({"status": "ok" if ok else "not_found"})
+    if not ok:
+        return json.dumps({"status": "not_found"})
+
+    # The APScheduler job caches content/ai_prompt/background/execution_mode in
+    # its persisted kwargs, so re-register it after an edit.
+    deps = tool_deps or ToolDeps()
+    if (task.get("schedule_config") and task.get("status") == "active"
+            and deps.task_scheduler is not None):
+        try:
+            deps.task_scheduler.ensure_job(
+                task_id, json.loads(task["schedule_config"]),
+                new_ai_prompt, task.get("thread_id"),
+                new_background, new_execution_mode,
+            )
+        except Exception:
+            logger.warning("Could not re-schedule APScheduler job for updated task %s",
+                           task_id, exc_info=True)
+    return json.dumps({"status": "ok"})
 
 
 def _task_list(inputs: dict, effective_scope: Optional[str],

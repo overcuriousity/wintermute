@@ -47,6 +47,7 @@ class MemoryBackend(Protocol):
     def search(self, query: str, top_k: int, threshold: float,
                *, bump_access: bool = True) -> list[dict]: ...
     def get_all(self) -> list[dict]: ...
+    def get_page(self, limit: int, offset: int) -> tuple[list[dict], int]: ...
     def replace_all(self, entries: list[str]) -> None: ...
     def delete(self, entry_id: str) -> bool: ...
     def count(self) -> int: ...
@@ -238,6 +239,22 @@ class LocalVectorBackend:
             finally:
                 conn.close()
         return [{"id": r[0], "text": r[1], "score": 1.0, "source": r[2] or "unknown"} for r in rows]
+
+    def get_page(self, limit: int, offset: int) -> tuple[list[dict], int]:
+        with self._lock:
+            conn = self._connect()
+            try:
+                total = conn.execute("SELECT COUNT(*) FROM local_vectors").fetchone()[0]
+                rows = conn.execute(
+                    "SELECT entry_id, text, source FROM local_vectors "
+                    "ORDER BY created_at LIMIT ? OFFSET ?",
+                    (limit, offset),
+                ).fetchall()
+            finally:
+                conn.close()
+        items = [{"id": r[0], "text": r[1], "score": 1.0, "source": r[2] or "unknown"}
+                 for r in rows]
+        return items, total
 
     def replace_all(self, entries: list[str]) -> None:
         t0 = time.time()
@@ -792,6 +809,46 @@ class QdrantBackend:
             for p in points
         ]
 
+    def get_page(self, limit: int, offset: int) -> tuple[list[dict], int]:
+        """Scroll one page without materialising the whole collection.
+
+        Qdrant scroll offsets are point ids, not row numbers, so skipping ahead
+        still walks the collection — but payload-less hops keep it cheap.
+        """
+        total = self.count()
+        next_offset = None
+        remaining = offset
+        while remaining > 0:
+            hop = min(remaining, 1000)
+            with self._lock:
+                result = self._client.scroll(
+                    collection_name=self._collection,
+                    limit=hop,
+                    offset=next_offset,
+                    with_payload=False,
+                    with_vectors=False,
+                )
+            points = result[0] if result else []
+            next_offset = result[1] if result and len(result) > 1 else None
+            remaining -= hop
+            if next_offset is None or not points:
+                return [], total
+        with self._lock:
+            result = self._client.scroll(
+                collection_name=self._collection,
+                limit=limit,
+                offset=next_offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+        points = result[0] if result else []
+        items = [
+            {"id": str(p.id), "text": p.payload.get("text", ""), "score": 1.0,
+             "source": p.payload.get("source", "unknown")}
+            for p in points
+        ]
+        return items, total
+
     def replace_all(self, entries: list[str]) -> None:
         from qdrant_client.models import Filter, HasIdCondition, PointStruct
 
@@ -1192,6 +1249,15 @@ def add(entry: str, entry_id: str | None = None, source: str = "unknown") -> str
 
 def get_all() -> list[dict]:
     return _backend.get_all()
+
+
+def get_page(limit: int, offset: int = 0) -> tuple[list[dict], int]:
+    """Return ``(entries, total)`` for one page, without loading the whole store."""
+    getter = getattr(_backend, "get_page", None)
+    if getter is not None:
+        return getter(limit, offset)
+    items = _backend.get_all()
+    return items[offset:offset + limit], len(items)
 
 
 def replace_all(entries: list[str]) -> None:

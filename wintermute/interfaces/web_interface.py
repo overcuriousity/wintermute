@@ -522,7 +522,7 @@ class WebInterface:
     async def _api_task_create(self, request: web.Request) -> web.Response:
         """POST /api/tasks — create a new task."""
         from wintermute.infra import database
-        from wintermute.tools.task_tools import _describe_schedule, _resolve_execution_mode
+        from wintermute.tools.task_tools import _build_schedule, _resolve_execution_mode
         try:
             data = await request.json()
         except Exception:
@@ -551,32 +551,11 @@ class WebInterface:
         schedule_config = None
         schedule_desc = None
         if schedule_type:
-            _sched_keys = ("schedule_type", "at", "day_of_week", "day_of_month",
-                           "interval_seconds", "window_start", "window_end")
-            sched_inputs = {k: data[k] for k in _sched_keys if k in data}
-            _required: tuple[str, ...] = ()
-            if schedule_type == "interval":
-                _required = ("interval_seconds",)
-            elif schedule_type == "once":
-                _required = ("at",)
-            elif schedule_type == "weekly":
-                _required = ("at",)
-            elif schedule_type == "monthly":
-                _required = ("at",)
-            if _required:
-                missing = [f for f in _required if f not in sched_inputs]
-                if missing:
-                    return web.json_response(
-                        {"error": f"Missing required field(s) for {schedule_type!r} schedule: "
-                                  + ", ".join(sorted(missing))},
-                        status=400,
-                    )
-            # For types with a static scheduler default, mirror it in the config so
-            # the stored description matches the actual trigger time.
-            if schedule_type == "daily" and "at" not in sched_inputs:
-                sched_inputs["at"] = "09:00"
+            try:
+                sched_inputs, schedule_desc = _build_schedule({**data, "schedule_type": schedule_type})
+            except ValueError as exc:
+                return web.json_response({"error": str(exc)}, status=400)
             schedule_config = json.dumps(sched_inputs)
-            schedule_desc = _describe_schedule(sched_inputs)
 
         task_id = await database.async_call(
             database.add_task,
@@ -623,42 +602,81 @@ class WebInterface:
                 {"error": "Task status must be changed via the task action endpoints"},
                 status=400,
             )
-        allowed = {"content", "ai_prompt", "execution_mode"}
-        kwargs = {k: v for k, v in data.items() if k in allowed and v is not None}
-        # Strip whitespace; drop fields that became empty.
-        for field in list(kwargs):
-            if isinstance(kwargs[field], str):
-                kwargs[field] = kwargs[field].strip() or None
-                if kwargs[field] is None:
-                    del kwargs[field]
+        kwargs: dict = {}
+        for field in ("content", "ai_prompt", "execution_mode"):
+            if field not in data:
+                continue
+            value = data[field]
+            if value is None:
+                value = ""
+            if not isinstance(value, str):
+                return web.json_response({"error": f"{field} must be a string"}, status=400)
+            value = value.strip()
+            if field == "content":
+                if not value:
+                    return web.json_response({"error": "content cannot be empty"}, status=400)
+                kwargs["content"] = value
+            else:
+                # Empty string clears the field (e.g. dropping ai_prompt to make
+                # an autonomous task a plain reminder again).
+                kwargs[field] = value or None
         if not kwargs:
             return web.json_response({"error": "No valid fields to update"}, status=400)
 
+        task = await database.async_call(database.get_task, task_id)
+        if not task:
+            return web.json_response({"error": "not found"}, status=404)
+
+        merged_ai_prompt = (
+            kwargs["ai_prompt"] if "ai_prompt" in kwargs
+            else (task.get("ai_prompt") or "").strip() or None
+        )
+        merged_execution_mode = (
+            kwargs["execution_mode"] if "execution_mode" in kwargs
+            else (task.get("execution_mode") or "").strip() or None
+        )
         # Validate execution_mode/ai_prompt consistency when either is changing.
         if "execution_mode" in kwargs or "ai_prompt" in kwargs:
-            task = await database.async_call(database.get_task, task_id)
-            if not task:
-                return web.json_response({"error": "not found"}, status=404)
-            merged_execution_mode = kwargs.get("execution_mode", task.get("execution_mode"))
-            merged_ai_prompt = (kwargs.get("ai_prompt", task.get("ai_prompt")) or "").strip() or None
             try:
-                resolved_mode, _ = _resolve_execution_mode(
+                resolved_mode, resolved_background = _resolve_execution_mode(
                     schedule_type=task.get("schedule_type"),
                     ai_prompt=merged_ai_prompt,
-                    execution_mode=(merged_execution_mode or "").strip() or None,
+                    execution_mode=merged_execution_mode,
                     background=bool(task.get("background", False)),
                     background_provided=True,
                 )
             except ValueError as exc:
                 return web.json_response({"error": str(exc)}, status=400)
-            # Persist the canonical resolved mode, not the raw client value.
-            if "execution_mode" in kwargs:
+            # Persist the canonical resolved mode/background, not the raw client
+            # values — otherwise the stored mode and delivery semantics diverge.
+            merged_execution_mode = resolved_mode
+            if task.get("schedule_type"):
                 kwargs["execution_mode"] = resolved_mode
+            kwargs["background"] = int(resolved_background)
+        merged_background = bool(kwargs.get("background", task.get("background", False)))
 
         ok = await database.async_call(database.update_task, task_id, None, **kwargs)
         if not ok:
             return web.json_response({"error": "not found"}, status=404)
-        return self._json({"ok": True})
+
+        # The APScheduler job bakes content/ai_prompt/background/execution_mode
+        # into its persisted kwargs, so it must be re-registered after an edit.
+        rescheduled = None
+        if task.get("schedule_config") and task.get("status") == "active" and self._scheduler:
+            rescheduled = False
+            try:
+                self._scheduler.ensure_job(
+                    task_id, json.loads(task["schedule_config"]),
+                    merged_ai_prompt, task.get("thread_id"),
+                    merged_background, merged_execution_mode,
+                )
+                rescheduled = True
+            except Exception:
+                logger.exception("Failed to re-schedule APScheduler job for task %s", task_id)
+        result: dict = {"ok": True}
+        if rescheduled is not None:
+            result["rescheduled"] = rescheduled
+        return self._json(result)
 
     async def _api_task_delete(self, request: web.Request) -> web.Response:
         """DELETE /api/tasks/{task_id} — soft-delete a task."""
@@ -668,7 +686,10 @@ class WebInterface:
         if not task:
             return web.json_response({"error": "not found"}, status=404)
         if task.get("apscheduler_job_id") and self._scheduler:
-            self._scheduler.remove_job(task["apscheduler_job_id"])
+            try:
+                self._scheduler.remove_job(task["apscheduler_job_id"])
+            except Exception:
+                logger.warning("Could not remove APScheduler job for deleted task %s", task_id)
         ok = await database.async_call(database.delete_task, task_id)
         return self._json({"ok": ok})
 
@@ -706,7 +727,10 @@ class WebInterface:
             reason = (data.get("reason") or "Completed via web interface").strip()
             task = await database.async_call(database.get_task, task_id)
             if task and task.get("apscheduler_job_id") and self._scheduler:
-                self._scheduler.remove_job(task["apscheduler_job_id"])
+                try:
+                    self._scheduler.remove_job(task["apscheduler_job_id"])
+                except Exception:
+                    logger.warning("Could not remove APScheduler job for completed task %s", task_id)
             ok = await database.async_call(database.complete_task, task_id, reason)
         else:
             return web.json_response({"error": f"Unknown action: {action}"}, status=400)
@@ -921,9 +945,7 @@ class WebInterface:
         limit = min(max(self._int_param(request, "limit", 100), 1), 1000)
         offset = max(self._int_param(request, "offset", 0), 0)
         loop = asyncio.get_running_loop()
-        items = await loop.run_in_executor(None, memory_store.get_all)
-        total = len(items)
-        page = items[offset:offset + limit]
+        page, total = await loop.run_in_executor(None, memory_store.get_page, limit, offset)
         return self._json({"items": page, "count": len(page), "total": total,
                            "limit": limit, "offset": offset, "has_more": offset + limit < total})
 
@@ -953,12 +975,14 @@ class WebInterface:
         existing = await loop.run_in_executor(None, memory_store.exists_batch, [entry_id])
         if not existing:
             return web.json_response({"error": "not found"}, status=404)
-        source = data.get("source", "user_explicit")
+        # A web edit is always an explicit user statement — which is also the
+        # highest-priority source, so the promotion below always applies.
+        source = "user_explicit"
         # Passing the existing entry_id causes add() to upsert in place.
         new_id = await loop.run_in_executor(None, memory_store.add, text, entry_id, source)
         # add() preserves the existing source on upsert, so explicitly promote it.
         await loop.run_in_executor(None, memory_store.promote_source, new_id, source)
-        return self._json({"ok": True, "id": new_id})
+        return self._json({"ok": True, "id": new_id, "source": source})
 
     async def _api_memory_bulk_delete(self, request: web.Request) -> web.Response:
         """POST /api/memory/bulk-delete — delete multiple memory entries."""
