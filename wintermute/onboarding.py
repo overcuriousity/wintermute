@@ -739,7 +739,7 @@ async def _tool_install_systemd(args: dict, config: dict) -> str:
         """)
 
         try:
-            write_proc = subprocess.run(
+            subprocess.run(
                 ["sudo", "tee", str(unit_file)],
                 input=unit_content.encode(),
                 capture_output=True,

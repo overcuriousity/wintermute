@@ -1060,7 +1060,7 @@ async def _phase_schema(pool: BackendPool, cfg: dict, sim_data: SimilarityData) 
                 # Don't delete entries that are themselves schemas (lineage).
                 delete_ids = [
                     cid
-                    for cid, idx in zip(cluster_ids, cluster)
+                    for cid, idx in zip(cluster_ids, cluster, strict=False)
                     if sim_data.entries[idx].get("source") != "dreaming_schema"
                 ]
                 if delete_ids:

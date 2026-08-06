@@ -17,7 +17,7 @@ import json
 import logging
 import time
 from collections import deque
-from typing import Any, Optional
+from typing import Any
 
 from wintermute.core.tool_deps import ToolDeps
 from wintermute.core.tool_schemas import (  # noqa: F401 — re-exported

@@ -1042,10 +1042,9 @@ class SubSessionManager:
         for sid, state in list(self._states.items()):
             if state.parent_thread_id != thread_id:
                 continue
-            if state.status in ("running", "pending"):
-                if await self._cancel_node(sid):
-                    logger.info("Cancelled sub-session %s (thread reset)", sid)
-                    cancelled += 1
+            if state.status in ("running", "pending") and await self._cancel_node(sid):
+                logger.info("Cancelled sub-session %s (thread reset)", sid)
+                cancelled += 1
         return cancelled
 
     async def _cancel_node(self, sid: str) -> bool:

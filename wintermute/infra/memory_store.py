@@ -294,7 +294,7 @@ class LocalVectorBackend:
         now = time.time()
         rows = [
             (_make_id(entry), entry, self._vec_to_blob(vec), now, now)
-            for entry, vec in zip(entries, vectors)
+            for entry, vec in zip(entries, vectors, strict=False)
         ]
         new_ids = [r[0] for r in rows]
         with self._lock:
@@ -380,7 +380,7 @@ class LocalVectorBackend:
         with self._lock:
             conn = self._connect()
             try:
-                for (eid, _text), vec in zip(rows, vectors):
+                for (eid, _text), vec in zip(rows, vectors, strict=False):
                     conn.execute(
                         "UPDATE local_vectors SET vector = ? WHERE entry_id = ?",
                         (self._vec_to_blob(vec), eid),
@@ -706,7 +706,7 @@ class QdrantBackend:
                 )
 
             result: dict[str, list[dict]] = {}
-            for eid, resp in zip(order, batch_results):
+            for eid, resp in zip(order, batch_results, strict=False):
                 neighbors = [
                     {
                         "id": str(h.id),
@@ -971,7 +971,7 @@ class QdrantBackend:
                         "source": existing_meta.get(eid, {}).get("source", "dreaming"),
                     },
                 )
-                for entry, vec, eid in zip(entries, vectors, new_ids)
+                for entry, vec, eid in zip(entries, vectors, new_ids, strict=False)
             ]
 
             # Delete points no longer present (avoids delete_collection race window).
@@ -1052,7 +1052,7 @@ class QdrantBackend:
                     "source": e.get("source", "unknown"),
                 },
             )
-            for e, vec in zip(all_entries, vectors)
+            for e, vec in zip(all_entries, vectors, strict=False)
         ]
         with self._lock:
             for i in range(0, len(points), 100):

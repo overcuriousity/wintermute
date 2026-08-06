@@ -119,10 +119,7 @@ class GeminiCloudClient:
                     system_parts.append(content)
                 continue
 
-            if role == "assistant":
-                google_role = "model"
-            else:
-                google_role = "user"
+            google_role = "model" if role == "assistant" else "user"
 
             parts = []
 
@@ -437,10 +434,7 @@ class GeminiCloudClient:
         if not chunks:
             try:
                 parsed = json.loads(text)
-                if isinstance(parsed, list):
-                    chunks = parsed
-                else:
-                    chunks = [parsed]
+                chunks = parsed if isinstance(parsed, list) else [parsed]
             except json.JSONDecodeError:
                 pass
         return chunks

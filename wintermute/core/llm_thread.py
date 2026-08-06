@@ -1277,11 +1277,11 @@ class LLMThread:
                     ),
                     timeout=300.0,  # 5 min hard ceiling per LLM call
                 )
-            except TimeoutError:
+            except TimeoutError as exc:
                 raise RuntimeError(
                     "LLM API call timed out after 300 seconds — backend may be "
                     "unresponsive. Aborting inference loop."
-                )
+                ) from exc
 
             if response.content is None and not response.tool_calls:
                 empty_retries += 1

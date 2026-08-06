@@ -35,10 +35,7 @@ def add_skill(skill_name: str, documentation: str, summary: str | None = None) -
         final_summary = summary.strip()
     else:
         doc_stripped = documentation.strip()
-        if doc_stripped:
-            final_summary = doc_stripped.splitlines()[0]
-        else:
-            final_summary = ""
+        final_summary = doc_stripped.splitlines()[0] if doc_stripped else ""
     skill_store.add(skill_name, final_summary, documentation)
     logger.info("Skill '%s' written via skill_store", skill_name)
     data_versioning.commit_async(f"skill: {skill_name}")

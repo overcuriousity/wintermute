@@ -105,12 +105,12 @@ def tool_worker_delegation(
         except Exception as exc:
             logger.debug("Historical feedback lookup failed: %s", exc, exc_info=True)
 
-        kwargs = dict(
-            objective=inputs["objective"],
-            context_blobs=context_blobs,
-            parent_thread_id=thread_id,
-            nesting_depth=nesting_depth + 1,
-        )
+        kwargs = {
+            "objective": inputs["objective"],
+            "context_blobs": context_blobs,
+            "parent_thread_id": thread_id,
+            "nesting_depth": nesting_depth + 1,
+        }
         if "timeout" in inputs:
             kwargs["timeout"] = int(inputs["timeout"])
         if "depends_on" in inputs:

@@ -403,8 +403,10 @@ class ThreadConfigManager:
             if isinstance(value, str):
                 try:
                     value = json.loads(value)
-                except json.JSONDecodeError:
-                    raise ValueError("backend_overrides must be a JSON dict (role → backend name)")
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        "backend_overrides must be a JSON dict (role → backend name)"
+                    ) from exc
             if not isinstance(value, dict):
                 raise ValueError("backend_overrides must be a dict (role → backend name)")
             for role, bname in value.items():

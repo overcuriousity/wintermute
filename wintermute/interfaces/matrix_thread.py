@@ -42,19 +42,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote as _url_quote
 
-from ruamel.yaml import YAML as _YAML
-from ruamel.yaml.scalarstring import DoubleQuotedScalarString as _DQStr
-
-_REPLY_STRIP_RE = _re.compile(r"<mx-reply>.*?</mx-reply>", flags=_re.DOTALL)
-
-try:
-    import olm as _olm
-
-    _HAS_OLM = True
-except ImportError:
-    _olm = None  # type: ignore[assignment]
-    _HAS_OLM = False
-
 from mautrix.client import Client, InternalEventType
 from mautrix.client.dispatcher import MembershipEventDispatcher
 from mautrix.crypto import OlmMachine
@@ -70,6 +57,20 @@ from mautrix.types import (
     UserID,
 )
 from mautrix.util.async_db import Database
+from ruamel.yaml import YAML as _YAML
+from ruamel.yaml.scalarstring import DoubleQuotedScalarString as _DQStr
+
+# Optional: python-olm is only needed for the legacy device-key inspection
+# paths below.  mautrix.crypto works without importing it directly here.
+try:
+    import olm as _olm
+
+    _HAS_OLM = True
+except ImportError:
+    _olm = None  # type: ignore[assignment]
+    _HAS_OLM = False
+
+_REPLY_STRIP_RE = _re.compile(r"<mx-reply>.*?</mx-reply>", flags=_re.DOTALL)
 
 logger = logging.getLogger(__name__)
 
@@ -453,7 +454,7 @@ class MatrixThread:
         try:
             # Access rooms through the state store's internal storage
             if isinstance(self._client.state_store, _CryptoMemoryStateStore):
-                return {str(r) for r in self._client.state_store.members.keys()}
+                return {str(r) for r in self._client.state_store.members}
             return set()
         except Exception:  # noqa: BLE001
             return set()

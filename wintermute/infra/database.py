@@ -24,6 +24,7 @@ import sqlite3
 import struct
 import threading
 import time
+import uuid as _uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -399,8 +400,6 @@ def get_thread_stats(thread_id: str = "default") -> dict:
 # ---------------------------------------------------------------------------
 # Tasks CRUD
 # ---------------------------------------------------------------------------
-
-import uuid as _uuid
 
 
 def _new_task_id() -> str:
@@ -915,7 +914,7 @@ def _vector_search_outcomes(objective: str, embed_cfg: dict, limit: int) -> list
             continue
         vec = struct.unpack(f"{dim}f", blob)
         # Cosine similarity.
-        dot = sum(a * b for a, b in zip(qv, vec))
+        dot = sum(a * b for a, b in zip(qv, vec, strict=False))
         mag_q = sum(a * a for a in qv) ** 0.5
         mag_v = sum(a * a for a in vec) ** 0.5
         if mag_q == 0 or mag_v == 0:
@@ -1108,7 +1107,7 @@ def get_cp_violation_stats() -> dict:
             pass
 
     # Build per-backend summary
-    all_backends = set(confirmed_by_backend) | set(r["llm"] for r in detection_rows)
+    all_backends = set(confirmed_by_backend) | {r["llm"] for r in detection_rows}
     per_backend: dict[str, dict] = {}
     for backend in sorted(all_backends):
         det_row = next((r for r in detection_rows if r["llm"] == backend), None)

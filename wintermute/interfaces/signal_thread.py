@@ -910,10 +910,7 @@ class SignalThread:
 
         # Fallback: check if phone number appears in body text
         body = data_msg.get("message") or ""
-        if phone in body:
-            return True
-
-        return False
+        return phone in body
 
     def _strip_bot_mention(self, text: str) -> str:
         """Remove the bot's phone number from plain text."""
