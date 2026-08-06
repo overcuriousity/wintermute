@@ -12,6 +12,8 @@ A self-hosted AI runtime environment (named after Neuromancer's AI) with persist
 uv sync                              # Install dependencies
 uv run wintermute                    # Run the application
 uv build                             # Build package
+uv run pytest                        # Run the test suite
+uv run ruff check . && uv run ruff format --check .   # Lint (CI runs both)
 
 # Production (systemd user service)
 bash onboarding.sh                   # AI-driven installer (experimental)
@@ -20,7 +22,7 @@ systemctl --user start wintermute
 journalctl --user -u wintermute -f
 ```
 
-No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`.
+Configuration: copy `config.yaml.example` to `config.yaml`.
 
 ## Architecture
 
@@ -32,19 +34,19 @@ No test suite exists. Configuration: copy `config.yaml.example` to `config.yaml`
 
 | Module | Purpose |
 |---|---|
-| `llm_thread.py` | Conversation history, context compaction, Convergence Protocol dispatch; delegates per-tool-call execution to `inference_engine` |
-| `inference_engine.py` | Shared tool-call pipeline (`process_tool_call`): JSON parse, NL translation, CP pre/post execution gates, tool dispatch, interaction logging — used by both `llm_thread` and `sub_session` |
-| `tools.py` | Tool definitions (OpenAI function-calling schemas) + `execute_tool()` dispatcher |
-| `sub_session.py` | Background worker DAG: `TaskNode`/`Workflow` with `depends_on` edges, nested workers (depth 2), timeout continuation |
-| `prompt_assembler.py` | Assembles system prompt per-turn: BASE_PROMPT + datetime + memories (vector search) + tasks + skills TOC (full skills loaded on demand via read_file) |
-| `prompt_loader.py` | Loads/validates prompt templates from `data/prompts/` (required files; missing = startup failure) |
-| `convergence_protocol.py` | Phase-aware 3-stage pipeline: detect → validate → correct. Phases: `post_inference`, `pre_execution`, `post_execution`. Scoped to `main` and/or `sub_session`. |
-| `matrix_thread.py` | Matrix client (mautrix) with E2E encryption; voice messages transcribed via configurable Whisper endpoint |
-| `web_interface.py` | aiohttp server: WebSocket chat, debug panel (`/debug`), REST API |
-| `dreaming.py` | Nightly memory consolidation: 4-phase housekeeping pipeline (dedup, contradictions, stale pruning, working set export) + 3 creative phases |
-| `memory_harvest.py` | Periodic conversation mining → memory store extraction via sub-sessions |
-| `scheduler_thread.py` | APScheduler-based task scheduling; `ai_prompt` triggers sub-sessions |
-| `database.py` | SQLite ops (per-thread cached connections): messages, tasks, summaries, interaction_log |
+| `core/llm_thread.py` | Conversation history, context compaction, Convergence Protocol dispatch; delegates per-tool-call execution to `inference_engine` |
+| `core/inference_engine.py` | Shared tool-call pipeline (`process_tool_call`): JSON parse, NL translation, CP pre/post execution gates, tool dispatch, interaction logging — used by both `llm_thread` and `sub_session` |
+| `tools/` | Tool definitions (OpenAI function-calling schemas in `core/tool_schemas.py`) + `execute_tool()` dispatcher; one module per tool family |
+| `core/sub_session.py` | Background worker DAG: `TaskNode`/`Workflow` with `depends_on` edges, nested workers (depth 2), timeout continuation |
+| `infra/prompt_assembler.py` | Assembles system prompt per-turn: BASE_PROMPT + datetime + memories (vector search) + tasks + skills TOC (full skills loaded on demand via read_file) |
+| `infra/prompt_loader.py` | Loads/validates prompt templates from `data/prompts/` (required files; missing = startup failure) |
+| `core/convergence_protocol.py` | Phase-aware 3-stage pipeline: detect → validate → correct. Phases: `post_inference`, `pre_execution`, `post_execution`. Scoped to `main` and/or `sub_session`. |
+| `interfaces/matrix_thread.py` | Matrix client (mautrix) with E2E encryption; voice messages transcribed via configurable Whisper endpoint |
+| `interfaces/web_interface.py` | aiohttp server: WebSocket chat, debug panel (`/debug`), REST API |
+| `workers/dreaming.py` | Nightly memory consolidation: 4-phase housekeeping pipeline (dedup, contradictions, stale pruning, working set export) + 3 creative phases |
+| `workers/memory_harvest.py` | Periodic conversation mining → memory store extraction via sub-sessions |
+| `workers/scheduler_thread.py` | APScheduler-based task scheduling; `ai_prompt` triggers sub-sessions |
+| `infra/database.py` | SQLite ops (per-thread cached connections): messages, tasks, summaries, interaction_log |
 
 **LLM provider abstraction:** `BackendPool` wraps `AsyncOpenAI` with ordered failover. Four provider types: `"openai"` (any compatible endpoint), `"anthropic"` (native Messages API with prompt caching), `"gemini-cli"`, `"kimi-code"`. Role-based routing (`base`, `compaction`, `sub_sessions`, `dreaming`, `convergence_protocol`).
 
