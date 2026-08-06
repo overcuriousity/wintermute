@@ -16,12 +16,11 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-from wintermute.infra.llm_utils import strip_fences
-
 from wintermute.infra import prompt_loader
+from wintermute.infra.llm_utils import strip_fences
 
 if TYPE_CHECKING:
     from wintermute.core.types import BackendPool
@@ -100,7 +99,6 @@ def is_nl_tool_call(tool_name: str, tool_args: dict) -> bool:
     )
 
 
-
 def _fix_unescaped_control_chars(text: str) -> str:
     """Escape literal control characters inside JSON string values.
 
@@ -141,10 +139,10 @@ async def translate_nl_tool_call(
     pool: "BackendPool",
     tool_name: str,
     description: str,
-    thread_id: Optional[str] = None,
+    thread_id: str | None = None,
     timezone_str: str = "UTC",
-    current_datetime: Optional[str] = None,
-    tool_profiles: Optional[dict[str, dict]] = None,
+    current_datetime: str | None = None,
+    tool_profiles: dict[str, dict] | None = None,
 ) -> "dict | list | None":
     """Call the translator LLM to expand a natural-language description
     into structured tool arguments.
@@ -197,8 +195,7 @@ async def translate_nl_tool_call(
 
     user_content = (
         f"[Current time: {current_datetime}. "
-        f"All times without explicit timezone should use this timezone.]\n\n"
-        + description
+        f"All times without explicit timezone should use this timezone.]\n\n" + description
     )
 
     messages = [
@@ -233,7 +230,8 @@ async def translate_nl_tool_call(
             logger.warning(
                 "NL translator: repaired unescaped control chars in JSON for %s "
                 "(lossy — newlines/tabs in values converted to escape sequences): %s",
-                tool_name, raw[:300],
+                tool_name,
+                raw[:300],
             )
         except json.JSONDecodeError:
             logger.warning("NL translator returned invalid JSON for %s: %s", tool_name, raw[:200])
@@ -245,5 +243,7 @@ async def translate_nl_tool_call(
     if isinstance(parsed, list) and all(isinstance(item, dict) for item in parsed):
         return parsed
 
-    logger.warning("NL translator returned unexpected type for %s: %s", tool_name, type(parsed).__name__)
+    logger.warning(
+        "NL translator returned unexpected type for %s: %s", tool_name, type(parsed).__name__
+    )
     return None

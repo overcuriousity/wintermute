@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from wintermute.core.tool_deps import ToolDeps
 from wintermute.infra import database
@@ -13,9 +13,13 @@ logger = logging.getLogger(__name__)
 _EXECUTION_MODES = {"reminder", "autonomous_notify", "autonomous_silent"}
 
 
-def _resolve_execution_mode(schedule_type: Optional[str], ai_prompt: Optional[str],
-                            execution_mode: Optional[str], background: bool,
-                            background_provided: bool = False) -> tuple[Optional[str], bool]:
+def _resolve_execution_mode(
+    schedule_type: str | None,
+    ai_prompt: str | None,
+    execution_mode: str | None,
+    background: bool,
+    background_provided: bool = False,
+) -> tuple[str | None, bool]:
     """Resolve explicit/legacy execution semantics for scheduled tasks."""
     mode = (execution_mode or "").strip() or None
     if mode is not None and mode not in _EXECUTION_MODES:
@@ -35,9 +39,7 @@ def _resolve_execution_mode(schedule_type: Optional[str], ai_prompt: Optional[st
 
     if mode in {"autonomous_notify", "autonomous_silent"}:
         if not ai_prompt:
-            raise ValueError(
-                f"ai_prompt is required when execution_mode is {mode}"
-            )
+            raise ValueError(f"ai_prompt is required when execution_mode is {mode}")
         return mode, True
 
     # Backward compatibility for existing callers without execution_mode:
@@ -55,8 +57,15 @@ def _resolve_execution_mode(schedule_type: Optional[str], ai_prompt: Optional[st
     return "reminder", False
 
 
-_SCHEDULE_KEYS = ("schedule_type", "at", "day_of_week", "day_of_month",
-                  "interval_seconds", "window_start", "window_end")
+_SCHEDULE_KEYS = (
+    "schedule_type",
+    "at",
+    "day_of_week",
+    "day_of_month",
+    "interval_seconds",
+    "window_start",
+    "window_end",
+)
 
 _SCHEDULE_TYPES = ("once", "daily", "weekly", "monthly", "interval")
 
@@ -83,12 +92,9 @@ def _build_schedule(inputs: dict) -> tuple[dict, str]:
     """
     schedule_type = inputs.get("schedule_type")
     if schedule_type not in _SCHEDULE_TYPES:
-        raise ValueError(
-            "schedule_type must be one of: " + ", ".join(_SCHEDULE_TYPES)
-        )
+        raise ValueError("schedule_type must be one of: " + ", ".join(_SCHEDULE_TYPES))
     sched = {k: inputs[k] for k in _SCHEDULE_KEYS if k in inputs}
-    missing = [f for f in _SCHEDULE_REQUIRED.get(schedule_type, ())
-               if sched.get(f) in (None, "")]
+    missing = [f for f in _SCHEDULE_REQUIRED.get(schedule_type, ()) if sched.get(f) in (None, "")]
     if missing:
         raise ValueError(
             f"Missing required field(s) for {schedule_type!r} schedule: "
@@ -131,8 +137,7 @@ def _describe_schedule(inputs: dict) -> str:
     return str(inputs)
 
 
-def _task_add(inputs: dict, effective_scope: Optional[str],
-              tool_deps: Optional[ToolDeps] = None) -> str:
+def _task_add(inputs: dict, effective_scope: str | None, tool_deps: ToolDeps | None = None) -> str:
     content = inputs.get("content")
     if not content:
         return json.dumps({"error": "content is required for add action"})
@@ -179,19 +184,24 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     if schedule_type and deps.task_scheduler is not None:
         try:
             deps.task_scheduler.ensure_job(
-                task_id, json.loads(schedule_config),
-                ai_prompt, add_thread, background, execution_mode,
+                task_id,
+                json.loads(schedule_config),
+                ai_prompt,
+                add_thread,
+                background,
+                execution_mode,
             )
             database.update_task(task_id, apscheduler_job_id=task_id)
             scheduled = True
         except Exception:
-            logger.warning("Could not schedule APScheduler job for new task %s",
-                           task_id, exc_info=True)
+            logger.warning(
+                "Could not schedule APScheduler job for new task %s", task_id, exc_info=True
+            )
 
     if deps.event_bus:
-        deps.event_bus.emit("task.created", task_id=task_id,
-                        content=content[:200],
-                        schedule_type=schedule_type)
+        deps.event_bus.emit(
+            "task.created", task_id=task_id, content=content[:200], schedule_type=schedule_type
+        )
     result = {"status": "ok", "task_id": task_id}
     if schedule_desc:
         result["schedule"] = schedule_desc
@@ -201,15 +211,18 @@ def _task_add(inputs: dict, effective_scope: Optional[str],
     return json.dumps(result)
 
 
-def _task_complete(inputs: dict, effective_scope: Optional[str],
-                   tool_deps: Optional[ToolDeps] = None) -> str:
+def _task_complete(
+    inputs: dict, effective_scope: str | None, tool_deps: ToolDeps | None = None
+) -> str:
     deps = tool_deps or ToolDeps()
     task_id = inputs.get("task_id")
     if not task_id:
         return json.dumps({"error": "task_id is required for complete action"})
     reason = (inputs.get("reason") or "").strip()
     if not reason:
-        return json.dumps({"error": "reason is required for complete action — explain why this task is finished"})
+        return json.dumps(
+            {"error": "reason is required for complete action — explain why this task is finished"}
+        )
     task = database.get_task(task_id)
     # Mutate the DB first — removing the scheduler job before a failed DB
     # write would leave an active task that silently never fires.
@@ -218,15 +231,17 @@ def _task_complete(inputs: dict, effective_scope: Optional[str],
         try:
             deps.task_scheduler.remove_job(task["apscheduler_job_id"])
         except Exception:
-            logger.warning("Could not remove APScheduler job for completed task %s",
-                           task_id, exc_info=True)
+            logger.warning(
+                "Could not remove APScheduler job for completed task %s", task_id, exc_info=True
+            )
     if ok and deps.event_bus:
         deps.event_bus.emit("task.completed", task_id=task_id, reason=reason[:200])
     return json.dumps({"status": "ok" if ok else "not_found", "reason": reason})
 
 
-def _task_pause(inputs: dict, effective_scope: Optional[str],
-                tool_deps: Optional[ToolDeps] = None) -> str:
+def _task_pause(
+    inputs: dict, effective_scope: str | None, tool_deps: ToolDeps | None = None
+) -> str:
     deps = tool_deps or ToolDeps()
     task_id = inputs.get("task_id")
     if not task_id:
@@ -237,13 +252,15 @@ def _task_pause(inputs: dict, effective_scope: Optional[str],
         try:
             deps.task_scheduler.remove_job(task["apscheduler_job_id"])
         except Exception:
-            logger.warning("Could not remove APScheduler job for paused task %s",
-                           task_id, exc_info=True)
+            logger.warning(
+                "Could not remove APScheduler job for paused task %s", task_id, exc_info=True
+            )
     return json.dumps({"status": "ok" if ok else "not_found"})
 
 
-def _task_resume(inputs: dict, effective_scope: Optional[str],
-                 tool_deps: Optional[ToolDeps] = None) -> str:
+def _task_resume(
+    inputs: dict, effective_scope: str | None, tool_deps: ToolDeps | None = None
+) -> str:
     deps = tool_deps or ToolDeps()
     task_id = inputs.get("task_id")
     if not task_id:
@@ -254,16 +271,19 @@ def _task_resume(inputs: dict, effective_scope: Optional[str],
         if task and task.get("schedule_config") and deps.task_scheduler:
             sched = json.loads(task["schedule_config"])
             deps.task_scheduler.ensure_job(
-                task_id, sched,
-                task.get("ai_prompt"), task.get("thread_id"),
+                task_id,
+                sched,
+                task.get("ai_prompt"),
+                task.get("thread_id"),
                 bool(task.get("background")),
                 task.get("execution_mode"),
             )
     return json.dumps({"status": "ok" if ok else "not_found"})
 
 
-def _task_delete(inputs: dict, effective_scope: Optional[str],
-                 tool_deps: Optional[ToolDeps] = None) -> str:
+def _task_delete(
+    inputs: dict, effective_scope: str | None, tool_deps: ToolDeps | None = None
+) -> str:
     deps = tool_deps or ToolDeps()
     task_id = inputs.get("task_id")
     if not task_id:
@@ -274,13 +294,15 @@ def _task_delete(inputs: dict, effective_scope: Optional[str],
         try:
             deps.task_scheduler.remove_job(task["apscheduler_job_id"])
         except Exception:
-            logger.warning("Could not remove APScheduler job for deleted task %s",
-                           task_id, exc_info=True)
+            logger.warning(
+                "Could not remove APScheduler job for deleted task %s", task_id, exc_info=True
+            )
     return json.dumps({"status": "ok" if ok else "not_found"})
 
 
-def _task_update(inputs: dict, effective_scope: Optional[str],
-                 tool_deps: Optional[ToolDeps] = None) -> str:
+def _task_update(
+    inputs: dict, effective_scope: str | None, tool_deps: ToolDeps | None = None
+) -> str:
     task_id = inputs.get("task_id")
     if not task_id:
         return json.dumps({"error": "task_id is required for update action"})
@@ -332,22 +354,28 @@ def _task_update(inputs: dict, effective_scope: Optional[str],
     # The APScheduler job caches content/ai_prompt/background/execution_mode in
     # its persisted kwargs, so re-register it after an edit.
     deps = tool_deps or ToolDeps()
-    if (task.get("schedule_config") and task.get("status") == "active"
-            and deps.task_scheduler is not None):
+    if (
+        task.get("schedule_config")
+        and task.get("status") == "active"
+        and deps.task_scheduler is not None
+    ):
         try:
             deps.task_scheduler.ensure_job(
-                task_id, json.loads(task["schedule_config"]),
-                new_ai_prompt, task.get("thread_id"),
-                new_background, new_execution_mode,
+                task_id,
+                json.loads(task["schedule_config"]),
+                new_ai_prompt,
+                task.get("thread_id"),
+                new_background,
+                new_execution_mode,
             )
         except Exception:
-            logger.warning("Could not re-schedule APScheduler job for updated task %s",
-                           task_id, exc_info=True)
+            logger.warning(
+                "Could not re-schedule APScheduler job for updated task %s", task_id, exc_info=True
+            )
     return json.dumps({"status": "ok"})
 
 
-def _task_list(inputs: dict, effective_scope: Optional[str],
-               tool_deps: Optional[ToolDeps] = None) -> str:
+def _task_list(inputs: dict, effective_scope: str | None, tool_deps: ToolDeps | None = None) -> str:
     status = inputs.get("status", "active")
     items = database.list_tasks(status, thread_id=effective_scope)
     formatted = []
@@ -373,19 +401,23 @@ def _task_list(inputs: dict, effective_scope: Optional[str],
 
 
 TASK_ACTIONS: dict[str, Any] = {
-    "add":      _task_add,
+    "add": _task_add,
     "complete": _task_complete,
-    "pause":    _task_pause,
-    "resume":   _task_resume,
-    "delete":   _task_delete,
-    "update":   _task_update,
-    "list":     _task_list,
+    "pause": _task_pause,
+    "resume": _task_resume,
+    "delete": _task_delete,
+    "update": _task_update,
+    "list": _task_list,
 }
 
 
-def tool_task(inputs: dict, thread_id: Optional[str] = None,
-              parent_thread_id: Optional[str] = None,
-              tool_deps: Optional[ToolDeps] = None, **_kw) -> str:
+def tool_task(
+    inputs: dict,
+    thread_id: str | None = None,
+    parent_thread_id: str | None = None,
+    tool_deps: ToolDeps | None = None,
+    **_kw,
+) -> str:
     """Unified task tool — handles add/update/complete/pause/resume/delete/list."""
     effective_scope = parent_thread_id or thread_id
     try:

@@ -25,29 +25,27 @@ import os
 import signal
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
-from wintermute.infra import database
-from wintermute.infra import prompt_assembler
-from wintermute.infra import prompt_loader
-from wintermute.infra.paths import DATA_DIR
-from wintermute.infra.event_bus import EventBus
-from wintermute.infra.thread_config import ThreadConfigManager
-from wintermute import tools as tool_module
-from wintermute.core.tool_deps import ToolDeps
+
 from wintermute.core.llm_thread import LLMThread
+from wintermute.core.sub_session import SubSessionManager
+from wintermute.core.tool_deps import ToolDeps
 from wintermute.core.types import BackendPool, MultiProviderConfig, ProviderConfig
+from wintermute.infra import database, prompt_assembler, prompt_loader
+from wintermute.infra.event_bus import EventBus
+from wintermute.infra.paths import DATA_DIR
+from wintermute.infra.thread_config import ThreadConfigManager
 from wintermute.interfaces.matrix_thread import MatrixConfig, MatrixThread
 from wintermute.interfaces.signal_thread import SignalConfig, SignalThread
+from wintermute.interfaces.web_interface import WebInterface
+from wintermute.update_checker import UpdateCheckerConfig, UpdateCheckerLoop
 from wintermute.workers.dreaming import DreamingConfig, DreamingLoop
 from wintermute.workers.memory_harvest import MemoryHarvestConfig, MemoryHarvestLoop
 from wintermute.workers.reflection import ReflectionConfig, ReflectionLoop
+from wintermute.workers.scheduler_thread import SchedulerConfig, TaskScheduler
 from wintermute.workers.self_model import SelfModelConfig, SelfModelProfiler
-from wintermute.workers.scheduler_thread import TaskScheduler, SchedulerConfig
-from wintermute.core.sub_session import SubSessionManager
-from wintermute.update_checker import UpdateCheckerConfig, UpdateCheckerLoop
-from wintermute.interfaces.web_interface import WebInterface
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +56,7 @@ LOG_DIR = Path("logs")
 # ---------------------------------------------------------------------------
 # Configuration loading
 # ---------------------------------------------------------------------------
+
 
 def load_config(path: Path = CONFIG_FILE) -> dict:
     if not path.exists():
@@ -70,6 +69,7 @@ def load_config(path: Path = CONFIG_FILE) -> dict:
 # ---------------------------------------------------------------------------
 # Logging setup
 # ---------------------------------------------------------------------------
+
 
 def setup_logging(cfg: dict) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -104,6 +104,7 @@ def setup_logging(cfg: dict) -> None:
 # ---------------------------------------------------------------------------
 # Data file bootstrapping
 # ---------------------------------------------------------------------------
+
 
 def ensure_data_dirs() -> None:
     """Ensure required data directories exist.
@@ -148,6 +149,7 @@ class ShutdownCoordinator:
 # Main
 # ---------------------------------------------------------------------------
 
+
 def _parse_inference_backends(raw_list: list[dict]) -> dict[str, ProviderConfig]:
     """Parse the ``inference_backends`` list into a name→ProviderConfig map."""
     backends: dict[str, ProviderConfig] = {}
@@ -173,16 +175,17 @@ def _parse_inference_backends(raw_list: list[dict]) -> dict[str, ProviderConfig]
     return backends
 
 
-def _resolve_role(role_name: str, names: list[str],
-                  backends: dict[str, ProviderConfig],
-                  config_path: str = None) -> list[ProviderConfig]:
+def _resolve_role(
+    role_name: str, names: list[str], backends: dict[str, ProviderConfig], config_path: str = None
+) -> list[ProviderConfig]:
     """Resolve a list of backend names into ProviderConfig objects."""
     label = config_path or f"llm.{role_name}"
     result: list[ProviderConfig] = []
     for n in names:
         if n not in backends:
-            print(f"ERROR: {label} references unknown backend {n!r}. "
-                  f"Available: {', '.join(backends)}")
+            print(
+                f"ERROR: {label} references unknown backend {n!r}. Available: {', '.join(backends)}"
+            )
             sys.exit(1)
         result.append(backends[n])
     return result
@@ -192,8 +195,10 @@ def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
     """Parse ``inference_backends`` + ``llm`` role mapping into a MultiProviderConfig."""
     raw_backends = cfg.get("inference_backends")
     if not raw_backends:
-        print("ERROR: 'inference_backends' section is required in config.yaml. "
-              "See config.yaml.example for the new format.")
+        print(
+            "ERROR: 'inference_backends' section is required in config.yaml. "
+            "See config.yaml.example for the new format."
+        )
         sys.exit(1)
 
     backends = _parse_inference_backends(raw_backends)
@@ -236,13 +241,20 @@ def _build_multi_provider_config(cfg: dict) -> MultiProviderConfig:
         nl_backends_raw = nl_raw.get("backends")
         if nl_backends_raw is None:
             # Default to convergence_protocol backends if omitted.
-            nl_configs = list(cp_configs) if cp_configs else _resolve_role(
-                "nl_translation", default_list, backends,
-                config_path="nl_translation.backends",
+            nl_configs = (
+                list(cp_configs)
+                if cp_configs
+                else _resolve_role(
+                    "nl_translation",
+                    default_list,
+                    backends,
+                    config_path="nl_translation.backends",
+                )
             )
         elif isinstance(nl_backends_raw, list) and nl_backends_raw:
-            nl_configs = _resolve_role("nl_translation", nl_backends_raw, backends,
-                                       config_path="nl_translation.backends")
+            nl_configs = _resolve_role(
+                "nl_translation", nl_backends_raw, backends, config_path="nl_translation.backends"
+            )
         else:
             nl_configs = []
     else:
@@ -276,6 +288,7 @@ def _make_client_for_config(cfg: ProviderConfig, cache: dict) -> Any:
         key = ("gemini-cli",)
         if key not in cache:
             from wintermute.backends import gemini_auth, gemini_client
+
             creds = gemini_auth.load_credentials()
             if not creds:
                 logger.info("No Gemini credentials found — running interactive setup")
@@ -286,6 +299,7 @@ def _make_client_for_config(cfg: ProviderConfig, cache: dict) -> Any:
         key = ("kimi-code",)
         if key not in cache:
             from wintermute.backends import kimi_auth, kimi_client
+
             creds = kimi_auth.load_credentials()
             # Client is created even without creds — auto-auth runs after
             # interfaces are up, or the user can run /kimi-auth manually.
@@ -295,12 +309,14 @@ def _make_client_for_config(cfg: ProviderConfig, cache: dict) -> Any:
         key = ("anthropic", cfg.api_key)
         if key not in cache:
             from wintermute.backends.anthropic_client import AnthropicClient
+
             cache[key] = AnthropicClient(api_key=cfg.api_key)
         return cache[key]
     else:
         key = (cfg.base_url, cfg.api_key)
         if key not in cache:
             from wintermute.backends.openai_wrapper import OpenAIBackend
+
             cache[key] = OpenAIBackend(api_key=cfg.api_key, base_url=cfg.base_url)
         return cache[key]
 
@@ -324,8 +340,7 @@ class _LazyBackendPoolDict(dict):
     merely *defined* but unused.
     """
 
-    def __init__(self, backends_by_name: dict[str, ProviderConfig],
-                 client_cache: dict) -> None:
+    def __init__(self, backends_by_name: dict[str, ProviderConfig], client_cache: dict) -> None:
         super().__init__()
         self._available = backends_by_name
         self._client_cache = client_cache
@@ -358,10 +373,12 @@ async def main() -> None:
 
     # Initialize vector memory store (before pool construction).
     from wintermute.infra import memory_store
+
     memory_store.init(cfg.get("memory", {}))
 
     # Initialize skill store (shares embedding + backend config from memory section).
     from wintermute.infra import skill_store
+
     memory_cfg = cfg.get("memory", {}) or {}
     skills_cfg = (cfg.get("skills", {}) or {}).copy()
     # Inherit memory.backend as skill backend default when not explicitly set.
@@ -411,10 +428,16 @@ async def main() -> None:
     # when the backend is defined but not assigned to any llm role.
     backends_by_name = _parse_inference_backends(cfg.get("inference_backends", []))
     _used_backend_names: set[str] = set()
-    for cfgs in (multi_cfg.main, multi_cfg.compaction, multi_cfg.sub_sessions,
-                 multi_cfg.dreaming, multi_cfg.convergence_protocol,
-                 multi_cfg.memory_harvest, multi_cfg.nl_translation,
-                 multi_cfg.reflection):
+    for cfgs in (
+        multi_cfg.main,
+        multi_cfg.compaction,
+        multi_cfg.sub_sessions,
+        multi_cfg.dreaming,
+        multi_cfg.convergence_protocol,
+        multi_cfg.memory_harvest,
+        multi_cfg.nl_translation,
+        multi_cfg.reflection,
+    ):
         for pc in cfgs:
             _used_backend_names.add(pc.name)
     backend_pools_by_name = _LazyBackendPoolDict(backends_by_name, client_cache)
@@ -456,8 +479,11 @@ async def main() -> None:
     }
     if nl_translation_config["enabled"]:
         prompt_loader.validate_nl_translation()
-        logger.info("NL Translation enabled (tools=%s, model=%s)",
-                     nl_translation_config["tools"], nl_translation_pool.primary.model)
+        logger.info(
+            "NL Translation enabled (tools=%s, model=%s)",
+            nl_translation_config["tools"],
+            nl_translation_pool.primary.model,
+        )
 
     scheduler_raw = cfg.get("scheduler", {}) or {}
     dreaming_raw = cfg.get("dreaming", {})
@@ -469,8 +495,12 @@ async def main() -> None:
     memory_dreaming_raw = cfg.get("memory", {}).get("dreaming", {})
     scheduler_cfg = SchedulerConfig(
         timezone=scheduler_raw.get("timezone", "UTC"),
-        prediction_proactive_scheduling=memory_dreaming_raw.get("prediction_proactive_scheduling", True),
-        prediction_proactive_cooldown_hours=memory_dreaming_raw.get("prediction_proactive_cooldown_hours", 4),
+        prediction_proactive_scheduling=memory_dreaming_raw.get(
+            "prediction_proactive_scheduling", True
+        ),
+        prediction_proactive_cooldown_hours=memory_dreaming_raw.get(
+            "prediction_proactive_cooldown_hours", 4
+        ),
         proactive_target_thread_id=memory_dreaming_raw.get("proactive_target_thread_id", "default"),
         task_completed_retention_days=scheduler_raw.get("task_completed_retention_days", 30),
         task_maintenance_interval_hours=scheduler_raw.get("task_maintenance_interval_hours", 6),
@@ -481,7 +511,10 @@ async def main() -> None:
     if _tuning_raw is None:
         tuning: dict = {}
     elif not isinstance(_tuning_raw, dict):
-        logger.warning("tuning: expected a mapping, got %r; ignoring tuning section", type(_tuning_raw).__name__)
+        logger.warning(
+            "tuning: expected a mapping, got %r; ignoring tuning section",
+            type(_tuning_raw).__name__,
+        )
         tuning = {}
     else:
         tuning = _tuning_raw
@@ -507,17 +540,21 @@ async def main() -> None:
     max_inline_tool_rounds = _tuning_int("max_inline_tool_rounds", 3, minimum=0)
 
     # Feed tuning-based defaults into the per-thread config manager.
-    thread_config_mgr.update_global_defaults({
-        "compaction_keep_recent": compaction_keep_recent,
-        "max_inline_tool_rounds": max_inline_tool_rounds,
-    })
+    thread_config_mgr.update_global_defaults(
+        {
+            "compaction_keep_recent": compaction_keep_recent,
+            "max_inline_tool_rounds": max_inline_tool_rounds,
+        }
+    )
 
     # Push the inline tool limit into the Convergence Protocol module.
     from wintermute.core.convergence_protocol import set_max_inline_tool_rounds
+
     set_max_inline_tool_rounds(max_inline_tool_rounds)
 
     # Extract config secrets and enable credential redaction.
     from wintermute.core.convergence_protocol import extract_config_secrets, set_redaction_secrets
+
     _secrets = extract_config_secrets(cfg)
     set_redaction_secrets(_secrets)
     if _secrets:
@@ -536,7 +573,7 @@ async def main() -> None:
     searxng_url = (cfg.get("search") or {}).get("searxng_url", "")
 
     # --- Optional interfaces ---
-    matrix_cfg_raw: Optional[dict] = cfg.get("matrix")
+    matrix_cfg_raw: dict | None = cfg.get("matrix")
     web_cfg: dict = cfg.get("web", {"enabled": True, "host": "127.0.0.1", "port": 8080})
 
     matrix_enabled = bool(
@@ -544,11 +581,9 @@ async def main() -> None:
         and matrix_cfg_raw.get("homeserver")
         and (matrix_cfg_raw.get("access_token") or matrix_cfg_raw.get("password"))
     )
-    signal_cfg_raw: Optional[dict] = cfg.get("signal")
+    signal_cfg_raw: dict | None = cfg.get("signal")
     signal_enabled = bool(
-        signal_cfg_raw
-        and signal_cfg_raw.get("enabled")
-        and signal_cfg_raw.get("phone_number")
+        signal_cfg_raw and signal_cfg_raw.get("enabled") and signal_cfg_raw.get("phone_number")
     )
 
     web_enabled = web_cfg.get("enabled", True)
@@ -572,19 +607,29 @@ async def main() -> None:
     # 1. Broadcast closure — needs forward references to matrix / web_iface
     #    which are filled in below (the closure is only _called_ after
     #    asyncio tasks start, by which point everything is wired).
-    _matrix_ref: list[Optional[MatrixThread]] = [None]
-    _web_ref: list[Optional[WebInterface]] = [None]
-    _signal_ref: list[Optional[SignalThread]] = [None]
+    _matrix_ref: list[MatrixThread | None] = [None]
+    _web_ref: list[WebInterface | None] = [None]
+    _signal_ref: list[SignalThread | None] = [None]
 
-    async def broadcast(text: str, thread_id: Optional[str] = None, *,
-                        reasoning: Optional[str] = None,
-                        is_proactive: bool = False) -> None:
+    async def broadcast(
+        text: str,
+        thread_id: str | None = None,
+        *,
+        reasoning: str | None = None,
+        is_proactive: bool = False,
+    ) -> None:
         mx = _matrix_ref[0]
         wi = _web_ref[0]
         si = _signal_ref[0]
         if si and thread_id and thread_id.startswith("sig_"):
             await si.send_message(text, thread_id)
-        elif mx and thread_id and not thread_id.startswith("web_") and not thread_id.startswith("sig_") and thread_id != "default":
+        elif (
+            mx
+            and thread_id
+            and not thread_id.startswith("web_")
+            and not thread_id.startswith("sig_")
+            and thread_id != "default"
+        ):
             await mx.send_message(text, thread_id)
         if wi and thread_id:
             await wi.broadcast(text, thread_id, reasoning=reasoning)
@@ -594,6 +639,7 @@ async def main() -> None:
         if is_proactive and thread_id == "default":
             opted_in = thread_config_mgr.get_proactive_thread_ids()
             if opted_in:
+
                 async def _send_to_room(tid: str) -> None:
                     try:
                         if si and tid.startswith("sig_"):
@@ -603,7 +649,9 @@ async def main() -> None:
                         elif mx and not tid.startswith("web_") and not tid.startswith("sig_"):
                             await mx.send_message(text, tid)
                     except Exception as exc:  # noqa: BLE001
-                        logger.warning("Failed to deliver proactive message to %s: %s", tid, exc, exc_info=True)
+                        logger.warning(
+                            "Failed to deliver proactive message to %s: %s", tid, exc, exc_info=True
+                        )
 
                 await asyncio.gather(*(_send_to_room(tid) for tid in opted_in))
 
@@ -627,18 +675,22 @@ async def main() -> None:
         shutdown_coordinator=shutdown,
     )
 
-    llm = LLMThread(main_pool=main_pool, compaction_pool=compaction_pool,
-                    convergence_protocol_pool=convergence_protocol_pool, broadcast_fn=broadcast,
-                    sub_session_getter=lambda: _ssm_holder[0] if _ssm_holder else None,
-                    convergence_protocol_validators=cp_validators,
-                    nl_translation_pool=nl_translation_pool,
-                    nl_translation_config=nl_translation_config,
-                    seed_language=seed_language,
-                    event_bus=event_bus,
-                    thread_config_manager=thread_config_mgr,
-                    backend_pools_by_name=backend_pools_by_name,
-                    compaction_keep_recent=compaction_keep_recent,
-                    tool_deps=tool_deps)
+    llm = LLMThread(
+        main_pool=main_pool,
+        compaction_pool=compaction_pool,
+        convergence_protocol_pool=convergence_protocol_pool,
+        broadcast_fn=broadcast,
+        sub_session_getter=lambda: _ssm_holder[0] if _ssm_holder else None,
+        convergence_protocol_validators=cp_validators,
+        nl_translation_pool=nl_translation_pool,
+        nl_translation_config=nl_translation_config,
+        seed_language=seed_language,
+        event_bus=event_bus,
+        thread_config_manager=thread_config_mgr,
+        backend_pools_by_name=backend_pools_by_name,
+        compaction_keep_recent=compaction_keep_recent,
+        tool_deps=tool_deps,
+    )
 
     # 3. SubSessionManager — needs llm.enqueue_system_event (no cycle: LLM
     #    already exists).  Fills the lazy holder so LLM can reach it later.
@@ -670,7 +722,7 @@ async def main() -> None:
     scheduler.set_session_manager(llm.session_manager)
 
     # 5. Memory harvest loop
-    harvest_loop: Optional[MemoryHarvestLoop] = None
+    harvest_loop: MemoryHarvestLoop | None = None
     if harvest_config.enabled:
         harvest_loop = MemoryHarvestLoop(
             config=harvest_config,
@@ -702,6 +754,7 @@ async def main() -> None:
             )
             tool_deps.self_model_profiler = self_model
             from wintermute.infra.prompt_assembler import set_self_model_path
+
             set_self_model_path(sm_cfg.yaml_path)
             logger.info("Self-model profiler enabled")
         except Exception:
@@ -749,7 +802,7 @@ async def main() -> None:
         interval_hours=uc_raw.get("interval_hours", 24),
         remote_url=uc_raw.get("remote_url", ""),
     )
-    update_checker: Optional[UpdateCheckerLoop] = None
+    update_checker: UpdateCheckerLoop | None = None
     if uc_config.enabled:
         uc_rooms: list[str] = []
         if matrix_enabled and matrix_cfg_raw:
@@ -764,6 +817,7 @@ async def main() -> None:
 
     # 10. Slash command handler (needs almost everything above)
     from wintermute.interfaces.slash_commands import SlashCommandHandler
+
     slash_handler = SlashCommandHandler(
         llm=llm,
         sub_sessions=sub_sessions,
@@ -783,6 +837,7 @@ async def main() -> None:
     whisper_raw = cfg.get("whisper", {}) or {}
     if whisper_raw.get("enabled") and (matrix_enabled or signal_enabled):
         from openai import AsyncOpenAI
+
         whisper_client = AsyncOpenAI(
             api_key=whisper_raw.get("api_key", ""),
             base_url=whisper_raw.get("base_url", ""),
@@ -792,6 +847,7 @@ async def main() -> None:
         whisper_language = whisper_raw.get("language", "") or ""
         logger.info("Whisper transcription enabled (model=%s)", whisper_model)
         import shutil as _shutil
+
         if not _shutil.which("ffmpeg"):
             logger.warning(
                 "Whisper transcription is enabled but ffmpeg is not in PATH. "
@@ -800,7 +856,7 @@ async def main() -> None:
             )
 
     # 12. MatrixThread — all deps passed via constructor (no post-injection)
-    matrix: Optional[MatrixThread] = None
+    matrix: MatrixThread | None = None
     if matrix_enabled:
         matrix_cfg = MatrixConfig(
             homeserver=matrix_cfg_raw["homeserver"],
@@ -813,7 +869,8 @@ async def main() -> None:
             group_mode=matrix_cfg_raw.get("group_mode", False),
         )
         matrix = MatrixThread(
-            matrix_cfg, llm,
+            matrix_cfg,
+            llm,
             kimi_client=client_cache.get(("kimi-code",)),
             whisper_client=whisper_client,
             whisper_model=whisper_model,
@@ -825,7 +882,7 @@ async def main() -> None:
         logger.info("Matrix not configured - skipping Matrix interface")
 
     # 12b. SignalThread
-    signal_iface: Optional[SignalThread] = None
+    signal_iface: SignalThread | None = None
     if signal_enabled:
         sig_cfg = SignalConfig(
             phone_number=signal_cfg_raw["phone_number"],
@@ -837,7 +894,8 @@ async def main() -> None:
             http_port=signal_cfg_raw.get("http_port", 8190),
         )
         signal_iface = SignalThread(
-            sig_cfg, llm,
+            sig_cfg,
+            llm,
             whisper_client=whisper_client,
             whisper_model=whisper_model,
             whisper_language=whisper_language,
@@ -848,7 +906,7 @@ async def main() -> None:
         logger.info("Signal not configured - skipping Signal interface")
 
     # 13. WebInterface — all deps passed via constructor (no post-injection)
-    web_iface: Optional[WebInterface] = None
+    web_iface: WebInterface | None = None
     if web_enabled:
         web_iface = WebInterface(
             host=web_cfg.get("host", "127.0.0.1"),
@@ -877,9 +935,9 @@ async def main() -> None:
         loop.add_signal_handler(sig, shutdown.request_shutdown)
 
     tasks = [
-        asyncio.create_task(llm.run(),              name="llm"),
-        asyncio.create_task(dreaming_loop.run(),     name="dreaming"),
-        asyncio.create_task(reflection_loop.run(),   name="reflection"),
+        asyncio.create_task(llm.run(), name="llm"),
+        asyncio.create_task(dreaming_loop.run(), name="dreaming"),
+        asyncio.create_task(reflection_loop.run(), name="reflection"),
     ]
     if harvest_loop:
         tasks.append(asyncio.create_task(harvest_loop.run(), name="memory_harvest"))
@@ -898,15 +956,19 @@ async def main() -> None:
     if signal_enabled:
         interfaces.append("Signal")
     if web_enabled:
-        interfaces.append(f"web http://{web_cfg.get('host','127.0.0.1')}:{web_cfg.get('port',8080)}")
+        interfaces.append(
+            f"web http://{web_cfg.get('host', '127.0.0.1')}:{web_cfg.get('port', 8080)}"
+        )
     # Feature branch: enhanced logging
     logger.info("✨ All components started successfully. Interfaces: %s", ", ".join(interfaces))
 
     # Auto-trigger Kimi-Code device auth if credentials are missing.
     kimi_client_instance = client_cache.get(("kimi-code",))
     if kimi_client_instance and not kimi_client_instance.authenticated:
+
         async def _kimi_auto_auth() -> None:
             from wintermute.backends import kimi_auth
+
             # Wait for Matrix client to be ready (connected + synced).
             if matrix:
                 for _ in range(30):
@@ -916,11 +978,16 @@ async def main() -> None:
                 # Extra pause for first sync to complete.
                 await asyncio.sleep(3)
             try:
+
                 async def _broadcast_auth(msg: str) -> None:
                     sent = False
                     # Broadcast to allowed Matrix rooms only.
                     if matrix:
-                        allowed = set(matrix._cfg.allowed_rooms) if matrix._cfg.allowed_rooms else await matrix.get_joined_rooms()
+                        allowed = (
+                            set(matrix._cfg.allowed_rooms)
+                            if matrix._cfg.allowed_rooms
+                            else await matrix.get_joined_rooms()
+                        )
                         logger.debug("Kimi auto-auth: broadcasting to rooms=%s", allowed)
                         for room_id in allowed:
                             try:
@@ -935,11 +1002,13 @@ async def main() -> None:
                             sent = True
                     if not sent:
                         logger.warning("Kimi auth (no interface connected): %s", msg)
+
                 creds = await kimi_auth.run_device_flow(_broadcast_auth)
                 kimi_client_instance.update_credentials(creds)
                 logger.info("Kimi-Code auto-auth completed")
             except Exception:
                 logger.exception("Kimi-Code auto-auth failed — use /kimi-auth to retry")
+
         tasks.append(asyncio.create_task(_kimi_auto_auth(), name="kimi-auth"))
 
     await shutdown.wait()
@@ -963,16 +1032,17 @@ async def main() -> None:
             task.cancel()
     try:
         await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10.0)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("Some tasks did not stop within 10 s — forcing exit")
 
     # Drain after tasks are cancelled so any commits queued during shutdown
     # cleanup are also flushed before the process exits.  Run in a thread so
     # we don't block the event loop; cap the wait at 30 s.
     from wintermute.infra import data_versioning
+
     try:
         await asyncio.wait_for(asyncio.to_thread(data_versioning.drain), timeout=30.0)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("data_versioning: drain timed out after 30 s — commits may be incomplete")
 
     database.close_all_connections()
@@ -983,8 +1053,10 @@ async def main() -> None:
         try:
             os.execv(sys.executable, [sys.executable, "-m", "wintermute.main"] + sys.argv[1:])
         except OSError:
-            logger.exception("os.execv failed — exiting with code %d for systemd restart",
-                             _EXECV_FALLBACK_EXIT_CODE)
+            logger.exception(
+                "os.execv failed — exiting with code %d for systemd restart",
+                _EXECV_FALLBACK_EXIT_CODE,
+            )
             sys.exit(_EXECV_FALLBACK_EXIT_CODE)
 
 

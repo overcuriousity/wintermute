@@ -25,15 +25,16 @@ import asyncio
 import json
 import logging
 import time as _time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any
 
 import json_repair
 
+from wintermute import tools as tool_module
 from wintermute.core import nl_translator
 from wintermute.core.tool_deps import ToolDeps
 from wintermute.infra import database
-from wintermute import tools as tool_module
 
 logger = logging.getLogger(__name__)
 
@@ -77,38 +78,39 @@ CPCheckFn = Callable[..., Awaitable[Any]]
 # Context & result dataclasses
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ToolCallContext:
     """Parameters for tool-call execution that vary between callers."""
 
     thread_id: str
     nesting_depth: int = 0
-    parent_thread_id: Optional[str] = None
-    scope: str = "main"           # "main" or "sub_session"
-    pool_last_used: str = ""      # backend name, for interaction logging
+    parent_thread_id: str | None = None
+    scope: str = "main"  # "main" or "sub_session"
+    pool_last_used: str = ""  # backend name, for interaction logging
 
-    event_bus: Optional[Any] = None
+    event_bus: Any | None = None
 
     # NL translation
     nl_enabled: bool = False
-    nl_tools: Optional[set] = None
-    nl_translation_pool: Optional[Any] = None
+    nl_tools: set | None = None
+    nl_translation_pool: Any | None = None
     timezone_str: str = ""
 
     # Convergence Protocol
     cp_enabled: bool = False
-    cp_check: Optional[CPCheckFn] = None
+    cp_check: CPCheckFn | None = None
 
     # Per-result tool output truncation (0 = no limit)
     max_tool_output_chars: int = 0
 
     # Dependency container for tool execution.
-    tool_deps: Optional[ToolDeps] = None
+    tool_deps: ToolDeps | None = None
 
     # Per-session pool overrides for sub-system delegation.
-    sub_sessions_pool_override: Optional[Any] = None
-    cp_pool_override: Optional[Any] = None
-    nl_pool_override: Optional[Any] = None
+    sub_sessions_pool_override: Any | None = None
+    cp_pool_override: Any | None = None
+    nl_pool_override: Any | None = None
 
 
 def make_tool_context(
@@ -118,15 +120,15 @@ def make_tool_context(
     pool_last_used: str,
     event_bus: Any = None,
     nesting_depth: int = 0,
-    parent_thread_id: Optional[str] = None,
+    parent_thread_id: str | None = None,
     nl_enabled: bool = False,
     nl_tools: set[str] | None = None,
     nl_translation_pool: Any = None,
     timezone_str: str = "",
     cp_enabled: bool = False,
-    cp_check: Optional[CPCheckFn] = None,
+    cp_check: CPCheckFn | None = None,
     max_tool_output_chars: int = 0,
-    tool_deps: Optional[ToolDeps] = None,
+    tool_deps: ToolDeps | None = None,
     sub_sessions_pool_override: Any = None,
     cp_pool_override: Any = None,
     nl_pool_override: Any = None,
@@ -157,11 +159,11 @@ def make_tool_context(
 class ToolCallOutcome:
     """Result of processing a single tool call."""
 
-    content: str                                            # tool result text for messages
+    content: str  # tool result text for messages
     tool_name: str
-    raw_arguments: str                                      # original JSON from the model
-    executed: bool = True                                   # False → parse/NL/CP error
-    calls_made: list[str] = field(default_factory=list)     # tool names actually executed
+    raw_arguments: str  # original JSON from the model
+    executed: bool = True  # False → parse/NL/CP error
+    calls_made: list[str] = field(default_factory=list)  # tool names actually executed
     call_details: list[dict] = field(default_factory=list)  # [{name, arguments, result}]
 
 
@@ -169,12 +171,14 @@ class ToolCallOutcome:
 # Internal: NL translation helpers
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class _NLResult:
     """Internal result from NL translation attempt."""
-    translated: Optional[dict] = None       # single-item translation
-    multi_items: Optional[list] = None      # multi-item translation
-    error: Optional[str] = None             # error / clarification message
+
+    translated: dict | None = None  # single-item translation
+    multi_items: list | None = None  # multi-item translation
+    error: str | None = None  # error / clarification message
 
 
 async def _translate_nl(
@@ -184,7 +188,9 @@ async def _translate_nl(
 ) -> _NLResult:
     """Run NL translation and log the call."""
     translated = await nl_translator.translate_nl_tool_call(
-        ctx.nl_translation_pool, name, inputs["description"],
+        ctx.nl_translation_pool,
+        name,
+        inputs["description"],
         thread_id=ctx.thread_id,
         timezone_str=ctx.timezone_str,
         tool_profiles=ctx.tool_deps.tool_profiles if ctx.tool_deps else None,
@@ -193,9 +199,10 @@ async def _translate_nl(
     try:
         await database.async_call(
             database.save_interaction_log,
-            _time.time(), "nl_translation", ctx.thread_id,
-            (ctx.nl_translation_pool.last_used
-             if ctx.nl_translation_pool else ""),
+            _time.time(),
+            "nl_translation",
+            ctx.thread_id,
+            (ctx.nl_translation_pool.last_used if ctx.nl_translation_pool else ""),
             inputs["description"],
             json.dumps(translated) if translated is not None else "null",
             "ok" if translated is not None else "error",
@@ -204,16 +211,20 @@ async def _translate_nl(
         logger.warning("Failed to log NL translation", exc_info=True)
 
     if translated is None:
-        return _NLResult(error=(
-            "[TRANSLATION ERROR] Failed to translate natural-language "
-            "tool call. Please try rephrasing or use structured arguments."
-        ))
+        return _NLResult(
+            error=(
+                "[TRANSLATION ERROR] Failed to translate natural-language "
+                "tool call. Please try rephrasing or use structured arguments."
+            )
+        )
 
     if isinstance(translated, dict) and "error" in translated:
-        return _NLResult(error=(
-            f"[CLARIFICATION NEEDED] "
-            f"{translated.get('clarification_needed', translated['error'])}"
-        ))
+        return _NLResult(
+            error=(
+                f"[CLARIFICATION NEEDED] "
+                f"{translated.get('clarification_needed', translated['error'])}"
+            )
+        )
 
     if isinstance(translated, list):
         # Merge orphan metadata items (no required field) into
@@ -221,9 +232,7 @@ async def _translate_nl(
         # depends_on / not_before as separate array elements.
         merged: list[dict] = []
         for item in translated:
-            if (merged
-                    and "objective" not in item
-                    and name == "worker_delegation"):
+            if merged and "objective" not in item and name == "worker_delegation":
                 merged[-1].update(item)
             else:
                 merged.append(item)
@@ -248,14 +257,17 @@ async def _execute_multi_item(
     # this group of items, not across unrelated conversation turns.
     if name == "worker_delegation" and len(items) > 1:
         import uuid as _uuid
+
         batch_id = f"batch_{_uuid.uuid4().hex[:8]}"
         for item in items:
             item.setdefault("_spawn_batch_id", batch_id)
 
     for i, item_args in enumerate(items):
         item_result = await asyncio.get_running_loop().run_in_executor(
-            None, lambda _n=name, _a=item_args: tool_module.execute_tool(
-                _n, _a,
+            None,
+            lambda _n=name, _a=item_args: tool_module.execute_tool(
+                _n,
+                _a,
                 thread_id=ctx.thread_id,
                 nesting_depth=ctx.nesting_depth,
                 parent_thread_id=ctx.parent_thread_id,
@@ -276,19 +288,23 @@ async def _execute_multi_item(
             item_result = item_result[:keep] + notice
             logger.info(
                 "[%s] Truncated multi-item %s[%d] output: %d → %d chars",
-                ctx.thread_id, name, i, orig, len(item_result),
+                ctx.thread_id,
+                name,
+                i,
+                orig,
+                len(item_result),
             )
-        summary = ", ".join(
-            f"{k}={v!r}" for k, v in item_args.items() if k != "description"
-        )
+        summary = ", ".join(f"{k}={v!r}" for k, v in item_args.items() if k != "description")
         combined.append(f"[{i + 1}] [Translated to: {summary}] {item_result}")
         tool_calls_made.append(name)
         calls_made.append(name)
-        call_details.append({
-            "name": name,
-            "arguments": json.dumps(item_args),
-            "result": item_result,
-        })
+        call_details.append(
+            {
+                "name": name,
+                "arguments": json.dumps(item_args),
+                "result": item_result,
+            }
+        )
 
     # Log once for the entire multi-item call (early return bypasses outer log).
     combined_content = "\n\n".join(combined)
@@ -305,16 +321,22 @@ async def _execute_multi_item(
         combined_content = combined_content[:keep] + notice
         logger.info(
             "[%s] Truncated combined multi-item %s output: %d → %d chars",
-            ctx.thread_id, name, original_len, len(combined_content),
+            ctx.thread_id,
+            name,
+            original_len,
+            len(combined_content),
         )
 
     try:
         await database.async_call(
             database.save_interaction_log,
-            _time.time(), "tool_call", ctx.thread_id,
+            _time.time(),
+            "tool_call",
+            ctx.thread_id,
             ctx.pool_last_used,
             json.dumps({"tool": name, "arguments": raw_arguments}),
-            combined_content[:500], "ok",
+            combined_content[:500],
+            "ok",
         )
     except Exception:  # noqa: BLE001
         logger.warning("Failed to log multi-item tool call", exc_info=True)
@@ -332,6 +354,7 @@ async def _execute_multi_item(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 async def process_tool_call(
     tc: Any,
@@ -373,12 +396,19 @@ async def process_tool_call(
             inputs = json_repair.loads(raw_args)
             logger.info(
                 "Repaired malformed JSON for tool %s in %s (id=%s) — raw: %s",
-                name, ctx.thread_id, tc_id, raw_args[:500],
+                name,
+                ctx.thread_id,
+                tc_id,
+                raw_args[:500],
             )
         except Exception as exc:
             logger.warning(
                 "Malformed tool args for %s in %s (id=%s): %s — raw: %s",
-                name, ctx.thread_id, tc_id, exc, raw_args[:500],
+                name,
+                ctx.thread_id,
+                tc_id,
+                exc,
+                raw_args[:500],
             )
             # Detect likely truncation (unterminated string / unexpected end).
             _exc_lower = str(exc).lower()
@@ -421,7 +451,11 @@ async def process_tool_call(
 
         if nl_result.multi_items is not None:
             return await _execute_multi_item(
-                nl_result.multi_items, name, raw_args, ctx, tool_calls_made,
+                nl_result.multi_items,
+                name,
+                raw_args,
+                ctx,
+                tool_calls_made,
             )
 
         # Single-item translation — update inputs and continue.
@@ -443,7 +477,9 @@ async def process_tool_call(
         if pre_result and pre_result.correction:
             logger.warning(
                 "[%s] pre_execution hook blocked tool %s: %s",
-                ctx.thread_id, name, pre_result.correction[:200],
+                ctx.thread_id,
+                name,
+                pre_result.correction[:200],
             )
             return ToolCallOutcome(
                 content=f"[BLOCKED BY CONVERGENCE PROTOCOL] {pre_result.correction}",
@@ -454,8 +490,10 @@ async def process_tool_call(
 
     # -- Step 4: Execute tool ----------------------------------------
     result = await asyncio.get_running_loop().run_in_executor(
-        None, lambda _n=name, _i=inputs: tool_module.execute_tool(
-            _n, _i,
+        None,
+        lambda _n=name, _i=inputs: tool_module.execute_tool(
+            _n,
+            _i,
             thread_id=ctx.thread_id,
             nesting_depth=ctx.nesting_depth,
             parent_thread_id=ctx.parent_thread_id,
@@ -478,7 +516,10 @@ async def process_tool_call(
         result = result[:keep] + notice
         logger.info(
             "[%s] Truncated %s output: %d → %d chars",
-            ctx.thread_id, name, original_len, len(result),
+            ctx.thread_id,
+            name,
+            original_len,
+            len(result),
         )
 
     # -- Step 5: NL summary ------------------------------------------
@@ -503,16 +544,21 @@ async def process_tool_call(
     # -- Step 7: Logging & events ------------------------------------
     if ctx.event_bus:
         ctx.event_bus.emit(
-            "tool.executed", tool=name,
-            thread_id=ctx.thread_id, scope=ctx.scope,
+            "tool.executed",
+            tool=name,
+            thread_id=ctx.thread_id,
+            scope=ctx.scope,
         )
     try:
         await database.async_call(
             database.save_interaction_log,
-            _time.time(), "tool_call", ctx.thread_id,
+            _time.time(),
+            "tool_call",
+            ctx.thread_id,
             ctx.pool_last_used,
             json.dumps({"tool": name, "arguments": raw_args}),
-            result[:500], "ok",
+            result[:500],
+            "ok",
         )
     except Exception:  # noqa: BLE001
         logger.warning("Failed to log tool call %s", name, exc_info=True)

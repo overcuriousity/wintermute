@@ -124,7 +124,9 @@ def _start_worker_locked() -> None:
     global _worker
     if _worker is None or not _worker.is_alive():
         _worker = threading.Thread(
-            target=_worker_loop, name="data-commit-worker", daemon=False,
+            target=_worker_loop,
+            name="data-commit-worker",
+            daemon=False,
         )
         _worker.start()
 

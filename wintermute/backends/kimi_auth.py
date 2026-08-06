@@ -17,7 +17,8 @@ import platform
 import socket
 import time
 import uuid
-from typing import Any, Callable, Awaitable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import aiohttp
 
@@ -41,6 +42,7 @@ _DEVICE_ID_FILE = _paths.KIMI_DEVICE_ID_FILE
 # ---------------------------------------------------------------------------
 # Device identification headers (required by Kimi's OAuth endpoints)
 # ---------------------------------------------------------------------------
+
 
 def _get_device_id() -> str:
     """Get or create a persistent device ID."""
@@ -97,6 +99,7 @@ def api_headers() -> dict[str, str]:
 # Credential persistence
 # ---------------------------------------------------------------------------
 
+
 def load_credentials() -> dict | None:
     """Load credentials from data/kimi_credentials.json."""
     if not CREDENTIALS_FILE.exists():
@@ -134,6 +137,7 @@ def is_token_expired(creds: dict) -> bool:
 # Token refresh
 # ---------------------------------------------------------------------------
 
+
 async def refresh_access_token(creds: dict) -> dict:
     """Refresh the access token using the stored refresh token.
 
@@ -142,14 +146,20 @@ async def refresh_access_token(creds: dict) -> dict:
     oauth_host = os.getenv("KIMI_CODE_OAUTH_HOST") or KIMI_OAUTH_HOST
     url = f"{oauth_host.rstrip('/')}/api/oauth/token"
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, data={
-            "client_id": KIMI_CLIENT_ID,
-            "grant_type": "refresh_token",
-            "refresh_token": creds["refresh_token"],
-        }, headers=_common_headers()) as resp:
-            data = await resp.json(content_type=None)
-            status = resp.status
+    async with (
+        aiohttp.ClientSession() as session,
+        session.post(
+            url,
+            data={
+                "client_id": KIMI_CLIENT_ID,
+                "grant_type": "refresh_token",
+                "refresh_token": creds["refresh_token"],
+            },
+            headers=_common_headers(),
+        ) as resp,
+    ):
+        data = await resp.json(content_type=None)
+        status = resp.status
 
     if status in (401, 403):
         raise RuntimeError(
@@ -173,18 +183,25 @@ async def refresh_access_token(creds: dict) -> dict:
 # Device-code authorization flow
 # ---------------------------------------------------------------------------
 
+
 async def _request_device_authorization() -> dict[str, Any]:
     """POST to Kimi's device_authorization endpoint."""
     oauth_host = os.getenv("KIMI_CODE_OAUTH_HOST") or KIMI_OAUTH_HOST
     url = f"{oauth_host.rstrip('/')}/api/oauth/device_authorization"
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, data={
-            "client_id": KIMI_CLIENT_ID,
-        }, headers=_common_headers()) as resp:
-            data = await resp.json(content_type=None)
-            if resp.status != 200:
-                raise RuntimeError(f"Device authorization failed: {data}")
+    async with (
+        aiohttp.ClientSession() as session,
+        session.post(
+            url,
+            data={
+                "client_id": KIMI_CLIENT_ID,
+            },
+            headers=_common_headers(),
+        ) as resp,
+    ):
+        data = await resp.json(content_type=None)
+        if resp.status != 200:
+            raise RuntimeError(f"Device authorization failed: {data}")
     return data
 
 
@@ -193,14 +210,20 @@ async def _poll_device_token(device_code: str) -> tuple[int, dict[str, Any]]:
     oauth_host = os.getenv("KIMI_CODE_OAUTH_HOST") or KIMI_OAUTH_HOST
     url = f"{oauth_host.rstrip('/')}/api/oauth/token"
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, data={
-            "client_id": KIMI_CLIENT_ID,
-            "device_code": device_code,
-            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-        }, headers=_common_headers()) as resp:
-            data = await resp.json(content_type=None)
-            return resp.status, data
+    async with (
+        aiohttp.ClientSession() as session,
+        session.post(
+            url,
+            data={
+                "client_id": KIMI_CLIENT_ID,
+                "device_code": device_code,
+                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            },
+            headers=_common_headers(),
+        ) as resp,
+    ):
+        data = await resp.json(content_type=None)
+        return resp.status, data
 
 
 async def run_device_flow(

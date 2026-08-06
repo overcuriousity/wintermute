@@ -3,7 +3,6 @@
 import json
 import logging
 import time
-from typing import Optional
 
 from wintermute.core.tool_deps import ToolDeps
 from wintermute.infra import database
@@ -11,9 +10,13 @@ from wintermute.infra import database
 logger = logging.getLogger(__name__)
 
 
-def tool_worker_delegation(inputs: dict, thread_id: Optional[str] = None,
-                           nesting_depth: int = 0,
-                           tool_deps: Optional[ToolDeps] = None, **_kw) -> str:
+def tool_worker_delegation(
+    inputs: dict,
+    thread_id: str | None = None,
+    nesting_depth: int = 0,
+    tool_deps: ToolDeps | None = None,
+    **_kw,
+) -> str:
     deps = tool_deps or ToolDeps()
     action = inputs.get("action", "spawn")
 
@@ -41,12 +44,14 @@ def tool_worker_delegation(inputs: dict, thread_id: Optional[str] = None,
     if not inputs.get("objective"):
         return json.dumps({"error": "objective is required for spawn."})
     if nesting_depth >= deps.max_nesting_depth:
-        return json.dumps({
-            "error": (
-                f"Maximum nesting depth ({deps.max_nesting_depth}) reached. "
-                "Cannot spawn further sub-sessions."
-            )
-        })
+        return json.dumps(
+            {
+                "error": (
+                    f"Maximum nesting depth ({deps.max_nesting_depth}) reached. "
+                    "Cannot spawn further sub-sessions."
+                )
+            }
+        )
     if deps.sub_session_manager is None:
         return json.dumps({"error": "Sub-session manager not ready yet."})
     try:
@@ -81,7 +86,9 @@ def tool_worker_delegation(inputs: dict, thread_id: Optional[str] = None,
                     tov_str = f"{tov}s timeout" if tov is not None else "no timeout"
                     cont = o.get("continuation_count", 0)
                     extra = f", continued {cont}x" if cont else ""
-                    lines.append(f"- \"{obj_short}\" ({tov_str}): {st} in {dur_str}, {tc} tool calls{extra}")
+                    lines.append(
+                        f'- "{obj_short}" ({tov_str}): {st} in {dur_str}, {tc} tool calls{extra}'
+                    )
                     if dur is not None:
                         total_dur += dur
                         dur_count += 1
@@ -135,24 +142,26 @@ def tool_worker_delegation(inputs: dict, thread_id: Optional[str] = None,
             status = f"pending (waiting for {' and '.join(reasons)})"
         else:
             status = "started"
-        return json.dumps({
-            "status": status,
-            "session_id": session_id,
-            "IMPORTANT": (
-                "The worker is now running in the background. "
-                "You do NOT have its results yet. "
-                "Tell the user you started the task and STOP. "
-                "Do NOT fabricate, guess, or anticipate what the worker will find. "
-                "The results will be delivered to you later as a [SYSTEM EVENT]. "
-                "Only then should you report them to the user."
-            ),
-        })
+        return json.dumps(
+            {
+                "status": status,
+                "session_id": session_id,
+                "IMPORTANT": (
+                    "The worker is now running in the background. "
+                    "You do NOT have its results yet. "
+                    "Tell the user you started the task and STOP. "
+                    "Do NOT fabricate, guess, or anticipate what the worker will find. "
+                    "The results will be delivered to you later as a [SYSTEM EVENT]. "
+                    "Only then should you report them to the user."
+                ),
+            }
+        )
     except Exception as exc:  # noqa: BLE001
         logger.exception("worker_delegation failed")
         return json.dumps({"error": str(exc)})
 
 
-def tool_query_telemetry(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -> str:
+def tool_query_telemetry(inputs: dict, tool_deps: ToolDeps | None = None, **_kw) -> str:
     """Query operational telemetry data."""
     query_type = inputs.get("query_type", "")
     since_hours = int(inputs.get("since_hours", 24))
@@ -172,17 +181,20 @@ def tool_query_telemetry(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_
             outcomes = database.get_outcomes_since(**kwargs)
             rows = []
             for o in outcomes:
-                rows.append({
-                    "session_id": o.get("session_id", ""),
-                    "objective": (o.get("objective") or "")[:120],
-                    "status": o.get("status", ""),
-                    "duration_seconds": o.get("duration_seconds"),
-                    "tool_call_count": o.get("tool_call_count", 0),
-                })
+                rows.append(
+                    {
+                        "session_id": o.get("session_id", ""),
+                        "objective": (o.get("objective") or "")[:120],
+                        "status": o.get("status", ""),
+                        "duration_seconds": o.get("duration_seconds"),
+                        "tool_call_count": o.get("tool_call_count", 0),
+                    }
+                )
             return json.dumps({"outcomes": rows, "count": len(rows)})
 
         elif query_type == "skill_stats":
             from wintermute.infra import skill_store
+
             return json.dumps(skill_store.stats())
 
         elif query_type == "top_tools":
@@ -193,14 +205,16 @@ def tool_query_telemetry(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_
             entries = database.get_interaction_log(limit=limit)
             rows = []
             for e in entries:
-                rows.append({
-                    "id": e.get("id"),
-                    "action": e.get("action", ""),
-                    "session": e.get("session", ""),
-                    "input": (e.get("input") or "")[:200],
-                    "output": (e.get("output") or "")[:200],
-                    "status": e.get("status", ""),
-                })
+                rows.append(
+                    {
+                        "id": e.get("id"),
+                        "action": e.get("action", ""),
+                        "session": e.get("session", ""),
+                        "input": (e.get("input") or "")[:200],
+                        "output": (e.get("output") or "")[:200],
+                        "status": e.get("status", ""),
+                    }
+                )
             return json.dumps({"entries": rows, "count": len(rows)})
 
         elif query_type == "self_model":
@@ -213,6 +227,7 @@ def tool_query_telemetry(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_
                 yaml_path = deps.self_model_profiler.yaml_path
                 if yaml_path.exists():
                     import yaml
+
                     raw_metrics = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
             except Exception:
                 pass

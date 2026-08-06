@@ -29,14 +29,15 @@ import json
 import logging
 import re
 import time as _time
-from dataclasses import dataclass, field
-from typing import Optional, TYPE_CHECKING
+from dataclasses import dataclass
+from datetime import UTC
+from typing import TYPE_CHECKING
 
 from wintermute.infra import database
 
 if TYPE_CHECKING:
-    from wintermute.core.types import BackendPool
     from wintermute.core.sub_session import SubSessionManager
+    from wintermute.core.types import BackendPool
     from wintermute.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
@@ -93,13 +94,14 @@ def _extract_json_tail(text: str) -> dict | None:
         if not isinstance(obj, dict):
             continue
         # Ensure nothing but whitespace follows the parsed JSON object.
-        if text[start + end:].strip():
+        if text[start + end :].strip():
             continue
         return obj
     # All attempts failed — log for debuggability.
     logger.warning(
         "[reflection] Found braces but failed to decode JSON tail (%d chars, last 120: %s)",
-        len(text), text[-120:],
+        len(text),
+        text[-120:],
     )
     return None
 
@@ -137,33 +139,35 @@ def _extract_task_actions(text: str) -> list[dict]:
     actions: list[dict] = []
     for item in raw_actions:
         if isinstance(item, dict) and item.get("content") and item.get("ai_prompt"):
-            actions.append({
-                "content": str(item["content"]),
-                "ai_prompt": str(item["ai_prompt"]),
-            })
+            actions.append(
+                {
+                    "content": str(item["content"]),
+                    "ai_prompt": str(item["ai_prompt"]),
+                }
+            )
     return actions[:1]  # Cap at 1 per cycle.
 
 
 @dataclass
 class ReflectionConfig:
     enabled: bool = True
-    batch_threshold: int = 10            # trigger batch analysis every N completions
-    consecutive_failure_limit: int = 3   # auto-pause after N consecutive failures
-    lookback_seconds: int = 86400        # 24h window for pattern detection
-    min_result_length: int = 50          # below this = "no meaningful output" (stale check)
+    batch_threshold: int = 10  # trigger batch analysis every N completions
+    consecutive_failure_limit: int = 3  # auto-pause after N consecutive failures
+    lookback_seconds: int = 86400  # 24h window for pattern detection
+    min_result_length: int = 50  # below this = "no meaningful output" (stale check)
     main_turn_batch_threshold: int = 15  # trigger reflection after N main-thread turns
     synthesis_min_cluster_size: int = 3  # min sessions per tool-set cluster
-    synthesis_min_outcomes: int = 20     # min completed outcomes before synthesis runs
+    synthesis_min_outcomes: int = 20  # min completed outcomes before synthesis runs
 
 
 @dataclass
 class ReflectionFinding:
-    rule: str              # "consecutive_failures" | "timeout_pattern" | "stale_task" | "skill_correlation"
-    severity: str          # "warning" | "action_taken"
-    subject_type: str      # "task" | "skill" | "sub_session"
-    subject_id: str        # task_id, skill filename, or session_id
-    detail: str            # human-readable description
-    action_taken: str = "" # "" if warning-only, or "paused_task" etc.
+    rule: str  # "consecutive_failures" | "timeout_pattern" | "stale_task" | "skill_correlation"
+    severity: str  # "warning" | "action_taken"
+    subject_type: str  # "task" | "skill" | "sub_session"
+    subject_id: str  # task_id, skill filename, or session_id
+    detail: str  # human-readable description
+    action_taken: str = ""  # "" if warning-only, or "paused_task" etc.
 
 
 class ReflectionLoop:
@@ -172,9 +176,9 @@ class ReflectionLoop:
     def __init__(
         self,
         config: ReflectionConfig,
-        sub_session_manager: "Optional[SubSessionManager]" = None,
-        pool: "Optional[BackendPool]" = None,
-        event_bus: "Optional[EventBus]" = None,
+        sub_session_manager: SubSessionManager | None = None,
+        pool: BackendPool | None = None,
+        event_bus: EventBus | None = None,
         self_model: object | None = None,
     ) -> None:
         self._cfg = config
@@ -207,9 +211,7 @@ class ReflectionLoop:
         self._running = True
 
         if self._event_bus:
-            sub_id = self._event_bus.subscribe(
-                "sub_session.failed", self._on_sub_session_failed
-            )
+            sub_id = self._event_bus.subscribe("sub_session.failed", self._on_sub_session_failed)
             self._event_bus_subs.append(sub_id)
             sub_id = self._event_bus.subscribe(
                 "sub_session.completed", self._on_sub_session_completed
@@ -234,7 +236,7 @@ class ReflectionLoop:
         while self._running:
             try:
                 await asyncio.wait_for(self._check_event.wait(), timeout=fallback_poll)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             self._check_event.clear()
             if not self._running:
@@ -295,12 +297,8 @@ class ReflectionLoop:
     async def _run_rules(self) -> list[ReflectionFinding]:
         since = _time.time() - self._cfg.lookback_seconds
         try:
-            outcomes = await database.async_call(
-                database.get_outcomes_since, since, limit=500
-            )
-            active_tasks = await database.async_call(
-                database.list_tasks, "active"
-            )
+            outcomes = await database.async_call(database.get_outcomes_since, since, limit=500)
+            active_tasks = await database.async_call(database.list_tasks, "active")
         except Exception:
             logger.exception("[reflection] Rule engine: failed to query DB")
             return []
@@ -308,16 +306,10 @@ class ReflectionLoop:
         findings: list[ReflectionFinding] = []
 
         # Rule 1: Consecutive failures for scheduled tasks.
-        tasks_with_task_id = {
-            o["task_id"]
-            for o in outcomes
-            if o.get("task_id")
-        }
+        tasks_with_task_id = {o["task_id"] for o in outcomes if o.get("task_id")}
         for task_id in tasks_with_task_id:
             try:
-                streak = await database.async_call(
-                    database.get_task_failure_streak, task_id
-                )
+                streak = await database.async_call(database.get_task_failure_streak, task_id)
             except Exception:
                 continue
             if streak >= self._cfg.consecutive_failure_limit:
@@ -342,7 +334,8 @@ class ReflectionLoop:
                     if paused:
                         logger.warning(
                             "[reflection] Auto-paused task %s after %d consecutive failures",
-                            task_id, streak,
+                            task_id,
+                            streak,
                         )
                         if self._event_bus:
                             self._event_bus.emit(
@@ -474,7 +467,9 @@ class ReflectionLoop:
                 # Skip if it looks like an add action (not a read).
                 if not skill_names_from_entry and ('"skill"' in raw or "'skill'" in raw):
                     if '"action": "add"' not in raw and "'action': 'add'" not in raw:
-                        matches = re.findall(r'[\\"]*skill_name[\\"]*\s*:\s*[\\"]*([^\\"\s,}]+)', raw)
+                        matches = re.findall(
+                            r'[\\"]*skill_name[\\"]*\s*:\s*[\\"]*([^\\"\s,}]+)', raw
+                        )
                         skill_names_from_entry.extend(matches)
 
                 if skill_names_from_entry:
@@ -526,13 +521,15 @@ class ReflectionLoop:
                     "system:reflection",
                     "rule_engine",
                     finding.rule,
-                    json.dumps({
-                        "severity": finding.severity,
-                        "subject_type": finding.subject_type,
-                        "subject_id": finding.subject_id,
-                        "detail": finding.detail,
-                        "action_taken": finding.action_taken,
-                    }),
+                    json.dumps(
+                        {
+                            "severity": finding.severity,
+                            "subject_type": finding.subject_type,
+                            "subject_id": finding.subject_id,
+                            "detail": finding.detail,
+                            "action_taken": finding.action_taken,
+                        }
+                    ),
                     "ok",
                 )
             except Exception:
@@ -586,8 +583,9 @@ class ReflectionLoop:
             ts = o.get("timestamp")
             if ts:
                 try:
-                    from datetime import datetime, timezone as _tz
-                    dt = datetime.fromtimestamp(float(ts), tz=_tz.utc)
+                    from datetime import datetime
+
+                    dt = datetime.fromtimestamp(float(ts), tz=UTC)
                     hours_active.add(dt.hour)
                     days_active.add(dt.strftime("%A").lower())
                 except (ValueError, TypeError, OSError):
@@ -607,9 +605,7 @@ class ReflectionLoop:
 
         # Also get tool usage stats from DB for broader coverage.
         try:
-            db_tool_stats = await database.async_call(
-                database.get_tool_usage_stats, since
-            )
+            db_tool_stats = await database.async_call(database.get_tool_usage_stats, since)
             for tool_name, count in db_tool_stats:
                 tool_counts[tool_name] = tool_counts.get(tool_name, 0) + count
         except Exception:
@@ -630,11 +626,11 @@ class ReflectionLoop:
                 # Check if predicted hours match actual activity.
                 # Look for hour patterns like "8-9 AM", "21:00-23:00", etc.
                 hour_matches = re.findall(
-                    r'(\d{1,2})(?::\d{2})?\s*(am|pm)?\s*(?:-|to)\s*(\d{1,2})(?::\d{2})?\s*(am|pm)?',
+                    r"(\d{1,2})(?::\d{2})?\s*(am|pm)?\s*(?:-|to)\s*(\d{1,2})(?::\d{2})?\s*(am|pm)?",
                     text,
                 )
                 day_matches = re.findall(
-                    r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?',
+                    r"(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?",
                     text,
                 )
                 if hour_matches:
@@ -656,7 +652,11 @@ class ReflectionLoop:
                             # Only treat as hours if both values are in 0-23 range.
                             if sh > 23 or eh > 23:
                                 continue
-                            predicted_hours = set(range(sh, eh + 1)) if sh <= eh else set(range(sh, 24)) | set(range(0, eh + 1))
+                            predicted_hours = (
+                                set(range(sh, eh + 1))
+                                if sh <= eh
+                                else set(range(sh, 24)) | set(range(0, eh + 1))
+                            )
                             if predicted_hours & hours_active:
                                 confirmed = True
                         except (ValueError, TypeError):
@@ -670,19 +670,29 @@ class ReflectionLoop:
                     else:
                         confirmed = day_match
 
-            elif "[prediction:behavioral]" in text or "relies on" in text or "file operations" in text:
+            elif (
+                "[prediction:behavioral]" in text
+                or "relies on" in text
+                or "file operations" in text
+            ):
                 pred_type = "behavioral"
                 # Check if predicted tool patterns match actual usage.
                 _tool_synonyms = {
-                    "shell": "execute_shell", "execute_shell": "execute_shell",
-                    "web_search": "search_web", "search_web": "search_web",
-                    "read_file": "read_file", "write_file": "write_file",
-                    "fetch_url": "fetch_url", "task": "task", "skill": "skill",
-                    "append_memory": "append_memory", "worker_delegation": "worker_delegation",
+                    "shell": "execute_shell",
+                    "execute_shell": "execute_shell",
+                    "web_search": "search_web",
+                    "search_web": "search_web",
+                    "read_file": "read_file",
+                    "write_file": "write_file",
+                    "fetch_url": "fetch_url",
+                    "task": "task",
+                    "skill": "skill",
+                    "append_memory": "append_memory",
+                    "worker_delegation": "worker_delegation",
                 }
                 raw_keywords = re.findall(
-                    r'(read_file|write_file|shell|execute_shell|web_search|search_web|'
-                    r'fetch_url|task|skill|append_memory|worker_delegation)',
+                    r"(read_file|write_file|shell|execute_shell|web_search|search_web|"
+                    r"fetch_url|task|skill|append_memory|worker_delegation)",
                     text,
                 )
                 tool_keywords = [_tool_synonyms.get(tk, tk) for tk in raw_keywords]
@@ -702,7 +712,9 @@ class ReflectionLoop:
             # Record the check result.
             try:
                 await database.async_call(
-                    database.record_prediction_check, pred_id, confirmed,
+                    database.record_prediction_check,
+                    pred_id,
+                    confirmed,
                     source_text=original_text[:500],
                     pred_type=pred_type,
                 )
@@ -717,16 +729,18 @@ class ReflectionLoop:
                     pass
 
             severity = "action_taken" if confirmed else "warning"
-            findings.append(ReflectionFinding(
-                rule="prediction_validation",
-                severity=severity,
-                subject_type="prediction",
-                subject_id=pred_id,
-                detail=(
-                    f"Prediction {'confirmed' if confirmed else 'not confirmed'}: "
-                    f"{pred.get('text', '')[:120]}"
-                ),
-            ))
+            findings.append(
+                ReflectionFinding(
+                    rule="prediction_validation",
+                    severity=severity,
+                    subject_type="prediction",
+                    subject_id=pred_id,
+                    detail=(
+                        f"Prediction {'confirmed' if confirmed else 'not confirmed'}: "
+                        f"{pred.get('text', '')[:120]}"
+                    ),
+                )
+            )
 
             if self._event_bus:
                 self._event_bus.emit(
@@ -758,22 +772,29 @@ class ReflectionLoop:
             for f in findings
         )
 
-        failed_text = "\n".join(
-            f"- {o['session_id']}: {o['objective'][:120]} "
-            f"[{o['status']}, {o.get('duration_seconds', '?')}s]"
-            for o in failed_outcomes[:10]
-        ) or "(none)"
+        failed_text = (
+            "\n".join(
+                f"- {o['session_id']}: {o['objective'][:120]} "
+                f"[{o['status']}, {o.get('duration_seconds', '?')}s]"
+                for o in failed_outcomes[:10]
+            )
+            or "(none)"
+        )
 
-        tasks_text = "\n".join(
-            f"- {t['id']}: {t['content'][:80]}"
-            + (f" [runs={t.get('run_count', 0)}]" if t.get('run_count') else "")
-            for t in active_tasks[:15]
-        ) or "(none)"
+        tasks_text = (
+            "\n".join(
+                f"- {t['id']}: {t['content'][:80]}"
+                + (f" [runs={t.get('run_count', 0)}]" if t.get("run_count") else "")
+                for t in active_tasks[:15]
+            )
+            or "(none)"
+        )
 
         # Build skill stats summary for enrichment.
         skill_stats_text = "(unavailable)"
         try:
             from wintermute.infra import skill_store
+
             store_stats = skill_store.stats()
             if store_stats:
                 lines = []
@@ -791,6 +812,7 @@ class ReflectionLoop:
         # Load prompt template, fall back to hardcoded.
         try:
             from wintermute.infra import prompt_loader
+
             prompt_text = prompt_loader.load(
                 "REFLECTION_ANALYSIS.txt",
                 findings=findings_text,
@@ -906,6 +928,7 @@ class ReflectionLoop:
         # discovering them.
         try:
             from wintermute.infra import skill_store
+
             all_skills = skill_store.get_all()
             skill_names = sorted(s["name"] for s in all_skills)
         except Exception:
@@ -931,7 +954,7 @@ class ReflectionLoop:
                 tool_names=["read_file", "skill", "append_memory"],
                 system_prompt_mode="none",
                 pool=self._pool,
-                parent_thread_id=None,   # fire-and-forget
+                parent_thread_id=None,  # fire-and-forget
                 skip_cp_on_exit=True,
                 max_rounds=5,
             )
@@ -949,8 +972,10 @@ class ReflectionLoop:
 
         try:
             outcomes = await database.async_call(
-                database.get_outcomes_since, since,
-                status_filter="completed", limit=100,
+                database.get_outcomes_since,
+                since,
+                status_filter="completed",
+                limit=100,
             )
         except Exception:
             logger.debug("[reflection] Synthesis: failed to query outcomes", exc_info=True)
@@ -984,6 +1009,7 @@ class ReflectionLoop:
         # Deduplicate: skip clusters whose tool set is already covered by a skill.
         try:
             from wintermute.infra import skill_store
+
             all_skills = skill_store.get_all()
             existing_skill_texts: dict[str, str] = {
                 s["name"]: f"{s.get('summary', '')} {s.get('documentation', '')}"
@@ -999,10 +1025,7 @@ class ReflectionLoop:
             # name is a substring of another (e.g. "shell" matching "execute_shell").
             covered = False
             for _skill_name, skill_text in existing_skill_texts.items():
-                if all(
-                    re.search(r'\b' + re.escape(t) + r'\b', skill_text)
-                    for t in tool_set
-                ):
+                if all(re.search(r"\b" + re.escape(t) + r"\b", skill_text) for t in tool_set):
                     covered = True
                     break
             if not covered:
@@ -1014,19 +1037,17 @@ class ReflectionLoop:
         # Build prompt for LLM synthesis.
         pattern_lines = []
         for i, (tool_set, sessions) in enumerate(list(novel_clusters.items())[:5], 1):
-            objectives = [
-                (s.get("objective") or "")[:100] for s in sessions[:5]
-            ]
+            objectives = [(s.get("objective") or "")[:100] for s in sessions[:5]]
             pattern_lines.append(
                 f"Pattern {i}: tools={sorted(tool_set)}, "
                 f"{len(sessions)} sessions\n"
-                f"  Example objectives:\n"
-                + "\n".join(f"  - {obj}" for obj in objectives)
+                f"  Example objectives:\n" + "\n".join(f"  - {obj}" for obj in objectives)
             )
         patterns_text = "\n\n".join(pattern_lines)
 
         try:
             from wintermute.infra import prompt_loader
+
             prompt_text = prompt_loader.load(
                 "SKILL_SYNTHESIS.txt",
                 patterns=patterns_text,

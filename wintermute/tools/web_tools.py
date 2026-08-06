@@ -6,7 +6,6 @@ import os
 import re
 import urllib.parse
 from html.parser import HTMLParser
-from typing import Optional
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -20,6 +19,7 @@ SEARXNG_URL = os.environ.get("WINTERMUTE_SEARXNG_URL", "http://127.0.0.1:8888")
 # ---------------------------------------------------------------------------
 # HTML-to-text helper (stdlib only, no extra dependencies)
 # ---------------------------------------------------------------------------
+
 
 class _HTMLTextExtractor(HTMLParser):
     """Minimal HTML-to-text converter that strips tags and scripts."""
@@ -63,7 +63,8 @@ def _html_to_text(html: str) -> str:
 # Tool implementations
 # ---------------------------------------------------------------------------
 
-def tool_search_web(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -> str:
+
+def tool_search_web(inputs: dict, tool_deps: ToolDeps | None = None, **_kw) -> str:
     query = inputs["query"]
     max_results = int(inputs.get("max_results", 5))
     logger.info("search_web: %s", query)
@@ -76,10 +77,16 @@ def tool_search_web(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -
         with urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         results = [
-            {"title": item.get("title", ""), "url": item.get("url", ""), "snippet": item.get("content", "")}
+            {
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "snippet": item.get("content", ""),
+            }
             for item in data.get("results", [])[:max_results]
         ]
-        return json.dumps({"query": query, "source": "searxng", "results": results, "count": len(results)})
+        return json.dumps(
+            {"query": query, "source": "searxng", "results": results, "count": len(results)}
+        )
     except URLError as exc:
         reason = str(exc.reason) if hasattr(exc, "reason") else str(exc)
         if not any(s in reason for s in ("Connection refused", "No route to host", "timed out")):
@@ -90,12 +97,14 @@ def tool_search_web(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -
 
     # --- Fallback: DuckDuckGo Instant Answer API via direct HTTP (no auth required) ---
     try:
-        params = urllib.parse.urlencode({
-            "q": query,
-            "format": "json",
-            "no_html": "1",
-            "skip_disambig": "1",
-        })
+        params = urllib.parse.urlencode(
+            {
+                "q": query,
+                "format": "json",
+                "no_html": "1",
+                "skip_disambig": "1",
+            }
+        )
         req = Request(
             f"https://api.duckduckgo.com/?{params}",
             headers={"User-Agent": "wintermute/0.1"},
@@ -107,23 +116,45 @@ def tool_search_web(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -
         data = json.loads(body)
         results = []
         if data.get("AbstractText") and data.get("AbstractURL"):
-            results.append({"title": data.get("Heading", query), "url": data["AbstractURL"], "snippet": data["AbstractText"]})
+            results.append(
+                {
+                    "title": data.get("Heading", query),
+                    "url": data["AbstractURL"],
+                    "snippet": data["AbstractText"],
+                }
+            )
         for topic in data.get("RelatedTopics", []):
             if len(results) >= max_results:
                 break
             if "FirstURL" in topic:
-                results.append({"title": topic.get("Text", "")[:80], "url": topic["FirstURL"], "snippet": topic.get("Text", "")})
+                results.append(
+                    {
+                        "title": topic.get("Text", "")[:80],
+                        "url": topic["FirstURL"],
+                        "snippet": topic.get("Text", ""),
+                    }
+                )
             elif "Topics" in topic:
                 for sub in topic["Topics"]:
                     if len(results) >= max_results:
                         break
                     if "FirstURL" in sub:
-                        results.append({"title": sub.get("Text", "")[:80], "url": sub["FirstURL"], "snippet": sub.get("Text", "")})
-        return json.dumps({
-            "query": query, "source": "duckduckgo_fallback",
-            "warning": "SearXNG unavailable. Start it with: cd ~/searxng-test && ./start-searxng.sh",
-            "results": results[:max_results], "count": len(results[:max_results]),
-        })
+                        results.append(
+                            {
+                                "title": sub.get("Text", "")[:80],
+                                "url": sub["FirstURL"],
+                                "snippet": sub.get("Text", ""),
+                            }
+                        )
+        return json.dumps(
+            {
+                "query": query,
+                "source": "duckduckgo_fallback",
+                "warning": "SearXNG unavailable. Start it with: cd ~/searxng-test && ./start-searxng.sh",
+                "results": results[:max_results],
+                "count": len(results[:max_results]),
+            }
+        )
     except Exception as exc:  # noqa: BLE001
         logger.exception("search_web fallback failed")
         return json.dumps({"error": f"Both SearXNG and curl fallback failed: {exc}"})
@@ -135,13 +166,15 @@ def tool_fetch_url(inputs: dict, **_kw) -> str:
     logger.info("fetch_url: %s", url)
 
     try:
-        req = Request(url, headers={
-            "User-Agent": (
-                "Mozilla/5.0 (compatible; wintermute/0.1; "
-                "+https://github.com/wintermute)"
-            ),
-            "Accept": "text/html,application/xhtml+xml,text/plain,*/*",
-        })
+        req = Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (compatible; wintermute/0.1; +https://github.com/wintermute)"
+                ),
+                "Accept": "text/html,application/xhtml+xml,text/plain,*/*",
+            },
+        )
         with urlopen(req, timeout=20) as resp:
             content_type = resp.headers.get("Content-Type", "")
 
@@ -153,12 +186,14 @@ def tool_fetch_url(inputs: dict, **_kw) -> str:
             if content_length is not None:
                 try:
                     if int(content_length) > max_bytes:
-                        return json.dumps({
-                            "error": (
-                                f"Content too large to fetch safely "
-                                f"({content_length} bytes reported)"
-                            )
-                        })
+                        return json.dumps(
+                            {
+                                "error": (
+                                    f"Content too large to fetch safely "
+                                    f"({content_length} bytes reported)"
+                                )
+                            }
+                        )
                 except ValueError:
                     pass  # Invalid Content-Length, fall back to capped read.
 
@@ -192,9 +227,11 @@ def tool_fetch_url(inputs: dict, **_kw) -> str:
     if len(body) > max_chars:
         body = body[:max_chars] + f"\n\n[... truncated at {max_chars} chars]"
 
-    return json.dumps({
-        "url": url,
-        "content_type": content_type,
-        "length": len(body),
-        "content": body,
-    })
+    return json.dumps(
+        {
+            "url": url,
+            "content_type": content_type,
+            "length": len(body),
+            "content": body,
+        }
+    )

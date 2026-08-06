@@ -93,6 +93,7 @@ def parse_json_from_llm(text: str, expected_type: type) -> Any:
 # Content hashing
 # ---------------------------------------------------------------------------
 
+
 def make_content_id(text: str) -> str:
     """Deterministic UUID from text content (SHA-256 → UUID v5-style).
 
@@ -107,9 +108,16 @@ def make_content_id(text: str) -> str:
 # Interaction logging
 # ---------------------------------------------------------------------------
 
-def log_store_interaction(timestamp: float, action: str, input_text: str,
-                          output_text: str, status: str = "ok",
-                          llm: str = "", session: str = "system:store") -> None:
+
+def log_store_interaction(
+    timestamp: float,
+    action: str,
+    input_text: str,
+    output_text: str,
+    status: str = "ok",
+    llm: str = "",
+    session: str = "system:store",
+) -> None:
     """Log a store interaction to the database interaction_log.
 
     Used by memory_store and skill_store for audit trailing of embedding
@@ -118,9 +126,15 @@ def log_store_interaction(timestamp: float, action: str, input_text: str,
     """
     try:
         from wintermute.infra import database
+
         database.save_interaction_log(
-            timestamp, action, session,
-            llm, input_text[:2000], output_text[:2000], status,
+            timestamp,
+            action,
+            session,
+            llm,
+            input_text[:2000],
+            output_text[:2000],
+            status,
         )
     except Exception:  # noqa: BLE001
         logger.debug("Failed to save interaction log", exc_info=True)
@@ -130,8 +144,10 @@ def log_store_interaction(timestamp: float, action: str, input_text: str,
 # Embedding helpers
 # ---------------------------------------------------------------------------
 
-def embed_batch(texts: list[str], embed_cfg: dict, model: str,
-                url: str, headers: dict) -> list[list[float]]:
+
+def embed_batch(
+    texts: list[str], embed_cfg: dict, model: str, url: str, headers: dict
+) -> list[list[float]]:
     """Send a single HTTP request for a batch of (already-prefixed) texts.
 
     Raises on error after up to 3 retries for transient 5xx/network failures.
@@ -164,8 +180,15 @@ def embed_batch(texts: list[str], embed_cfg: dict, model: str,
                 status = f"ok (retry {attempt - 1})"
             log_store_interaction(t0, "embedding", input_summary, output_summary, status, llm=model)
             return result
-        except (httpx.HTTPStatusError, httpx.ConnectError, httpx.ReadTimeout,
-                httpx.WriteTimeout, httpx.PoolTimeout, ConnectionError, OSError) as exc:
+        except (
+            httpx.HTTPStatusError,
+            httpx.ConnectError,
+            httpx.ReadTimeout,
+            httpx.WriteTimeout,
+            httpx.PoolTimeout,
+            ConnectionError,
+            OSError,
+        ) as exc:
             if isinstance(exc, httpx.HTTPStatusError):
                 if exc.response.status_code < 500:
                     # 4xx — not retryable, log and raise immediately.
@@ -182,13 +205,21 @@ def embed_batch(texts: list[str], embed_cfg: dict, model: str,
                     "Server response: %s. "
                     "Hint: if the error mentions 'batch size' or 'too large', "
                     "set memory.embeddings.batch_size in config.yaml to a smaller value.",
-                    exc.response.status_code, attempt, max_retries, body,
+                    exc.response.status_code,
+                    attempt,
+                    max_retries,
+                    body,
                 )
             last_exc = exc
             if attempt < max_retries:
                 backoff = 0.5 * (2 ** (attempt - 1))  # 0.5s, 1s
-                logger.warning("Embedding attempt %d/%d failed (%s), retrying in %.1fs",
-                               attempt, max_retries, exc, backoff)
+                logger.warning(
+                    "Embedding attempt %d/%d failed (%s), retrying in %.1fs",
+                    attempt,
+                    max_retries,
+                    exc,
+                    backoff,
+                )
                 time.sleep(backoff)
             else:
                 status = f"error: {exc}"

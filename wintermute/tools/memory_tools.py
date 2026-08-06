@@ -2,16 +2,15 @@
 
 import json
 import logging
-from typing import Optional
 
 from wintermute.core.tool_deps import ToolDeps
-from wintermute.infra.memory_io import append_memory
 from wintermute.infra import skill_io
+from wintermute.infra.memory_io import append_memory
 
 logger = logging.getLogger(__name__)
 
 
-def tool_append_memory(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -> str:
+def tool_append_memory(inputs: dict, tool_deps: ToolDeps | None = None, **_kw) -> str:
     try:
         deps = tool_deps or ToolDeps()
         source = inputs.get("source", "user_explicit")
@@ -29,7 +28,7 @@ def tool_append_memory(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw
         return json.dumps({"error": str(exc)})
 
 
-def tool_skill(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -> str:
+def tool_skill(inputs: dict, tool_deps: ToolDeps | None = None, **_kw) -> str:
     """Unified skill tool: add / read / search."""
     try:
         deps = tool_deps or ToolDeps()
@@ -68,8 +67,7 @@ def tool_skill(inputs: dict, tool_deps: Optional[ToolDeps] = None, **_kw) -> str
                 top_k = 5
             top_k = max(1, min(top_k, 50))  # clamp to reasonable range
             results = skill_io.search_skills(query, top_k)
-            return json.dumps({"status": "ok", "results": results,
-                               "count": len(results)})
+            return json.dumps({"status": "ok", "results": results, "count": len(results)})
 
         return json.dumps({"error": f"Unknown action: {action}"})
 

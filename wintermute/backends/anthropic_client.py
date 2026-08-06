@@ -27,6 +27,7 @@ _CACHE_SYSTEM_THRESHOLD = 3072
 # Main client
 # ---------------------------------------------------------------------------
 
+
 class AnthropicClient:
     """Wraps the Anthropic Python SDK with the LLMBackend protocol."""
 
@@ -46,11 +47,7 @@ class AnthropicClient:
 
         # Anthropic uses max_tokens (required), OpenAI uses max_tokens or
         # max_completion_tokens.  Accept either.
-        max_tokens = (
-            kwargs.get("max_completion_tokens")
-            or kwargs.get("max_tokens")
-            or 4096
-        )
+        max_tokens = kwargs.get("max_completion_tokens") or kwargs.get("max_tokens") or 4096
 
         # -- Extract system prompt ----------------------------------------
         system_text = ""
@@ -127,28 +124,35 @@ class AnthropicClient:
                         except (json.JSONDecodeError, TypeError) as _exc:
                             logger.warning(
                                 "Malformed tool args in history for %s: %s",
-                                fn.get("name", "?"), _exc,
+                                fn.get("name", "?"),
+                                _exc,
                             )
                             args = {}
-                        blocks.append({
-                            "type": "tool_use",
-                            "id": tc.get("id", ""),
-                            "name": fn.get("name", ""),
-                            "input": args,
-                        })
+                        blocks.append(
+                            {
+                                "type": "tool_use",
+                                "id": tc.get("id", ""),
+                                "name": fn.get("name", ""),
+                                "input": args,
+                            }
+                        )
                 if blocks:
                     result.append({"role": "assistant", "content": blocks})
 
             elif role == "tool":
                 # Tool result — Anthropic expects role=user with tool_result block
-                result.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": tool_call_id or "",
-                        "content": content or "",
-                    }],
-                })
+                result.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_call_id or "",
+                                "content": content or "",
+                            }
+                        ],
+                    }
+                )
 
             elif role == "user":
                 result.append({"role": "user", "content": content or ""})
@@ -201,11 +205,13 @@ class AnthropicClient:
             if block.type == "text":
                 text_parts.append(block.text)
             elif block.type == "tool_use":
-                tool_calls.append(LLMToolCall(
-                    id=block.id,
-                    name=block.name,
-                    arguments=json.dumps(block.input),
-                ))
+                tool_calls.append(
+                    LLMToolCall(
+                        id=block.id,
+                        name=block.name,
+                        arguments=json.dumps(block.input),
+                    )
+                )
             elif block.type == "thinking":
                 thinking_text.append(block.thinking)
 

@@ -62,6 +62,7 @@ def _validate_memory_entry(entry: str) -> tuple[bool, str]:
         filtered = [t for t in tokens if len(t) > 2]
         if len(filtered) >= 20:
             from collections import Counter
+
             top_word, top_count = Counter(filtered).most_common(1)[0]
             if top_count > 5 and top_count / len(filtered) >= 0.2:
                 return False, "repetitive"
@@ -88,7 +89,11 @@ def read_text_safe(path: Path, default: str = "") -> str:
 
 
 def append_memory(
-    entry: str, source: str = "unknown", *, pool=None, loop=None,
+    entry: str,
+    source: str = "unknown",
+    *,
+    pool=None,
+    loop=None,
     event_bus=None,
 ) -> tuple[int, str]:
     """Add a memory entry to the vector store.
@@ -119,6 +124,7 @@ def append_memory(
     if pool is not None and loop is not None:
         import asyncio
         import concurrent.futures
+
         try:
             future = asyncio.run_coroutine_threadsafe(
                 memory_store.add_with_dedup(entry.strip(), source=source, pool=pool),
@@ -129,7 +135,9 @@ def append_memory(
             # The coroutine may still be running (e.g. blocked in the LLM
             # merge call).  Do NOT fall back to a plain add — that risks
             # duplicates if add_with_dedup eventually completes.
-            logger.warning("add_with_dedup timed out; coroutine still in progress, skipping fallback")
+            logger.warning(
+                "add_with_dedup timed out; coroutine still in progress, skipping fallback"
+            )
             status = "pending"
             # Attach done-callback so errors are logged and deferred event
             # fires once the coroutine eventually completes.

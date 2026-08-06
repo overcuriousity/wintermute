@@ -62,48 +62,48 @@ import logging
 import re
 import time as _time
 import uuid
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING as _TYPE_CHECKING
 from zoneinfo import ZoneInfo
-from typing import Callable, Coroutine, Optional
 
-from wintermute.infra import database
-from wintermute.infra import prompt_assembler
-from wintermute.infra import prompt_loader
+from wintermute import tools as tool_module
 from wintermute.core import convergence_protocol as convergence_protocol_module
+from wintermute.core.cp_runner import ConvergenceProtocolRunner
 from wintermute.core.inference_engine import (
-    ToolCallContext, extract_content_text, make_tool_context,
+    extract_content_text,
+    make_tool_context,
     process_tool_call,
 )
 from wintermute.core.tool_call_rescue import rescue_tool_calls
-from wintermute import tools as tool_module
 from wintermute.core.tool_deps import ToolDeps
-from wintermute.core.cp_runner import ConvergenceProtocolRunner
 from wintermute.core.types import BackendPool, ContextTooLargeError
+from wintermute.infra import database, prompt_assembler, prompt_loader
 
-from typing import TYPE_CHECKING as _TYPE_CHECKING
 if _TYPE_CHECKING:
     from wintermute.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT = 300       # seconds per hop
+DEFAULT_TIMEOUT = 300  # seconds per hop
 MAX_CONTINUATION_DEPTH = 3  # max auto-continuation hops (default; overridable via config)
 MAX_COMPLETED_WORKFLOWS = 50  # completed workflows kept in memory (default; overridable via config)
 
 # Tool categories available per system_prompt_mode.
 _MODE_TOOL_CATEGORIES: dict[str, set[str]] = {
-    "minimal":   {"execution", "research"},
+    "minimal": {"execution", "research"},
     "base_only": {"execution", "research"},
-    "none":      {"execution", "research"},
-    "full":      {"execution", "research", "orchestration"},
+    "none": {"execution", "research"},
+    "full": {"execution", "research", "orchestration"},
 }
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _sanitize_tool_call_boundary(messages: list) -> list:
     """Ensure *messages* form a valid tool-call sequence.
@@ -149,10 +149,7 @@ def _sanitize_tool_call_boundary(messages: list) -> list:
     # -- Step 2: validate leading assistant with tool_calls ----------------
     first = msgs[0]
     if _role(first) == "assistant" and _tool_calls(first):
-        expected_ids = {
-            tc.get("id")
-            for tc in _tool_calls(first)
-        } - {None, ""}
+        expected_ids = {tc.get("id") for tc in _tool_calls(first)} - {None, ""}
         # Collect the tool-result ids that immediately follow
         found_ids: set[str] = set()
         i = 1
@@ -176,77 +173,81 @@ def _sanitize_tool_call_boundary(messages: list) -> list:
 # State
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SubSessionState:
     session_id: str
     objective: str
-    parent_thread_id: Optional[str]      # None = fire-and-forget
-    system_prompt_mode: str              # "full" | "base_only" | "minimal" | "none"
-    status: str                          # "pending" | "running" | "completed" | "failed" | "timeout"
-    created_at: str                      # ISO-8601
-    started_at: Optional[str] = None     # ISO-8601; set when _start_node() fires
-    root_thread_id: Optional[str] = None # original user-facing thread (for nested routing)
-    nesting_depth: int = 1               # 1 = direct child, 2 = grandchild
-    completed_at: Optional[str] = None
-    result: Optional[str] = None
-    error: Optional[str] = None
+    parent_thread_id: str | None  # None = fire-and-forget
+    system_prompt_mode: str  # "full" | "base_only" | "minimal" | "none"
+    status: str  # "pending" | "running" | "completed" | "failed" | "timeout"
+    created_at: str  # ISO-8601
+    started_at: str | None = None  # ISO-8601; set when _start_node() fires
+    root_thread_id: str | None = None  # original user-facing thread (for nested routing)
+    nesting_depth: int = 1  # 1 = direct child, 2 = grandchild
+    completed_at: str | None = None
+    result: str | None = None
+    error: str | None = None
     tool_calls_log: list = field(default_factory=list)  # [(tool_name, summary), ...]
     # Full in-flight message history — updated after every tool call so it
     # survives asyncio.wait_for cancellation and can be handed to a continuation.
     messages: list = field(default_factory=list)
-    continuation_depth: int = 0          # how many hops deep this session is
-    continued_from: Optional[str] = None # session_id of predecessor, if any
-    tool_names: Optional[list[str]] = None  # explicit tool whitelist (bypasses category filter)
-    pool_override: Optional[object] = None   # per-session BackendPool override
-    cp_pool_override: Optional[object] = None   # per-session CP pool override
-    nl_pool_override: Optional[object] = None   # per-session NL translation pool override
-    max_rounds: Optional[int] = None        # None = unlimited inference rounds
-    skip_cp_on_exit: bool = False           # skip CP post_inference on terminal response
-    timeout_value: int = DEFAULT_TIMEOUT    # configured timeout for this session
-    cp_verdict: str = "skipped"             # CP verdict: 'pass' | 'fail' | 'skipped'
-    task_id: Optional[str] = None          # originating scheduled task id (for reflection)
-    is_proactive: bool = False             # set by scheduler for proactive sessions
+    continuation_depth: int = 0  # how many hops deep this session is
+    continued_from: str | None = None  # session_id of predecessor, if any
+    tool_names: list[str] | None = None  # explicit tool whitelist (bypasses category filter)
+    pool_override: object | None = None  # per-session BackendPool override
+    cp_pool_override: object | None = None  # per-session CP pool override
+    nl_pool_override: object | None = None  # per-session NL translation pool override
+    max_rounds: int | None = None  # None = unlimited inference rounds
+    skip_cp_on_exit: bool = False  # skip CP post_inference on terminal response
+    timeout_value: int = DEFAULT_TIMEOUT  # configured timeout for this session
+    cp_verdict: str = "skipped"  # CP verdict: 'pass' | 'fail' | 'skipped'
+    task_id: str | None = None  # originating scheduled task id (for reflection)
+    is_proactive: bool = False  # set by scheduler for proactive sessions
 
 
 @dataclass
 class TaskNode:
     """A node in a workflow DAG."""
-    node_id: str                          # == session_id
+
+    node_id: str  # == session_id
     objective: str
     context_blobs: list[str]
     system_prompt_mode: str
     timeout: int
-    depends_on: list[str]                 # node_ids that must complete first
+    depends_on: list[str]  # node_ids that must complete first
     nesting_depth: int = 1
-    parent_thread_id: Optional[str] = None
-    root_thread_id: Optional[str] = None  # original user-facing thread
-    status: str = "pending"               # pending | running | completed | failed
-    result: Optional[str] = None
-    error: Optional[str] = None
-    not_before: Optional[datetime] = None # time gate: don't start before this
-    tool_names: Optional[list[str]] = None  # explicit tool whitelist (bypasses category filter)
-    pool_override: Optional[object] = None   # per-session BackendPool override
-    cp_pool_override: Optional[object] = None   # per-session CP pool override
-    nl_pool_override: Optional[object] = None   # per-session NL translation pool override
-    max_rounds: Optional[int] = None        # None = unlimited inference rounds
-    skip_cp_on_exit: bool = False           # skip CP post_inference on terminal response
-    task_id: Optional[str] = None          # originating scheduled task id (for reflection)
-    is_proactive: bool = False             # set by scheduler for proactive sessions
+    parent_thread_id: str | None = None
+    root_thread_id: str | None = None  # original user-facing thread
+    status: str = "pending"  # pending | running | completed | failed
+    result: str | None = None
+    error: str | None = None
+    not_before: datetime | None = None  # time gate: don't start before this
+    tool_names: list[str] | None = None  # explicit tool whitelist (bypasses category filter)
+    pool_override: object | None = None  # per-session BackendPool override
+    cp_pool_override: object | None = None  # per-session CP pool override
+    nl_pool_override: object | None = None  # per-session NL translation pool override
+    max_rounds: int | None = None  # None = unlimited inference rounds
+    skip_cp_on_exit: bool = False  # skip CP post_inference on terminal response
+    task_id: str | None = None  # originating scheduled task id (for reflection)
+    is_proactive: bool = False  # set by scheduler for proactive sessions
 
 
 @dataclass
 class Workflow:
     """A DAG of TaskNodes."""
+
     workflow_id: str
-    parent_thread_id: Optional[str]
+    parent_thread_id: str | None
     nodes: dict[str, TaskNode] = field(default_factory=dict)
     created_at: str = ""
-    status: str = "running"               # running | completed | failed
+    status: str = "running"  # running | completed | failed
 
 
 # ---------------------------------------------------------------------------
 # Manager
 # ---------------------------------------------------------------------------
+
 
 class SubSessionManager:
     """
@@ -269,14 +270,14 @@ class SubSessionManager:
         self,
         pool: BackendPool,
         enqueue_system_event: Callable[..., Coroutine],
-        convergence_protocol_pool: Optional[BackendPool] = None,
-        convergence_protocol_validators: Optional[dict] = None,
-        nl_translation_pool: Optional[BackendPool] = None,
-        nl_translation_config: Optional[dict] = None,
-        event_bus: "Optional[EventBus]" = None,
+        convergence_protocol_pool: BackendPool | None = None,
+        convergence_protocol_validators: dict | None = None,
+        nl_translation_pool: BackendPool | None = None,
+        nl_translation_config: dict | None = None,
+        event_bus: "EventBus | None" = None,
         max_continuation_depth: int = MAX_CONTINUATION_DEPTH,
         max_completed_workflows: int = MAX_COMPLETED_WORKFLOWS,
-        tool_deps: Optional[ToolDeps] = None,
+        tool_deps: ToolDeps | None = None,
     ) -> None:
         # Capture the running event loop so that spawn() (which is synchronous
         # and may be called from a thread-pool worker via run_in_executor) can
@@ -288,7 +289,9 @@ class SubSessionManager:
         self._cp_pool = convergence_protocol_pool
         self._cp_validators = convergence_protocol_validators
         self._cp_runner = ConvergenceProtocolRunner(
-            convergence_protocol_pool, "sub_session", convergence_protocol_validators,
+            convergence_protocol_pool,
+            "sub_session",
+            convergence_protocol_validators,
         )
         self._nl_translation_pool = nl_translation_pool
         self._nl_translation_config = nl_translation_config or {}
@@ -299,7 +302,8 @@ class SubSessionManager:
         except (TypeError, ValueError):
             logger.warning(
                 "Invalid max_continuation_depth %r; using default %d",
-                max_continuation_depth, MAX_CONTINUATION_DEPTH,
+                max_continuation_depth,
+                MAX_CONTINUATION_DEPTH,
             )
             _cont_depth = MAX_CONTINUATION_DEPTH
         self._max_continuation_depth = max(0, _cont_depth)
@@ -308,7 +312,8 @@ class SubSessionManager:
         except (TypeError, ValueError):
             logger.warning(
                 "Invalid max_completed_workflows %r; using default %d",
-                max_completed_workflows, MAX_COMPLETED_WORKFLOWS,
+                max_completed_workflows,
+                MAX_COMPLETED_WORKFLOWS,
             )
             _max_wf = MAX_COMPLETED_WORKFLOWS
         self._max_completed_workflows = max(1, _max_wf)
@@ -357,26 +362,26 @@ class SubSessionManager:
     def spawn(
         self,
         objective: str,
-        context_blobs: Optional[list[str]] = None,
-        parent_thread_id: Optional[str] = None,
+        context_blobs: list[str] | None = None,
+        parent_thread_id: str | None = None,
         system_prompt_mode: str = "minimal",
-        timeout: Optional[int] = None,
+        timeout: int | None = None,
         nesting_depth: int = 1,
-        prior_messages: Optional[list[dict]] = None,
+        prior_messages: list[dict] | None = None,
         continuation_depth: int = 0,
-        continued_from: Optional[str] = None,
-        depends_on: Optional[list[str]] = None,
+        continued_from: str | None = None,
+        depends_on: list[str] | None = None,
         depends_on_previous: bool = False,
-        not_before: Optional[str] = None,
-        tool_names: Optional[list[str]] = None,
-        pool: Optional[object] = None,
-        cp_pool: Optional[object] = None,
-        nl_pool: Optional[object] = None,
-        max_rounds: Optional[int] = None,
+        not_before: str | None = None,
+        tool_names: list[str] | None = None,
+        pool: object | None = None,
+        cp_pool: object | None = None,
+        nl_pool: object | None = None,
+        max_rounds: int | None = None,
         skip_cp_on_exit: bool = False,
-        profile: Optional[str] = None,
-        task_id: Optional[str] = None,
-        spawn_batch_id: Optional[str] = None,
+        profile: str | None = None,
+        task_id: str | None = None,
+        spawn_batch_id: str | None = None,
         is_proactive: bool = False,
     ) -> str:
         """
@@ -416,19 +421,25 @@ class SubSessionManager:
                     system_prompt_mode = prof.get("prompt_mode", "minimal")
                 logger.info(
                     "Resolved profile '%s' → tools=%s, mode=%s",
-                    profile, tool_names, system_prompt_mode,
+                    profile,
+                    tool_names,
+                    system_prompt_mode,
                 )
             else:
                 logger.warning(
                     "Unknown tool profile '%s' (available: %s) — using defaults",
-                    profile, ", ".join(profiles) if profiles else "none",
+                    profile,
+                    ", ".join(profiles) if profiles else "none",
                 )
 
         session_id = f"sub_{uuid.uuid4().hex[:8]}"
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         deps = self._resolve_deps(
-            session_id, depends_on, depends_on_previous, parent_thread_id,
+            session_id,
+            depends_on,
+            depends_on_previous,
+            parent_thread_id,
             spawn_batch_id=spawn_batch_id,
         )
 
@@ -442,11 +453,15 @@ class SubSessionManager:
         root_thread_id = self._resolve_root_thread(parent_thread_id)
 
         # -- Parse not_before time gate --
-        not_before_dt: Optional[datetime] = None
+        not_before_dt: datetime | None = None
         if not_before:
             not_before_dt = self._parse_not_before(not_before)
             if not_before_dt:
-                logger.info("Sub-session %s has time gate: not_before=%s", session_id, not_before_dt.isoformat())
+                logger.info(
+                    "Sub-session %s has time gate: not_before=%s",
+                    session_id,
+                    not_before_dt.isoformat(),
+                )
 
         # -- Register the node in a workflow --
         node = TaskNode(
@@ -482,8 +497,7 @@ class SubSessionManager:
                 for d in deps
             )
             any_failed = any(
-                self._states.get(d) and self._states[d].status == "failed"
-                for d in deps
+                self._states.get(d) and self._states[d].status == "failed" for d in deps
             )
 
             if any_failed:
@@ -491,34 +505,42 @@ class SubSessionManager:
                 node.error = "dependency failed before task was started"
                 logger.info("Sub-session %s skipped (dependency failed)", session_id)
                 state = SubSessionState(
-                    session_id=session_id, objective=objective,
+                    session_id=session_id,
+                    objective=objective,
                     parent_thread_id=parent_thread_id,
                     root_thread_id=root_thread_id,
                     system_prompt_mode=system_prompt_mode,
-                    status="failed", created_at=now,
+                    status="failed",
+                    created_at=now,
                     error=node.error,
                     is_proactive=is_proactive,
                 )
                 self._states[session_id] = state
-                report_coro = self._report(state, f"[SUB-SESSION {session_id} FAILED] dependency failed")
+                report_coro = self._report(
+                    state, f"[SUB-SESSION {session_id} FAILED] dependency failed"
+                )
                 self._loop.call_soon_threadsafe(self._loop.create_task, report_coro)
                 return session_id
 
             if not all_done:
                 node.status = "pending"
                 state = SubSessionState(
-                    session_id=session_id, objective=objective,
+                    session_id=session_id,
+                    objective=objective,
                     parent_thread_id=parent_thread_id,
                     root_thread_id=root_thread_id,
                     system_prompt_mode=system_prompt_mode,
-                    status="pending", created_at=now,
+                    status="pending",
+                    created_at=now,
                     nesting_depth=nesting_depth,
                     is_proactive=is_proactive,
                 )
                 self._states[session_id] = state
                 logger.info(
                     "Sub-session %s registered as pending (deps=%s, workflow=%s)",
-                    session_id, deps, workflow_id,
+                    session_id,
+                    deps,
+                    workflow_id,
                 )
                 return session_id
 
@@ -540,11 +562,13 @@ class SubSessionManager:
         if node.not_before and not self._time_gate_met(node.not_before):
             node.status = "pending"
             state = SubSessionState(
-                session_id=session_id, objective=objective,
+                session_id=session_id,
+                objective=objective,
                 parent_thread_id=parent_thread_id,
                 root_thread_id=root_thread_id,
                 system_prompt_mode=system_prompt_mode,
-                status="pending", created_at=now,
+                status="pending",
+                created_at=now,
                 nesting_depth=nesting_depth,
                 is_proactive=is_proactive,
             )
@@ -552,7 +576,8 @@ class SubSessionManager:
             self._schedule_time_gate(session_id, node.not_before)
             logger.info(
                 "Sub-session %s pending on time gate (not_before=%s)",
-                session_id, node.not_before.isoformat(),
+                session_id,
+                node.not_before.isoformat(),
             )
             return session_id
 
@@ -564,10 +589,10 @@ class SubSessionManager:
     def _resolve_deps(
         self,
         session_id: str,
-        depends_on: Optional[list[str]],
+        depends_on: list[str] | None,
         depends_on_previous: bool,
-        parent_thread_id: Optional[str],
-        spawn_batch_id: Optional[str] = None,
+        parent_thread_id: str | None,
+        spawn_batch_id: str | None = None,
     ) -> list[str]:
         """Resolve and validate dependency IDs, dropping unknown ones.
 
@@ -586,7 +611,9 @@ class SubSessionManager:
             if previous:
                 logger.info(
                     "Sub-session %s: depends_on_previous resolved to %s (batch=%s)",
-                    session_id, previous, spawn_batch_id or "unbatched",
+                    session_id,
+                    previous,
+                    spawn_batch_id or "unbatched",
                 )
         else:
             raw_deps = depends_on or []
@@ -599,7 +626,8 @@ class SubSessionManager:
                 logger.warning(
                     "Sub-session %s: dropping unknown dependency '%s' "
                     "(session does not exist — possibly hallucinated by LLM)",
-                    session_id, dep_id,
+                    session_id,
+                    dep_id,
                 )
 
         # Cycle detection: walk the transitive dependency graph from each dep.
@@ -630,7 +658,7 @@ class SubSessionManager:
 
         return deps
 
-    def _resolve_root_thread(self, parent_thread_id: Optional[str]) -> Optional[str]:
+    def _resolve_root_thread(self, parent_thread_id: str | None) -> str | None:
         """Derive the original user-facing thread ID from a parent."""
         if not parent_thread_id:
             return None
@@ -644,7 +672,7 @@ class SubSessionManager:
     def _find_or_create_workflow(
         self,
         deps: list[str],
-        parent_thread_id: Optional[str],
+        parent_thread_id: str | None,
         now: str,
     ) -> str:
         """Find an existing workflow for *deps*, merging if needed, or create a new one.
@@ -695,7 +723,9 @@ class SubSessionManager:
                 self._session_to_workflow[nid] = target_id
             logger.info(
                 "Merged workflow %s into %s (%d nodes)",
-                other_id, target_id, len(other_wf.nodes),
+                other_id,
+                target_id,
+                len(other_wf.nodes),
             )
 
     def _adopt_orphan_deps(self, wf: Workflow, workflow_id: str, deps: list[str]) -> None:
@@ -727,29 +757,29 @@ class SubSessionManager:
             dep_state = self._states.get(dep_id)
             if dep_state and dep_state.result:
                 blobs.append(
-                    f"[Result from {dep_id} ({dep_state.objective[:80]})]\n"
-                    f"{dep_state.result}"
+                    f"[Result from {dep_id} ({dep_state.objective[:80]})]\n{dep_state.result}"
                 )
         return blobs
 
     @staticmethod
     def _time_gate_met(not_before: datetime) -> bool:
         """Return True if the current time is at or past *not_before*."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Ensure comparison is tz-aware.
         if not_before.tzinfo is None:
-            not_before = not_before.replace(tzinfo=timezone.utc)
+            not_before = not_before.replace(tzinfo=UTC)
         return now >= not_before
 
     def _schedule_time_gate(self, session_id: str, not_before: datetime) -> None:
         """Schedule an asyncio callback to re-check a pending node at *not_before*."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if not_before.tzinfo is None:
-            not_before = not_before.replace(tzinfo=timezone.utc)
+            not_before = not_before.replace(tzinfo=UTC)
         delay = max((not_before - now).total_seconds(), 0.1)
         logger.info(
             "Scheduling time-gate wakeup for %s in %.0fs",
-            session_id, delay,
+            session_id,
+            delay,
         )
         # Cancel any existing handle for this session before scheduling a new one.
         old_handle = self._time_gate_handles.pop(session_id, None)
@@ -781,28 +811,36 @@ class SubSessionManager:
         node = wf.nodes.get(session_id)
         if node and node.status == "pending":
             # Standalone time-gated node (no deps, or all deps already done).
-            deps_ok = all(
-                self._states.get(d) and self._states[d].status in ("completed", "timeout")
-                for d in node.depends_on
-            ) if node.depends_on else True
+            deps_ok = (
+                all(
+                    self._states.get(d) and self._states[d].status in ("completed", "timeout")
+                    for d in node.depends_on
+                )
+                if node.depends_on
+                else True
+            )
             if deps_ok and self._time_gate_met(node.not_before):
                 if node.depends_on:
-                    node.context_blobs = self._collect_dep_results(node.depends_on) + node.context_blobs
+                    node.context_blobs = (
+                        self._collect_dep_results(node.depends_on) + node.context_blobs
+                    )
                 self._start_node(node)
 
     @staticmethod
-    def _parse_not_before(value: str) -> Optional[datetime]:
+    def _parse_not_before(value: str) -> datetime | None:
         """Parse a not_before string (ISO-8601) into a tz-aware datetime."""
         from dateutil import parser as dateutil_parser
+
         try:
             dt = dateutil_parser.parse(value)
             if dt.tzinfo is None:
                 # Assume the configured timezone from prompt_assembler.
                 from wintermute.infra.prompt_assembler import get_timezone
+
                 try:
                     tz = ZoneInfo(get_timezone())
                 except Exception:
-                    tz = timezone.utc
+                    tz = UTC
                 dt = dt.replace(tzinfo=tz)
             return dt
         except (ValueError, OverflowError) as exc:
@@ -812,9 +850,9 @@ class SubSessionManager:
     def _start_node(
         self,
         node: TaskNode,
-        prior_messages: Optional[list[dict]] = None,
+        prior_messages: list[dict] | None = None,
         continuation_depth: int = 0,
-        continued_from: Optional[str] = None,
+        continued_from: str | None = None,
     ) -> str:
         """Create the SubSessionState + asyncio.Task and start the worker."""
         session_id = node.node_id
@@ -833,7 +871,7 @@ class SubSessionManager:
                 scratchpad_dir.mkdir(parents=True, exist_ok=True)
 
         existing = self._states.get(session_id)
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         state = SubSessionState(
             session_id=session_id,
             objective=node.objective,
@@ -869,7 +907,8 @@ class SubSessionManager:
 
         def _create_task() -> None:
             task = self._loop.create_task(
-                coro, name=f"sub_session_{session_id}",
+                coro,
+                name=f"sub_session_{session_id}",
             )
             self._tasks[session_id] = task
             task.add_done_callback(lambda t: self._tasks.pop(session_id, None))
@@ -877,13 +916,20 @@ class SubSessionManager:
         self._loop.call_soon_threadsafe(_create_task)
 
         if self._event_bus:
-            self._event_bus.emit("sub_session.started", session_id=session_id,
-                                 objective=node.objective[:200],
-                                 parent_thread_id=node.parent_thread_id)
+            self._event_bus.emit(
+                "sub_session.started",
+                session_id=session_id,
+                objective=node.objective[:200],
+                parent_thread_id=node.parent_thread_id,
+            )
         logger.info(
             "Sub-session %s spawned (parent=%s mode=%s timeout=%ds depth=%d nest=%d)",
-            session_id, node.parent_thread_id, node.system_prompt_mode,
-            node.timeout, continuation_depth, node.nesting_depth,
+            session_id,
+            node.parent_thread_id,
+            node.system_prompt_mode,
+            node.timeout,
+            continuation_depth,
+            node.nesting_depth,
         )
         return session_id
 
@@ -917,9 +963,7 @@ class SubSessionManager:
                     continue
 
                 dep_states = {d: self._states.get(d) for d in n.depends_on}
-                any_failed = any(
-                    s and s.status == "failed" for s in dep_states.values()
-                )
+                any_failed = any(s and s.status == "failed" for s in dep_states.values())
                 all_done = all(
                     s and s.status in ("completed", "timeout") for s in dep_states.values()
                 )
@@ -931,7 +975,7 @@ class SubSessionManager:
                     if placeholder:
                         placeholder.status = "failed"
                         placeholder.error = n.error
-                        placeholder.completed_at = datetime.now(timezone.utc).isoformat()
+                        placeholder.completed_at = datetime.now(UTC).isoformat()
                     nodes_to_fail.append((n, placeholder))
 
                 elif all_done:
@@ -939,24 +983,31 @@ class SubSessionManager:
                         self._schedule_time_gate(nid, n.not_before)
                         logger.info(
                             "Deps ready for %s but time gate not met (not_before=%s)",
-                            nid, n.not_before.isoformat(),
+                            nid,
+                            n.not_before.isoformat(),
                         )
                         continue
                     n.context_blobs = self._collect_dep_results(n.depends_on) + n.context_blobs
                     logger.info(
                         "All deps ready for %s — auto-starting (workflow=%s, %d/%d done)",
-                        nid, workflow_id, completed, total,
+                        nid,
+                        workflow_id,
+                        completed,
+                        total,
                     )
                     nodes_to_start.append(n)
 
         # Outside lock: perform I/O-heavy operations.
         for n, placeholder in nodes_to_fail:
             await self._report(
-                placeholder or SubSessionState(
-                    session_id=n.node_id, objective=n.objective,
+                placeholder
+                or SubSessionState(
+                    session_id=n.node_id,
+                    objective=n.objective,
                     parent_thread_id=n.parent_thread_id,
                     system_prompt_mode=n.system_prompt_mode,
-                    status="failed", created_at="",
+                    status="failed",
+                    created_at="",
                     error=n.error,
                     is_proactive=n.is_proactive,
                 ),
@@ -1007,14 +1058,14 @@ class SubSessionManager:
             if task and not task.done():
                 state.status = "failed"
                 state.error = "Cancelled"
-                state.completed_at = datetime.now(timezone.utc).isoformat()
+                state.completed_at = datetime.now(UTC).isoformat()
                 task.cancel()
                 await self._resolve_dependents(sid)
                 return True
         elif state.status == "pending":
             state.status = "failed"
             state.error = "Cancelled"
-            state.completed_at = datetime.now(timezone.utc).isoformat()
+            state.completed_at = datetime.now(UTC).isoformat()
             await self._resolve_dependents(sid)
             return True
         return False
@@ -1030,7 +1081,7 @@ class SubSessionManager:
                 cancelled += 1
         return cancelled
 
-    async def _cancel_target(self, target_id: str, thread_id: Optional[str] = None) -> str:
+    async def _cancel_target(self, target_id: str, thread_id: str | None = None) -> str:
         """Resolve and cancel a target entirely on the event loop thread."""
         if target_id == "all":
             if not thread_id:
@@ -1062,10 +1113,11 @@ class SubSessionManager:
 
         return f"Unknown ID: {target_id}"
 
-    def cancel(self, target_id: str, thread_id: Optional[str] = None) -> str:
+    def cancel(self, target_id: str, thread_id: str | None = None) -> str:
         """Cancel a session, workflow, or all workers for a thread (thread-safe)."""
         import asyncio as _asyncio
         from concurrent.futures import TimeoutError as FuturesTimeoutError
+
         try:
             future = _asyncio.run_coroutine_threadsafe(
                 self._cancel_target(target_id, thread_id), self._loop
@@ -1077,16 +1129,18 @@ class SubSessionManager:
             logger.exception("cancel(%s) failed", target_id)
             return f"Cancel failed: {exc}"
 
-    async def _list_active_async(self, thread_id: Optional[str] = None) -> list[dict]:
+    async def _list_active_async(self, thread_id: str | None = None) -> list[dict]:
         """Async wrapper so list_active runs on the event loop thread."""
         return self.list_active(thread_id)
 
-    def list_active_threadsafe(self, thread_id: Optional[str] = None) -> list[dict]:
+    def list_active_threadsafe(self, thread_id: str | None = None) -> list[dict]:
         """Thread-safe wrapper for list_active, scheduled on the event loop."""
         import asyncio as _asyncio
+
         try:
             future = _asyncio.run_coroutine_threadsafe(
-                self._list_active_async(thread_id), self._loop,
+                self._list_active_async(thread_id),
+                self._loop,
             )
             return future.result(timeout=5)
         except Exception:
@@ -1116,12 +1170,13 @@ class SubSessionManager:
 
         # Count how many terminal workflows already exist (excluding this one).
         completed_wfs = [
-            wid for wid, w in self._workflows.items()
+            wid
+            for wid, w in self._workflows.items()
             if w.status in ("completed", "failed", "timeout") and wid != workflow_id
         ]
         if len(completed_wfs) >= self._max_completed_workflows:
             # Remove the oldest completed workflows to stay within budget.
-            to_purge = completed_wfs[:len(completed_wfs) - self._max_completed_workflows + 1]
+            to_purge = completed_wfs[: len(completed_wfs) - self._max_completed_workflows + 1]
             for old_wid in to_purge:
                 old_wf = self._workflows.pop(old_wid, None)
                 if old_wf:
@@ -1161,7 +1216,9 @@ class SubSessionManager:
                 except (ValueError, TypeError):
                     continue
                 if now_ts - created_ts > _STALE_THRESHOLD_S:
-                    logger.warning("Purging stale workflow %s (created %s, still running)", wid, w.created_at)
+                    logger.warning(
+                        "Purging stale workflow %s (created %s, still running)", wid, w.created_at
+                    )
                     old_wf = self._workflows.pop(wid, None)
                     if old_wf:
                         for nid in old_wf.nodes:
@@ -1180,7 +1237,7 @@ class SubSessionManager:
                             self._aggregated_parents.discard(nid)
                         self._workflow_reports.pop(wid, None)
 
-    def list_active(self, thread_id: Optional[str] = None) -> list[dict]:
+    def list_active(self, thread_id: str | None = None) -> list[dict]:
         """Return serialisable state dicts for active sub-sessions.
 
         When *thread_id* is given, only sessions belonging to that thread
@@ -1190,9 +1247,11 @@ class SubSessionManager:
             self._serialise(state)
             for state in self._states.values()
             if state.status in ("running", "pending")
-            and (thread_id is None
-                 or state.parent_thread_id == thread_id
-                 or state.root_thread_id == thread_id)
+            and (
+                thread_id is None
+                or state.parent_thread_id == thread_id
+                or state.root_thread_id == thread_id
+            )
         ]
 
     def list_all(self) -> list[dict]:
@@ -1212,7 +1271,11 @@ class SubSessionManager:
 
     def _serialise(self, state: SubSessionState) -> dict:
         """Return state as a dict, omitting the (potentially large) messages list."""
-        d = {k: v for k, v in state.__dict__.items() if k not in ("messages", "pool_override", "cp_pool_override", "nl_pool_override")}
+        d = {
+            k: v
+            for k, v in state.__dict__.items()
+            if k not in ("messages", "pool_override", "cp_pool_override", "nl_pool_override")
+        }
         d["tool_call_count"] = len(state.tool_calls_log)
         # Enrich with workflow metadata.
         wf_id = self._session_to_workflow.get(state.session_id)
@@ -1232,23 +1295,27 @@ class SubSessionManager:
         for wf in self._workflows.values():
             nodes = []
             for n in wf.nodes.values():
-                nodes.append({
-                    "node_id": n.node_id,
-                    "objective": n.objective,
-                    "status": n.status,
-                    "depends_on": n.depends_on,
-                    "not_before": n.not_before.isoformat() if n.not_before else None,
-                    "result_preview": (n.result or "")[:120] if n.result else None,
-                    "error": n.error,
-                })
-            result.append({
-                "workflow_id": wf.workflow_id,
-                "parent_thread_id": wf.parent_thread_id,
-                "status": wf.status,
-                "created_at": wf.created_at,
-                "node_count": len(wf.nodes),
-                "nodes": nodes,
-            })
+                nodes.append(
+                    {
+                        "node_id": n.node_id,
+                        "objective": n.objective,
+                        "status": n.status,
+                        "depends_on": n.depends_on,
+                        "not_before": n.not_before.isoformat() if n.not_before else None,
+                        "result_preview": (n.result or "")[:120] if n.result else None,
+                        "error": n.error,
+                    }
+                )
+            result.append(
+                {
+                    "workflow_id": wf.workflow_id,
+                    "parent_thread_id": wf.parent_thread_id,
+                    "status": wf.status,
+                    "created_at": wf.created_at,
+                    "node_count": len(wf.nodes),
+                    "nodes": nodes,
+                }
+            )
         result.sort(key=lambda w: w["created_at"], reverse=True)
         return result
 
@@ -1270,31 +1337,40 @@ class SubSessionManager:
             )
             state.status = "completed"
             state.result = result
-            state.completed_at = datetime.now(timezone.utc).isoformat()
+            state.completed_at = datetime.now(UTC).isoformat()
             await self._persist_outcome(state, "completed", _time.monotonic() - _start_time)
             if self._event_bus:
-                self._event_bus.emit("sub_session.completed", session_id=state.session_id,
-                                     objective=state.objective[:200])
+                self._event_bus.emit(
+                    "sub_session.completed",
+                    session_id=state.session_id,
+                    objective=state.objective[:200],
+                )
             logger.info("Sub-session %s completed (%d chars)", state.session_id, len(result or ""))
             await self._report(state, f"[SUB-SESSION {state.session_id} RESULT]\n\n{result}")
             await self._resolve_dependents(state.session_id)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             state.status = "timeout"
-            state.completed_at = datetime.now(timezone.utc).isoformat()
+            state.completed_at = datetime.now(UTC).isoformat()
             await self._persist_outcome(state, "timeout", _time.monotonic() - _start_time)
             try:
                 await database.async_call(
                     database.save_interaction_log,
-                    _time.time(), "sub_session", state.session_id,
+                    _time.time(),
+                    "sub_session",
+                    state.session_id,
                     self._pool.last_used,
-                    state.objective[:500], "timeout", "timeout",
+                    state.objective[:500],
+                    "timeout",
+                    "timeout",
                 )
             except Exception:  # noqa: BLE001
                 logger.debug("Failed to log sub-session timeout", exc_info=True)
             logger.warning(
                 "Sub-session %s timed out after %ds (depth=%d, tool_calls=%d)",
-                state.session_id, timeout, state.continuation_depth,
+                state.session_id,
+                timeout,
+                state.continuation_depth,
                 len(state.tool_calls_log),
             )
 
@@ -1344,7 +1420,7 @@ class SubSessionManager:
 
                 if state.tool_calls_log:
                     steps = "\n".join(
-                        f"  {i+1}. {name}: {summary}"
+                        f"  {i + 1}. {name}: {summary}"
                         for i, (name, summary) in enumerate(state.tool_calls_log)
                     )
                     msg = (
@@ -1368,7 +1444,7 @@ class SubSessionManager:
         except asyncio.CancelledError:
             state.status = "failed"
             state.error = "Cancelled"
-            state.completed_at = datetime.now(timezone.utc).isoformat()
+            state.completed_at = datetime.now(UTC).isoformat()
             logger.info("Sub-session %s cancelled", state.session_id)
             # Don't report back on explicit cancel (e.g. /new command) — the
             # user already knows they reset the session.
@@ -1377,20 +1453,25 @@ class SubSessionManager:
         except Exception as exc:  # noqa: BLE001
             state.status = "failed"
             state.error = str(exc)
-            state.completed_at = datetime.now(timezone.utc).isoformat()
+            state.completed_at = datetime.now(UTC).isoformat()
             await self._persist_outcome(state, "failed", _time.monotonic() - _start_time)
             try:
                 await database.async_call(
                     database.save_interaction_log,
-                    _time.time(), "sub_session", state.session_id,
+                    _time.time(),
+                    "sub_session",
+                    state.session_id,
                     self._pool.last_used,
-                    state.objective[:500], str(exc)[:500], "error",
+                    state.objective[:500],
+                    str(exc)[:500],
+                    "error",
                 )
             except Exception:  # noqa: BLE001
                 logger.debug("Failed to log sub-session error", exc_info=True)
             if self._event_bus:
-                self._event_bus.emit("sub_session.failed", session_id=state.session_id,
-                                     error=str(exc)[:200])
+                self._event_bus.emit(
+                    "sub_session.failed", session_id=state.session_id, error=str(exc)[:200]
+                )
             msg = f"[SUB-SESSION {state.session_id} FAILED] {exc}"
             logger.exception("Sub-session %s failed", state.session_id)
             await self._report(state, msg)
@@ -1399,15 +1480,16 @@ class SubSessionManager:
     async def _persist_outcome(self, state: SubSessionState, status: str, duration: float) -> None:
         """Persist a sub-session outcome to the database (non-blocking via async_call)."""
         try:
-            tools_used = list({name for name, _ in state.tool_calls_log}) if state.tool_calls_log else []
+            tools_used = (
+                list({name for name, _ in state.tool_calls_log}) if state.tool_calls_log else []
+            )
             # Derive available tools the same way _worker_loop does.
             if state.tool_names:
                 tools_available = list(state.tool_names)
             elif state.system_prompt_mode in _MODE_TOOL_CATEGORIES:
                 categories = _MODE_TOOL_CATEGORIES[state.system_prompt_mode]
                 tools_available = [
-                    name for name, cat in tool_module.TOOL_CATEGORIES.items()
-                    if cat in categories
+                    name for name, cat in tool_module.TOOL_CATEGORIES.items() if cat in categories
                 ]
             else:
                 tools_available = []
@@ -1448,14 +1530,17 @@ class SubSessionManager:
                         cleaned_result,
                     )
                 except Exception:
-                    logger.debug("Failed to update task result summary for %s", state.task_id, exc_info=True)
+                    logger.debug(
+                        "Failed to update task result summary for %s", state.task_id, exc_info=True
+                    )
 
         # Detect skill reads in this session and record outcome (success/failure)
         # in skill_store for per-skill success rate tracking.  Never raises.
         try:
             import json as _json
+
             skill_names_used: list[str] = []
-            for tool_name, preview in (state.tool_calls_log or []):
+            for tool_name, preview in state.tool_calls_log or []:
                 if tool_name == "skill":
                     # preview is the tool result JSON.
                     # add returns {"skill": "name"} — skip (not a read, don't count).
@@ -1477,6 +1562,7 @@ class SubSessionManager:
                     # tool_calls_log stores the result preview, not the arguments,
                     # so this heuristic only fires if the path appears in the result.
                     import re as _re
+
                     matches = _re.findall(r'data/skills/([^\s"\']+)\.md', preview)
                     skill_names_used.extend(matches)
             if skill_names_used:
@@ -1485,10 +1571,13 @@ class SubSessionManager:
                     _log = logging.getLogger(__name__)
                     _log.debug(
                         "Skill outcome: skill=%r, session=%s, success=%s",
-                        sname, state.session_id, succeeded,
+                        sname,
+                        state.session_id,
+                        succeeded,
                     )
                     try:
                         from wintermute.infra import skill_store
+
                         await asyncio.to_thread(skill_store.record_outcome, sname, succeeded)
                     except Exception:
                         _log.debug("Failed to record skill outcome for %s", sname, exc_info=True)
@@ -1518,7 +1607,8 @@ class SubSessionManager:
         if state.parent_thread_id and state.parent_thread_id.startswith("sub_"):
             logger.info(
                 "Nested sub-session %s completed (parent=%s) — deferring to aggregated delivery",
-                state.session_id, state.parent_thread_id,
+                state.session_id,
+                state.parent_thread_id,
             )
             await self._check_nested_aggregation(state.session_id)
             return
@@ -1536,8 +1626,7 @@ class SubSessionManager:
                     node.result = state.result
                     node.error = state.error
                 done = sum(
-                    1 for n in wf.nodes.values()
-                    if n.status in ("completed", "failed", "timeout")
+                    1 for n in wf.nodes.values() if n.status in ("completed", "failed", "timeout")
                 )
                 total = len(wf.nodes)
 
@@ -1547,7 +1636,10 @@ class SubSessionManager:
                 if done < total:
                     logger.info(
                         "Sub-session %s: buffering report (%d/%d) for workflow %s",
-                        state.session_id, done, total, wf_id,
+                        state.session_id,
+                        done,
+                        total,
+                        wf_id,
                     )
                     return
 
@@ -1559,7 +1651,8 @@ class SubSessionManager:
                 any_fail = False
                 for nid, node in wf.nodes.items():
                     node_text = wf_reports.get(
-                        nid, f"[{nid}] {node.objective[:100]}: no report",
+                        nid,
+                        f"[{nid}] {node.objective[:100]}: no report",
                     )
                     parts.append(node_text)
                     if node.status == "failed":
@@ -1612,19 +1705,15 @@ class SubSessionManager:
                 return
 
             # Find all children of the same parent sub-session.
-            siblings = [
-                s for s in self._states.values()
-                if s.parent_thread_id == parent_sid
-            ]
+            siblings = [s for s in self._states.values() if s.parent_thread_id == parent_sid]
 
-            all_terminal = all(
-                s.status in ("completed", "failed", "timeout") for s in siblings
-            )
+            all_terminal = all(s.status in ("completed", "failed", "timeout") for s in siblings)
             if not all_terminal:
                 logger.debug(
                     "Nested aggregation: %d/%d children of %s are terminal",
                     sum(1 for s in siblings if s.status in ("completed", "failed", "timeout")),
-                    len(siblings), parent_sid,
+                    len(siblings),
+                    parent_sid,
                 )
                 return
 
@@ -1657,7 +1746,9 @@ class SubSessionManager:
 
         logger.info(
             "Delivering aggregated results (%d children of %s) to root thread %s",
-            len(siblings), parent_sid, root_tid,
+            len(siblings),
+            parent_sid,
+            root_tid,
         )
         try:
             is_proactive = parent_state.is_proactive if parent_state else False
@@ -1665,7 +1756,8 @@ class SubSessionManager:
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "Failed to deliver aggregated nested results to %s: %s",
-                root_tid, exc,
+                root_tid,
+                exc,
             )
 
     async def _worker_loop(self, state: SubSessionState, context_blobs: list[str]) -> str:
@@ -1693,16 +1785,14 @@ class SubSessionManager:
         if state.tool_names:
             # Explicit tool whitelist — bypass category system entirely.
             allowed = set(state.tool_names)
-            tool_schemas = [
-                s for s in tool_module.TOOL_SCHEMAS
-                if s["function"]["name"] in allowed
-            ]
+            tool_schemas = [s for s in tool_module.TOOL_SCHEMAS if s["function"]["name"] in allowed]
         else:
             categories = _MODE_TOOL_CATEGORIES.get(
                 state.system_prompt_mode, {"execution", "research"}
             )
             tool_schemas = tool_module.get_tool_schemas(
-                categories, nl_tools=nl_tools,
+                categories,
+                nl_tools=nl_tools,
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
                 exclude_names=tool_module.SUB_SESSION_EXCLUDE,
             )
@@ -1711,32 +1801,46 @@ class SubSessionManager:
         _effective_cp_pool = state.cp_pool_override or self._cp_pool
         _effective_nl_pool = state.nl_pool_override or self._nl_translation_pool
         cp_enabled = bool(_effective_cp_pool and _effective_cp_pool.enabled)
-        cp_correction_depth = 0  # depth-2 re-check: 0=unchecked, 1=corrected once, >=2=graceful fallback
+        cp_correction_depth = (
+            0  # depth-2 re-check: 0=unchecked, 1=corrected once, >=2=graceful fallback
+        )
         tool_calls_made: list[str] = []  # accumulated across the session
 
         # Build a per-session CP runner if an override pool is active.
         _cp_runner = self._cp_runner
         if state.cp_pool_override:
             _cp_runner = ConvergenceProtocolRunner(
-                state.cp_pool_override, "sub_session", self._cp_validators,
+                state.cp_pool_override,
+                "sub_session",
+                self._cp_validators,
             )
 
         # Build shared tool-call context for the inference engine.
-        async def _cp_check_sub(phase, *, tool_name=None, tool_args=None,
-                                tool_result=None, assistant_response="",
-                                tool_calls_made=None, nl_tools=None):
+        async def _cp_check_sub(
+            phase,
+            *,
+            tool_name=None,
+            tool_args=None,
+            tool_result=None,
+            assistant_response="",
+            tool_calls_made=None,
+            nl_tools=None,
+        ):
             return await _cp_runner.run_phase(
                 phase,
                 thread_id=state.session_id,
                 tool_calls_made=tool_calls_made or [],
                 assistant_response=assistant_response,
                 user_message=state.objective,
-                tool_name=tool_name, tool_args=tool_args,
-                tool_result=tool_result, nl_tools=nl_tools,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                tool_result=tool_result,
+                nl_tools=nl_tools,
                 objective=state.objective,
             )
 
         from wintermute.infra.prompt_assembler import get_timezone
+
         tc_ctx = make_tool_context(
             thread_id=state.session_id,
             nesting_depth=state.nesting_depth,
@@ -1761,25 +1865,26 @@ class SubSessionManager:
         elif state.system_prompt_mode in _MODE_TOOL_CATEGORIES:
             categories = _MODE_TOOL_CATEGORIES[state.system_prompt_mode]
             _available_tool_names = {
-                name for name, cat in tool_module.TOOL_CATEGORIES.items()
-                if cat in categories
+                name for name, cat in tool_module.TOOL_CATEGORIES.items() if cat in categories
             }
 
         if state.messages:
             # Resuming from a prior timed-out session.  The full prior history
             # is already in state.messages; just append a resumption note.
-            state.messages.append({
-                "role":    "user",
-                "content": prompt_loader.load(
-                    "WORKER_CONTINUATION.txt",
-                    continuation_depth=state.continuation_depth,
-                ),
-            })
+            state.messages.append(
+                {
+                    "role": "user",
+                    "content": prompt_loader.load(
+                        "WORKER_CONTINUATION.txt",
+                        continuation_depth=state.continuation_depth,
+                    ),
+                }
+            )
             cp_correction_depth = 0  # fresh CP budget for the resumed session
         else:
             # Fresh start — build the initial conversation.
             # Determine scratchpad path for multi-node workflows.
-            _scratchpad_dir: Optional[str] = None
+            _scratchpad_dir: str | None = None
             _wf_id = self._session_to_workflow.get(state.session_id)
             if _wf_id:
                 _wf = self._workflows.get(_wf_id)
@@ -1787,7 +1892,9 @@ class SubSessionManager:
                     _scratchpad_dir = f"data/scratchpad/{_wf_id}"
 
             system_prompt = self._build_system_prompt(
-                state.system_prompt_mode, state.objective, context_blobs,
+                state.system_prompt_mode,
+                state.objective,
+                context_blobs,
                 thread_id=state.parent_thread_id,
                 available_tools=_available_tool_names,
                 scratchpad_dir=_scratchpad_dir,
@@ -1797,7 +1904,7 @@ class SubSessionManager:
             )
             state.messages = [
                 {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": state.objective},
+                {"role": "user", "content": state.objective},
             ]
 
         round_count = 0
@@ -1808,7 +1915,8 @@ class SubSessionManager:
             if state.max_rounds is not None and round_count > state.max_rounds:
                 logger.info(
                     "Sub-session %s: max_rounds (%d) exceeded — returning last result",
-                    state.session_id, state.max_rounds,
+                    state.session_id,
+                    state.max_rounds,
                 )
                 # Return whatever text the model last produced, or a fallback.
                 last_text = None
@@ -1831,7 +1939,8 @@ class SubSessionManager:
                 if len(state.messages) > 4:
                     logger.warning(
                         "Sub-session %s: context too large (%d messages), trimming and retrying",
-                        state.session_id, len(state.messages),
+                        state.session_id,
+                        len(state.messages),
                     )
                     # Keep system prompt + original objective + last tail messages,
                     # then sanitize the boundary so no assistant tool_calls are
@@ -1858,7 +1967,9 @@ class SubSessionManager:
                     )
                 logger.warning(
                     "Sub-session %s: LLM returned empty response (%d/%d), retrying",
-                    state.session_id, _empty_retries, _MAX_EMPTY_RETRIES,
+                    state.session_id,
+                    _empty_retries,
+                    _MAX_EMPTY_RETRIES,
                 )
                 state.messages.append({"role": "assistant", "content": "[No response generated]"})
                 state.messages.append({"role": "user", "content": "Continue."})
@@ -1878,20 +1989,28 @@ class SubSessionManager:
                     output_summary = f"[tool_calls: {', '.join(tc_names)}]"
                 else:
                     output_summary = msg_content[:500]
-                raw_output_data = json.dumps({
-                    "content": msg_content[:500],
-                    "tool_calls": [tc["function"]["name"] for tc in (msg_tool_calls or [])],
-                })
+                raw_output_data = json.dumps(
+                    {
+                        "content": msg_content[:500],
+                        "tool_calls": [tc["function"]["name"] for tc in (msg_tool_calls or [])],
+                    }
+                )
                 if tool_calls_made:
                     _recent = tool_calls_made[-3:]
-                    _input_summary = f"[round {len(tool_calls_made)+1}, after: {', '.join(_recent)}]"
+                    _input_summary = (
+                        f"[round {len(tool_calls_made) + 1}, after: {', '.join(_recent)}]"
+                    )
                 else:
                     _input_summary = state.objective[:500]
                 await database.async_call(
                     database.save_interaction_log,
-                    _time.time(), "sub_session", state.session_id,
+                    _time.time(),
+                    "sub_session",
+                    state.session_id,
                     self._pool.last_used,
-                    _input_summary, output_summary, "ok",
+                    _input_summary,
+                    output_summary,
+                    "ok",
                     raw_output=raw_output_data,
                 )
             except Exception:  # noqa: BLE001
@@ -1905,15 +2024,17 @@ class SubSessionManager:
                         "— asking model to retry with smaller output",
                         state.session_id,
                     )
-                    state.messages.append({
-                        "role": "user",
-                        "content": (
-                            "Your previous response was cut off (output token limit reached) "
-                            "while generating tool call arguments. Please retry — if the "
-                            "content is very large, split it into smaller parts using "
-                            "multiple sequential tool calls."
-                        ),
-                    })
+                    state.messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Your previous response was cut off (output token limit reached) "
+                                "while generating tool call arguments. Please retry — if the "
+                                "content is very large, split it into smaller parts using "
+                                "multiple sequential tool calls."
+                            ),
+                        }
+                    )
                     continue
 
                 state.messages.append(msg)
@@ -1923,15 +2044,19 @@ class SubSessionManager:
                 # as the real result arrives.
                 _placeholder_start = len(state.messages)
                 for _i, _tc in enumerate(msg_tool_calls):
-                    state.messages.append({
-                        "role":         "tool",
-                        "tool_call_id": _tc["id"],
-                        "content":      "[Timed out — result not available]",
-                    })
+                    state.messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": _tc["id"],
+                            "content": "[Timed out — result not available]",
+                        }
+                    )
 
                 for tc_idx, tc in enumerate(msg_tool_calls):
                     outcome = await process_tool_call(
-                        tc, tc_ctx, tool_calls_made,
+                        tc,
+                        tc_ctx,
+                        tool_calls_made,
                         assistant_response=msg_content,
                     )
                     # Track progress on state for the timeout handler.
@@ -1939,48 +2064,57 @@ class SubSessionManager:
                         preview = outcome.content[:120].replace("\n", " ")
                         state.tool_calls_log.append((cn, preview))
                     state.messages[_placeholder_start + tc_idx] = {
-                        "role":         "tool",
+                        "role": "tool",
                         "tool_call_id": tc["id"],
-                        "content":      outcome.content,
+                        "content": outcome.content,
                     }
                 continue
 
             # -- Rescue XML/text-encoded tool calls -------------------
             if msg_content and tool_schemas:
-                _known_names = {
-                    s["function"]["name"] for s in tool_schemas
-                }
+                _known_names = {s["function"]["name"] for s in tool_schemas}
                 _rescued = rescue_tool_calls(msg_content, _known_names)
                 if _rescued:
-                    state.messages.append({
-                        "role": "assistant",
-                        "content": msg_content,
-                        "tool_calls": [
-                            {"id": tc.id, "type": tc.type,
-                             "function": {"name": tc.function.name,
-                                          "arguments": tc.function.arguments}}
-                            for tc in _rescued
-                        ],
-                    })
+                    state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": msg_content,
+                            "tool_calls": [
+                                {
+                                    "id": tc.id,
+                                    "type": tc.type,
+                                    "function": {
+                                        "name": tc.function.name,
+                                        "arguments": tc.function.arguments,
+                                    },
+                                }
+                                for tc in _rescued
+                            ],
+                        }
+                    )
                     _placeholder_start = len(state.messages)
                     for _tc in _rescued:
-                        state.messages.append({
-                            "role":         "tool",
-                            "tool_call_id": _tc.id,
-                            "content":      "[Timed out — result not available]",
-                        })
+                        state.messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": _tc.id,
+                                "content": "[Timed out — result not available]",
+                            }
+                        )
                     for tc_idx, tc in enumerate(_rescued):
                         outcome = await process_tool_call(
-                            tc, tc_ctx, tool_calls_made,
+                            tc,
+                            tc_ctx,
+                            tool_calls_made,
                             assistant_response=msg_content,
                         )
                         for cn in outcome.calls_made:
                             preview = outcome.content[:120].replace("\n", " ")
                             state.tool_calls_log.append((cn, preview))
                         state.messages[_placeholder_start + tc_idx] = {
-                            "role":         "tool",
+                            "role": "tool",
                             "tool_call_id": tc.id,
-                            "content":      outcome.content,
+                            "content": outcome.content,
                         }
                     logger.info(
                         "Rescued and executed %d tool call(s) from text-only response: %s",
@@ -2031,7 +2165,8 @@ class SubSessionManager:
                     logger.info(
                         "Sub-session %s: objective not met — injecting "
                         "correction and resuming loop (depth=%d, hooks=%s)",
-                        state.session_id, cp_correction_depth,
+                        state.session_id,
+                        cp_correction_depth,
                         [m["hook"] for m in pi_result.correction_metadata],
                     )
                     # At depth >= 1 (already corrected once), use graceful fallback.
@@ -2046,14 +2181,18 @@ class SubSessionManager:
                         correction_text = pi_result.correction
                     # Append the model's response and the correction as a
                     # system message, then re-enter the inference loop.
-                    state.messages.append({
-                        "role": "assistant",
-                        "content": final_text,
-                    })
-                    state.messages.append({
-                        "role": "user",
-                        "content": correction_text,
-                    })
+                    state.messages.append(
+                        {
+                            "role": "assistant",
+                            "content": final_text,
+                        }
+                    )
+                    state.messages.append(
+                        {
+                            "role": "user",
+                            "content": correction_text,
+                        }
+                    )
                     continue  # back to while True → next inference call
 
             if cp_enabled and not state.skip_cp_on_exit:
@@ -2070,13 +2209,13 @@ class SubSessionManager:
         state: SubSessionState,
         tool_calls_made: list[str],
         assistant_response: str = "",
-        tool_name: Optional[str] = None,
-        tool_args: Optional[dict] = None,
-        tool_result: Optional[str] = None,
+        tool_name: str | None = None,
+        tool_args: dict | None = None,
+        tool_result: str | None = None,
         nl_tools: "set[str] | None" = None,
-        prior_assistant_message: Optional[str] = None,
-        recent_assistant_messages: Optional[list[str]] = None,
-    ) -> Optional[convergence_protocol_module.ConvergenceResult]:
+        prior_assistant_message: str | None = None,
+        recent_assistant_messages: list[str] | None = None,
+    ) -> convergence_protocol_module.ConvergenceResult | None:
         """Run Convergence Protocol hooks for a specific phase in sub-session scope.
 
         Delegates to :class:`ConvergenceProtocolRunner`.
@@ -2105,12 +2244,12 @@ class SubSessionManager:
         mode: str,
         objective: str,
         context_blobs: list[str],
-        thread_id: Optional[str] = None,
-        available_tools: Optional[set[str]] = None,
-        scratchpad_dir: Optional[str] = None,
-        session_id: Optional[str] = None,
-        tool_deps: Optional[ToolDeps] = None,
-        nl_tools: Optional[set[str]] = None,
+        thread_id: str | None = None,
+        available_tools: set[str] | None = None,
+        scratchpad_dir: str | None = None,
+        session_id: str | None = None,
+        tool_deps: ToolDeps | None = None,
+        nl_tools: set[str] | None = None,
     ) -> str:
         if mode == "none":
             base = ""
@@ -2121,7 +2260,8 @@ class SubSessionManager:
             # pass query for the sync fallback path (sub-sessions are less
             # latency-sensitive).
             base = prompt_assembler.assemble(
-                thread_id=thread_id, available_tools=available_tools,
+                thread_id=thread_id,
+                available_tools=available_tools,
                 query=objective,
                 tool_profiles=tool_deps.tool_profiles if tool_deps else None,
                 nl_tools=nl_tools,

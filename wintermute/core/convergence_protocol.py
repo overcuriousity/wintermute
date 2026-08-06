@@ -65,20 +65,17 @@ import time as _time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from pathlib import Path
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft7Validator
 
 if TYPE_CHECKING:
     from wintermute.core.types import BackendPool
 
-from wintermute.infra import database
-from wintermute.infra.llm_utils import strip_fences
-from wintermute.infra import prompt_loader
+from wintermute.core.tool_schemas import NL_SCHEMA_MAP, TOOL_SCHEMAS
+from wintermute.infra import database, prompt_loader
 from wintermute.infra import paths as _paths
-
-from wintermute.core.tool_schemas import TOOL_SCHEMAS, NL_SCHEMA_MAP
+from wintermute.infra.llm_utils import strip_fences
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +84,7 @@ _HOOKS_FILE_LEGACY = _paths.HOOKS_FILE_LEGACY
 
 # Cache for file-loaded hooks: (mtime, file_hooks_dict).
 # Avoids re-reading + re-parsing the file on every protocol call.
-_hooks_file_cache: tuple[float, dict[str, "ConvergenceHook"]] = (0.0, {})
+_hooks_file_cache: tuple[float, dict[str, ConvergenceHook]] = (0.0, {})
 
 # Configurable threshold for the inline_tool_limit hook.
 # Set from main.py at startup via set_max_inline_tool_rounds().
@@ -204,26 +201,32 @@ VALID_SCOPES = frozenset({"main", "sub_session"})
 
 @dataclass
 class ConvergenceHook:
-    name: str                              # e.g. "workflow_spawn"
-    detection_prompt: str                  # Stage 1: bullet added to universal prompt
-    validator_type: str                    # "programmatic" or "llm"
-    validator_fn_name: Optional[str]       # Stage 2 programmatic: registered function name
-    validator_prompt: Optional[str]        # Stage 2 LLM: system prompt (future use)
-    correction_template: str              # Stage 3: single correction prompt
-    halt_inference: bool = False           # Stage 2: block inference thread until validation completes
-    kill_on_detect: bool = False           # Stage 2: if confirmed, discard the response entirely
+    name: str  # e.g. "workflow_spawn"
+    detection_prompt: str  # Stage 1: bullet added to universal prompt
+    validator_type: str  # "programmatic" or "llm"
+    validator_fn_name: str | None  # Stage 2 programmatic: registered function name
+    validator_prompt: str | None  # Stage 2 LLM: system prompt (future use)
+    correction_template: str  # Stage 3: single correction prompt
+    halt_inference: bool = False  # Stage 2: block inference thread until validation completes
+    kill_on_detect: bool = False  # Stage 2: if confirmed, discard the response entirely
     enabled: bool = True
-    phase: str = "post_inference"          # When to fire: post_inference | pre_execution | post_execution
-    scope: list = field(default_factory=lambda: ["main"])  # Where: ["main"], ["sub_session"], or both
+    phase: str = "post_inference"  # When to fire: post_inference | pre_execution | post_execution
+    scope: list = field(
+        default_factory=lambda: ["main"]
+    )  # Where: ["main"], ["sub_session"], or both
 
 
 @dataclass
 class ConvergenceResult:
-    correction: Optional[str]              # Aggregated correction prompt (None = all clear)
-    confirmed_violations: list[dict] = field(default_factory=list)  # [{type, reason, halt, kill}, ...]
-    has_halt_violations: bool = False      # Any confirmed violation with halt_inference=True
-    has_kill_violations: bool = False      # Any confirmed violation with kill_on_detect=True
-    correction_metadata: list[dict] = field(default_factory=list)   # [{hook, reason, halt, kill}, ...]
+    correction: str | None  # Aggregated correction prompt (None = all clear)
+    confirmed_violations: list[dict] = field(
+        default_factory=list
+    )  # [{type, reason, halt, kill}, ...]
+    has_halt_violations: bool = False  # Any confirmed violation with halt_inference=True
+    has_kill_violations: bool = False  # Any confirmed violation with kill_on_detect=True
+    correction_metadata: list[dict] = field(
+        default_factory=list
+    )  # [{hook, reason, halt, kill}, ...]
 
 
 # ------------------------------------------------------------------
@@ -234,12 +237,12 @@ _BUILTIN_HOOKS: list[ConvergenceHook] = [
     ConvergenceHook(
         name="workflow_spawn",
         detection_prompt=(
-            '- **workflow_spawn**: The assistant\'s text claims -- in any tense or '
-            'phrasing -- that a session, workflow, or background task was '
-            'started/spawned/launched during this response, AND '
+            "- **workflow_spawn**: The assistant's text claims -- in any tense or "
+            "phrasing -- that a session, workflow, or background task was "
+            "started/spawned/launched during this response, AND "
             '"worker_delegation" is NOT in tool_calls_made. Do NOT flag pure '
             'intentions ("I\'ll start..."). Do NOT flag references to sessions '
-            'in active_sessions.'
+            "in active_sessions."
         ),
         validator_type="programmatic",
         validator_fn_name="validate_workflow_spawn",
@@ -263,27 +266,27 @@ _BUILTIN_HOOKS: list[ConvergenceHook] = [
     ConvergenceHook(
         name="phantom_tool_result",
         detection_prompt=(
-            '- **phantom_tool_result**: The assistant\'s text presents specific data '
-            'or claims a concrete action was completed — e.g. file contents, search '
-            'results, command output, a task being set/scheduled, a task '
-            'being cancelled/deleted, memory being saved, a skill being created — '
-            'as if **already done** during THIS exchange, AND the corresponding tool '
-            '(`read_file`, `write_file`, `search_web`, `fetch_url`, `execute_shell`, '
-            '`task`, `append_memory`, `skill`) is NOT in tool_calls_made. '
-            'Also flag short past-tense confirmation phrases that imply a tool was '
+            "- **phantom_tool_result**: The assistant's text presents specific data "
+            "or claims a concrete action was completed — e.g. file contents, search "
+            "results, command output, a task being set/scheduled, a task "
+            "being cancelled/deleted, memory being saved, a skill being created — "
+            "as if **already done** during THIS exchange, AND the corresponding tool "
+            "(`read_file`, `write_file`, `search_web`, `fetch_url`, `execute_shell`, "
+            "`task`, `append_memory`, `skill`) is NOT in tool_calls_made. "
+            "Also flag short past-tense confirmation phrases that imply a tool was "
             'called without providing any real data — e.g. "Done. Task scheduled.", '
             '"Erledigt. Task erstellt.", "Ok, memory saved.", "Skill added." — when '
-            'the matching tool is absent from tool_calls_made. These brief '
-            'fabricated confirmations are just as much a phantom result as '
-            'detailed fake output. '
-            'Do NOT flag general knowledge, reasoning from context, references to '
-            'information the user provided, or information from earlier in the '
-            'conversation history. '
+            "the matching tool is absent from tool_calls_made. These brief "
+            "fabricated confirmations are just as much a phantom result as "
+            "detailed fake output. "
+            "Do NOT flag general knowledge, reasoning from context, references to "
+            "information the user provided, or information from earlier in the "
+            "conversation history. "
             'Do NOT flag future-tense action commitments ("I\'ll check…") — '
-            'those are handled by empty_promise. '
-            'Do NOT flag the assistant reflecting on, admitting, or apologising for '
-            'its own previous errors or fabricated data — self-criticism about past '
-            'turns is not a new phantom tool result. '
+            "those are handled by empty_promise. "
+            "Do NOT flag the assistant reflecting on, admitting, or apologising for "
+            "its own previous errors or fabricated data — self-criticism about past "
+            "turns is not a new phantom tool result. "
             'Include a "tool" field naming the specific tool that should have been '
             'called (e.g. "task", "skill", "read_file").'
         ),
@@ -310,27 +313,27 @@ _BUILTIN_HOOKS: list[ConvergenceHook] = [
     ConvergenceHook(
         name="empty_promise",
         detection_prompt=(
-            '- **empty_promise**: ONLY applies when `tool_calls_made` is empty. '
-            'The assistant commits to performing an action — in any language — '
-            'without having called any tool to actually carry it out. '
-            'This covers BOTH tenses: '
+            "- **empty_promise**: ONLY applies when `tool_calls_made` is empty. "
+            "The assistant commits to performing an action — in any language — "
+            "without having called any tool to actually carry it out. "
+            "This covers BOTH tenses: "
             '(1) Future-tense intent: "I will", "I\'ll", "Let me", "I\'ll do X", '
             '"I am going to schedule", "Je vais faire", "Ich werde"; '
-            '(2) False-completion past tense: a brief affirmation that implies '
-            'the action was just performed when no tool was called — e.g. '
+            "(2) False-completion past tense: a brief affirmation that implies "
+            "the action was just performed when no tool was called — e.g. "
             '"Done.", "Scheduled.", "Task created.", "Erledigt.", "Fatto.", '
             '"Ok, done!", "Erledigt. Task erstellt für 16:20.". '
-            'The key test: tool_calls_made is empty AND the response implies '
-            'the requested action was either just done or is about to be done. '
+            "The key test: tool_calls_made is empty AND the response implies "
+            "the requested action was either just done or is about to be done. "
             'A trailing generic question ("Is there anything else?") does NOT '
-            'exempt the response — flag the unfulfilled commitment regardless. '
-            'Do NOT flag: (a) any response where tool_calls_made is non-empty; '
-            '(b) responses whose primary purpose is asking the user for '
+            "exempt the response — flag the unfulfilled commitment regardless. "
+            "Do NOT flag: (a) any response where tool_calls_made is non-empty; "
+            "(b) responses whose primary purpose is asking the user for "
             'permission or confirmation before acting ("Should I do X?"); '
-            '(c) responses where the assistant states it cannot perform the '
-            'action or explains a blocker; '
-            '(d) responses that only describe general information without '
-            'implying a tool action was taken or will be taken.'
+            "(c) responses where the assistant states it cannot perform the "
+            "action or explains a blocker; "
+            "(d) responses that only describe general information without "
+            "implying a tool action was taken or will be taken."
         ),
         validator_type="programmatic",
         validator_fn_name="validate_empty_promise",
@@ -500,6 +503,7 @@ _BUILTIN_HOOKS: list[ConvergenceHook] = [
 # Hook loading
 # ------------------------------------------------------------------
 
+
 def _load_file_hooks_cached() -> dict[str, ConvergenceHook]:
     """Load hooks from the hooks file, using an mtime-based cache."""
     global _hooks_file_cache
@@ -507,8 +511,11 @@ def _load_file_hooks_cached() -> dict[str, ConvergenceHook]:
     hooks_path = HOOKS_FILE
     if not HOOKS_FILE.exists() and _HOOKS_FILE_LEGACY.exists():
         hooks_path = _HOOKS_FILE_LEGACY
-        logger.info("Using legacy hooks file %s (rename to %s to silence this)",
-                     _HOOKS_FILE_LEGACY, HOOKS_FILE)
+        logger.info(
+            "Using legacy hooks file %s (rename to %s to silence this)",
+            _HOOKS_FILE_LEGACY,
+            HOOKS_FILE,
+        )
     try:
         mtime = hooks_path.stat().st_mtime
     except FileNotFoundError:
@@ -563,10 +570,10 @@ def _load_file_hooks_cached() -> dict[str, ConvergenceHook]:
 
 
 def _load_hooks(
-    enabled_validators: Optional[dict[str, Any]] = None,
+    enabled_validators: dict[str, Any] | None = None,
     *,
-    phase_filter: Optional[str] = None,
-    scope_filter: Optional[str] = None,
+    phase_filter: str | None = None,
+    scope_filter: str | None = None,
 ) -> list[ConvergenceHook]:
     """Load hooks from CONVERGENCE_PROTOCOL_HOOKS.txt, merged with built-in defaults.
 
@@ -612,14 +619,18 @@ def _load_hooks(
         if h.phase not in VALID_PHASES:
             logger.warning(
                 "Hook %r has invalid phase %r (expected one of %s) — skipping",
-                h.name, h.phase, sorted(VALID_PHASES),
+                h.name,
+                h.phase,
+                sorted(VALID_PHASES),
             )
             continue
         invalid_scopes = [s for s in h.scope if s not in VALID_SCOPES]
         if invalid_scopes:
             logger.warning(
                 "Hook %r has invalid scope values %s (expected %s) — skipping",
-                h.name, invalid_scopes, sorted(VALID_SCOPES),
+                h.name,
+                invalid_scopes,
+                sorted(VALID_SCOPES),
             )
             continue
         if phase_filter and h.phase != phase_filter:
@@ -635,6 +646,7 @@ def _load_hooks(
 # Stage 1: Detection — Universal LLM call
 # ------------------------------------------------------------------
 
+
 def _build_stage1_system_prompt(hooks: list[ConvergenceHook]) -> str:
     """Assemble the Stage 1 system prompt from all enabled hooks' detection_prompt fields."""
     bullets = "\n".join(h.detection_prompt for h in hooks)
@@ -644,6 +656,7 @@ def _build_stage1_system_prompt(hooks: list[ConvergenceHook]) -> str:
 # ------------------------------------------------------------------
 # Stage 2: Validation — Per-hook dispatch
 # ------------------------------------------------------------------
+
 
 def validate_workflow_spawn(context: dict, detection_result: dict) -> bool:
     """Programmatic validator for workflow_spawn.
@@ -658,8 +671,8 @@ def validate_workflow_spawn(context: dict, detection_result: dict) -> bool:
     tool_calls_made = context.get("tool_calls_made", [])
     if "worker_delegation" in tool_calls_made:
         logger.info(
-            "Stage 2: False positive — worker_delegation was actually called. "
-            "LLM reason: %s", detection_result.get("reason", "?"),
+            "Stage 2: False positive — worker_delegation was actually called. LLM reason: %s",
+            detection_result.get("reason", "?"),
         )
         return False
     prior_tool_calls = context.get("prior_tool_calls_made", [])
@@ -695,8 +708,9 @@ def validate_phantom_tool_result(context: dict, detection_result: dict) -> bool:
 
     if claimed_tool and claimed_tool in tool_calls_made:
         logger.info(
-            "Stage 2: False positive — claimed tool %r was actually called. "
-            "LLM reason: %s", claimed_tool, detection_result.get("reason", "?"),
+            "Stage 2: False positive — claimed tool %r was actually called. LLM reason: %s",
+            claimed_tool,
+            detection_result.get("reason", "?"),
         )
         return False
 
@@ -707,7 +721,8 @@ def validate_phantom_tool_result(context: dict, detection_result: dict) -> bool:
         logger.info(
             "Stage 2: False positive — execute_shell was called (can "
             "substitute for %r). LLM reason: %s",
-            claimed_tool or "(unspecified)", detection_result.get("reason", "?"),
+            claimed_tool or "(unspecified)",
+            detection_result.get("reason", "?"),
         )
         return False
 
@@ -719,7 +734,8 @@ def validate_phantom_tool_result(context: dict, detection_result: dict) -> bool:
         logger.info(
             "Stage 2: False positive — claimed tool %r was called in the "
             "prior turn (cross-turn context). LLM reason: %s",
-            claimed_tool, detection_result.get("reason", "?"),
+            claimed_tool,
+            detection_result.get("reason", "?"),
         )
         return False
 
@@ -729,13 +745,15 @@ def validate_phantom_tool_result(context: dict, detection_result: dict) -> bool:
         logger.info(
             "Stage 2: False positive — no specific tool claimed but "
             "tools were called (%s). LLM reason: %s",
-            tool_calls_made, detection_result.get("reason", "?"),
+            tool_calls_made,
+            detection_result.get("reason", "?"),
         )
         return False
 
     logger.warning(
-        "Stage 2: Confirmed phantom tool result — claimed tool %r not in "
-        "tool_calls_made %s", claimed_tool or "(unspecified)", tool_calls_made,
+        "Stage 2: Confirmed phantom tool result — claimed tool %r not in tool_calls_made %s",
+        claimed_tool or "(unspecified)",
+        tool_calls_made,
     )
     return True
 
@@ -755,8 +773,9 @@ def validate_empty_promise(context: dict, detection_result: dict) -> bool:
     tool_calls_made = context.get("tool_calls_made", [])
     if tool_calls_made:
         logger.info(
-            "Stage 2: False positive (empty_promise) — tools were called (%s). "
-            "LLM reason: %s", tool_calls_made, detection_result.get("reason", "?"),
+            "Stage 2: False positive (empty_promise) — tools were called (%s). LLM reason: %s",
+            tool_calls_made,
+            detection_result.get("reason", "?"),
         )
         return False
 
@@ -769,7 +788,8 @@ def validate_empty_promise(context: dict, detection_result: dict) -> bool:
         logger.info(
             "Stage 2: False positive (empty_promise) — prior turn called "
             "tools (%s), likely cross-turn context bleed. LLM reason: %s",
-            prior_tool_calls, detection_result.get("reason", "?"),
+            prior_tool_calls,
+            detection_result.get("reason", "?"),
         )
         return False
 
@@ -788,7 +808,11 @@ def validate_empty_promise(context: dict, detection_result: dict) -> bool:
     _TRIVIAL_LINE_THRESHOLD = 20
     assistant_response = context.get("assistant_response", "")
     # Get the last non-empty line, stripping markdown/whitespace.
-    lines = [ln.strip().lstrip(">-#) ").strip("*_~`") for ln in assistant_response.splitlines() if ln.strip()]
+    lines = [
+        ln.strip().lstrip(">-#) ").strip("*_~`")
+        for ln in assistant_response.splitlines()
+        if ln.strip()
+    ]
     if lines:
         last_line = lines[-1]
         if last_line.endswith("?"):
@@ -799,7 +823,8 @@ def validate_empty_promise(context: dict, detection_result: dict) -> bool:
                 logger.info(
                     "Stage 2: False positive (empty_promise) — response is a "
                     "confirmation question with no prior commitment: %r. LLM reason: %s",
-                    last_line[-80:], detection_result.get("reason", "?"),
+                    last_line[-80:],
+                    detection_result.get("reason", "?"),
                 )
                 return False
             # Substantive content exists before the question — the ? is a generic
@@ -840,6 +865,7 @@ def validate_tool_schema(context: dict, detection_result: dict) -> bool:
     # against the full schema to avoid false rejections.
     nl_tools = context.get("nl_tools")
     from wintermute.core.nl_translator import is_nl_tool_call
+
     use_nl = (
         nl_tools
         and tool_name in nl_tools
@@ -858,9 +884,7 @@ def validate_tool_schema(context: dict, detection_result: dict) -> bool:
                 break
 
     if schema is None:
-        logger.warning(
-            "tool_schema_validation: no schema found for tool %r — skipping", tool_name
-        )
+        logger.warning("tool_schema_validation: no schema found for tool %r — skipping", tool_name)
         return False
 
     errors = _validate_against_schema(tool_args, schema)
@@ -872,7 +896,9 @@ def validate_tool_schema(context: dict, detection_result: dict) -> bool:
     context["_convergence_hook_reason"] = error_text
     logger.warning(
         "tool_schema_validation: %d error(s) for tool %r:\n%s",
-        len(errors), tool_name, error_text,
+        len(errors),
+        tool_name,
+        error_text,
     )
     return True
 
@@ -964,16 +990,13 @@ def validate_inline_tool_limit(context: dict, detection_result: dict) -> bool:
     # Count execution/research tools already called this turn.
     tool_calls_made = context.get("tool_calls_made", [])
     exec_count = sum(
-        1 for t in tool_calls_made
-        if TOOL_CATEGORIES.get(t, "") in ("execution", "research")
+        1 for t in tool_calls_made if TOOL_CATEGORIES.get(t, "") in ("execution", "research")
     )
 
     if exec_count < limit:
         return False
 
-    context["_convergence_hook_reason"] = (
-        f"{exec_count} execution/research"
-    )
+    context["_convergence_hook_reason"] = f"{exec_count} execution/research"
 
     # In lite mode (worker_delegation excluded), override the correction
     # to avoid referencing unavailable delegation and instead instruct the
@@ -995,7 +1018,9 @@ def validate_inline_tool_limit(context: dict, detection_result: dict) -> bool:
 
     logger.info(
         "inline_tool_limit: blocking %s (exec_count=%d >= limit=%d)",
-        tool_name, exec_count, limit,
+        tool_name,
+        exec_count,
+        limit,
     )
     return True
 
@@ -1035,9 +1060,14 @@ _PROGRAMMATIC_VALIDATORS = {
 # Stage 3: Correction — Aggregate confirmed violations
 # ------------------------------------------------------------------
 
-def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, ConvergenceHook],
-                      context: Optional[dict] = None,
-                      *, objective: Optional[str] = None) -> str:
+
+def _build_correction(
+    confirmed: list[dict],
+    hooks_by_name: dict[str, ConvergenceHook],
+    context: dict | None = None,
+    *,
+    objective: str | None = None,
+) -> str:
     """Build an aggregated correction prompt from all confirmed violations.
 
     Multiple violations of the same hook type are merged into a single
@@ -1093,8 +1123,11 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, Convergenc
                 partial = _get_phantom_tool_schemas(v, nl_tools)
                 if partial and not partial.startswith("("):
                     all_schemas[partial] = partial
-            effective_schema = "\n\n".join(all_schemas.values()) if all_schemas else \
-                "(call the tool that corresponds to the action you claimed)"
+            effective_schema = (
+                "\n\n".join(all_schemas.values())
+                if all_schemas
+                else "(call the tool that corresponds to the action you claimed)"
+            )
         # Allow programmatic validators to override the correction template
         # (e.g. inline_tool_limit in lite mode uses a delegation-free message).
         template = hook.correction_template
@@ -1113,7 +1146,9 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, Convergenc
         except KeyError as exc:
             logger.warning(
                 "Correction template for hook %r has unknown placeholder %s — "
-                "using raw reason instead", hook.name, exc,
+                "using raw reason instead",
+                hook.name,
+                exc,
             )
             part = f"[CONVERGENCE PROTOCOL CORRECTION] {hook.name}: {reason}"
         parts.append(part)
@@ -1124,6 +1159,7 @@ def _build_correction(confirmed: list[dict], hooks_by_name: dict[str, Convergenc
 # ------------------------------------------------------------------
 # Helpers (preserved from supervisor.py)
 # ------------------------------------------------------------------
+
 
 def _truncate_middle(text: str, keep_head: int, keep_tail: int) -> str:
     """Keep the first *keep_head* and last *keep_tail* characters of *text*.
@@ -1149,7 +1185,7 @@ def _json_safe_for_cp(value: Any) -> Any:
     return repr(value)
 
 
-def _get_tool_schema(tool_name: str, nl_tools: "set[str] | None" = None) -> str:
+def _get_tool_schema(tool_name: str, nl_tools: set[str] | None = None) -> str:
     """Return a compact JSON string of the named tool's schema.
 
     When *nl_tools* is provided and contains *tool_name*, the NL schema is
@@ -1166,12 +1202,12 @@ def _get_tool_schema(tool_name: str, nl_tools: "set[str] | None" = None) -> str:
     return f"(schema for tool '{tool_name}' not found)"
 
 
-def _get_spawn_tool_schema(nl_tools: "set[str] | None" = None) -> str:
+def _get_spawn_tool_schema(nl_tools: set[str] | None = None) -> str:
     """Return a compact JSON string of the worker_delegation tool schema."""
     return _get_tool_schema("worker_delegation", nl_tools=nl_tools)
 
 
-def _get_phantom_tool_schemas(violation: dict, nl_tools: "set[str] | None" = None) -> str:
+def _get_phantom_tool_schemas(violation: dict, nl_tools: set[str] | None = None) -> str:
     """Extract tool names mentioned in a phantom_tool_result violation and return their schemas.
 
     Parses the violation reason for backtick-quoted tool names (e.g. `task`,
@@ -1181,15 +1217,18 @@ def _get_phantom_tool_schemas(violation: dict, nl_tools: "set[str] | None" = Non
     reason = violation.get("reason", "")
     # Match backtick-quoted tool names and bare tool names from the known set.
     known_tools = {t["function"]["name"] for t in TOOL_SCHEMAS}
-    found = set(re.findall(r'`(\w+)`', reason)) & known_tools
+    found = set(re.findall(r"`(\w+)`", reason)) & known_tools
     if not found:
         # Fallback: provide all NL tool schemas so the model has something
         # concrete to work with.
         all_schemas = []
         for tname in sorted(NL_SCHEMA_MAP):
             all_schemas.append(_get_tool_schema(tname, nl_tools=nl_tools))
-        return "\n\n".join(all_schemas) if all_schemas else \
-            "(call the tool that corresponds to the action you claimed)"
+        return (
+            "\n\n".join(all_schemas)
+            if all_schemas
+            else "(call the tool that corresponds to the action you claimed)"
+        )
     schemas = []
     for name in sorted(found):
         schemas.append(_get_tool_schema(name, nl_tools=nl_tools))
@@ -1215,7 +1254,11 @@ def _get_validator(schema: dict) -> Draft7Validator:
     """
     key = id(schema)
     if key not in _VALIDATOR_CACHE:
-        effective = schema if "additionalProperties" in schema else {**schema, "additionalProperties": False}
+        effective = (
+            schema
+            if "additionalProperties" in schema
+            else {**schema, "additionalProperties": False}
+        )
         _VALIDATOR_CACHE[key] = Draft7Validator(effective)
     return _VALIDATOR_CACHE[key]
 
@@ -1247,27 +1290,28 @@ def _validate_against_schema(args: dict, schema: dict) -> list[str]:
 # Public API
 # ------------------------------------------------------------------
 
+
 async def run_convergence_protocol(
-    pool: "BackendPool",
+    pool: BackendPool,
     user_message: str,
     assistant_response: str,
     tool_calls_made: list[str],
     active_sessions: list[dict],
-    enabled_validators: Optional[dict[str, Any]] = None,
+    enabled_validators: dict[str, Any] | None = None,
     thread_id: str = "unknown",
     *,
     phase: str = "post_inference",
     scope: str = "main",
-    objective: Optional[str] = None,
-    tool_name: Optional[str] = None,
-    tool_args: Optional[dict] = None,
-    tool_result: Optional[str] = None,
-    nl_tools: "set[str] | None" = None,
-    prior_assistant_message: Optional[str] = None,
-    prior_tool_calls_made: Optional[list[str]] = None,
-    recent_assistant_messages: Optional[list[str]] = None,
-    exclude_tool_names: "set[str] | None" = None,
-    extra_context: Optional[dict] = None,
+    objective: str | None = None,
+    tool_name: str | None = None,
+    tool_args: dict | None = None,
+    tool_result: str | None = None,
+    nl_tools: set[str] | None = None,
+    prior_assistant_message: str | None = None,
+    prior_tool_calls_made: list[str] | None = None,
+    recent_assistant_messages: list[str] | None = None,
+    exclude_tool_names: set[str] | None = None,
+    extra_context: dict | None = None,
 ) -> ConvergenceResult:
     """Run the three-stage Convergence Protocol validation pipeline.
 
@@ -1326,7 +1370,9 @@ async def run_convergence_protocol(
     # use a dedicated LLM call (e.g. objective_completion).
     stage1_hooks = [h for h in hooks if h.detection_prompt and h.validator_type == "programmatic"]
     dedicated_llm_hooks = [h for h in hooks if h.validator_type == "llm"]
-    programmatic_only = [h for h in hooks if not h.detection_prompt and h.validator_type == "programmatic"]
+    programmatic_only = [
+        h for h in hooks if not h.detection_prompt and h.validator_type == "programmatic"
+    ]
 
     # Build shared context for all validators.
     context: dict[str, Any] = {
@@ -1377,8 +1423,12 @@ async def run_convergence_protocol(
 
         # -- Stage 1: Detection via universal LLM call (only for hooks with detection_prompt) --
         if stage1_hooks:
-            logger.debug("Stage 1: Running LLM analysis (phase=%s, scope=%s, hooks=%s)",
-                         phase, scope, [h.name for h in stage1_hooks])
+            logger.debug(
+                "Stage 1: Running LLM analysis (phase=%s, scope=%s, hooks=%s)",
+                phase,
+                scope,
+                [h.name for h in stage1_hooks],
+            )
 
             system_prompt = _build_stage1_system_prompt(stage1_hooks)
 
@@ -1427,11 +1477,13 @@ async def run_convergence_protocol(
             fn = _PROGRAMMATIC_VALIDATORS.get(hook.validator_fn_name or "")
             if fn and fn(context, {}):
                 reason = context.pop("_convergence_hook_reason", "programmatic check failed")
-                violations.append({
-                    "type": hook.name,
-                    "reason": reason,
-                    "_pre_validated": True,
-                })
+                violations.append(
+                    {
+                        "type": hook.name,
+                        "reason": reason,
+                        "_pre_validated": True,
+                    }
+                )
 
         # Log detection results (after all violation sources have run).
         try:
@@ -1439,9 +1491,12 @@ async def run_convergence_protocol(
             log_raw = stage1_raw if stage1_hooks else "no_stage1"
             await database.async_call(
                 database.save_interaction_log,
-                _time.time(), "convergence_detection", thread_id,
+                _time.time(),
+                "convergence_detection",
+                thread_id,
                 pool.last_used,
-                json.dumps(context)[:2000], (log_raw or "")[:2000],
+                json.dumps(context)[:2000],
+                (log_raw or "")[:2000],
                 log_status,
             )
         except Exception:  # noqa: BLE001
@@ -1451,8 +1506,11 @@ async def run_convergence_protocol(
             logger.debug("Stage 1: No violations detected (phase=%s, scope=%s)", phase, scope)
             return ConvergenceResult(correction=None)
 
-        logger.warning("Stage 1: Detected %d violation(s): %s",
-                        len(violations), [v.get("type") for v in violations])
+        logger.warning(
+            "Stage 1: Detected %d violation(s): %s",
+            len(violations),
+            [v.get("type") for v in violations],
+        )
 
         # -- Stage 2: Validation (per-hook dispatch) -----------------------
         confirmed: list[dict] = []
@@ -1475,7 +1533,8 @@ async def run_convergence_protocol(
                 if not fn:
                     logger.error(
                         "Stage 2: No programmatic validator %r registered for hook %r",
-                        hook.validator_fn_name, hook.name,
+                        hook.validator_fn_name,
+                        hook.name,
                     )
                     continue
                 is_confirmed = fn(context, violation)
@@ -1483,30 +1542,40 @@ async def run_convergence_protocol(
                 # Dedicated LLM hooks already validated during detection.
                 is_confirmed = True
             else:
-                logger.error("Stage 2: Unknown validator_type %r for hook %r", hook.validator_type, hook.name)
+                logger.error(
+                    "Stage 2: Unknown validator_type %r for hook %r", hook.validator_type, hook.name
+                )
                 continue
 
             if is_confirmed:
-                confirmed.append({
-                    "type": vtype,
-                    "reason": reason,
-                    "halt": hook.halt_inference,
-                    "kill": hook.kill_on_detect,
-                })
+                confirmed.append(
+                    {
+                        "type": vtype,
+                        "reason": reason,
+                        "halt": hook.halt_inference,
+                        "kill": hook.kill_on_detect,
+                    }
+                )
 
         # Log Stage 2 result
         try:
             stage2_status = "ok" if not confirmed else "violation_detected"
-            stage2_output = json.dumps({
-                "confirmed": confirmed,
-                "false_positives": len(violations) - len(confirmed),
-                "total_checked": len(violations),
-            })
+            stage2_output = json.dumps(
+                {
+                    "confirmed": confirmed,
+                    "false_positives": len(violations) - len(confirmed),
+                    "total_checked": len(violations),
+                }
+            )
             await database.async_call(
                 database.save_interaction_log,
-                _time.time(), "convergence_validation", thread_id,
+                _time.time(),
+                "convergence_validation",
+                thread_id,
                 pool.last_used,
-                json.dumps(violations)[:2000], stage2_output[:2000], stage2_status,
+                json.dumps(violations)[:2000],
+                stage2_output[:2000],
+                stage2_status,
             )
         except Exception:  # noqa: BLE001
             logger.debug("Failed to log convergence validation", exc_info=True)
@@ -1516,20 +1585,31 @@ async def run_convergence_protocol(
             return ConvergenceResult(correction=None)
 
         # -- Stage 3: Correction (aggregate all confirmed) -----------------
-        logger.warning("Stage 3: %d confirmed violation(s) — building correction (phase=%s, scope=%s)",
-                        len(confirmed), phase, scope)
+        logger.warning(
+            "Stage 3: %d confirmed violation(s) — building correction (phase=%s, scope=%s)",
+            len(confirmed),
+            phase,
+            scope,
+        )
 
         correction_text = _build_correction(
-            confirmed, hooks_by_name, context, objective=objective,
+            confirmed,
+            hooks_by_name,
+            context,
+            objective=objective,
         )
 
         # Log Stage 3 correction
         try:
             await database.async_call(
                 database.save_interaction_log,
-                _time.time(), "convergence_correction", thread_id,
+                _time.time(),
+                "convergence_correction",
+                thread_id,
                 pool.last_used,
-                json.dumps(confirmed)[:2000], correction_text[:2000], "violation_detected",
+                json.dumps(confirmed)[:2000],
+                correction_text[:2000],
+                "violation_detected",
             )
         except Exception:
             pass
@@ -1567,12 +1647,13 @@ async def run_convergence_protocol(
 # Dedicated LLM hook execution
 # ------------------------------------------------------------------
 
+
 async def _run_dedicated_llm_hook(
-    pool: "BackendPool",
+    pool: BackendPool,
     hook: ConvergenceHook,
     context: dict,
     thread_id: str,
-) -> Optional[dict]:
+) -> dict | None:
     """Run a hook that uses its own LLM call for detection+validation.
 
     Returns a violation dict ``{"type": ..., "reason": ...}`` if the hook
@@ -1587,11 +1668,11 @@ async def _run_dedicated_llm_hook(
 
 
 async def _check_objective_completion(
-    pool: "BackendPool",
+    pool: BackendPool,
     hook: ConvergenceHook,
     context: dict,
     thread_id: str,
-) -> Optional[dict]:
+) -> dict | None:
     """Evaluate whether a sub-session's response satisfies its objective.
 
     Makes a single LLM call using the CONVERGENCE_OBJECTIVE_COMPLETION.txt
@@ -1611,11 +1692,16 @@ async def _check_objective_completion(
         objective=objective,
     )
 
-    eval_context = json.dumps({
-        "objective": objective,
-        "assistant_response": _truncate_middle(assistant_response, keep_head=800, keep_tail=400),
-        "tools_called_this_session": tool_summary,
-    }, indent=2)
+    eval_context = json.dumps(
+        {
+            "objective": objective,
+            "assistant_response": _truncate_middle(
+                assistant_response, keep_head=800, keep_tail=400
+            ),
+            "tools_called_this_session": tool_summary,
+        },
+        indent=2,
+    )
 
     response = await pool.call(
         messages=[
@@ -1649,9 +1735,12 @@ async def _check_objective_completion(
     try:
         await database.async_call(
             database.save_interaction_log,
-            _time.time(), "convergence_objective", thread_id,
+            _time.time(),
+            "convergence_objective",
+            thread_id,
             pool.last_used,
-            eval_context[:2000], raw[:2000],
+            eval_context[:2000],
+            raw[:2000],
             "ok" if met else "violation_detected",
         )
     except Exception:
@@ -1663,5 +1752,3 @@ async def _check_objective_completion(
 
     logger.info("objective_completion: objective NOT met for %s — %s", thread_id, reason[:200])
     return {"type": "objective_completion", "reason": reason}
-
-

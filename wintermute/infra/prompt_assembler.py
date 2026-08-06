@@ -16,20 +16,18 @@ import json
 import logging
 import re
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional
 from zoneinfo import ZoneInfo
 
-from wintermute.infra import database
-from wintermute.infra import prompt_loader
+from wintermute.infra import database, prompt_loader
 
 logger = logging.getLogger(__name__)
 
 # Size thresholds (characters) that trigger AI summarisation.
 # Defaults — overridden at startup via set_component_limits() from config.yaml.
-TASKS_LIMIT    = 5_000
-SKILLS_LIMIT   = 2_000  # TOC-only; individual skills loaded on demand
+TASKS_LIMIT = 5_000
+SKILLS_LIMIT = 2_000  # TOC-only; individual skills loaded on demand
 
 # Configured timezone — set by main.py at startup via set_timezone().
 _timezone: str = "UTC"
@@ -40,8 +38,9 @@ _cached_sections_mtime: float = 0.0
 _sections_lock = threading.Lock()
 
 
-def set_component_limits(memories: int = 10_000, tasks: int = 5_000,
-                         skills: int = 2_000, **_compat) -> None:
+def set_component_limits(
+    memories: int = 10_000, tasks: int = 5_000, skills: int = 2_000, **_compat
+) -> None:
     """Override component size limits from config.yaml.
 
     The ``memories`` parameter is accepted for backward compatibility but
@@ -69,9 +68,7 @@ def get_timezone() -> str:
 # Sectioned BASE_PROMPT parsing
 # ---------------------------------------------------------------------------
 
-_SECTION_RE = re.compile(
-    r'<!--\s*section:\s*(\S+)\s+requires:\s*(\S+)\s*-->'
-)
+_SECTION_RE = re.compile(r"<!--\s*section:\s*(\S+)\s+requires:\s*(\S+)\s*-->")
 
 
 def _parse_sections(raw: str) -> list[tuple[str, set[str], str]]:
@@ -133,8 +130,9 @@ def _get_sections() -> list[tuple[str, set[str], str]]:
         return _cached_sections
 
 
-def _assemble_base(available_tools: set[str] | None = None,
-                   nl_tools: set[str] | None = None) -> str:
+def _assemble_base(
+    available_tools: set[str] | None = None, nl_tools: set[str] | None = None
+) -> str:
     """Assemble the BASE_PROMPT, optionally filtering sections by available tools.
 
     When *available_tools* is None, all sections are included (backward
@@ -180,7 +178,7 @@ def _assemble_base(available_tools: set[str] | None = None,
 
 def _get_reflection_observations() -> str:
     """Return recent reflection findings (last 24h) for the main thread prompt."""
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    cutoff = datetime.now(UTC) - timedelta(hours=24)
     lines: list[str] = []
     for action in ("reflection_rule", "reflection_analysis"):
         try:
@@ -190,7 +188,7 @@ def _get_reflection_observations() -> str:
         for e in entries:
             ts_str = e.get("timestamp", "")
             try:
-                ts = datetime.fromtimestamp(float(ts_str), tz=timezone.utc)
+                ts = datetime.fromtimestamp(float(ts_str), tz=UTC)
                 if ts < cutoff:
                     continue
             except (ValueError, TypeError):
@@ -214,7 +212,7 @@ def _get_reflection_observations() -> str:
 
 
 _self_model_cache: tuple[float, str] = (0.0, "")  # (mtime, summary)
-_self_model_path: Optional[Path] = None  # Set at startup via set_self_model_path()
+_self_model_path: Path | None = None  # Set at startup via set_self_model_path()
 _self_model_cache_lock = threading.Lock()
 
 
@@ -241,6 +239,7 @@ def _get_self_model_summary() -> str:
             if mtime == _self_model_cache[0]:
                 return _self_model_cache[1]
         import yaml
+
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         summary = (data.get("summary") or "").strip()[:300]
         with _self_model_cache_lock:
@@ -280,8 +279,7 @@ def fetch_predictions() -> list[str]:
     return lines
 
 
-
-def _read_skills_toc(query: Optional[str] = None) -> str:
+def _read_skills_toc(query: str | None = None) -> str:
     """Build a TOC of skills from the skill store.
 
     When *query* is provided and the skill backend supports vector search,
@@ -321,15 +319,18 @@ def _read_skills_toc(query: Optional[str] = None) -> str:
     return header
 
 
-def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = None,
-             available_tools: Optional[set[str]] = None,
-             query: Optional[str] = None,
-             memory_results: Optional[list[dict]] = None,
-             prompt_mode: str = "full",
-             tool_profiles: Optional[dict[str, dict]] = None,  # deprecated — profiles now in tool schemas
-             nl_tools: Optional[set[str]] = None,
-             prediction_results: Optional[list[str]] = None,
-             include_tasks: bool = True) -> str:
+def assemble(
+    extra_summary: str | None = None,
+    thread_id: str | None = None,
+    available_tools: set[str] | None = None,
+    query: str | None = None,
+    memory_results: list[dict] | None = None,
+    prompt_mode: str = "full",
+    tool_profiles: dict[str, dict] | None = None,  # deprecated — profiles now in tool schemas
+    nl_tools: set[str] | None = None,
+    prediction_results: list[str] | None = None,
+    include_tasks: bool = True,
+) -> str:
     """
     Build and return the full system prompt string.
 
@@ -389,7 +390,9 @@ def assemble(extra_summary: Optional[str] = None, thread_id: Optional[str] = Non
             try:
                 results = memory_store.search(query)
             except Exception as exc:
-                logger.warning("Memory search failed in prompt assembly, continuing without: %s", exc)
+                logger.warning(
+                    "Memory search failed in prompt assembly, continuing without: %s", exc
+                )
                 results = []
             if results:
                 memories_text = "\n".join(r["text"] for r in results)
@@ -436,10 +439,10 @@ def check_component_sizes() -> dict[str, bool]:
     so the memories component is never oversized.
     """
     memories_oversized = False
-    tasks_len     = len(database.get_active_tasks_text())
+    tasks_len = len(database.get_active_tasks_text())
     skills_toc_len = len(_read_skills_toc())
     return {
         "memories": memories_oversized,
-        "tasks":    tasks_len    > TASKS_LIMIT,
-        "skills":   skills_toc_len > SKILLS_LIMIT,
+        "tasks": tasks_len > TASKS_LIMIT,
+        "skills": skills_toc_len > SKILLS_LIMIT,
     }

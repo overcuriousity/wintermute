@@ -34,13 +34,13 @@ import mimetypes as _mimetypes
 import re as _re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 import aiohttp
 
 logger = logging.getLogger(__name__)
 
 VOICE_DIR = Path("data/voice")
+
 
 def _to_urlsafe_b64(s: str) -> str:
     """Convert standard base64 to URL-safe base64 (no padding)."""
@@ -73,19 +73,23 @@ class SignalThread:
     ``send_message`` may be called from any task in the same event loop.
     """
 
-    def __init__(self, config: SignalConfig, llm_thread,
-                 *,
-                 whisper_client=None,
-                 whisper_model: str = "",
-                 whisper_language: str = "",
-                 slash_handler=None,
-                 event_bus=None) -> None:
+    def __init__(
+        self,
+        config: SignalConfig,
+        llm_thread,
+        *,
+        whisper_client=None,
+        whisper_model: str = "",
+        whisper_language: str = "",
+        slash_handler=None,
+        event_bus=None,
+    ) -> None:
         self._cfg = config
         self._llm = llm_thread
         self._running = False
-        self._process: Optional[asyncio.subprocess.Process] = None
+        self._process: asyncio.subprocess.Process | None = None
         self._rpc_id = 0
-        self._http_session: Optional[aiohttp.ClientSession] = None
+        self._http_session: aiohttp.ClientSession | None = None
         self._base_url = f"http://127.0.0.1:{config.http_port}"
         self._background_tasks: set[asyncio.Task] = set()
         # Whisper transcription (passed from main.py if enabled).
@@ -96,18 +100,21 @@ class SignalThread:
         self._slash_handler = slash_handler
         # Subscribe to tool delivery events (send_file, send_message).
         self._event_bus = event_bus
-        self._send_file_sub_id: Optional[str] = None
-        self._send_message_sub_id: Optional[str] = None
+        self._send_file_sub_id: str | None = None
+        self._send_message_sub_id: str | None = None
         if event_bus is not None:
             self._send_file_sub_id = event_bus.subscribe("send_file", self._handle_send_file_event)
-            self._send_message_sub_id = event_bus.subscribe("send_message", self._handle_send_message_event)
+            self._send_message_sub_id = event_bus.subscribe(
+                "send_message", self._handle_send_message_event
+            )
 
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
 
-    async def send_message(self, text: str, thread_id: str,
-                           _retries: int = 3, _delay: float = 2.0) -> None:
+    async def send_message(
+        self, text: str, thread_id: str, _retries: int = 3, _delay: float = 2.0
+    ) -> None:
         """Send a message to a Signal recipient or group."""
         if self._http_session is None:
             logger.warning("send_message called before signal-cli is ready")
@@ -121,7 +128,7 @@ class SignalThread:
             return
         params["message"] = text
 
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         for attempt in range(1, _retries + 1):
             try:
                 await self._send_jsonrpc("send", params)
@@ -130,12 +137,16 @@ class SignalThread:
                 last_exc = exc
                 logger.warning(
                     "Signal send to %s failed (attempt %d/%d): %s",
-                    thread_id, attempt, _retries, exc,
+                    thread_id,
+                    attempt,
+                    _retries,
+                    exc,
                 )
             if attempt < _retries:
                 await asyncio.sleep(_delay * attempt)
-        logger.error("Signal send to %s failed after %d attempts: %s",
-                     thread_id, _retries, last_exc)
+        logger.error(
+            "Signal send to %s failed after %d attempts: %s", thread_id, _retries, last_exc
+        )
 
     async def run(self) -> None:
         """Entry point — validate config, spawn subprocess, receive loop with reconnection."""
@@ -202,15 +213,20 @@ class SignalThread:
         cmd = [self._cfg.signal_cli_path, "-a", self._cfg.phone_number]
         if self._cfg.trust_new_keys:
             cmd.extend(["--trust-new-identities", "always"])
-        cmd.extend([
-            "daemon",
-            "--http", f"127.0.0.1:{self._cfg.http_port}",
-            "--no-receive-stdout",
-            "--receive-mode", "on-start",
-        ])
+        cmd.extend(
+            [
+                "daemon",
+                "--http",
+                f"127.0.0.1:{self._cfg.http_port}",
+                "--no-receive-stdout",
+                "--receive-mode",
+                "on-start",
+            ]
+        )
 
-        logger.info("Starting signal-cli HTTP daemon on port %d (account=<redacted>)",
-                     self._cfg.http_port)
+        logger.info(
+            "Starting signal-cli HTTP daemon on port %d (account=<redacted>)", self._cfg.http_port
+        )
         self._process = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.DEVNULL,
@@ -236,11 +252,13 @@ class SignalThread:
                 if self._process is not None and self._process.returncode is not None:
                     raise RuntimeError("signal-cli process exited before becoming ready")
                 try:
-                    async with session.get(check_url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    async with session.get(
+                        check_url, timeout=aiohttp.ClientTimeout(total=5)
+                    ) as resp:
                         if resp.status == 200:
                             logger.info("signal-cli HTTP daemon is ready")
                             return
-                except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+                except (TimeoutError, aiohttp.ClientError, OSError):
                     pass
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 5.0)
@@ -287,9 +305,9 @@ class SignalThread:
                     break
                 line = raw_line.decode(errors="replace").rstrip("\r\n")
                 if line.startswith("event:"):
-                    event_type = line[len("event:"):].strip()
+                    event_type = line[len("event:") :].strip()
                 elif line.startswith("data:"):
-                    data_lines.append(line[len("data:"):].strip())
+                    data_lines.append(line[len("data:") :].strip())
                 elif line == "":
                     # Empty line = end of SSE event
                     if data_lines:
@@ -314,8 +332,7 @@ class SignalThread:
             self._background_tasks.add(_t)
             _t.add_done_callback(self._background_tasks.discard)
 
-    async def _send_jsonrpc(self, method: str, params: dict,
-                            *, timeout: float = 30.0) -> dict:
+    async def _send_jsonrpc(self, method: str, params: dict, *, timeout: float = 30.0) -> dict:
         """Send a JSON-RPC request via HTTP POST.
 
         Raises RuntimeError on RPC-level errors so callers can retry.
@@ -332,7 +349,8 @@ class SignalThread:
         }
         rpc_url = f"{self._base_url}/api/v1/rpc"
         async with self._http_session.post(
-            rpc_url, json=request,
+            rpc_url,
+            json=request,
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as resp:
             if resp.status == 201:
@@ -348,8 +366,12 @@ class SignalThread:
         return data.get("result", {})
 
     async def _send_jsonrpc_fire_and_forget(
-        self, method: str, params: dict, *,
-        log_level: int = logging.DEBUG, context: str = "",
+        self,
+        method: str,
+        params: dict,
+        *,
+        log_level: int = logging.DEBUG,
+        context: str = "",
     ) -> None:
         """Send a JSON-RPC request without caring about the response.
 
@@ -373,13 +395,20 @@ class SignalThread:
         ctx = f" [{context}]" if context else ""
         try:
             async with self._http_session.post(
-                rpc_url, json=request,
+                rpc_url,
+                json=request,
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status not in (200, 201):
                     body = await resp.text()
-                    logger.log(log_level, "Fire-and-forget RPC %s%s returned %d: %s",
-                               method, ctx, resp.status, body[:200])
+                    logger.log(
+                        log_level,
+                        "Fire-and-forget RPC %s%s returned %d: %s",
+                        method,
+                        ctx,
+                        resp.status,
+                        body[:200],
+                    )
                 elif log_level <= logging.DEBUG:
                     logger.debug("Fire-and-forget RPC %s%s succeeded", method, ctx)
                 else:
@@ -392,8 +421,9 @@ class SignalThread:
                             pass  # Non-JSON success response — nothing to inspect.
                         else:
                             if "error" in data:
-                                logger.log(log_level, "RPC %s%s error: %s",
-                                           method, ctx, data["error"])
+                                logger.log(
+                                    log_level, "RPC %s%s error: %s", method, ctx, data["error"]
+                                )
                                 return
                     logger.debug("Fire-and-forget RPC %s%s succeeded", method, ctx)
         except Exception as exc:  # noqa: BLE001
@@ -418,7 +448,7 @@ class SignalThread:
                 self._process.terminate()
                 try:
                     await asyncio.wait_for(self._process.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     self._process.kill()
                     await self._process.wait()
             except ProcessLookupError:
@@ -457,12 +487,14 @@ class SignalThread:
             url = f"{self._base_url}/api/v1/attachments/{att_id}"
             try:
                 async with self._http_session.get(
-                    url, timeout=aiohttp.ClientTimeout(total=30),
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
                     if resp.status == 200:
                         return await resp.read()
-                    logger.warning("Attachment download returned HTTP %d for id=%s",
-                                   resp.status, att_id)
+                    logger.warning(
+                        "Attachment download returned HTTP %d for id=%s", resp.status, att_id
+                    )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to download attachment id=%s: %s", att_id, exc)
 
@@ -508,8 +540,11 @@ class SignalThread:
         else:
             thread_id = f"sig_{source_identity}"
             if not self._is_user_allowed(source_number, source_uuid):
-                logger.info("[signal] User %s (uuid=%s) not in allowed_users, ignoring",
-                            source_number or "(none)", source_uuid or "(none)")
+                logger.info(
+                    "[signal] User %s (uuid=%s) not in allowed_users, ignoring",
+                    source_number or "(none)",
+                    source_uuid or "(none)",
+                )
                 return
 
         is_group = group_info is not None
@@ -558,10 +593,12 @@ class SignalThread:
                     text_for_db = self._strip_bot_mention(text_for_db)
                 if text_part.strip() and text_part.strip() != sender_prefix.strip():
                     content_parts.append({"type": "text", "text": text_part})
-                content_parts.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{content_type};base64,{b64data}"},
-                })
+                content_parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{content_type};base64,{b64data}"},
+                    }
+                )
                 logger.info("Received image from %s in %s", sender_label, thread_id)
                 await self._dispatch(text_for_db, thread_id, content=content_parts, ephemeral=group)
                 return
@@ -584,7 +621,8 @@ class SignalThread:
                     logger.exception("Failed to save voice message to %s", voice_path)
                     await self._dispatch(
                         sender_prefix + "[Voice message received but could not be saved]",
-                        thread_id, ephemeral=group,
+                        thread_id,
+                        ephemeral=group,
                     )
                     return
                 logger.info("Saved voice message from %s to %s", sender_label, voice_path)
@@ -593,21 +631,34 @@ class SignalThread:
                 if self._whisper_client is not None:
                     try:
                         from openai import NOT_GIVEN
+
                         transcribe_data = audio_data
                         transcribe_filename = filename
                         if not filename.lower().endswith(".wav"):
                             proc = await asyncio.create_subprocess_exec(
-                                "ffmpeg", "-i", "pipe:0",
-                                "-ar", "16000", "-ac", "1", "-f", "wav",
-                                "-loglevel", "error", "pipe:1",
+                                "ffmpeg",
+                                "-i",
+                                "pipe:0",
+                                "-ar",
+                                "16000",
+                                "-ac",
+                                "1",
+                                "-f",
+                                "wav",
+                                "-loglevel",
+                                "error",
+                                "pipe:1",
                                 stdin=asyncio.subprocess.PIPE,
                                 stdout=asyncio.subprocess.PIPE,
                                 stderr=asyncio.subprocess.PIPE,
                             )
                             wav_bytes, ffmpeg_err = await proc.communicate(input=audio_data)
                             if proc.returncode != 0 or not wav_bytes:
-                                logger.error("ffmpeg conversion failed for %s: %s",
-                                             voice_path, ffmpeg_err.decode())
+                                logger.error(
+                                    "ffmpeg conversion failed for %s: %s",
+                                    voice_path,
+                                    ffmpeg_err.decode(),
+                                )
                             else:
                                 transcribe_data = wav_bytes
                                 transcribe_filename = Path(filename).stem + ".wav"
@@ -619,9 +670,14 @@ class SignalThread:
                         )
                         transcript = resp.text.strip()
                         if not transcript:
-                            text = sender_prefix + "[Voice message received — transcription was empty (silence?)]"
+                            text = (
+                                sender_prefix
+                                + "[Voice message received — transcription was empty (silence?)]"
+                            )
                         else:
-                            logger.info("Whisper transcript (%s): %s", sender_label, transcript[:120])
+                            logger.info(
+                                "Whisper transcript (%s): %s", sender_label, transcript[:120]
+                            )
                             text = sender_prefix + f"[Transcribed voice message] {transcript}"
                         if group:
                             text = self._strip_bot_mention(text)
@@ -650,23 +706,29 @@ class SignalThread:
     # Dispatch to LLM
     # ------------------------------------------------------------------
 
-    async def _dispatch(self, text: str, thread_id: str, *,
-                        content: list | None = None,
-                        ephemeral: bool = False) -> None:
+    async def _dispatch(
+        self, text: str, thread_id: str, *, content: list | None = None, ephemeral: bool = False
+    ) -> None:
         """Handle slash commands first, then enqueue to LLM with typing loop."""
         # Shared slash commands
         if content is None and self._slash_handler is not None:
+
             async def send_fn(msg: str) -> None:
                 await self.send_message(msg, thread_id)
+
             if await self._slash_handler.dispatch(text, thread_id, send_fn):
                 return
 
         typing_task = asyncio.create_task(
-            self._typing_loop(thread_id), name=f"sig_typing_{thread_id}",
+            self._typing_loop(thread_id),
+            name=f"sig_typing_{thread_id}",
         )
         try:
             reply = await self._llm.enqueue_user_message(
-                text, thread_id, content=content, ephemeral=ephemeral,
+                text,
+                thread_id,
+                content=content,
+                ephemeral=ephemeral,
             )
         finally:
             typing_task.cancel()
@@ -708,11 +770,16 @@ class SignalThread:
 
     async def _send_read_receipt(self, sender: str, timestamp: int) -> None:
         """Send a read receipt for a message (logged at WARNING on failure)."""
-        await self._send_jsonrpc_fire_and_forget("sendReceipt", {
-            "recipient": [sender],
-            "targetTimestamp": [timestamp],
-            "type": "read",
-        }, log_level=logging.WARNING, context=f"{sender}/{timestamp}")
+        await self._send_jsonrpc_fire_and_forget(
+            "sendReceipt",
+            {
+                "recipient": [sender],
+                "targetTimestamp": [timestamp],
+                "type": "read",
+            },
+            log_level=logging.WARNING,
+            context=f"{sender}/{timestamp}",
+        )
 
     # ------------------------------------------------------------------
     # File sending
@@ -742,8 +809,9 @@ class SignalThread:
             return
         await self.send_message(text, thread_id)
 
-    async def _send_file(self, file_path: str, thread_id: str,
-                         _retries: int = 3, _delay: float = 2.0) -> None:
+    async def _send_file(
+        self, file_path: str, thread_id: str, _retries: int = 3, _delay: float = 2.0
+    ) -> None:
         """Send a file via signal-cli."""
         p = Path(file_path)
         if not p.is_file():
@@ -756,7 +824,7 @@ class SignalThread:
             return
         params["attachment"] = [str(p.resolve())]
 
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         for attempt in range(1, _retries + 1):
             try:
                 await self._send_jsonrpc("send", params)
@@ -766,12 +834,21 @@ class SignalThread:
                 last_exc = exc
                 logger.warning(
                     "Signal send_file %s to %s failed (attempt %d/%d): %s",
-                    file_path, thread_id, attempt, _retries, exc,
+                    file_path,
+                    thread_id,
+                    attempt,
+                    _retries,
+                    exc,
                 )
             if attempt < _retries:
                 await asyncio.sleep(_delay * attempt)
-        logger.error("Signal send_file %s to %s failed after %d attempts: %s",
-                     file_path, thread_id, _retries, last_exc)
+        logger.error(
+            "Signal send_file %s to %s failed after %d attempts: %s",
+            file_path,
+            thread_id,
+            _retries,
+            last_exc,
+        )
 
     # ------------------------------------------------------------------
     # ACL helpers
@@ -809,11 +886,11 @@ class SignalThread:
     def _thread_id_to_send_params(self, thread_id: str) -> dict | None:
         """Convert a thread_id to signal-cli JSON-RPC send parameters."""
         if thread_id.startswith("sig_group_"):
-            safe_group_id = thread_id[len("sig_group_"):]
+            safe_group_id = thread_id[len("sig_group_") :]
             group_id = _from_urlsafe_b64(safe_group_id)
             return {"groupId": [group_id]}
         if thread_id.startswith("sig_"):
-            recipient = thread_id[len("sig_"):]
+            recipient = thread_id[len("sig_") :]
             return {"recipient": [recipient]}
         return None
 

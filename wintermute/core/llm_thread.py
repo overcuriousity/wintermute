@@ -22,18 +22,23 @@ import json
 import logging
 import re
 import time as _time
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
-from wintermute.infra import database
-from wintermute.infra import prompt_assembler
-from wintermute.infra import prompt_loader
+from wintermute import tools as tool_module
 from wintermute.core import convergence_protocol as convergence_protocol_module
+from wintermute.core.context_compactor import COMPACTION_KEEP_RECENT, ContextCompactor
+from wintermute.core.conversation_store import ConversationStore, count_tokens
 from wintermute.core.inference_engine import (
-    ToolCallContext, extract_content_text, make_tool_context,
+    extract_content_text,
+    make_tool_context,
     process_tool_call,
 )
+from wintermute.core.session_manager import SessionManager
+from wintermute.core.tool_call_rescue import rescue_tool_calls
+from wintermute.core.tool_deps import ToolDeps
 from wintermute.core.types import (  # noqa: F401 — re-exported for backwards compat
     BackendPool,
     ContextTooLargeError,
@@ -44,17 +49,12 @@ from wintermute.core.types import (  # noqa: F401 — re-exported for backwards 
     RateLimitError,
     classify_api_error,
 )
-from wintermute.core.tool_call_rescue import rescue_tool_calls
-from wintermute import tools as tool_module
+from wintermute.infra import database, prompt_assembler, prompt_loader
 
-from wintermute.core.tool_deps import ToolDeps
-from wintermute.core.conversation_store import ConversationStore, count_tokens
-from wintermute.core.context_compactor import ContextCompactor, COMPACTION_KEEP_RECENT
-from wintermute.core.session_manager import SessionManager
 if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager
     from wintermute.infra.event_bus import EventBus
-    from wintermute.infra.thread_config import ThreadConfigManager, ResolvedThreadConfig
+    from wintermute.infra.thread_config import ThreadConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +68,13 @@ _count_tokens = count_tokens
 @dataclass
 class LLMReply:
     """Response from the LLM, separating visible content from reasoning tokens."""
+
     text: str
-    reasoning: Optional[str] = None  # reasoning/thinking tokens (if model supports it)
+    reasoning: str | None = None  # reasoning/thinking tokens (if model supports it)
     tool_calls_made: list[str] = field(default_factory=list)  # tool names called during inference
     tool_call_details: list[dict] = field(default_factory=list)  # [{name, arguments, result}, ...]
-    duration_seconds: Optional[float] = None   # wall-clock inference time
-    backend_used: Optional[str] = None         # model/backend that served the request
+    duration_seconds: float | None = None  # wall-clock inference time
+    backend_used: str | None = None  # model/backend that served the request
 
     def __str__(self) -> str:
         return self.text
@@ -84,13 +85,13 @@ class _QueueItem:
     text: str
     thread_id: str = "default"
     is_system_event: bool = False
-    future: Optional[asyncio.Future] = field(default=None, compare=False)
+    future: asyncio.Future | None = field(default=None, compare=False)
     convergence_depth: int = 0  # 0=normal, 1=first correction, 2=re-check correction (max)
-    content: Optional[list] = None  # multimodal content parts (OpenAI vision format)
+    content: list | None = None  # multimodal content parts (OpenAI vision format)
     # Sequence number of the user-message turn this correction was issued for.
     # If the thread has advanced past this number by the time the correction is
     # dequeued, the correction is stale and will be dropped.
-    correction_for_seq: Optional[int] = None
+    correction_for_seq: int | None = None
     ephemeral: bool = False  # skip loading history (group mode: single-turn)
     is_proactive: bool = False  # result of a proactive sub-session (routes to opted-in rooms)
 
@@ -98,22 +99,28 @@ class _QueueItem:
 class LLMThread:
     """Runs as an asyncio task within the shared event loop."""
 
-    def __init__(self, main_pool: BackendPool, compaction_pool: BackendPool,
-                 convergence_protocol_pool: BackendPool, broadcast_fn,
-                 sub_session_getter: "Optional[Callable[[], Optional[SubSessionManager]]]" = None,
-                 convergence_protocol_validators: "Optional[dict[str, bool]]" = None,
-                 nl_translation_pool: "Optional[BackendPool]" = None,
-                 nl_translation_config: "Optional[dict]" = None,
-                 seed_language: str = "en",
-                 event_bus: "Optional[EventBus]" = None,
-                 thread_config_manager: "Optional[ThreadConfigManager]" = None,
-                 backend_pools_by_name: "Optional[dict[str, BackendPool]]" = None,
-                 compaction_keep_recent: int = COMPACTION_KEEP_RECENT,
-                 tool_deps: "Optional[ToolDeps]" = None) -> None:
+    def __init__(
+        self,
+        main_pool: BackendPool,
+        compaction_pool: BackendPool,
+        convergence_protocol_pool: BackendPool,
+        broadcast_fn,
+        sub_session_getter: "Callable[[], SubSessionManager | None] | None" = None,
+        convergence_protocol_validators: "dict[str, bool] | None" = None,
+        nl_translation_pool: "BackendPool | None" = None,
+        nl_translation_config: "dict | None" = None,
+        seed_language: str = "en",
+        event_bus: "EventBus | None" = None,
+        thread_config_manager: "ThreadConfigManager | None" = None,
+        backend_pools_by_name: "dict[str, BackendPool] | None" = None,
+        compaction_keep_recent: int = COMPACTION_KEEP_RECENT,
+        tool_deps: "ToolDeps | None" = None,
+    ) -> None:
         self._main_pool = main_pool
         self._convergence_protocol_pool = convergence_protocol_pool
         self._cp_validators = convergence_protocol_validators or {}
         from wintermute.core.cp_runner import ConvergenceProtocolRunner
+
         self._cp_runner = ConvergenceProtocolRunner(
             pool=convergence_protocol_pool,
             scope="main",
@@ -183,7 +190,7 @@ class LLMThread:
         return self._convergence_protocol_pool
 
     @property
-    def nl_translation_pool(self) -> "Optional[BackendPool]":
+    def nl_translation_pool(self) -> "BackendPool | None":
         return self._nl_translation_pool
 
     @property
@@ -191,7 +198,7 @@ class LLMThread:
         return sum(q.qsize() for q in list(self._queues.values()))
 
     @property
-    def thread_config_manager(self) -> "Optional[ThreadConfigManager]":
+    def thread_config_manager(self) -> "ThreadConfigManager | None":
         return self._session_mgr.thread_config_manager
 
     @property
@@ -206,8 +213,10 @@ class LLMThread:
     # ------------------------------------------------------------------
 
     async def enqueue_user_message(
-        self, text: str, thread_id: str = "default",
-        content: Optional[list] = None,
+        self,
+        text: str,
+        thread_id: str = "default",
+        content: list | None = None,
         ephemeral: bool = False,
     ) -> "LLMReply":
         """Submit a user message and await the AI reply (returns LLMReply).
@@ -223,17 +232,26 @@ class LLMThread:
         """
         loop = asyncio.get_running_loop()
         fut: asyncio.Future = loop.create_future()
-        await self._dispatch(_QueueItem(
-            text=text, thread_id=thread_id, future=fut, content=content,
-            ephemeral=ephemeral,
-        ))
+        await self._dispatch(
+            _QueueItem(
+                text=text,
+                thread_id=thread_id,
+                future=fut,
+                content=content,
+                ephemeral=ephemeral,
+            )
+        )
         return await fut
 
-    async def enqueue_system_event(self, text: str, thread_id: str = "default", *,
-                                   is_proactive: bool = False) -> None:
+    async def enqueue_system_event(
+        self, text: str, thread_id: str = "default", *, is_proactive: bool = False
+    ) -> None:
         """Submit an autonomous system event (heartbeat, scheduled task, etc.)."""
-        await self._dispatch(_QueueItem(text=text, thread_id=thread_id, is_system_event=True,
-                                        is_proactive=is_proactive))
+        await self._dispatch(
+            _QueueItem(
+                text=text, thread_id=thread_id, is_system_event=True, is_proactive=is_proactive
+            )
+        )
 
     async def reset_session(self, thread_id: str = "default") -> None:
         await self._session_mgr.reset_session(thread_id)
@@ -241,13 +259,13 @@ class LLMThread:
     async def force_compact(self, thread_id: str = "default") -> None:
         await self._compactor.compact(thread_id)
 
-    def get_compaction_summary(self, thread_id: str = "default") -> Optional[str]:
+    def get_compaction_summary(self, thread_id: str = "default") -> str | None:
         return self._store.get_compaction_summary(thread_id)
 
-    def get_last_system_prompt(self, thread_id: str = "default") -> Optional[str]:
+    def get_last_system_prompt(self, thread_id: str = "default") -> str | None:
         return self._store.get_last_system_prompt(thread_id)
 
-    def get_last_tool_schemas(self, thread_id: str = "default") -> Optional[list]:
+    def get_last_tool_schemas(self, thread_id: str = "default") -> list | None:
         return self._store.get_last_tool_schemas(thread_id)
 
     def get_token_budget(self, thread_id: str = "default") -> dict:
@@ -269,7 +287,8 @@ class LLMThread:
             worker = self._workers.get(tid)
             if worker is None or worker.done():
                 task = asyncio.create_task(
-                    self._thread_worker(tid), name=f"llm_worker_{tid}",
+                    self._thread_worker(tid),
+                    name=f"llm_worker_{tid}",
                 )
                 self._workers[tid] = task
                 logger.debug("Spawned per-thread worker for %s", tid)
@@ -301,9 +320,14 @@ class LLMThread:
         self._running = True
         await self._store.load_summaries()
         self._ready.set()
-        logger.info("LLM thread started (endpoint=%s model=%s)", self._cfg.base_url, self._cfg.model)
+        logger.info(
+            "LLM thread started (endpoint=%s model=%s)", self._cfg.base_url, self._cfg.model
+        )
         if self._convergence_protocol_pool.enabled:
-            logger.info("Convergence Protocol enabled (model=%s)", self._convergence_protocol_pool.primary.model)
+            logger.info(
+                "Convergence Protocol enabled (model=%s)",
+                self._convergence_protocol_pool.primary.model,
+            )
         else:
             logger.info("Convergence Protocol disabled")
 
@@ -342,9 +366,10 @@ class LLMThread:
             while True:
                 try:
                     item = await asyncio.wait_for(
-                        queue.get(), timeout=self._worker_idle_timeout,
+                        queue.get(),
+                        timeout=self._worker_idle_timeout,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Attempt cleanup; if new work arrived, keep running.
                     if await self._cleanup_worker(thread_id):
                         logger.debug("Worker idle timeout for thread %s — exiting", thread_id)
@@ -358,14 +383,20 @@ class LLMThread:
                         logger.warning(
                             "Dropping stale Convergence Protocol correction for thread %s "
                             "(issued at seq=%d, current seq=%d)",
-                            thread_id, item.correction_for_seq, current_seq,
+                            thread_id,
+                            item.correction_for_seq,
+                            current_seq,
                         )
                         try:
                             await database.async_call(
                                 database.save_interaction_log,
-                                _time.time(), "convergence_stale_drop", thread_id,
+                                _time.time(),
+                                "convergence_stale_drop",
+                                thread_id,
                                 self._main_pool.last_used,
-                                item.text[:2000], "", "stale",
+                                item.text[:2000],
+                                "",
+                                "stale",
                             )
                         except Exception:  # noqa: BLE001
                             logger.debug("Failed to log stale drop", exc_info=True)
@@ -374,15 +405,17 @@ class LLMThread:
 
                 # Advance per-thread sequence counter.
                 if not item.is_system_event or item.convergence_depth > 0:
-                    self._store.thread_seq[thread_id] = (
-                        self._store.thread_seq.get(thread_id, 0) + 1
-                    )
+                    self._store.thread_seq[thread_id] = self._store.thread_seq.get(thread_id, 0) + 1
 
                 # Seed empty threads on first real user message.
                 # Skip seeding for ephemeral turns (group mode) — the bot
                 # should only respond to the actual @mention, not send an
                 # unsolicited greeting.
-                if not item.ephemeral and not item.is_system_event and not await database.async_call(database.thread_has_messages, thread_id):
+                if (
+                    not item.ephemeral
+                    and not item.is_system_event
+                    and not await database.async_call(database.thread_has_messages, thread_id)
+                ):
                     try:
                         seed_prompt = prompt_loader.load_seed(self._seed_language)
                         seed_item = _QueueItem(
@@ -394,7 +427,8 @@ class LLMThread:
                         if seed_reply.text:
                             try:
                                 await self._broadcast(
-                                    seed_reply.text, thread_id,
+                                    seed_reply.text,
+                                    thread_id,
                                     reasoning=seed_reply.reasoning,
                                 )
                             except Exception:  # noqa: BLE001
@@ -427,9 +461,13 @@ class LLMThread:
                     try:
                         await database.async_call(
                             database.save_interaction_log,
-                            _time.time(), "chat", thread_id,
+                            _time.time(),
+                            "chat",
+                            thread_id,
                             self._main_pool.last_used,
-                            item.text, str(exc), "error",
+                            item.text,
+                            str(exc),
+                            "error",
                         )
                     except Exception:  # noqa: BLE001
                         logger.debug("Failed to log chat error", exc_info=True)
@@ -448,34 +486,37 @@ class LLMThread:
                     text_to_send = reply.text or item.text
                     logger.info(
                         "Broadcasting system-event reply for thread %s (%d chars, reply_empty=%s, proactive=%s)",
-                        thread_id, len(text_to_send), not reply.text, item.is_proactive,
+                        thread_id,
+                        len(text_to_send),
+                        not reply.text,
+                        item.is_proactive,
                     )
                     try:
-                        await self._broadcast(text_to_send, thread_id,
-                                              reasoning=reply.reasoning,
-                                              is_proactive=item.is_proactive)
+                        await self._broadcast(
+                            text_to_send,
+                            thread_id,
+                            reasoning=reply.reasoning,
+                            is_proactive=item.is_proactive,
+                        )
                     except Exception:  # noqa: BLE001
-                        logger.exception("Failed to broadcast system-event reply for thread %s",
-                                         thread_id)
+                        logger.exception(
+                            "Failed to broadcast system-event reply for thread %s", thread_id
+                        )
                 elif item.convergence_depth > 0 and reply.text:
                     logger.info(
                         "Broadcasting Convergence correction response for thread %s "
                         "(depth=%d, tools=%s)",
-                        thread_id, item.convergence_depth,
+                        thread_id,
+                        item.convergence_depth,
                         reply.tool_calls_made or "none",
                     )
                     try:
-                        await self._broadcast(reply.text, thread_id,
-                                              reasoning=reply.reasoning)
+                        await self._broadcast(reply.text, thread_id, reasoning=reply.reasoning)
                     except Exception:  # noqa: BLE001
                         logger.exception("Failed to broadcast Convergence correction response")
 
                 # -- Convergence Protocol validation --
-                if (
-                    not thread_id.startswith("sub_")
-                    and reply.text
-                    and item.convergence_depth < 2
-                ):
+                if not thread_id.startswith("sub_") and reply.text and item.convergence_depth < 2:
                     seq_at_fire = self._store.thread_seq.get(thread_id, 0)
                     _prior_tc = self._session_mgr.prior_tool_calls.get(thread_id, [])
                     _cp_task = asyncio.create_task(
@@ -517,7 +558,7 @@ class LLMThread:
                                     and parts.index("skills") == parts.index("data") + 1
                                     and p.endswith(".md")
                                 ):
-                                    m = re.search(r'data/skills/([^/]+)\.md', p)
+                                    m = re.search(r"data/skills/([^/]+)\.md", p)
                                     if m:
                                         skills_loaded.append(m.group(1))
                             except Exception:
@@ -545,7 +586,9 @@ class LLMThread:
                             objective=item.text[:200] if item.text else "",
                             system_prompt_mode="main_thread",
                             tools_used=reply.tool_calls_made or None,
-                            tool_call_count=len(reply.tool_call_details) if reply.tool_call_details else 0,
+                            tool_call_count=len(reply.tool_call_details)
+                            if reply.tool_call_details
+                            else 0,
                             duration_seconds=reply.duration_seconds,
                             status="error" if _had_error else "completed",
                             result_length=len(reply.text) if reply.text else 0,
@@ -560,7 +603,9 @@ class LLMThread:
             logger.debug("Worker cancelled for thread %s", thread_id)
             await self._cleanup_worker(thread_id)
         except Exception:  # noqa: BLE001
-            logger.exception("Worker crashed for thread %s — will respawn on next message", thread_id)
+            logger.exception(
+                "Worker crashed for thread %s — will respawn on next message", thread_id
+            )
             await self._cleanup_worker(thread_id)
 
     def stop(self) -> None:
@@ -578,9 +623,9 @@ class LLMThread:
         thread_id: str,
         issued_for_seq: int = 0,
         convergence_depth: int = 0,
-        prior_assistant_message: Optional[str] = None,
-        prior_tool_calls_made: Optional[list[str]] = None,
-        recent_assistant_messages: Optional[list[str]] = None,
+        prior_assistant_message: str | None = None,
+        prior_tool_calls_made: list[str] | None = None,
+        recent_assistant_messages: list[str] | None = None,
     ) -> None:
         """Fire the Convergence Protocol pipeline to detect violations.
 
@@ -641,24 +686,39 @@ class LLMThread:
                 correction_text = result.correction
             logger.info(
                 "Convergence Protocol injecting correction into thread %s (depth=%d, hooks=%s)",
-                thread_id, new_depth,
+                thread_id,
+                new_depth,
                 [m["hook"] for m in result.correction_metadata],
             )
-            await self._dispatch(_QueueItem(
-                text=correction_text,
-                thread_id=thread_id,
-                is_system_event=True,
-                convergence_depth=new_depth,
-                correction_for_seq=issued_for_seq,
-            ))
+            await self._dispatch(
+                _QueueItem(
+                    text=correction_text,
+                    thread_id=thread_id,
+                    is_system_event=True,
+                    convergence_depth=new_depth,
+                    correction_for_seq=issued_for_seq,
+                )
+            )
 
     # ------------------------------------------------------------------
     # Core inference
     # ------------------------------------------------------------------
 
     async def _prepare_inference_context(
-        self, item: _QueueItem,
-    ) -> tuple[list[dict], str, str | None, "BackendPool", "ProviderConfig", bool, str, list | None, list | None, "set[str] | None"]:
+        self,
+        item: _QueueItem,
+    ) -> tuple[
+        list[dict],
+        str,
+        str | None,
+        "BackendPool",
+        "ProviderConfig",
+        bool,
+        str,
+        list | None,
+        list | None,
+        "set[str] | None",
+    ]:
         """Resolve config, build messages, fetch memories, assemble system prompt.
 
         Returns (messages, system_prompt, memory_query, pool, pool_cfg,
@@ -668,7 +728,10 @@ class LLMThread:
         """
         thread_id = item.thread_id
         messages = await self._store.build_messages(
-            item.text, item.is_system_event, thread_id, item.content,
+            item.text,
+            item.is_system_event,
+            thread_id,
+            item.content,
             ephemeral=item.ephemeral,
         )
 
@@ -683,7 +746,9 @@ class LLMThread:
         prompt_mode = resolved_cfg.system_prompt_mode if resolved_cfg else "full"
         # Resolve per-session compaction pool override for pre-compaction.
         _compaction_pool = self._session_mgr.resolve_role_pool(
-            thread_id, "compaction", self._compactor.pool,
+            thread_id,
+            "compaction",
+            self._compactor.pool,
         )
 
         # Build a query for vector memory retrieval (user message + last assistant reply).
@@ -705,8 +770,10 @@ class LLMThread:
             if memory_store.is_memory_backend_initialized() and _memory_query:
                 try:
                     return await asyncio.to_thread(
-                        memory_store.search, _memory_query,
-                        top_k=_mem_top_k, threshold=_mem_threshold,
+                        memory_store.search,
+                        _memory_query,
+                        top_k=_mem_top_k,
+                        threshold=_mem_threshold,
                     )
                 except Exception as e:
                     logger.warning("Memory search failed, continuing without memory context: %s", e)
@@ -725,11 +792,16 @@ class LLMThread:
             _prediction_results = None
         else:
             _memory_results, _prediction_results = await asyncio.gather(
-                _fetch_memories(), _fetch_predictions(),
+                _fetch_memories(),
+                _fetch_predictions(),
             )
 
         # Assemble system prompt first so we can measure its real token cost.
-        nl_enabled = resolved_cfg.nl_translation_enabled if resolved_cfg else self._nl_translation_config.get("enabled", False)
+        nl_enabled = (
+            resolved_cfg.nl_translation_enabled
+            if resolved_cfg
+            else self._nl_translation_config.get("enabled", False)
+        )
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
         summary = None if item.ephemeral else self._store.compaction_summaries.get(thread_id)
         # Determine tool exclusions based on sub_sessions_enabled flag.
@@ -746,8 +818,10 @@ class LLMThread:
             } - _exclude_tools
 
         system_prompt = prompt_assembler.assemble(
-            extra_summary=summary, query=_memory_query,
-            memory_results=_memory_results, prompt_mode=prompt_mode,
+            extra_summary=summary,
+            query=_memory_query,
+            memory_results=_memory_results,
+            prompt_mode=prompt_mode,
             tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
             nl_tools=nl_tools,
             prediction_results=_prediction_results,
@@ -758,38 +832,51 @@ class LLMThread:
             tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
             exclude_names=_exclude_tools,
         )
-        overhead_tokens = (
-            _count_tokens(system_prompt, pool_cfg.model)
-            + _count_tokens(json.dumps(active_schemas), pool_cfg.model)
+        overhead_tokens = _count_tokens(system_prompt, pool_cfg.model) + _count_tokens(
+            json.dumps(active_schemas), pool_cfg.model
         )
 
         history_tokens = sum(
-            _count_tokens(m["content"] if isinstance(m["content"], str) else
-                          " ".join(p.get("text", "") for p in m["content"] if isinstance(p, dict)),
-                          pool_cfg.model)
+            _count_tokens(
+                m["content"]
+                if isinstance(m["content"], str)
+                else " ".join(p.get("text", "") for p in m["content"] if isinstance(p, dict)),
+                pool_cfg.model,
+            )
             for m in messages
         )
         compaction_threshold = pool_cfg.context_size - pool_cfg.max_tokens - overhead_tokens
         if history_tokens > compaction_threshold:
             logger.info(
                 "History at %d tokens (overhead %d, threshold %d) – compacting before inference (thread=%s)",
-                history_tokens, overhead_tokens, compaction_threshold, thread_id,
+                history_tokens,
+                overhead_tokens,
+                compaction_threshold,
+                thread_id,
             )
             _keep_recent_override = resolved_cfg.compaction_keep_recent if resolved_cfg else None
             await self._compactor.compact(
-                thread_id, keep_recent=_keep_recent_override,
-                pool_override=_compaction_pool if _compaction_pool is not self._compactor.pool else None,
+                thread_id,
+                keep_recent=_keep_recent_override,
+                pool_override=_compaction_pool
+                if _compaction_pool is not self._compactor.pool
+                else None,
                 inference_context_size=pool_cfg.context_size,
             )
             messages = await self._store.build_messages(
-                item.text, item.is_system_event, thread_id, item.content,
+                item.text,
+                item.is_system_event,
+                thread_id,
+                item.content,
                 ephemeral=item.ephemeral,
             )
             # Reassemble with the updated compaction summary.
             summary = None if item.ephemeral else self._store.compaction_summaries.get(thread_id)
             system_prompt = prompt_assembler.assemble(
-                extra_summary=summary, query=_memory_query,
-                memory_results=_memory_results, prompt_mode=prompt_mode,
+                extra_summary=summary,
+                query=_memory_query,
+                memory_results=_memory_results,
+                prompt_mode=prompt_mode,
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
                 nl_tools=nl_tools,
                 prediction_results=_prediction_results,
@@ -800,26 +887,44 @@ class LLMThread:
         self._store.last_tool_schemas[thread_id] = active_schemas
 
         is_sub_session_result = item.is_system_event and "[SUB-SESSION " in item.text
-        return (messages, system_prompt, _memory_query, pool, pool_cfg,
-                is_sub_session_result, prompt_mode, _memory_results,
-                _prediction_results, _exclude_tools)
+        return (
+            messages,
+            system_prompt,
+            _memory_query,
+            pool,
+            pool_cfg,
+            is_sub_session_result,
+            prompt_mode,
+            _memory_results,
+            _prediction_results,
+            _exclude_tools,
+        )
 
     async def _save_user_message(
-        self, item: _QueueItem, pool_cfg: "ProviderConfig", is_sub_session_result: bool,
+        self,
+        item: _QueueItem,
+        pool_cfg: "ProviderConfig",
+        is_sub_session_result: bool,
     ) -> None:
         """Persist the incoming user/system message to DB and emit events."""
         await self._store.save_user_message(
-            text=item.text, thread_id=item.thread_id,
+            text=item.text,
+            thread_id=item.thread_id,
             is_system_event=item.is_system_event,
             is_sub_session_result=is_sub_session_result,
             convergence_depth=item.convergence_depth,
-            content=item.content, model=pool_cfg.model,
+            content=item.content,
+            model=pool_cfg.model,
         )
 
     async def _save_inference_result(
-        self, item: _QueueItem, reply: LLMReply,
-        pool: "BackendPool", pool_cfg: "ProviderConfig",
-        inference_duration: float, memory_query: str | None,
+        self,
+        item: _QueueItem,
+        reply: LLMReply,
+        pool: "BackendPool",
+        pool_cfg: "ProviderConfig",
+        inference_duration: float,
+        memory_query: str | None,
     ) -> None:
         """Log inference results, save assistant message, emit events, run post-inference tasks."""
         thread_id = item.thread_id
@@ -842,9 +947,13 @@ class LLMThread:
             }
             await database.async_call(
                 database.save_interaction_log,
-                _time.time(), _action, thread_id,
+                _time.time(),
+                _action,
+                thread_id,
                 pool.last_used,
-                item.text, reply.text, "ok",
+                item.text,
+                reply.text,
+                "ok",
                 raw_output=json.dumps(raw_output_data),
             )
         except Exception:  # noqa: BLE001
@@ -862,7 +971,9 @@ class LLMThread:
         try:
             await database.async_call(
                 database.save_interaction_log,
-                _time.time(), "inference_completed", thread_id,
+                _time.time(),
+                "inference_completed",
+                thread_id,
                 pool.last_used,
                 f"duration={inference_duration:.2f}s",
                 f"tool_calls={len(reply.tool_call_details) if reply.tool_call_details else 0}",
@@ -872,11 +983,14 @@ class LLMThread:
             logger.debug("Failed to log inference_completed", exc_info=True)
 
         await self._store.save_assistant_message(
-            reply.text, thread_id, pool_cfg.model,
+            reply.text,
+            thread_id,
+            pool_cfg.model,
         )
 
         await self._compactor.maybe_summarise_components(
-            thread_id, _from_system_event=item.is_system_event,
+            thread_id,
+            _from_system_event=item.is_system_event,
         )
 
         # Attach timing/backend metadata so callers can use it.
@@ -899,14 +1013,18 @@ class LLMThread:
         thread_id = item.thread_id
         try:
             return await self._inference_loop(
-                system_prompt, messages, thread_id,
+                system_prompt,
+                messages,
+                thread_id,
                 pool=pool,
                 exclude_tool_names=exclude_tool_names,
             )
         except ContextTooLargeError:
             logger.warning("Context too large for thread %s — forcing compaction", thread_id)
             _comp_pool = self._session_mgr.resolve_role_pool(
-                thread_id, "compaction", self._compactor.pool,
+                thread_id,
+                "compaction",
+                self._compactor.pool,
             )
             await self._compactor.compact(
                 thread_id,
@@ -914,7 +1032,10 @@ class LLMThread:
                 inference_context_size=pool.primary.context_size,
             )
             messages = await self._store.build_messages(
-                item.text, item.is_system_event, thread_id, item.content,
+                item.text,
+                item.is_system_event,
+                thread_id,
+                item.content,
                 ephemeral=item.ephemeral,
             )
             nl_enabled = self._nl_translation_config.get("enabled", False)
@@ -922,18 +1043,24 @@ class LLMThread:
             # Compute available_tools for prompt assembly when tools are excluded.
             _avail = None
             if exclude_tool_names:
-                _avail = {s["function"]["name"] for s in tool_module.TOOL_SCHEMAS} - exclude_tool_names
+                _avail = {
+                    s["function"]["name"] for s in tool_module.TOOL_SCHEMAS
+                } - exclude_tool_names
             summary = None if item.ephemeral else self._store.compaction_summaries.get(thread_id)
             system_prompt = prompt_assembler.assemble(
-                extra_summary=summary, query=memory_query,
-                memory_results=memory_results, prompt_mode=prompt_mode,
+                extra_summary=summary,
+                query=memory_query,
+                memory_results=memory_results,
+                prompt_mode=prompt_mode,
                 tool_profiles=self._tool_deps.tool_profiles if self._tool_deps else None,
                 nl_tools=nl_tools,
                 prediction_results=prediction_results,
                 available_tools=_avail,
             )
             return await self._inference_loop(
-                system_prompt, messages, thread_id,
+                system_prompt,
+                messages,
+                thread_id,
                 pool=pool,
                 exclude_tool_names=exclude_tool_names,
             )
@@ -942,10 +1069,18 @@ class LLMThread:
         thread_id = item.thread_id
 
         # 1. Prepare context: config, messages, memory, system prompt, pre-compaction.
-        (messages, system_prompt, _memory_query, pool, pool_cfg,
-         is_sub_session_result, _prompt_mode,
-         _memory_results, _prediction_results,
-         _exclude_tools) = await self._prepare_inference_context(item)
+        (
+            messages,
+            system_prompt,
+            _memory_query,
+            pool,
+            pool_cfg,
+            is_sub_session_result,
+            _prompt_mode,
+            _memory_results,
+            _prediction_results,
+            _exclude_tools,
+        ) = await self._prepare_inference_context(item)
 
         # 2. Save the incoming message to DB.
         await self._save_user_message(item, pool_cfg, is_sub_session_result)
@@ -953,8 +1088,13 @@ class LLMThread:
         # 3. Run inference (with compaction retry on context overflow).
         _inference_start = _time.time()
         reply = await self._run_inference_with_retry(
-            item, system_prompt, messages, pool,
-            _memory_query, _memory_results, _prompt_mode,
+            item,
+            system_prompt,
+            messages,
+            pool,
+            _memory_query,
+            _memory_results,
+            _prompt_mode,
             prediction_results=_prediction_results,
             exclude_tool_names=_exclude_tools,
         )
@@ -967,18 +1107,27 @@ class LLMThread:
             and self._cp_validators.get("credential_redaction", True) is not False
         ):
             if reply.text:
-                _redacted, _was_redacted = convergence_protocol_module.redact_credentials(reply.text)
+                _redacted, _was_redacted = convergence_protocol_module.redact_credentials(
+                    reply.text
+                )
                 if _was_redacted:
                     reply = replace(reply, text=_redacted)
                     logger.warning("Credential redaction triggered for thread %s", thread_id)
             if reply.reasoning:
-                _r_redacted, _r_was = convergence_protocol_module.redact_credentials(reply.reasoning)
+                _r_redacted, _r_was = convergence_protocol_module.redact_credentials(
+                    reply.reasoning
+                )
                 if _r_was:
                     reply = replace(reply, reasoning=_r_redacted)
 
         # 4. Save results, log, emit events, run post-inference tasks.
         await self._save_inference_result(
-            item, reply, pool, pool_cfg, _inference_duration, _memory_query,
+            item,
+            reply,
+            pool,
+            pool_cfg,
+            _inference_duration,
+            _memory_query,
         )
 
         return reply
@@ -987,11 +1136,15 @@ class LLMThread:
     # OpenAI inference loop (handles tool-use rounds)
     # ------------------------------------------------------------------
 
-    async def _inference_loop(self, system_prompt: str, messages: list[dict],
-                              thread_id: str = "default",
-                              disable_tools: bool = False,
-                              pool: "Optional[BackendPool]" = None,
-                              exclude_tool_names: "set[str] | None" = None) -> LLMReply:
+    async def _inference_loop(
+        self,
+        system_prompt: str,
+        messages: list[dict],
+        thread_id: str = "default",
+        disable_tools: bool = False,
+        pool: "BackendPool | None" = None,
+        exclude_tool_names: "set[str] | None" = None,
+    ) -> LLMReply:
         """
         Repeatedly call the API until finish_reason is not 'tool_calls'.
         The system prompt is prepended as a role=system message each call
@@ -1008,7 +1161,9 @@ class LLMThread:
         active_pool = pool or self._main_pool
         active_cfg = active_pool.primary if active_pool.enabled else self._cfg
         resolved_cfg = self._session_mgr.resolve_config(thread_id)
-        full_messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}] + messages
+        full_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt}
+        ] + messages
         nl_enabled = self._nl_translation_config.get("enabled", False)
         nl_tools = self._nl_translation_config.get("tools", set()) if nl_enabled else None
         _profiles = self._tool_deps.tool_profiles if self._tool_deps else None
@@ -1016,7 +1171,8 @@ class LLMThread:
             tools = None
         elif nl_tools or _profiles or exclude_tool_names:
             tools = tool_module.get_tool_schemas(
-                nl_tools=nl_tools, tool_profiles=_profiles,
+                nl_tools=nl_tools,
+                tool_profiles=_profiles,
                 exclude_names=exclude_tool_names,
             )
         else:
@@ -1030,17 +1186,21 @@ class LLMThread:
         # Use resolve_role_pool_override (returns None when no override is set)
         # for an explicit check — avoids fragile object-identity comparisons.
         _cp_pool_override = self._session_mgr.resolve_role_pool_override(
-            thread_id, "convergence_protocol",
+            thread_id,
+            "convergence_protocol",
         )
         _cp_pool = _cp_pool_override or self._convergence_protocol_pool
         _nl_pool = self._nl_translation_pool
         if self._nl_translation_pool:
             _nl_pool = self._session_mgr.resolve_role_pool(
-                thread_id, "nl_translation", self._nl_translation_pool,
+                thread_id,
+                "nl_translation",
+                self._nl_translation_pool,
             )
         # Sub-sessions pool override: None means "use SubSessionManager default".
         _sub_sessions_pool = self._session_mgr.resolve_role_pool_override(
-            thread_id, "sub_sessions",
+            thread_id,
+            "sub_sessions",
         )
 
         cp_enabled = _cp_pool.enabled if _cp_pool else False
@@ -1048,8 +1208,10 @@ class LLMThread:
         # Build per-turn CP runner with the (possibly overridden) pool.
         if _cp_pool_override and cp_enabled:
             from wintermute.core.cp_runner import ConvergenceProtocolRunner as _CPRunner
+
             _cp_runner_main = _CPRunner(
-                pool=_cp_pool_override, scope="main",
+                pool=_cp_pool_override,
+                scope="main",
                 enabled_validators=self._cp_validators,
             )
         else:
@@ -1061,16 +1223,25 @@ class LLMThread:
         if resolved_cfg:
             _cp_extra_context["max_inline_tool_rounds"] = resolved_cfg.max_inline_tool_rounds
 
-        async def _cp_check_main(phase, *, tool_name=None, tool_args=None,
-                                 tool_result=None, assistant_response="",
-                                 tool_calls_made=None, nl_tools=None):
+        async def _cp_check_main(
+            phase,
+            *,
+            tool_name=None,
+            tool_args=None,
+            tool_result=None,
+            assistant_response="",
+            tool_calls_made=None,
+            nl_tools=None,
+        ):
             return await _cp_runner_main.run_phase(
                 phase,
                 thread_id=thread_id,
                 tool_calls_made=tool_calls_made or [],
                 assistant_response=assistant_response,
-                tool_name=tool_name, tool_args=tool_args,
-                tool_result=tool_result, nl_tools=nl_tools,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                tool_result=tool_result,
+                nl_tools=nl_tools,
                 exclude_tool_names=exclude_tool_names,
                 extra_context=_cp_extra_context,
             )
@@ -1106,7 +1277,7 @@ class LLMThread:
                     ),
                     timeout=300.0,  # 5 min hard ceiling per LLM call
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 raise RuntimeError(
                     "LLM API call timed out after 300 seconds — backend may be "
                     "unresponsive. Aborting inference loop."
@@ -1118,7 +1289,11 @@ class LLMThread:
                     raise RuntimeError(
                         f"LLM returned empty response {empty_retries} times in a row; aborting"
                     )
-                logger.warning("LLM returned empty response, retrying (%d/%d)", empty_retries, MAX_EMPTY_RETRIES)
+                logger.warning(
+                    "LLM returned empty response, retrying (%d/%d)",
+                    empty_retries,
+                    MAX_EMPTY_RETRIES,
+                )
                 logger.debug("Empty response: %s", response)
                 full_messages.append({"role": "assistant", "content": ""})
                 full_messages.append({"role": "user", "content": "Continue."})
@@ -1138,7 +1313,8 @@ class LLMThread:
                 _tc_names = [tc["function"]["name"] for tc in msg_tool_calls]
                 logger.debug(
                     "Tool calls detected (finish_reason=%s): %s",
-                    response.finish_reason, _tc_names,
+                    response.finish_reason,
+                    _tc_names,
                 )
 
                 # Detect truncated tool calls (LLM hit max_tokens mid-JSON).
@@ -1148,33 +1324,42 @@ class LLMThread:
                         "Tool calls truncated (finish_reason=length) — "
                         "discarding and asking model to retry with smaller output"
                     )
-                    full_messages.append({
-                        "role": "user",
-                        "content": (
-                            "Your previous response was cut off (output token limit reached) "
-                            "while generating tool call arguments. Please retry — if the "
-                            "content is very large, split it into smaller parts using "
-                            "multiple sequential tool calls."
-                        ),
-                    })
+                    full_messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "Your previous response was cut off (output token limit reached) "
+                                "while generating tool call arguments. Please retry — if the "
+                                "content is very large, split it into smaller parts using "
+                                "multiple sequential tool calls."
+                            ),
+                        }
+                    )
                     continue
 
                 # Log this inference round (intermediate, tool-use round).
                 try:
                     await database.async_call(
                         database.save_interaction_log,
-                        _time.time(), "inference_round", thread_id,
+                        _time.time(),
+                        "inference_round",
+                        thread_id,
                         active_pool.last_used,
                         msg_content[:500] or f"[requesting {len(_tc_names)} tool call(s)]",
                         f"[tool_calls: {', '.join(_tc_names)}]",
                         "ok",
-                        raw_output=json.dumps({
-                            "tool_calls": [
-                                {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]}
-                                for tc in msg_tool_calls
-                            ],
-                            "content": msg_content,
-                        }),
+                        raw_output=json.dumps(
+                            {
+                                "tool_calls": [
+                                    {
+                                        "name": tc["function"]["name"],
+                                        "arguments": tc["function"]["arguments"],
+                                    }
+                                    for tc in msg_tool_calls
+                                ],
+                                "content": msg_content,
+                            }
+                        ),
                     )
                 except Exception:  # noqa: BLE001
                     logger.debug("Failed to log inference round", exc_info=True)
@@ -1185,22 +1370,24 @@ class LLMThread:
                 tc_ctx.pool_last_used = active_pool.last_used
                 for tc in msg_tool_calls:
                     outcome = await process_tool_call(
-                        tc, tc_ctx, tool_calls_made,
+                        tc,
+                        tc_ctx,
+                        tool_calls_made,
                         assistant_response=msg_content,
                     )
                     tool_call_details.extend(outcome.call_details)
-                    full_messages.append({
-                        "role":         "tool",
-                        "tool_call_id": tc["id"],
-                        "content":      outcome.content,
-                    })
+                    full_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": outcome.content,
+                        }
+                    )
                 continue  # next round
 
             # -- Rescue XML/text-encoded tool calls -------------------
             if msg_content and tools:
-                _known_names = {
-                    s["function"]["name"] for s in tools
-                }
+                _known_names = {s["function"]["name"] for s in tools}
                 _rescued = rescue_tool_calls(msg_content, _known_names)
                 if _rescued:
                     # Log this as an inference round with rescued tool calls so
@@ -1209,54 +1396,75 @@ class LLMThread:
                         _rescued_names = [tc.function.name for tc in _rescued]
                         await database.async_call(
                             database.save_interaction_log,
-                            _time.time(), "inference_round", thread_id,
+                            _time.time(),
+                            "inference_round",
+                            thread_id,
                             active_pool.last_used,
                             msg_content[:500],
                             f"[rescued_tool_calls: {', '.join(_rescued_names)}]",
                             "ok",
-                            raw_output=json.dumps({
-                                "tool_calls": [
-                                    {"name": tc.function.name, "arguments": tc.function.arguments}
-                                    for tc in _rescued
-                                ],
-                                "content": msg_content,
-                                "rescue": True,
-                            }),
+                            raw_output=json.dumps(
+                                {
+                                    "tool_calls": [
+                                        {
+                                            "name": tc.function.name,
+                                            "arguments": tc.function.arguments,
+                                        }
+                                        for tc in _rescued
+                                    ],
+                                    "content": msg_content,
+                                    "rescue": True,
+                                }
+                            ),
                         )
                     except Exception:  # noqa: BLE001
                         logger.debug("Failed to log rescued tool calls", exc_info=True)
                     # Synthesise an assistant message with the rescued calls
                     # and inject tool-result messages, then loop again.
-                    full_messages.append({
-                        "role": "assistant",
-                        "content": msg_content,
-                        "tool_calls": [
-                            {"id": tc.id, "type": tc.type,
-                             "function": {"name": tc.function.name,
-                                          "arguments": tc.function.arguments}}
-                            for tc in _rescued
-                        ],
-                    })
+                    full_messages.append(
+                        {
+                            "role": "assistant",
+                            "content": msg_content,
+                            "tool_calls": [
+                                {
+                                    "id": tc.id,
+                                    "type": tc.type,
+                                    "function": {
+                                        "name": tc.function.name,
+                                        "arguments": tc.function.arguments,
+                                    },
+                                }
+                                for tc in _rescued
+                            ],
+                        }
+                    )
                     tc_ctx.pool_last_used = active_pool.last_used
                     for tc in _rescued:
                         outcome = await process_tool_call(
-                            tc, tc_ctx, tool_calls_made,
+                            tc,
+                            tc_ctx,
+                            tool_calls_made,
                             assistant_response=msg_content,
                         )
                         tool_call_details.extend(outcome.call_details)
-                        full_messages.append({
-                            "role":         "tool",
-                            "tool_call_id": tc.id,
-                            "content":      outcome.content,
-                        })
+                        full_messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": outcome.content,
+                            }
+                        )
                     continue  # next round
 
             # Terminal response.
             content = msg_content
             reasoning = "\n\n".join(reasoning_parts) if reasoning_parts else None
-            return LLMReply(text=content, reasoning=reasoning,
-                            tool_calls_made=tool_calls_made,
-                            tool_call_details=tool_call_details)
+            return LLMReply(
+                text=content,
+                reasoning=reasoning,
+                tool_calls_made=tool_calls_made,
+                tool_call_details=tool_call_details,
+            )
 
     async def _run_phase_check(
         self,
@@ -1264,12 +1472,12 @@ class LLMThread:
         thread_id: str,
         tool_calls_made: list[str],
         assistant_response: str = "",
-        tool_name: Optional[str] = None,
-        tool_args: Optional[dict] = None,
-        tool_result: Optional[str] = None,
+        tool_name: str | None = None,
+        tool_args: dict | None = None,
+        tool_result: str | None = None,
         nl_tools: "set[str] | None" = None,
         exclude_tool_names: "set[str] | None" = None,
-        extra_context: Optional[dict] = None,
+        extra_context: dict | None = None,
     ) -> Optional["convergence_protocol_module.ConvergenceResult"]:
         """Run Convergence Protocol hooks for a specific phase.
 
@@ -1288,4 +1496,3 @@ class LLMThread:
             exclude_tool_names=exclude_tool_names,
             extra_context=extra_context,
         )
-

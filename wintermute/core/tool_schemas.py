@@ -12,9 +12,9 @@ def _fn(name: str, description: str, parameters: dict) -> dict:
     return {
         "type": "function",
         "function": {
-            "name":        name,
+            "name": name,
             "description": description,
-            "parameters":  parameters,
+            "parameters": parameters,
         },
     }
 
@@ -325,8 +325,14 @@ TOOL_SCHEMAS = [
             "properties": {
                 "query_type": {
                     "type": "string",
-                    "enum": ["outcome_stats", "recent_outcomes", "skill_stats",
-                             "top_tools", "interaction_log", "self_model"],
+                    "enum": [
+                        "outcome_stats",
+                        "recent_outcomes",
+                        "skill_stats",
+                        "top_tools",
+                        "interaction_log",
+                        "self_model",
+                    ],
                     "description": (
                         "outcome_stats: aggregate success/failure counts. "
                         "recent_outcomes: latest sub-session results. "
@@ -431,19 +437,19 @@ TOOL_SCHEMAS = [
 # ---------------------------------------------------------------------------
 
 TOOL_CATEGORIES: dict[str, str] = {
-    "execute_shell":      "execution",
-    "read_file":          "execution",
-    "write_file":         "execution",
-    "search_web":         "research",
-    "send_file":          "execution",
-    "send_message":       "execution",
-    "fetch_url":          "research",
-    "worker_delegation":  "orchestration",
-    "task":               "orchestration",
-    "append_memory":      "orchestration",
-    "skill":              "research",
-    "query_telemetry":    "orchestration",
-    "restart_self":       "orchestration",
+    "execute_shell": "execution",
+    "read_file": "execution",
+    "write_file": "execution",
+    "search_web": "research",
+    "send_file": "execution",
+    "send_message": "execution",
+    "fetch_url": "research",
+    "worker_delegation": "orchestration",
+    "task": "orchestration",
+    "append_memory": "orchestration",
+    "skill": "research",
+    "query_telemetry": "orchestration",
+    "restart_self": "orchestration",
 }
 
 # Tools excluded from sub-sessions by default (main-agent only).
@@ -525,14 +531,13 @@ NL_TOOL_SCHEMAS = [
     ),
 ]
 
-NL_SCHEMA_MAP: dict[str, dict] = {
-    schema["function"]["name"]: schema for schema in NL_TOOL_SCHEMAS
-}
+NL_SCHEMA_MAP: dict[str, dict] = {schema["function"]["name"]: schema for schema in NL_TOOL_SCHEMAS}
 
 
 def _inject_profiles(schema: dict, profiles: dict[str, dict]) -> dict:
     """Return a copy of *schema* with profile names injected into the description."""
     import copy
+
     props = schema.get("function", {}).get("parameters", {}).get("properties", {})
     profile_prop = props.get("profile")
     if profile_prop is None:
@@ -549,10 +554,12 @@ def _inject_profiles(schema: dict, profiles: dict[str, dict]) -> dict:
     return schema
 
 
-def get_tool_schemas(categories: set[str] | None = None,
-                     nl_tools: set[str] | None = None,
-                     tool_profiles: dict[str, dict] | None = None,
-                     exclude_names: set[str] | None = None) -> list[dict]:
+def get_tool_schemas(
+    categories: set[str] | None = None,
+    nl_tools: set[str] | None = None,
+    tool_profiles: dict[str, dict] | None = None,
+    exclude_names: set[str] | None = None,
+) -> list[dict]:
     """Return tool schemas filtered by category, with optional NL substitution.
 
     If *categories* is None, return all schemas (used by the main agent).
@@ -573,7 +580,8 @@ def get_tool_schemas(categories: set[str] | None = None,
         schemas = list(TOOL_SCHEMAS)
     else:
         schemas = [
-            schema for schema in TOOL_SCHEMAS
+            schema
+            for schema in TOOL_SCHEMAS
             if TOOL_CATEGORIES.get(schema["function"]["name"]) in categories
         ]
     if exclude_names:

@@ -18,18 +18,17 @@ from __future__ import annotations
 import json
 import logging
 import time as _time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import yaml
 
-from wintermute.infra import database
-from wintermute.infra import data_versioning
+from wintermute.infra import data_versioning, database
 
 if TYPE_CHECKING:
-    from wintermute.core.types import BackendPool
     from wintermute.core.sub_session import SubSessionManager
+    from wintermute.core.types import BackendPool
     from wintermute.infra.event_bus import EventBus
     from wintermute.workers.memory_harvest import MemoryHarvestLoop
 
@@ -51,10 +50,10 @@ class SelfModelProfiler:
     def __init__(
         self,
         config: SelfModelConfig,
-        pool: Optional[BackendPool] = None,
-        event_bus: Optional[EventBus] = None,
-        sub_session_manager: Optional[SubSessionManager] = None,
-        memory_harvest_loop: Optional[MemoryHarvestLoop] = None,
+        pool: BackendPool | None = None,
+        event_bus: EventBus | None = None,
+        sub_session_manager: SubSessionManager | None = None,
+        memory_harvest_loop: MemoryHarvestLoop | None = None,
     ) -> None:
         self._cfg = config
         self._pool = pool
@@ -113,7 +112,8 @@ class SelfModelProfiler:
             try:
                 recent_harvests = await database.async_call(
                     database.get_interaction_log,
-                    limit=5, action_filter="memory_harvest",
+                    limit=5,
+                    action_filter="memory_harvest",
                 )
             except Exception:
                 pass
@@ -130,7 +130,8 @@ class SelfModelProfiler:
 
             logger.info(
                 "[self_model] Updated — %d metric(s), %d tuning change(s)",
-                len(metrics), len(changes),
+                len(metrics),
+                len(changes),
             )
         except Exception:
             logger.exception("[self_model] Error during update")
@@ -149,7 +150,9 @@ class SelfModelProfiler:
             try:
                 val = int(tuned_timeout)
             except (TypeError, ValueError):
-                logger.warning("[self_model] Ignoring invalid tuned_sub_session_timeout: %r", tuned_timeout)
+                logger.warning(
+                    "[self_model] Ignoring invalid tuned_sub_session_timeout: %r", tuned_timeout
+                )
             else:
                 val = max(lo_timeout, min(val, hi_timeout))
                 self._sub_sessions.default_timeout = val
@@ -160,7 +163,9 @@ class SelfModelProfiler:
             try:
                 val = int(tuned_harvest)
             except (TypeError, ValueError):
-                logger.warning("[self_model] Ignoring invalid tuned_harvest_threshold: %r", tuned_harvest)
+                logger.warning(
+                    "[self_model] Ignoring invalid tuned_harvest_threshold: %r", tuned_harvest
+                )
             else:
                 val = max(lo_harvest, min(val, hi_harvest))
                 self._harvest.message_threshold = val
@@ -232,6 +237,7 @@ class SelfModelProfiler:
         # Skill stats (from skill_store).
         try:
             from wintermute.infra import skill_store
+
             store_stats = skill_store.stats()
             metrics["skill_count"] = len(store_stats)
             metrics["skill_total_reads"] = sum(s.get("read_count", 0) for s in store_stats.values())
@@ -266,14 +272,23 @@ class SelfModelProfiler:
                 new_timeout = min(current_timeout + 60, hi_timeout)
                 self._sub_sessions.default_timeout = new_timeout
                 self._state["tuned_sub_session_timeout"] = new_timeout
-                changes.append(f"Increased sub-session timeout {current_timeout}s → {new_timeout}s (timeout_rate={timeout_rate}%)")
+                changes.append(
+                    f"Increased sub-session timeout {current_timeout}s → {new_timeout}s (timeout_rate={timeout_rate}%)"
+                )
                 logger.info("[self_model] %s", changes[-1])
 
-            elif timeout_rate < 5 and avg_duration and avg_duration < current_timeout * 0.4 and current_timeout > lo_timeout:
+            elif (
+                timeout_rate < 5
+                and avg_duration
+                and avg_duration < current_timeout * 0.4
+                and current_timeout > lo_timeout
+            ):
                 new_timeout = max(current_timeout - 60, lo_timeout)
                 self._sub_sessions.default_timeout = new_timeout
                 self._state["tuned_sub_session_timeout"] = new_timeout
-                changes.append(f"Decreased sub-session timeout {current_timeout}s → {new_timeout}s (timeout_rate={timeout_rate}%, avg_duration={avg_duration:.0f}s)")
+                changes.append(
+                    f"Decreased sub-session timeout {current_timeout}s → {new_timeout}s (timeout_rate={timeout_rate}%, avg_duration={avg_duration:.0f}s)"
+                )
                 logger.info("[self_model] %s", changes[-1])
 
         # --- Memory harvest threshold tuning ---
@@ -285,20 +300,23 @@ class SelfModelProfiler:
                 new_threshold = max(current_threshold - 5, lo_harvest)
                 self._harvest.message_threshold = new_threshold
                 self._state["tuned_harvest_threshold"] = new_threshold
-                changes.append(f"Decreased harvest threshold {current_threshold} → {new_threshold} (backlog detected)")
+                changes.append(
+                    f"Decreased harvest threshold {current_threshold} → {new_threshold} (backlog detected)"
+                )
                 logger.info("[self_model] %s", changes[-1])
             elif current_threshold < hi_harvest and recent_harvests is not None:
                 # Check recent harvests for low yield → increase threshold.
                 try:
-                    low_yield = (
-                        len(recent_harvests) >= 3
-                        and all(len(h.get("output", "")) < 50 for h in recent_harvests)
+                    low_yield = len(recent_harvests) >= 3 and all(
+                        len(h.get("output", "")) < 50 for h in recent_harvests
                     )
                     if low_yield:
                         new_threshold = min(current_threshold + 5, hi_harvest)
                         self._harvest.message_threshold = new_threshold
                         self._state["tuned_harvest_threshold"] = new_threshold
-                        changes.append(f"Increased harvest threshold {current_threshold} → {new_threshold} (low yield)")
+                        changes.append(
+                            f"Increased harvest threshold {current_threshold} → {new_threshold} (low yield)"
+                        )
                         logger.info("[self_model] %s", changes[-1])
                 except Exception:
                     pass
@@ -316,6 +334,7 @@ class SelfModelProfiler:
 
         try:
             from wintermute.infra import prompt_loader
+
             prompt_text = prompt_loader.load(
                 "SELF_MODEL_SUMMARY.txt",
                 metrics=json.dumps(metrics, default=str),
@@ -335,7 +354,7 @@ class SelfModelProfiler:
             )
             if response.content is not None:
                 text = (response.content or "").strip()
-                return text[:self._cfg.summary_max_chars]
+                return text[: self._cfg.summary_max_chars]
         except Exception:
             logger.debug("[self_model] LLM summary call failed", exc_info=True)
 

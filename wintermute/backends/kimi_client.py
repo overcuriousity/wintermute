@@ -56,9 +56,7 @@ class KimiCodeClient:
 
     async def _ensure_valid_token(self) -> None:
         if not self._creds.get("access_token"):
-            raise RuntimeError(
-                "Kimi-Code is not authenticated. Use /kimi-auth to authorize."
-            )
+            raise RuntimeError("Kimi-Code is not authenticated. Use /kimi-auth to authorize.")
         if not kimi_auth.is_token_expired(self._creds):
             return
         async with self._refresh_lock:

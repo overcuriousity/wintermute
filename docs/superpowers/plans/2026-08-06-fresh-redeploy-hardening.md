@@ -185,6 +185,7 @@ from wintermute.core.tool_schemas import TOOL_CATEGORIES
 
 # ── workflow_spawn ──────────────────────────────────────────────────
 
+
 def test_workflow_spawn_confirmed_when_not_called():
     assert cp.validate_workflow_spawn({"tool_calls_made": []}, {}) is True
 
@@ -200,6 +201,7 @@ def test_workflow_spawn_false_positive_called_prior_turn():
 
 
 # ── phantom_tool_result ─────────────────────────────────────────────
+
 
 def test_phantom_confirmed_when_claimed_tool_never_called():
     ctx = {"tool_calls_made": []}
@@ -230,6 +232,7 @@ def test_phantom_false_positive_no_tool_named_but_tools_ran():
 
 # ── empty_promise ───────────────────────────────────────────────────
 
+
 def test_empty_promise_confirmed_when_no_tools_called():
     ctx = {
         "tool_calls_made": [],
@@ -256,14 +259,14 @@ def test_empty_promise_confirmed_despite_trailing_question():
     ctx = {
         "tool_calls_made": [],
         "assistant_response": (
-            "I will now read the config file and report the results back to you.\n"
-            "Anything else?"
+            "I will now read the config file and report the results back to you.\nAnything else?"
         ),
     }
     assert cp.validate_empty_promise(ctx, {}) is True
 
 
 # ── task_complete ───────────────────────────────────────────────────
+
 
 def test_task_complete_confirmed_on_short_reason():
     ctx = {"tool_name": "task", "tool_args": {"action": "complete", "reason": "ok"}}
@@ -290,6 +293,7 @@ def test_task_complete_ignores_other_tools():
 
 
 # ── repetition_loop ─────────────────────────────────────────────────
+
 
 def test_repetition_loop_confirmed_on_near_identical_response():
     text = "I checked the scheduler and it reports three pending jobs right now."
@@ -322,6 +326,7 @@ def test_repetition_loop_passes_with_no_history():
 
 
 # ── inline_tool_limit ───────────────────────────────────────────────
+
 
 def _exec_tools(n: int) -> list[str]:
     """Return *n* tool names whose category is execution or research."""
@@ -392,6 +397,7 @@ def test_inline_tool_limit_per_thread_override_wins(inline_limit_two):
 
 # ── credential_redaction ────────────────────────────────────────────
 
+
 def test_credential_redaction_confirmed_when_placeholder_present():
     ctx = {"assistant_response": f"Your key is {cp._SECRET_PLACEHOLDER} now."}
     assert cp.validate_credential_redaction(ctx, {}) is True
@@ -403,6 +409,7 @@ def test_credential_redaction_passes_on_clean_response():
 
 
 # ── tool_schema ─────────────────────────────────────────────────────
+
 
 def test_tool_schema_skips_when_not_pre_execution():
     """tool_args is None outside the pre_execution phase."""
@@ -669,6 +676,7 @@ def args_of(call) -> dict:
 
 # ── _try_parse_json_body ────────────────────────────────────────────
 
+
 def test_json_body_flat_arguments():
     body = '{"name": "read_file", "arguments": {"path": "/tmp/x"}}'
     calls = _try_parse_json_body(body, KNOWN)
@@ -720,12 +728,9 @@ def test_json_body_rejects_empty():
 
 # ── _try_parse_invoke_body ──────────────────────────────────────────
 
+
 def test_invoke_body_single_block():
-    body = (
-        '<invoke name="read_file">'
-        '<parameter name="path">/tmp/x</parameter>'
-        "</invoke>"
-    )
+    body = '<invoke name="read_file"><parameter name="path">/tmp/x</parameter></invoke>'
     calls = _try_parse_invoke_body(body, KNOWN)
     assert len(calls) == 1
     assert calls[0].function.name == "read_file"
@@ -748,6 +753,7 @@ def test_invoke_body_skips_unknown_tool():
 
 # ── _parse_minimax_kv ───────────────────────────────────────────────
 
+
 def test_minimax_kv_quoted_and_bare():
     assert _parse_minimax_kv('path="/tmp/x" limit=10') == {"path": "/tmp/x", "limit": "10"}
 
@@ -757,6 +763,7 @@ def test_minimax_kv_unescapes_inner_quotes():
 
 
 # ── _parse_cli_args ─────────────────────────────────────────────────
+
 
 def test_cli_args_quoted_value_and_numeric_coercion():
     parsed = _parse_cli_args('--operation "interaction_log"\n--limit 10')
@@ -777,6 +784,7 @@ def test_cli_args_single_quoted_value():
 
 # ── _parse_yaml_like_kv ─────────────────────────────────────────────
 
+
 def test_yaml_like_kv_dash_prefixed_lines():
     body = (
         '- objective: "Implement GUI functionality"\n'
@@ -796,6 +804,7 @@ def test_yaml_like_kv_unquoted_values():
 
 # ── _parse_arrow_style ──────────────────────────────────────────────
 
+
 def test_arrow_style_with_json_args():
     body = '{tool => "read_file", args => {"path": "/tmp/x"}}'
     calls = _parse_arrow_style(body, KNOWN)
@@ -810,6 +819,7 @@ def test_arrow_style_rejects_unknown_tool():
 
 
 # ── rescue_tool_calls, end to end ───────────────────────────────────
+
 
 def test_rescue_generic_xml_wrapper():
     content = '<tool_call>{"name": "read_file", "arguments": {"path": "/tmp/x"}}</tool_call>'
@@ -827,8 +837,7 @@ def test_rescue_fenced_json_block():
 
 def test_rescue_bare_invoke_block():
     content = (
-        'Here you go:\n<invoke name="read_file">'
-        '<parameter name="path">/tmp/x</parameter></invoke>'
+        'Here you go:\n<invoke name="read_file"><parameter name="path">/tmp/x</parameter></invoke>'
     )
     calls = rescue_tool_calls(content, KNOWN)
     assert [c.function.name for c in calls] == ["read_file"]
@@ -906,6 +915,7 @@ from wintermute.core.nl_translator import (
 
 # ── is_nl_tool_call ─────────────────────────────────────────────────
 
+
 def test_is_nl_tool_call_true_for_nl_tool_with_description():
     assert is_nl_tool_call("task", {"description": "list my tasks"}) is True
 
@@ -932,6 +942,7 @@ def test_nl_tools_membership_is_stable():
 
 
 # ── _task_list_fastpath ─────────────────────────────────────────────
+
 
 def test_task_list_fastpath_default_list():
     assert _task_list_fastpath("list tasks") == {"action": "list"}
@@ -965,6 +976,7 @@ def test_task_list_fastpath_returns_a_fresh_dict_each_call():
 
 
 # ── _fix_unescaped_control_chars ────────────────────────────────────
+
 
 def test_fix_control_chars_escapes_raw_newline_in_string():
     broken = '{"text": "line one\nline two"}'
@@ -1161,7 +1173,7 @@ Expected: a hit in `prompt_loader.py` inside `REQUIRED_FILES`, and a hit in `wor
 In `wintermute/infra/prompt_loader.py`, delete this line from the `REQUIRED_FILES` list:
 
 ```python
-    "DREAM_SKILLS_CONDENSATION_PROMPT.txt",
+("DREAM_SKILLS_CONDENSATION_PROMPT.txt",)
 ```
 
 - [ ] **Step 3: Remove the condensation block from the dreaming phase**
@@ -1402,8 +1414,8 @@ _MODEL_URL = f"{_BASE_URL}/onnx/model.onnx"
 _TOKENIZER_URL = f"{_BASE_URL}/tokenizer.json"
 
 _lock = threading.Lock()
-_session = None      # onnxruntime.InferenceSession
-_tokenizer = None    # tokenizers.Tokenizer
+_session = None  # onnxruntime.InferenceSession
+_tokenizer = None  # tokenizers.Tokenizer
 _available: "bool | None" = None
 
 
@@ -1416,6 +1428,7 @@ def _import_backend():
     """Import the optional extra.  Raises ImportError when it is absent."""
     import onnxruntime
     import tokenizers
+
     return onnxruntime, tokenizers
 
 
@@ -1605,28 +1618,29 @@ This one edit serves all 15 `_embed()` call sites across `memory_store`, `skill_
 In `wintermute/infra/memory_store.py`, inside `init()`, replace the `if not has_embeddings: raise ValueError(...)` block with:
 
 ```python
-    if not has_embeddings:
-        from wintermute.infra import local_embeddings
+if not has_embeddings:
+    from wintermute.infra import local_embeddings
 
-        if not local_embeddings.is_available():
-            raise ValueError(
-                "memory.embeddings.endpoint is required. "
-                "Configure an OpenAI-compatible /v1/embeddings endpoint in config.yaml,\n"
-                "  or install the zero-config local fallback: "
-                "uv sync --extra local-embeddings\n"
-                "  Example:\n"
-                "    memory:\n"
-                "      embeddings:\n"
-                "        endpoint: \"http://localhost:8080/v1\"\n"
-                "        model: \"text-embedding-3-small\"\n"
-                "        dimensions: 1536"
-            )
-        logger.warning(
-            "No embeddings endpoint configured — using the local %s fallback "
-            "(%d-dim). Quality is below a hosted model; configure "
-            "memory.embeddings.endpoint for better recall.",
-            local_embeddings.MODEL_ID, local_embeddings.DIMENSIONS,
+    if not local_embeddings.is_available():
+        raise ValueError(
+            "memory.embeddings.endpoint is required. "
+            "Configure an OpenAI-compatible /v1/embeddings endpoint in config.yaml,\n"
+            "  or install the zero-config local fallback: "
+            "uv sync --extra local-embeddings\n"
+            "  Example:\n"
+            "    memory:\n"
+            "      embeddings:\n"
+            '        endpoint: "http://localhost:8080/v1"\n'
+            '        model: "text-embedding-3-small"\n'
+            "        dimensions: 1536"
         )
+    logger.warning(
+        "No embeddings endpoint configured — using the local %s fallback "
+        "(%d-dim). Quality is below a hosted model; configure "
+        "memory.embeddings.endpoint for better recall.",
+        local_embeddings.MODEL_ID,
+        local_embeddings.DIMENSIONS,
+    )
 ```
 
 Apply the same change to the corresponding `if not _embed_cfg.get("endpoint"): raise ValueError(...)` block in `wintermute/infra/skill_store.py:1068`, adapting the message to say "skill store" as the existing text does.
@@ -1636,15 +1650,10 @@ Apply the same change to the corresponding `if not _embed_cfg.get("endpoint"): r
 `LocalVectorBackend` stores bare float32 blobs with no recorded dimension, so switching providers would surface as an opaque numpy shape error mid-query. In `LocalVectorBackend.init()` in `memory_store.py`, after the existing `CREATE TABLE` and inline column migrations and before `conn.commit()`, add:
 
 ```python
-            # Record which embedding provider built this store.  Switching
-            # providers changes the vector dimension, which silently breaks
-            # similarity search — fail loudly instead.
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS store_meta ("
-                "  key TEXT PRIMARY KEY,"
-                "  value TEXT NOT NULL"
-                ")"
-            )
+# Record which embedding provider built this store.  Switching
+# providers changes the vector dimension, which silently breaks
+# similarity search — fail loudly instead.
+conn.execute("CREATE TABLE IF NOT EXISTS store_meta (  key TEXT PRIMARY KEY,  value TEXT NOT NULL)")
 ```
 
 Then, still inside `init()` and after the commit, add:
@@ -1656,62 +1665,60 @@ Then, still inside `init()` and after the commit, add:
 And add this method to `LocalVectorBackend`:
 
 ```python
-    def _active_provider(self) -> tuple[str, int]:
-        """Return (provider_name, dimension) for the currently configured
-        embedding source."""
-        if self._embed_cfg.get("endpoint"):
-            model = self._embed_cfg.get("model", "text-embedding-3-small")
-            return f"endpoint:{model}", int(self._embed_cfg.get("dimensions", 0))
-        from wintermute.infra import local_embeddings
-        return local_embeddings.provider_name(), local_embeddings.DIMENSIONS
+def _active_provider(self) -> tuple[str, int]:
+    """Return (provider_name, dimension) for the currently configured
+    embedding source."""
+    if self._embed_cfg.get("endpoint"):
+        model = self._embed_cfg.get("model", "text-embedding-3-small")
+        return f"endpoint:{model}", int(self._embed_cfg.get("dimensions", 0))
+    from wintermute.infra import local_embeddings
 
-    def _check_provider_compatibility(self) -> None:
-        """Refuse to start when the stored vectors were built by a provider
-        with a different dimension."""
-        provider, dimension = self._active_provider()
-        with self._lock:
-            conn = self._connect()
-            try:
-                row = conn.execute(
-                    "SELECT value FROM store_meta WHERE key = 'embedding_dimension'"
-                ).fetchone()
-                stored_dim = int(row[0]) if row else None
-                has_vectors = conn.execute(
-                    "SELECT 1 FROM local_vectors LIMIT 1"
-                ).fetchone() is not None
+    return local_embeddings.provider_name(), local_embeddings.DIMENSIONS
 
-                if stored_dim is None:
-                    if has_vectors and dimension:
-                        # Pre-existing store from before the guard existed:
-                        # adopt its dimension from an actual stored vector.
-                        blob = conn.execute(
-                            "SELECT vector FROM local_vectors LIMIT 1"
-                        ).fetchone()[0]
-                        stored_dim = len(blob) // 4  # float32
-                    else:
-                        stored_dim = dimension
-                    conn.execute(
-                        "INSERT OR REPLACE INTO store_meta (key, value) VALUES (?, ?)",
-                        ("embedding_dimension", str(stored_dim)),
-                    )
-                    conn.execute(
-                        "INSERT OR REPLACE INTO store_meta (key, value) VALUES (?, ?)",
-                        ("embedding_provider", provider),
-                    )
-                    conn.commit()
 
-                if dimension and stored_dim and stored_dim != dimension:
-                    raise ValueError(
-                        f"Memory store was built with {stored_dim}-dimensional "
-                        f"vectors, but the active embedding provider "
-                        f"({provider}) produces {dimension}-dimensional ones. "
-                        f"Similarity search would be meaningless.\n"
-                        f"  Either restore the previous embeddings "
-                        f"configuration, or delete {self._db_path} to start "
-                        f"fresh (existing memories will be lost)."
-                    )
-            finally:
-                conn.close()
+def _check_provider_compatibility(self) -> None:
+    """Refuse to start when the stored vectors were built by a provider
+    with a different dimension."""
+    provider, dimension = self._active_provider()
+    with self._lock:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT value FROM store_meta WHERE key = 'embedding_dimension'"
+            ).fetchone()
+            stored_dim = int(row[0]) if row else None
+            has_vectors = conn.execute("SELECT 1 FROM local_vectors LIMIT 1").fetchone() is not None
+
+            if stored_dim is None:
+                if has_vectors and dimension:
+                    # Pre-existing store from before the guard existed:
+                    # adopt its dimension from an actual stored vector.
+                    blob = conn.execute("SELECT vector FROM local_vectors LIMIT 1").fetchone()[0]
+                    stored_dim = len(blob) // 4  # float32
+                else:
+                    stored_dim = dimension
+                conn.execute(
+                    "INSERT OR REPLACE INTO store_meta (key, value) VALUES (?, ?)",
+                    ("embedding_dimension", str(stored_dim)),
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO store_meta (key, value) VALUES (?, ?)",
+                    ("embedding_provider", provider),
+                )
+                conn.commit()
+
+            if dimension and stored_dim and stored_dim != dimension:
+                raise ValueError(
+                    f"Memory store was built with {stored_dim}-dimensional "
+                    f"vectors, but the active embedding provider "
+                    f"({provider}) produces {dimension}-dimensional ones. "
+                    f"Similarity search would be meaningless.\n"
+                    f"  Either restore the previous embeddings "
+                    f"configuration, or delete {self._db_path} to start "
+                    f"fresh (existing memories will be lost)."
+                )
+        finally:
+            conn.close()
 ```
 
 A re-embed migration is deliberately out of scope for this batch.

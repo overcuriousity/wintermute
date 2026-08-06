@@ -19,7 +19,6 @@ import re
 import secrets
 import shutil
 import subprocess
-import threading
 import time
 import webbrowser
 from pathlib import Path
@@ -49,6 +48,7 @@ REDIRECT_URI = f"http://localhost:{REDIRECT_PORT}"
 # ---------------------------------------------------------------------------
 # 1. Find gemini-cli binary
 # ---------------------------------------------------------------------------
+
 
 def _probe_gemini_binary() -> str | None:
     """Try common NVM/node manager paths when ``gemini`` is not on PATH."""
@@ -97,9 +97,7 @@ def find_gemini_cli() -> Path | None:
             return current
     # Fallback: try to find the package via npm root
     try:
-        result = subprocess.run(
-            ["npm", "root", "-g"], capture_output=True, text=True, timeout=10
-        )
+        result = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             npm_root = Path(result.stdout.strip())
             cli_core = npm_root / "@google" / "gemini-cli-core"
@@ -116,6 +114,7 @@ def find_gemini_cli() -> Path | None:
 # ---------------------------------------------------------------------------
 # 2. Extract OAuth secrets from gemini-cli-core
 # ---------------------------------------------------------------------------
+
 
 def extract_oauth_secrets(cli_path: Path) -> tuple[str, str]:
     """Extract client_id and client_secret from the gemini-cli-core JS bundle.
@@ -184,6 +183,7 @@ def extract_oauth_secrets(cli_path: Path) -> tuple[str, str]:
 # 3. PKCE OAuth flow
 # ---------------------------------------------------------------------------
 
+
 def _generate_pkce() -> tuple[str, str]:
     """Generate PKCE code_verifier and code_challenge."""
     verifier = secrets.token_urlsafe(64)
@@ -238,9 +238,7 @@ def run_oauth_flow(client_id: str, client_secret: str) -> dict:
 
     # Detect headless environment (no DISPLAY/WAYLAND and not macOS)
     _headless = (
-        not os.environ.get("DISPLAY")
-        and not os.environ.get("WAYLAND_DISPLAY")
-        and os.name != "nt"
+        not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY") and os.name != "nt"
     )
 
     print(f"\nOpen this URL in a browser to sign in with Google:\n  {auth_url}\n")
@@ -409,6 +407,7 @@ def _discover_project(access_token: str) -> str:
 # 4. Token refresh
 # ---------------------------------------------------------------------------
 
+
 def refresh_access_token(creds: dict) -> dict:
     """Refresh the access token using the stored refresh token."""
     with httpx.Client(timeout=30) as http_client:
@@ -436,6 +435,7 @@ def refresh_access_token(creds: dict) -> dict:
 # 5. Credential persistence
 # ---------------------------------------------------------------------------
 
+
 def load_credentials() -> dict | None:
     """Load credentials from data/gemini_credentials.json."""
     if not CREDENTIALS_FILE.exists():
@@ -456,9 +456,7 @@ def load_credentials() -> dict | None:
 def save_credentials(creds: dict) -> None:
     """Persist credentials to data/gemini_credentials.json."""
     CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CREDENTIALS_FILE.write_text(
-        json.dumps(creds, indent=2), encoding="utf-8"
-    )
+    CREDENTIALS_FILE.write_text(json.dumps(creds, indent=2), encoding="utf-8")
     # Restrict permissions
     try:
         os.chmod(CREDENTIALS_FILE, 0o600)
@@ -471,6 +469,7 @@ def save_credentials(creds: dict) -> None:
 # 6. Top-level setup
 # ---------------------------------------------------------------------------
 
+
 def setup() -> dict:
     """Interactive setup: find gemini-cli, extract secrets, run OAuth, save credentials."""
     print("=== Gemini CLI OAuth Setup ===\n")
@@ -478,8 +477,7 @@ def setup() -> dict:
     cli_path = find_gemini_cli()
     if cli_path is None:
         raise RuntimeError(
-            "gemini-cli not found in PATH. Install it with:\n"
-            "  npm install -g @google/gemini-cli"
+            "gemini-cli not found in PATH. Install it with:\n  npm install -g @google/gemini-cli"
         )
     print(f"Found gemini-cli at: {cli_path}")
 

@@ -11,11 +11,10 @@ import logging
 import time as _time
 from typing import TYPE_CHECKING
 
-from wintermute.infra import database
-from wintermute.infra import prompt_assembler
-from wintermute.infra import prompt_loader
-from wintermute.core.types import BackendPool
 from wintermute.core.conversation_store import count_tokens
+from wintermute.core.types import BackendPool
+from wintermute.infra import database, prompt_assembler, prompt_loader
+
 if TYPE_CHECKING:
     from wintermute.core.conversation_store import ConversationStore
 
@@ -52,7 +51,8 @@ class ContextCompactor:
         except (TypeError, ValueError):
             logger.warning(
                 "Invalid compaction_keep_recent %r; falling back to default %d",
-                keep_recent, COMPACTION_KEEP_RECENT,
+                keep_recent,
+                COMPACTION_KEEP_RECENT,
             )
             _keep = COMPACTION_KEEP_RECENT
         if _keep < 1:
@@ -67,10 +67,13 @@ class ContextCompactor:
         """The compaction backend pool."""
         return self._compaction_pool
 
-    async def compact(self, thread_id: str = "default",
-                      keep_recent: int | None = None,
-                      pool_override: "BackendPool | None" = None,
-                      inference_context_size: int | None = None) -> None:
+    async def compact(
+        self,
+        thread_id: str = "default",
+        keep_recent: int | None = None,
+        pool_override: "BackendPool | None" = None,
+        inference_context_size: int | None = None,
+    ) -> None:
         """Summarise and archive old messages for the given thread.
 
         *keep_recent* overrides the instance default when provided (per-thread config).
@@ -95,7 +98,10 @@ class ContextCompactor:
         # messages fills the context window (count-based compaction can't help there).
         _pool = pool_override or self._compaction_pool
         rows = await self._shrink_large_messages(
-            rows, effective_keep, _pool, thread_id,
+            rows,
+            effective_keep,
+            _pool,
+            thread_id,
             inference_context_size=inference_context_size,
         )
 
@@ -108,9 +114,10 @@ class ContextCompactor:
         parts = []
         if prior_summary:
             parts.append(f"[PRIOR SUMMARY]\n{prior_summary}\n")
-        parts.append("[NEW MESSAGES]\n" + "\n".join(
-            f"{r['role'].upper()}: {r['content']}" for r in to_summarise
-        ))
+        parts.append(
+            "[NEW MESSAGES]\n"
+            + "\n".join(f"{r['role'].upper()}: {r['content']}" for r in to_summarise)
+        )
         history_text = "\n\n".join(parts)
 
         summary_prompt = prompt_loader.load("COMPACTION_PROMPT.txt", history=history_text)
@@ -129,9 +136,13 @@ class ContextCompactor:
         try:
             await database.async_call(
                 database.save_interaction_log,
-                _time.time(), "compaction", thread_id,
+                _time.time(),
+                "compaction",
+                thread_id,
                 _pool.last_used,
-                summary_prompt, summary, "ok",
+                summary_prompt,
+                summary,
+                "ok",
             )
         except Exception:  # noqa: BLE001
             logger.debug("Failed to save compaction interaction log", exc_info=True)
@@ -141,8 +152,12 @@ class ContextCompactor:
         await database.async_call(database.save_summary, summary, thread_id)
         self._store.compaction_summaries[thread_id] = summary
 
-        logger.info("Compacted %d messages into summary (%d chars) for thread %s",
-                     len(to_summarise), len(summary), thread_id)
+        logger.info(
+            "Compacted %d messages into summary (%d chars) for thread %s",
+            len(to_summarise),
+            len(summary),
+            thread_id,
+        )
         try:
             await self._broadcast(
                 "\U0001f4e6 Context compacted: old messages archived and summarised.",
@@ -223,7 +238,8 @@ class ContextCompactor:
                         logger.warning(
                             "Kept-message shrink budget (%d) reached during compaction "
                             "for thread %s; remaining kept messages will not be shrunk",
-                            kept_shrink_budget, thread_id,
+                            kept_shrink_budget,
+                            thread_id,
                         )
                         kept_budget_warning_emitted = True
                     continue
@@ -265,14 +281,20 @@ class ContextCompactor:
                 logger.warning(
                     "Message %d (%d tokens) exceeds shrink input limit (%d) — "
                     "truncating before LLM call for thread %s",
-                    row["id"], original_tokens, shrink_input_limit, thread_id,
+                    row["id"],
+                    original_tokens,
+                    shrink_input_limit,
+                    thread_id,
                 )
                 # Safety check: skip the LLM call if truncation still couldn't fit.
                 if tokens > shrink_input_limit:
                     logger.warning(
                         "Message %d still exceeds shrink input limit after truncation "
                         "(%d > %d) — skipping shrink for thread %s",
-                        row["id"], tokens, shrink_input_limit, thread_id,
+                        row["id"],
+                        tokens,
+                        shrink_input_limit,
+                        thread_id,
                     )
                     continue
 
@@ -290,20 +312,26 @@ class ContextCompactor:
                 if not shrunken:
                     logger.warning(
                         "Empty shrink response for message %d in thread %s — skipping",
-                        row["id"], thread_id,
+                        row["id"],
+                        thread_id,
                     )
                     continue
             except Exception:  # noqa: BLE001
                 logger.exception(
                     "Failed to shrink message %d for thread %s — skipping",
-                    row["id"], thread_id,
+                    row["id"],
+                    thread_id,
                 )
                 continue
 
             new_tokens = count_tokens(shrunken, model)
             logger.info(
                 "Shrank message %d (%s) from %d to %d tokens for thread %s",
-                row["id"], row["role"], original_tokens, new_tokens, thread_id,
+                row["id"],
+                row["role"],
+                original_tokens,
+                new_tokens,
+                thread_id,
             )
             updated[i] = {**row, "content": shrunken, "token_count": new_tokens}
 
@@ -311,14 +339,19 @@ class ContextCompactor:
             if is_kept:
                 await database.async_call(
                     database.update_message_content,
-                    row["id"], shrunken, new_tokens, thread_id,
+                    row["id"],
+                    shrunken,
+                    new_tokens,
+                    thread_id,
                 )
 
         return updated
 
     async def maybe_summarise_components(
-        self, thread_id: str = "default",
-        *, _from_system_event: bool = False,
+        self,
+        thread_id: str = "default",
+        *,
+        _from_system_event: bool = False,
     ) -> None:
         """Check prompt component sizes and request summarisation if oversized."""
         if _from_system_event:
@@ -365,11 +398,12 @@ class ContextCompactor:
         """
         total = sum(
             count_tokens(
-                m.get("content", "") if isinstance(m.get("content"), str)
+                m.get("content", "")
+                if isinstance(m.get("content"), str)
                 else " ".join(
-                    p.get("text", "") for p in m.get("content", [])
-                    if isinstance(p, dict)
-                ) if isinstance(m.get("content"), list)
+                    p.get("text", "") for p in m.get("content", []) if isinstance(p, dict)
+                )
+                if isinstance(m.get("content"), list)
                 else str(m.get("content", "") or ""),
                 model,
             )
@@ -378,10 +412,7 @@ class ContextCompactor:
         if total <= token_budget:
             return
 
-        tool_indices = [
-            i for i, m in enumerate(messages)
-            if m["role"] == "tool"
-        ]
+        tool_indices = [i for i, m in enumerate(messages) if m["role"] == "tool"]
         truncation_notice = "[tool output truncated to fit context window]"
         for idx in tool_indices:
             if total <= token_budget:
@@ -396,5 +427,7 @@ class ContextCompactor:
             )
             new_tokens = count_tokens(truncation_notice, model)
             msg["content"] = truncation_notice
-            total -= (old_tokens - new_tokens)
-            logger.info("Trimmed tool result at index %d (saved ~%d tokens)", idx, old_tokens - new_tokens)
+            total -= old_tokens - new_tokens
+            logger.info(
+                "Trimmed tool result at index %d (saved ~%d tokens)", idx, old_tokens - new_tokens
+            )

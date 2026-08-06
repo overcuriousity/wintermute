@@ -32,15 +32,20 @@ class WebInterface:
     All dependencies are passed via the constructor.
     """
 
-    def __init__(self, host: str, port: int, llm_thread,
-                 *,
-                 sub_sessions=None,
-                 scheduler=None,
-                 matrix=None,
-                 main_pool=None,
-                 multi_cfg=None,
-                 thread_config_manager=None,
-                 slash_handler=None) -> None:
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        llm_thread,
+        *,
+        sub_sessions=None,
+        scheduler=None,
+        matrix=None,
+        main_pool=None,
+        multi_cfg=None,
+        thread_config_manager=None,
+        slash_handler=None,
+    ) -> None:
         self._host = host
         self._port = port
         self._llm = llm_thread
@@ -49,7 +54,7 @@ class WebInterface:
         self._sub_sessions = sub_sessions
         self._scheduler = scheduler
         self._matrix = matrix
-        self._main_pool = main_pool   # BackendPool for main role
+        self._main_pool = main_pool  # BackendPool for main role
         self._multi_cfg = multi_cfg
         self._thread_config_manager = thread_config_manager
         self._background_tasks: set[asyncio.Task] = set()
@@ -67,14 +72,12 @@ class WebInterface:
         """Return thread IDs with active WebSocket connections."""
         return {tid for tid, clients in self._threads.items() if clients}
 
-    async def broadcast(self, text: str, thread_id: str = None, *,
-                        reasoning: str = None) -> None:
+    async def broadcast(self, text: str, thread_id: str = None, *, reasoning: str = None) -> None:
         """Push a message to all connected SSE and WebSocket clients."""
         if thread_id is None:
             return
         # SSE push: notify all connected SSE clients.
-        msg = {"type": "broadcast", "role": "assistant", "text": text,
-               "thread_id": thread_id}
+        msg = {"type": "broadcast", "role": "assistant", "text": text, "thread_id": thread_id}
         if reasoning:
             msg["reasoning"] = reasoning
         dead_queues: set[asyncio.Queue] = set()
@@ -103,49 +106,49 @@ class WebInterface:
         app.router.add_get("/", self._handle_dashboard)
         app.router.add_get("/debug", self._handle_debug_redirect)
         # REST API
-        app.router.add_get("/api/sessions",                        self._api_sessions)
-        app.router.add_get("/api/sessions/{thread_id}/messages",  self._api_session_messages)
-        app.router.add_post("/api/sessions/{thread_id}/send",     self._api_session_send)
-        app.router.add_post("/api/sessions/{thread_id}/delete",   self._api_session_delete)
-        app.router.add_post("/api/sessions/{thread_id}/compact",  self._api_session_compact)
-        app.router.add_get("/api/subsessions",                    self._api_subsessions)
-        app.router.add_get("/api/subsessions/{id}/messages",      self._api_subsession_messages)
-        app.router.add_get("/api/workflows",                     self._api_workflows)
+        app.router.add_get("/api/sessions", self._api_sessions)
+        app.router.add_get("/api/sessions/{thread_id}/messages", self._api_session_messages)
+        app.router.add_post("/api/sessions/{thread_id}/send", self._api_session_send)
+        app.router.add_post("/api/sessions/{thread_id}/delete", self._api_session_delete)
+        app.router.add_post("/api/sessions/{thread_id}/compact", self._api_session_compact)
+        app.router.add_get("/api/subsessions", self._api_subsessions)
+        app.router.add_get("/api/subsessions/{id}/messages", self._api_subsession_messages)
+        app.router.add_get("/api/workflows", self._api_workflows)
         app.router.add_get("/api/workflows/{workflow_id}/scratchpad", self._api_workflow_scratchpad)
-        app.router.add_get("/api/jobs",                           self._api_jobs)
-        app.router.add_get("/api/config",                          self._api_config)
-        app.router.add_get("/api/system-prompt",                  self._api_system_prompt)
-        app.router.add_get("/api/tasks",                          self._api_tasks)
-        app.router.add_post("/api/tasks",                         self._api_task_create)
-        app.router.add_post("/api/tasks/purge",                   self._api_tasks_purge)
-        app.router.add_put("/api/tasks/{task_id}",                self._api_task_update)
-        app.router.add_delete("/api/tasks/{task_id}",             self._api_task_delete)
-        app.router.add_post("/api/tasks/{task_id}/{action}",      self._api_task_action)
-        app.router.add_get("/api/memory",                           self._api_memory)
-        app.router.add_get("/api/memory/all",                      self._api_memory_list)
-        app.router.add_post("/api/memory/bulk-delete",             self._api_memory_bulk_delete)
-        app.router.add_put("/api/memory/{entry_id}",               self._api_memory_update)
-        app.router.add_delete("/api/memory/{entry_id}",            self._api_memory_delete)
-        app.router.add_get("/api/interaction-log",                 self._api_interaction_log)
-        app.router.add_get("/api/interaction-log/{id}",            self._api_interaction_log_entry)
-        app.router.add_get("/api/outcomes",                        self._api_outcomes)
-        app.router.add_get("/api/cp-violations",                    self._api_cp_violations)
-        app.router.add_get("/api/stream",                          self._api_stream)
+        app.router.add_get("/api/jobs", self._api_jobs)
+        app.router.add_get("/api/config", self._api_config)
+        app.router.add_get("/api/system-prompt", self._api_system_prompt)
+        app.router.add_get("/api/tasks", self._api_tasks)
+        app.router.add_post("/api/tasks", self._api_task_create)
+        app.router.add_post("/api/tasks/purge", self._api_tasks_purge)
+        app.router.add_put("/api/tasks/{task_id}", self._api_task_update)
+        app.router.add_delete("/api/tasks/{task_id}", self._api_task_delete)
+        app.router.add_post("/api/tasks/{task_id}/{action}", self._api_task_action)
+        app.router.add_get("/api/memory", self._api_memory)
+        app.router.add_get("/api/memory/all", self._api_memory_list)
+        app.router.add_post("/api/memory/bulk-delete", self._api_memory_bulk_delete)
+        app.router.add_put("/api/memory/{entry_id}", self._api_memory_update)
+        app.router.add_delete("/api/memory/{entry_id}", self._api_memory_delete)
+        app.router.add_get("/api/interaction-log", self._api_interaction_log)
+        app.router.add_get("/api/interaction-log/{id}", self._api_interaction_log_entry)
+        app.router.add_get("/api/outcomes", self._api_outcomes)
+        app.router.add_get("/api/cp-violations", self._api_cp_violations)
+        app.router.add_get("/api/stream", self._api_stream)
         # Per-thread config API
-        app.router.add_get("/api/thread-config",                   self._api_thread_configs)
-        app.router.add_get("/api/thread-config/{thread_id}",       self._api_thread_config_get)
-        app.router.add_post("/api/thread-config/{thread_id}",      self._api_thread_config_set)
-        app.router.add_delete("/api/thread-config/{thread_id}",    self._api_thread_config_reset)
+        app.router.add_get("/api/thread-config", self._api_thread_configs)
+        app.router.add_get("/api/thread-config/{thread_id}", self._api_thread_config_get)
+        app.router.add_post("/api/thread-config/{thread_id}", self._api_thread_config_set)
+        app.router.add_delete("/api/thread-config/{thread_id}", self._api_thread_config_reset)
         # Skills API
-        app.router.add_get("/api/skills",                          self._api_skills)
-        app.router.add_get("/api/skills/info",                     self._api_skill_info)
-        app.router.add_get("/api/skills/search",                   self._api_skill_search)
-        app.router.add_get("/api/skills/{name}",                   self._api_skill_get)
-        app.router.add_post("/api/skills",                         self._api_skill_create)
-        app.router.add_put("/api/skills/{name}",                   self._api_skill_update)
-        app.router.add_delete("/api/skills/{name}",                self._api_skill_delete)
+        app.router.add_get("/api/skills", self._api_skills)
+        app.router.add_get("/api/skills/info", self._api_skill_info)
+        app.router.add_get("/api/skills/search", self._api_skill_search)
+        app.router.add_get("/api/skills/{name}", self._api_skill_get)
+        app.router.add_post("/api/skills", self._api_skill_create)
+        app.router.add_put("/api/skills/{name}", self._api_skill_update)
+        app.router.add_delete("/api/skills/{name}", self._api_skill_delete)
         # Prediction accuracy API
-        app.router.add_get("/api/prediction-accuracy",             self._api_prediction_accuracy)
+        app.router.add_get("/api/prediction-accuracy", self._api_prediction_accuracy)
 
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
@@ -206,8 +209,15 @@ class WebInterface:
         """Delegate to LLMThread.get_token_budget() for accurate accounting."""
         if self._llm:
             return self._llm.get_token_budget(thread_id)
-        return {"total_limit": 4096, "sp_tokens": 0, "tools_tokens": 0,
-                "hist_tokens": 0, "total_used": 0, "pct": 0.0, "msg_count": 0}
+        return {
+            "total_limit": 4096,
+            "sp_tokens": 0,
+            "tools_tokens": 0,
+            "hist_tokens": 0,
+            "total_used": 0,
+            "pct": 0.0,
+            "msg_count": 0,
+        }
 
     # ------------------------------------------------------------------
     # REST API — sessions
@@ -232,25 +242,31 @@ class WebInterface:
         for tid in sorted(all_ids):
             budget = self._token_budget(tid)
             ttype = (
-                "web" if tid.startswith("web_")
-                else "signal" if tid.startswith("sig_")
-                else "matrix" if (tid.startswith("!") and ":" in tid)
+                "web"
+                if tid.startswith("web_")
+                else "signal"
+                if tid.startswith("sig_")
+                else "matrix"
+                if (tid.startswith("!") and ":" in tid)
                 else "system"
             )
-            sessions.append({
-                "id": tid,
-                "type": ttype,
-                "live": tid in web_live or tid in matrix_rooms,
-                "group_mode": ttype == "matrix" and self._matrix is not None
-                              and self._matrix.group_mode,
-                "msg_count": budget["msg_count"],
-                "sp_tokens": budget["sp_tokens"],
-                "tools_tokens": budget["tools_tokens"],
-                "hist_tokens": budget["hist_tokens"],
-                "total_used": budget["total_used"],
-                "total_limit": budget["total_limit"],
-                "context_pct": budget["pct"],
-            })
+            sessions.append(
+                {
+                    "id": tid,
+                    "type": ttype,
+                    "live": tid in web_live or tid in matrix_rooms,
+                    "group_mode": ttype == "matrix"
+                    and self._matrix is not None
+                    and self._matrix.group_mode,
+                    "msg_count": budget["msg_count"],
+                    "sp_tokens": budget["sp_tokens"],
+                    "tools_tokens": budget["tools_tokens"],
+                    "hist_tokens": budget["hist_tokens"],
+                    "total_used": budget["total_used"],
+                    "total_limit": budget["total_limit"],
+                    "context_pct": budget["pct"],
+                }
+            )
 
         return self._json({"sessions": sessions})
 
@@ -292,9 +308,11 @@ class WebInterface:
                 )
             # Try slash commands first (shared handler).
             if self._slash_handler and text.startswith("/"):
+
                 async def _handle_slash() -> None:
                     async def _send(msg: str) -> None:
                         await self.broadcast(msg, thread_id)
+
                     try:
                         handled = await self._slash_handler.dispatch(text, thread_id, _send)
                         if not handled:
@@ -323,6 +341,7 @@ class WebInterface:
         try:
             await self._llm.reset_session(thread_id)
             from wintermute.infra import prompt_loader
+
             try:
                 seed_prompt = prompt_loader.load_seed(self._llm.seed_language)
                 await self._llm.enqueue_system_event(seed_prompt, thread_id)
@@ -355,15 +374,18 @@ class WebInterface:
                 }
                 for cfg in configs
             ]
+
         mc = self._multi_cfg
         if mc:
-            return self._json({
-                "main": _backend_list(mc.main),
-                "compaction": _backend_list(mc.compaction),
-                "sub_sessions": _backend_list(mc.sub_sessions),
-                "dreaming": _backend_list(mc.dreaming),
-                "convergence_protocol": _backend_list(mc.convergence_protocol),
-            })
+            return self._json(
+                {
+                    "main": _backend_list(mc.main),
+                    "compaction": _backend_list(mc.compaction),
+                    "sub_sessions": _backend_list(mc.sub_sessions),
+                    "dreaming": _backend_list(mc.dreaming),
+                    "convergence_protocol": _backend_list(mc.convergence_protocol),
+                }
+            )
         return self._json({})
 
     async def _api_system_prompt(self, _request: web.Request) -> web.Response:
@@ -381,8 +403,9 @@ class WebInterface:
             # even before the first inference call (e.g. after restart).
             try:
                 from wintermute.infra import prompt_assembler
+
                 summary = None
-                if self._llm and hasattr(self._llm, '_store'):
+                if self._llm and hasattr(self._llm, "_store"):
                     summary = self._llm._store.compaction_summaries.get(thread_id)
                 prompt = prompt_assembler.assemble(extra_summary=summary)
                 is_fallback = True
@@ -392,6 +415,7 @@ class WebInterface:
                     status=503,
                 )
         from wintermute.core.llm_thread import _count_tokens
+
         _cfg = self._main_pool.primary if (self._main_pool and self._main_pool.enabled) else None
         model = _cfg.model if _cfg else "gpt-4"
         sp_tokens = _count_tokens(prompt, model)
@@ -414,7 +438,7 @@ class WebInterface:
         if active_schemas is None:
             nl_tools = None
             if self._llm:
-                nl_cfg = getattr(self._llm, '_nl_translation_config', {})
+                nl_cfg = getattr(self._llm, "_nl_translation_config", {})
                 if nl_cfg.get("enabled", False):
                     nl_tools = nl_cfg.get("tools", set())
             active_schemas = tool_module.get_tool_schemas(nl_tools=nl_tools)
@@ -465,8 +489,7 @@ class WebInterface:
                 entry["content"] = getattr(m, "content", None) or ""
                 if hasattr(m, "tool_calls") and m.tool_calls:
                     entry["tool_calls"] = [
-                        {"id": tc.id, "name": tc.function.name,
-                         "arguments": tc.function.arguments}
+                        {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
                         for tc in m.tool_calls
                     ]
                 serialized.append(entry)
@@ -495,7 +518,7 @@ class WebInterface:
             if p.is_file():
                 try:
                     content = p.read_text(errors="replace")
-                except Exception as exc:
+                except Exception:
                     logger.exception("Failed to read scratchpad file %s", p)
                     content = "[read error]"
                 files.append({"name": p.name, "size": p.stat().st_size, "content": content})
@@ -516,6 +539,7 @@ class WebInterface:
 
     async def _api_tasks(self, _request: web.Request) -> web.Response:
         from wintermute.infra import database
+
         items = await database.async_call(database.list_tasks, "all")
         return self._json({"items": items, "count": len(items)})
 
@@ -523,6 +547,7 @@ class WebInterface:
         """POST /api/tasks — create a new task."""
         from wintermute.infra import database
         from wintermute.tools.task_tools import _build_schedule, _resolve_execution_mode
+
         try:
             data = await request.json()
         except Exception:
@@ -554,7 +579,9 @@ class WebInterface:
         schedule_desc = None
         if schedule_type:
             try:
-                sched_inputs, schedule_desc = _build_schedule({**data, "schedule_type": schedule_type})
+                sched_inputs, schedule_desc = _build_schedule(
+                    {**data, "schedule_type": schedule_type}
+                )
             except ValueError as exc:
                 return web.json_response({"error": str(exc)}, status=400)
             schedule_config = json.dumps(sched_inputs)
@@ -575,11 +602,16 @@ class WebInterface:
         if schedule_type and self._scheduler is not None:
             try:
                 self._scheduler.ensure_job(
-                    task_id, json.loads(schedule_config),
-                    ai_prompt, data.get("thread_id"), background, execution_mode,
+                    task_id,
+                    json.loads(schedule_config),
+                    ai_prompt,
+                    data.get("thread_id"),
+                    background,
+                    execution_mode,
                 )
-                await database.async_call(database.update_task, task_id, None,
-                                          apscheduler_job_id=task_id)
+                await database.async_call(
+                    database.update_task, task_id, None, apscheduler_job_id=task_id
+                )
                 scheduled = True
             except Exception:
                 logger.exception("Failed to schedule APScheduler job for task %s", task_id)
@@ -594,6 +626,7 @@ class WebInterface:
         """PUT /api/tasks/{task_id} — update task fields."""
         from wintermute.infra import database
         from wintermute.tools.task_tools import _resolve_execution_mode
+
         task_id = request.match_info["task_id"]
         try:
             data = await request.json()
@@ -632,17 +665,18 @@ class WebInterface:
             return web.json_response({"error": "not found"}, status=404)
 
         merged_ai_prompt = (
-            kwargs["ai_prompt"] if "ai_prompt" in kwargs
+            kwargs["ai_prompt"]
+            if "ai_prompt" in kwargs
             else (task.get("ai_prompt") or "").strip() or None
         )
         merged_execution_mode = (
-            kwargs["execution_mode"] if "execution_mode" in kwargs
+            kwargs["execution_mode"]
+            if "execution_mode" in kwargs
             else (task.get("execution_mode") or "").strip() or None
         )
         # Clearing ai_prompt converts an autonomous task back into a plain
         # reminder — reset the stored mode unless explicitly overridden.
-        if ("ai_prompt" in kwargs and merged_ai_prompt is None
-                and "execution_mode" not in kwargs):
+        if "ai_prompt" in kwargs and merged_ai_prompt is None and "execution_mode" not in kwargs:
             merged_execution_mode = None
         # Validate execution_mode/ai_prompt consistency when either is changing.
         if "execution_mode" in kwargs or "ai_prompt" in kwargs:
@@ -675,9 +709,12 @@ class WebInterface:
             rescheduled = False
             try:
                 self._scheduler.ensure_job(
-                    task_id, json.loads(task["schedule_config"]),
-                    merged_ai_prompt, task.get("thread_id"),
-                    merged_background, merged_execution_mode,
+                    task_id,
+                    json.loads(task["schedule_config"]),
+                    merged_ai_prompt,
+                    task.get("thread_id"),
+                    merged_background,
+                    merged_execution_mode,
                 )
                 rescheduled = True
             except Exception:
@@ -690,6 +727,7 @@ class WebInterface:
     async def _api_task_delete(self, request: web.Request) -> web.Response:
         """DELETE /api/tasks/{task_id} — soft-delete a task."""
         from wintermute.infra import database
+
         task_id = request.match_info["task_id"]
         task = await database.async_call(database.get_task, task_id)
         if not task:
@@ -707,6 +745,7 @@ class WebInterface:
     async def _api_task_action(self, request: web.Request) -> web.Response:
         """POST /api/tasks/{task_id}/{action} — pause/resume/complete a task."""
         from wintermute.infra import database
+
         task_id = request.match_info["task_id"]
         action = request.match_info["action"]
         if action == "pause":
@@ -724,12 +763,17 @@ class WebInterface:
                 try:
                     sched_cfg = json.loads(task["schedule_config"])
                     self._scheduler.ensure_job(
-                        task_id, sched_cfg,
-                        task.get("ai_prompt"), task.get("thread_id"),
-                        bool(task.get("background", False)), task.get("execution_mode"),
+                        task_id,
+                        sched_cfg,
+                        task.get("ai_prompt"),
+                        task.get("thread_id"),
+                        bool(task.get("background", False)),
+                        task.get("execution_mode"),
                     )
                 except Exception:
-                    logger.warning("Could not re-schedule APScheduler job for resumed task %s", task_id)
+                    logger.warning(
+                        "Could not re-schedule APScheduler job for resumed task %s", task_id
+                    )
         elif action == "complete":
             try:
                 data = await request.json()
@@ -744,7 +788,9 @@ class WebInterface:
                 try:
                     self._scheduler.remove_job(task["apscheduler_job_id"])
                 except Exception:
-                    logger.warning("Could not remove APScheduler job for completed task %s", task_id)
+                    logger.warning(
+                        "Could not remove APScheduler job for completed task %s", task_id
+                    )
         else:
             return web.json_response({"error": f"Unknown action: {action}"}, status=400)
         if not ok:
@@ -754,6 +800,7 @@ class WebInterface:
     async def _api_tasks_purge(self, _request: web.Request) -> web.Response:
         """POST /api/tasks/purge — delete all completed tasks."""
         from wintermute.infra import database
+
         count = await database.async_call(database.delete_old_completed_tasks, 0)
         return self._json({"ok": True, "deleted": count})
 
@@ -768,26 +815,58 @@ class WebInterface:
             return self._json({"error": "Thread config not available"}, status=503)
         overrides = mgr.get_all_overrides()
         backends = sorted(mgr.get_available_backends())
-        return self._json({
-            "overrides": overrides,
-            "available_backends": backends,
-            "keys": [
-                {"name": "backend_name", "type": "select", "options": backends},
-                {"name": "backend_overrides.compaction", "type": "select", "options": backends, "nullable": True},
-                {"name": "backend_overrides.sub_sessions", "type": "select", "options": backends, "nullable": True},
-                {"name": "backend_overrides.convergence_protocol", "type": "select", "options": backends, "nullable": True},
-                {"name": "backend_overrides.nl_translation", "type": "select", "options": backends, "nullable": True},
-                {"name": "session_timeout_minutes", "type": "int", "min": 1, "nullable": True},
-                {"name": "sub_sessions_enabled", "type": "bool"},
-                {"name": "system_prompt_mode", "type": "select", "options": ["full", "minimal"]},
-                {"name": "seed_language", "type": "str", "placeholder": "en"},
-                {"name": "nl_translation_enabled", "type": "bool"},
-                {"name": "memory_top_k", "type": "int", "min": 1},
-                {"name": "memory_score_threshold", "type": "float", "min": 0, "max": 1, "step": 0.05},
-                {"name": "compaction_keep_recent", "type": "int", "min": 1},
-                {"name": "max_inline_tool_rounds", "type": "int", "min": 0},
-            ],
-        })
+        return self._json(
+            {
+                "overrides": overrides,
+                "available_backends": backends,
+                "keys": [
+                    {"name": "backend_name", "type": "select", "options": backends},
+                    {
+                        "name": "backend_overrides.compaction",
+                        "type": "select",
+                        "options": backends,
+                        "nullable": True,
+                    },
+                    {
+                        "name": "backend_overrides.sub_sessions",
+                        "type": "select",
+                        "options": backends,
+                        "nullable": True,
+                    },
+                    {
+                        "name": "backend_overrides.convergence_protocol",
+                        "type": "select",
+                        "options": backends,
+                        "nullable": True,
+                    },
+                    {
+                        "name": "backend_overrides.nl_translation",
+                        "type": "select",
+                        "options": backends,
+                        "nullable": True,
+                    },
+                    {"name": "session_timeout_minutes", "type": "int", "min": 1, "nullable": True},
+                    {"name": "sub_sessions_enabled", "type": "bool"},
+                    {
+                        "name": "system_prompt_mode",
+                        "type": "select",
+                        "options": ["full", "minimal"],
+                    },
+                    {"name": "seed_language", "type": "str", "placeholder": "en"},
+                    {"name": "nl_translation_enabled", "type": "bool"},
+                    {"name": "memory_top_k", "type": "int", "min": 1},
+                    {
+                        "name": "memory_score_threshold",
+                        "type": "float",
+                        "min": 0,
+                        "max": 1,
+                        "step": 0.05,
+                    },
+                    {"name": "compaction_keep_recent", "type": "int", "min": 1},
+                    {"name": "max_inline_tool_rounds", "type": "int", "min": 0},
+                ],
+            }
+        )
 
     async def _api_thread_config_get(self, request: web.Request) -> web.Response:
         """GET /api/thread-config/{thread_id} — resolved config with sources."""
@@ -808,11 +887,13 @@ class WebInterface:
                         flat_overrides[f"backend_overrides.{role}"] = bname
                 else:
                     flat_overrides[k] = v
-        return self._json({
-            "thread_id": thread_id,
-            "resolved": resolved_dict,
-            "overrides": flat_overrides,
-        })
+        return self._json(
+            {
+                "thread_id": thread_id,
+                "resolved": resolved_dict,
+                "overrides": flat_overrides,
+            }
+        )
 
     async def _api_thread_config_set(self, request: web.Request) -> web.Response:
         """POST /api/thread-config/{thread_id} — set overrides (JSON body)."""
@@ -827,7 +908,7 @@ class WebInterface:
         try:
             for key, value in body.items():
                 mgr.set(thread_id, key, value)
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError):
             logger.exception("Invalid thread configuration for %s", thread_id)
             return self._json({"error": "Invalid thread configuration"}, status=400)
         resolved_dict = mgr.resolve_as_dict(thread_id)
@@ -859,6 +940,7 @@ class WebInterface:
 
     async def _api_interaction_log(self, request: web.Request) -> web.Response:
         from wintermute.infra import database
+
         limit = self._int_param(request, "limit", 200)
         offset = self._int_param(request, "offset", 0)
         session = request.query.get("session") or None
@@ -868,16 +950,22 @@ class WebInterface:
         before_id = self._int_param(request, "before_id", 0) or None if before_id_s else None
         after_id = self._int_param(request, "after_id", 0) or None if after_id_s else None
         entries = await database.async_call(
-            database.get_interaction_log, limit=limit, offset=offset,
-            session_filter=session, action_filter=action,
-            before_id=before_id, after_id=after_id)
+            database.get_interaction_log,
+            limit=limit,
+            offset=offset,
+            session_filter=session,
+            action_filter=action,
+            before_id=before_id,
+            after_id=after_id,
+        )
         total = await database.async_call(
-            database.count_interaction_log, session_filter=session,
-            action_filter=action)
+            database.count_interaction_log, session_filter=session, action_filter=action
+        )
         return self._json({"entries": entries, "total": total})
 
     async def _api_interaction_log_entry(self, request: web.Request) -> web.Response:
         from wintermute.infra import database
+
         try:
             entry_id = int(request.match_info["id"])
         except (ValueError, TypeError):
@@ -893,18 +981,23 @@ class WebInterface:
 
     async def _api_outcomes(self, request: web.Request) -> web.Response:
         from wintermute.infra import database
+
         limit = self._int_param(request, "limit", 200)
         offset = self._int_param(request, "offset", 0)
         status_filter = request.query.get("status") or None
         source_filter = request.query.get("source") or None
         rows, total, stats = await database.async_call(
-            database.get_outcomes_page, limit=limit, offset=offset,
-            status_filter=status_filter, source_filter=source_filter,
+            database.get_outcomes_page,
+            limit=limit,
+            offset=offset,
+            status_filter=status_filter,
+            source_filter=source_filter,
         )
         return self._json({"entries": rows, "total": total, "stats": stats})
 
     async def _api_cp_violations(self, _request: web.Request) -> web.Response:
         from wintermute.infra import database
+
         stats = await database.async_call(database.get_cp_violation_stats)
         return self._json(stats)
 
@@ -916,11 +1009,13 @@ class WebInterface:
 
     def _get_memory_count(self) -> int:
         import time
+
         now = time.monotonic()
         if now - self._memory_count_cache[0] < 30:
             return self._memory_count_cache[1]
         try:
             from wintermute.infra import memory_store
+
             count = memory_store.count()
         except Exception:  # noqa: BLE001
             count = 0
@@ -955,16 +1050,26 @@ class WebInterface:
         Query params: limit (default 100, max 1000), offset (default 0).
         """
         from wintermute.infra import memory_store
+
         limit = min(max(self._int_param(request, "limit", 100), 1), 1000)
         offset = max(self._int_param(request, "offset", 0), 0)
         loop = asyncio.get_running_loop()
         page, total = await loop.run_in_executor(None, memory_store.get_page, limit, offset)
-        return self._json({"items": page, "count": len(page), "total": total,
-                           "limit": limit, "offset": offset, "has_more": offset + limit < total})
+        return self._json(
+            {
+                "items": page,
+                "count": len(page),
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "has_more": offset + limit < total,
+            }
+        )
 
     async def _api_memory_delete(self, request: web.Request) -> web.Response:
         """DELETE /api/memory/{entry_id} — delete a single memory entry."""
         from wintermute.infra import memory_store
+
         entry_id = request.match_info["entry_id"]
         loop = asyncio.get_running_loop()
         ok = await loop.run_in_executor(None, memory_store.delete, entry_id)
@@ -975,6 +1080,7 @@ class WebInterface:
     async def _api_memory_update(self, request: web.Request) -> web.Response:
         """PUT /api/memory/{entry_id} — update a memory entry in-place (upsert)."""
         from wintermute.infra import memory_store
+
         entry_id = request.match_info["entry_id"]
         try:
             data = await request.json()
@@ -1002,6 +1108,7 @@ class WebInterface:
     async def _api_memory_bulk_delete(self, request: web.Request) -> web.Response:
         """POST /api/memory/bulk-delete — delete multiple memory entries."""
         from wintermute.infra import memory_store
+
         try:
             data = await request.json()
         except Exception:
@@ -1025,6 +1132,7 @@ class WebInterface:
     async def _api_prediction_accuracy(self, _request: web.Request) -> web.Response:
         """GET /api/prediction-accuracy — return active prediction accuracy data."""
         from wintermute.infra import database
+
         records = await database.async_call(database.get_active_predictions_accuracy)
         return self._json(records)
 
@@ -1040,25 +1148,29 @@ class WebInterface:
         try:
             all_skills = skill_store.get_all()
             store_stats = skill_store.stats()
-        except Exception as exc:
+        except Exception:
             logger.exception("Failed to list skills")
-            return self._json({"error": "Failed to list skills", "skills": [], "count": 0}, status=500)
+            return self._json(
+                {"error": "Failed to list skills", "skills": [], "count": 0}, status=500
+            )
 
         for rec in all_skills:
             name = rec["name"]
             sstat = store_stats.get(name, {})
-            skills.append({
-                "name": name,
-                "summary": rec.get("summary", ""),
-                "doc_chars": len(rec.get("documentation", "")),
-                "last_accessed": rec.get("last_accessed", 0),
-                "read_count": sstat.get("read_count", 0),
-                "sessions_loaded": sstat.get("sessions_loaded", 0),
-                "success_count": sstat.get("success_count", 0),
-                "failure_count": sstat.get("failure_count", 0),
-                "version": sstat.get("version", 1),
-                "last_read": sstat.get("last_read"),
-            })
+            skills.append(
+                {
+                    "name": name,
+                    "summary": rec.get("summary", ""),
+                    "doc_chars": len(rec.get("documentation", "")),
+                    "last_accessed": rec.get("last_accessed", 0),
+                    "read_count": sstat.get("read_count", 0),
+                    "sessions_loaded": sstat.get("sessions_loaded", 0),
+                    "success_count": sstat.get("success_count", 0),
+                    "failure_count": sstat.get("failure_count", 0),
+                    "version": sstat.get("version", 1),
+                    "last_read": sstat.get("last_read"),
+                }
+            )
         return self._json({"skills": skills, "count": len(skills)})
 
     async def _api_skill_info(self, _request: web.Request) -> web.Response:
@@ -1070,13 +1182,15 @@ class WebInterface:
             backend = "qdrant"
         elif skill_store.is_vector_enabled():
             backend = "local_vector"
-        return self._json({
-            "backend": backend,
-            "vector_enabled": skill_store.is_vector_enabled(),
-            "count": skill_store.count(),
-            "top_k": skill_store.get_top_k(),
-            "threshold": skill_store.get_threshold(),
-        })
+        return self._json(
+            {
+                "backend": backend,
+                "vector_enabled": skill_store.is_vector_enabled(),
+                "count": skill_store.count(),
+                "top_k": skill_store.get_top_k(),
+                "threshold": skill_store.get_threshold(),
+            }
+        )
 
     async def _api_skill_search(self, request: web.Request) -> web.Response:
         """GET /api/skills/search?q=...&k=5 — semantic/keyword skill search."""
@@ -1084,8 +1198,7 @@ class WebInterface:
 
         query = request.query.get("q", "").strip()
         if not query:
-            return web.json_response(
-                {"error": "query parameter 'q' is required"}, status=400)
+            return web.json_response({"error": "query parameter 'q' is required"}, status=400)
         try:
             top_k = int(request.query.get("k", str(skill_store.get_top_k())))
         except (ValueError, TypeError):
@@ -1114,22 +1227,24 @@ class WebInterface:
         rec = skill_store.get(name)
         if rec is None:
             return web.json_response({"error": "not found"}, status=404)
-        return self._json({
-            "name": name,
-            "summary": rec.get("summary", ""),
-            "documentation": rec.get("documentation", ""),
-            "content": f"{rec.get('summary', '')}\n\n{rec.get('documentation', '')}".strip(),
-            "version": rec.get("version", 1),
-            "changelog": rec.get("changelog", ""),
-            "access_count": rec.get("access_count", 0),
-            "last_accessed": rec.get("last_accessed", 0),
-            "created_at": rec.get("created_at", 0),
-        })
+        return self._json(
+            {
+                "name": name,
+                "summary": rec.get("summary", ""),
+                "documentation": rec.get("documentation", ""),
+                "content": f"{rec.get('summary', '')}\n\n{rec.get('documentation', '')}".strip(),
+                "version": rec.get("version", 1),
+                "changelog": rec.get("changelog", ""),
+                "access_count": rec.get("access_count", 0),
+                "last_accessed": rec.get("last_accessed", 0),
+                "created_at": rec.get("created_at", 0),
+            }
+        )
 
     async def _api_skill_create(self, request: web.Request) -> web.Response:
         """POST /api/skills — create a new skill."""
-        from wintermute.infra.skill_io import add_skill, _validate_skill_name
         from wintermute.infra import skill_store
+        from wintermute.infra.skill_io import _validate_skill_name, add_skill
 
         try:
             data = await request.json()
@@ -1140,7 +1255,8 @@ class WebInterface:
         documentation = (data.get("documentation") or "").strip()
         if not name or not documentation:
             return web.json_response(
-                {"error": "skill_name and documentation are required"}, status=400)
+                {"error": "skill_name and documentation are required"}, status=400
+            )
         try:
             name = _validate_skill_name(name)
         except ValueError as exc:
@@ -1148,7 +1264,8 @@ class WebInterface:
         # Reject if already exists (non-tracking check).
         if skill_store.exists(name):
             return web.json_response(
-                {"error": f"Skill '{name}' already exists. Use PUT to update."}, status=409)
+                {"error": f"Skill '{name}' already exists. Use PUT to update."}, status=409
+            )
         try:
             add_skill(name, documentation, summary=summary or None)
         except ValueError as exc:
@@ -1184,10 +1301,10 @@ class WebInterface:
                     summary = lines[0].strip()
                 documentation = "\n".join(lines[1:]).strip()
         if not documentation:
-            return web.json_response(
-                {"error": "content or documentation is required"}, status=400)
+            return web.json_response({"error": "content or documentation is required"}, status=400)
         skill_store.update(name, summary=summary or None, documentation=documentation)
         from wintermute.infra import data_versioning
+
         data_versioning.commit_async(f"skill: {name}")
         return self._json({"ok": True, "name": name})
 
@@ -1197,10 +1314,9 @@ class WebInterface:
         Writes a backup of the skill to data/skills/.archive/ before
         removing it from the store, preserving the ability to restore.
         """
-        from wintermute.infra import skill_store
-        from wintermute.infra import data_versioning
-        from wintermute.infra.skill_io import _validate_skill_name
+        from wintermute.infra import data_versioning, skill_store
         from wintermute.infra.paths import SKILLS_DIR
+        from wintermute.infra.skill_io import _validate_skill_name
 
         name = request.match_info["name"]
         try:
@@ -1226,7 +1342,9 @@ class WebInterface:
                 content = f"{content}\n\n{changelog}"
             archive_path.write_text(content, encoding="utf-8")
         except Exception:
-            logger.error("Failed to archive skill '%s' to .archive/; aborting delete", name, exc_info=True)
+            logger.error(
+                "Failed to archive skill '%s' to .archive/; aborting delete", name, exc_info=True
+            )
             return web.json_response(
                 {"error": "failed to archive skill before deletion"},
                 status=500,
@@ -1257,23 +1375,28 @@ class WebInterface:
         for tid in sorted(all_ids):
             budget = self._token_budget(tid)
             ttype = (
-                "web" if tid.startswith("web_")
-                else "signal" if tid.startswith("sig_")
-                else "matrix" if (tid.startswith("!") and ":" in tid)
+                "web"
+                if tid.startswith("web_")
+                else "signal"
+                if tid.startswith("sig_")
+                else "matrix"
+                if (tid.startswith("!") and ":" in tid)
                 else "system"
             )
-            sessions.append({
-                "id": tid,
-                "type": ttype,
-                "live": tid in web_live or tid in matrix_rooms,
-                "msg_count": budget["msg_count"],
-                "sp_tokens": budget["sp_tokens"],
-                "tools_tokens": budget["tools_tokens"],
-                "hist_tokens": budget["hist_tokens"],
-                "total_used": budget["total_used"],
-                "total_limit": budget["total_limit"],
-                "context_pct": budget["pct"],
-            })
+            sessions.append(
+                {
+                    "id": tid,
+                    "type": ttype,
+                    "live": tid in web_live or tid in matrix_rooms,
+                    "msg_count": budget["msg_count"],
+                    "sp_tokens": budget["sp_tokens"],
+                    "tools_tokens": budget["tools_tokens"],
+                    "hist_tokens": budget["hist_tokens"],
+                    "total_used": budget["total_used"],
+                    "total_limit": budget["total_limit"],
+                    "context_pct": budget["pct"],
+                }
+            )
 
         # Sub-sessions and workflows
         subsessions = self._sub_sessions.list_all() if self._sub_sessions else []
@@ -1307,11 +1430,13 @@ class WebInterface:
 
     async def _api_stream(self, request: web.Request) -> web.StreamResponse:
         response = web.StreamResponse()
-        response.headers.update({
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        })
+        response.headers.update(
+            {
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            }
+        )
         await response.prepare(request)
         q: asyncio.Queue = asyncio.Queue(maxsize=64)
         self._sse_queues.add(q)
@@ -1319,9 +1444,7 @@ class WebInterface:
             while True:
                 try:
                     payload = await self._build_stream_snapshot()
-                    await response.write(
-                        ("data: " + json.dumps(payload) + "\n\n").encode()
-                    )
+                    await response.write(("data: " + json.dumps(payload) + "\n\n").encode())
                 except Exception as exc:  # noqa: BLE001
                     logger.debug("SSE snapshot error: %s", exc)
                 # Drain any broadcast messages that arrived since last snapshot.

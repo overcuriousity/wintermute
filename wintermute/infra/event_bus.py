@@ -12,8 +12,9 @@ import threading
 import time as _time
 import uuid
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class EventBus:
         # from thread-pool workers (run_in_executor) where there is no
         # running loop.  Falls back to None if constructed outside a loop.
         try:
-            self._loop: Optional[asyncio.AbstractEventLoop] = asyncio.get_running_loop()
+            self._loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
         except RuntimeError:
             self._loop = None
 
@@ -69,7 +70,9 @@ class EventBus:
             # the coroutine on the main event loop captured at init time.
             loop = self._loop
             if loop is not None and loop.is_running():
-                loop.call_soon_threadsafe(loop.create_task, self._safe_call(sub_id, callback, event))
+                loop.call_soon_threadsafe(
+                    loop.create_task, self._safe_call(sub_id, callback, event)
+                )
             else:
                 logger.warning("EventBus: event dropped for %s — no usable event loop", sub_id)
 
@@ -81,8 +84,9 @@ class EventBus:
         except Exception:
             logger.exception("EventBus: subscriber %s raised on %s", sub_id, event.event_type)
 
-    def _debounce_emit(self, sub_id: str, callback: Callable,
-                       event: Event, debounce_ms: int) -> None:
+    def _debounce_emit(
+        self, sub_id: str, callback: Callable, event: Event, debounce_ms: int
+    ) -> None:
         # All debounce state mutations (pending dict, timer cancel+create) must
         # happen on the event-loop thread to avoid races when emit() is called
         # from run_in_executor workers.  Wrapping the entire operation in a
@@ -127,13 +131,14 @@ class EventBus:
         if event:
             self._fire(sub_id, callback, event)
 
-    def subscribe(self, event_type: str, callback: Callable,
-                  debounce_ms: int = 0) -> str:
+    def subscribe(self, event_type: str, callback: Callable, debounce_ms: int = 0) -> str:
         """Subscribe to an event type. Returns subscription ID."""
         sub_id = f"sub_{uuid.uuid4().hex[:8]}"
         with self._lock:
             self._subs.setdefault(event_type, {})[sub_id] = (callback, debounce_ms)
-        logger.debug("EventBus: %s subscribed to %s (debounce=%dms)", sub_id, event_type, debounce_ms)
+        logger.debug(
+            "EventBus: %s subscribed to %s (debounce=%dms)", sub_id, event_type, debounce_ms
+        )
         return sub_id
 
     def unsubscribe(self, sub_id: str) -> None:
@@ -150,9 +155,9 @@ class EventBus:
                     logger.debug("EventBus: %s unsubscribed from %s", sub_id, event_type)
                     return
 
-    def history(self, event_type: Optional[str] = None,
-                since: Optional[float] = None,
-                limit: int = 100) -> list[Event]:
+    def history(
+        self, event_type: str | None = None, since: float | None = None, limit: int = 100
+    ) -> list[Event]:
         """Query event history with optional filters."""
         results = []
         for event in reversed(self._history):
