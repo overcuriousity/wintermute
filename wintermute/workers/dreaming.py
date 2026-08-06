@@ -719,62 +719,8 @@ async def _phase_skill_consolidation(
         except Exception:  # noqa: BLE001
             logger.exception("Dreaming: skill dedup failed")
 
-    # Condense each surviving skill (less aggressive — only if doc > 600 chars).
-    condensed = 0
-    try:
-        condense_template = prompt_loader.load("DREAM_SKILLS_CONDENSATION_PROMPT.txt")
-    except FileNotFoundError:
-        logger.warning(
-            "Dreaming: DREAM_SKILLS_CONDENSATION_PROMPT.txt not found, skipping condensation"
-        )
-        condense_template = None
-    if condense_template is None:
-        result.items_processed = merged_skills
-        result.summary = f"merged {merged_skills}, condensed 0 skills (template missing)"
-        logger.info("Dreaming phase skill_consolidation: %s", result.summary)
-        return result
-    for name, rec in list(skills.items()):
-        doc = rec.get("documentation", "")
-        if len(doc) < 600:
-            continue  # skip short skills — no need to condense
-        try:
-            # Pass full skill text (summary + doc) to the condense prompt
-            # so the model can produce a complete condensed version.
-            summary = rec.get("summary", "")
-            full_content = f"{summary}\n\n{doc}".strip() if summary else doc
-            prompt = condense_template.format(skill_name=name, content=full_content)
-            response = await pool.call(
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens_override=600,
-            )
-            if response.content is None:
-                continue
-            condensed_text = (response.content or "").strip()
-            if condensed_text:
-                # Split output back into summary (first line) and documentation.
-                cond_first, _, cond_rest = condensed_text.partition("\n")
-                cond_summary = cond_first.strip()
-                cond_doc = cond_rest.lstrip("\n").strip()
-                skill_store.update(name, summary=cond_summary, documentation=cond_doc)
-                condensed += 1
-                try:
-                    await database.async_call(
-                        database.save_interaction_log,
-                        _time.time(),
-                        "dreaming",
-                        f"system:dreaming:skill:{name}",
-                        pool.last_used,
-                        prompt[:2000],
-                        condensed_text[:2000],
-                        "ok",
-                    )
-                except Exception:  # noqa: BLE001
-                    logger.debug("Failed to log skill consolidation for %s", name, exc_info=True)
-        except Exception:  # noqa: BLE001
-            logger.exception("Dreaming: failed to condense skill '%s'", name)
-
-    result.items_processed = merged_skills + condensed
-    result.summary = f"merged {merged_skills}, condensed {condensed} skills"
+    result.items_processed = merged_skills
+    result.summary = f"merged {merged_skills} skills"
     logger.info("Dreaming phase skill_consolidation: %s", result.summary)
     return result
 
