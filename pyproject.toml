@@ -22,6 +22,15 @@ dependencies = [
     "json-repair>=0.61.7",
 ]
 
+[project.optional-dependencies]
+# Zero-config memory: bundles a local ONNX embedding model so a fresh
+# deployment works with no embeddings endpoint configured. Optional by
+# design — the roadmap caps direct dependencies near 17.
+local-embeddings = [
+    "onnxruntime>=1.20.0",
+    "tokenizers>=0.21.0",
+]
+
 [project.scripts]
 wintermute = "wintermute.main:run"
 

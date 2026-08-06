@@ -3,6 +3,8 @@ config.yaml
 
 # Runtime data
 data/conversation.db
+# Local embedding model artefacts (~90 MB), downloaded on first use.
+data/.embedding_cache/
 data/scheduler.db
 data/routine_history.json
 data/task_history.json
