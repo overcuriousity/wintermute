@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from wintermute.core.sub_session import SubSessionManager
@@ -41,16 +41,16 @@ class ToolDeps:
     # --- Typed object references (set once after construction) ---
 
     # Sub-session manager (spawn / cancel / status).
-    sub_session_manager: Optional["SubSessionManager"] = None
+    sub_session_manager: SubSessionManager | None = None
 
     # Task scheduler (ensure_job / remove_job / list_jobs).
-    task_scheduler: Optional["TaskScheduler"] = None
+    task_scheduler: TaskScheduler | None = None
 
     # Event bus instance.
-    event_bus: Optional["EventBus"] = None
+    event_bus: EventBus | None = None
 
     # Self-model profiler instance.
-    self_model_profiler: Optional["SelfModelProfiler"] = None
+    self_model_profiler: SelfModelProfiler | None = None
 
     # --- Simple config values (set at construction) ---
 
@@ -64,10 +64,10 @@ class ToolDeps:
     tool_profiles: dict[str, dict] = field(default_factory=dict)
 
     # Pool used for memory dedup merges (async LLM calls from tool context).
-    memory_pool: Optional["BackendPool"] = None
+    memory_pool: BackendPool | None = None
 
     # Event loop reference for bridging sync tool calls to async dedup.
-    event_loop: Optional[asyncio.AbstractEventLoop] = None
+    event_loop: asyncio.AbstractEventLoop | None = None
 
     # Shutdown coordinator for restart_self tool.
-    shutdown_coordinator: Optional["ShutdownCoordinator"] = None
+    shutdown_coordinator: ShutdownCoordinator | None = None

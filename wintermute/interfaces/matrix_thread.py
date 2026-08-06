@@ -40,20 +40,7 @@ import threading as _threading
 from collections.abc import MutableMapping as _Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 from urllib.parse import quote as _url_quote
-
-from ruamel.yaml import YAML as _YAML
-from ruamel.yaml.scalarstring import DoubleQuotedScalarString as _DQStr
-
-_REPLY_STRIP_RE = _re.compile(r"<mx-reply>.*?</mx-reply>", flags=_re.DOTALL)
-
-try:
-    import olm as _olm
-    _HAS_OLM = True
-except ImportError:
-    _olm = None  # type: ignore[assignment]
-    _HAS_OLM = False
 
 from mautrix.client import Client, InternalEventType
 from mautrix.client.dispatcher import MembershipEventDispatcher
@@ -70,6 +57,20 @@ from mautrix.types import (
     UserID,
 )
 from mautrix.util.async_db import Database
+from ruamel.yaml import YAML as _YAML
+from ruamel.yaml.scalarstring import DoubleQuotedScalarString as _DQStr
+
+# Optional: python-olm is only needed for the legacy device-key inspection
+# paths below.  mautrix.crypto works without importing it directly here.
+try:
+    import olm as _olm
+
+    _HAS_OLM = True
+except ImportError:
+    _olm = None  # type: ignore[assignment]
+    _HAS_OLM = False
+
+_REPLY_STRIP_RE = _re.compile(r"<mx-reply>.*?</mx-reply>", flags=_re.DOTALL)
 
 logger = logging.getLogger(__name__)
 
@@ -109,14 +110,24 @@ def _update_config_yaml(access_token: str, device_id: str) -> None:
             with CONFIG_PATH.open(encoding="utf-8") as f:
                 data = yaml.load(f)
         except Exception:
-            logger.warning("_update_config_yaml: failed to parse %s — skipping write", CONFIG_PATH, exc_info=True)
+            logger.warning(
+                "_update_config_yaml: failed to parse %s — skipping write",
+                CONFIG_PATH,
+                exc_info=True,
+            )
             return
 
         if not isinstance(data, _Mapping):
-            logger.warning("_update_config_yaml: %s does not contain a YAML mapping at root — skipping write", CONFIG_PATH)
+            logger.warning(
+                "_update_config_yaml: %s does not contain a YAML mapping at root — skipping write",
+                CONFIG_PATH,
+            )
             return
         if not isinstance(data.get("matrix"), _Mapping):
-            logger.warning("_update_config_yaml: 'matrix' section missing or not a mapping in %s — skipping write", CONFIG_PATH)
+            logger.warning(
+                "_update_config_yaml: 'matrix' section missing or not a mapping in %s — skipping write",
+                CONFIG_PATH,
+            )
             return
 
         # Force double-quoted scalars so PyYAML safe_load() always reads them
@@ -126,7 +137,9 @@ def _update_config_yaml(access_token: str, device_id: str) -> None:
 
         # Atomic write: temp file in same directory, then os.replace().
         fd, tmp_path = _tempfile.mkstemp(
-            dir=str(CONFIG_PATH.parent), suffix=".tmp", prefix=".config_",
+            dir=str(CONFIG_PATH.parent),
+            suffix=".tmp",
+            prefix=".config_",
         )
         try:
             with _os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
@@ -145,13 +158,13 @@ def _update_config_yaml(access_token: str, device_id: str) -> None:
 
 # SAS (m.sas.v1) to-device event types
 _VERIFY_REQUEST = EventType.find("m.key.verification.request", EventType.Class.TO_DEVICE)
-_VERIFY_READY   = EventType.find("m.key.verification.ready",   EventType.Class.TO_DEVICE)
-_VERIFY_START   = EventType.find("m.key.verification.start",   EventType.Class.TO_DEVICE)
-_VERIFY_ACCEPT  = EventType.find("m.key.verification.accept",  EventType.Class.TO_DEVICE)
-_VERIFY_KEY     = EventType.find("m.key.verification.key",     EventType.Class.TO_DEVICE)
-_VERIFY_MAC     = EventType.find("m.key.verification.mac",     EventType.Class.TO_DEVICE)
-_VERIFY_DONE    = EventType.find("m.key.verification.done",    EventType.Class.TO_DEVICE)
-_VERIFY_CANCEL  = EventType.find("m.key.verification.cancel",  EventType.Class.TO_DEVICE)
+_VERIFY_READY = EventType.find("m.key.verification.ready", EventType.Class.TO_DEVICE)
+_VERIFY_START = EventType.find("m.key.verification.start", EventType.Class.TO_DEVICE)
+_VERIFY_ACCEPT = EventType.find("m.key.verification.accept", EventType.Class.TO_DEVICE)
+_VERIFY_KEY = EventType.find("m.key.verification.key", EventType.Class.TO_DEVICE)
+_VERIFY_MAC = EventType.find("m.key.verification.mac", EventType.Class.TO_DEVICE)
+_VERIFY_DONE = EventType.find("m.key.verification.done", EventType.Class.TO_DEVICE)
+_VERIFY_CANCEL = EventType.find("m.key.verification.cancel", EventType.Class.TO_DEVICE)
 
 
 def _canonical_json(data: dict) -> str:
@@ -169,13 +182,14 @@ def _v_field(content, key: str, default=""):
 @dataclass
 class _SasState:
     """Per-transaction SAS verification state."""
-    sas: object                          # _olm.Sas instance (set on start)
+
+    sas: object  # _olm.Sas instance (set on start)
     their_user_id: str
     their_device_id: str
     txn_id: str
     start_content: dict = field(default_factory=dict)
-    is_initiator: bool = False           # True when wintermute sent the request
-    key_sent: bool = False               # True once we have sent our pubkey
+    is_initiator: bool = False  # True when wintermute sent the request
+    key_sent: bool = False  # True once we have sent our pubkey
 
 
 def _wipe_crypto_db() -> None:
@@ -222,16 +236,13 @@ class _CryptoMemoryStateStore(MemoryStateStore):
     by OlmMachine for key-sharing decisions."""
 
     async def find_shared_rooms(self, user_id: UserID) -> list[RoomID]:
-        return [
-            room_id
-            for room_id, members in self.members.items()
-            if user_id in members
-        ]
+        return [room_id for room_id, members in self.members.items() if user_id in members]
 
 
 # ---------------------------------------------------------------------------
 # Config and thread
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class MatrixConfig:
@@ -251,18 +262,22 @@ class MatrixThread:
     ``send_message`` may be called from any task in the same event loop.
     """
 
-    def __init__(self, config: MatrixConfig, llm_thread,
-                 *,
-                 kimi_client=None,
-                 whisper_client=None,
-                 whisper_model: str = "",
-                 whisper_language: str = "",
-                 slash_handler=None,
-                 event_bus=None) -> None:
+    def __init__(
+        self,
+        config: MatrixConfig,
+        llm_thread,
+        *,
+        kimi_client=None,
+        whisper_client=None,
+        whisper_model: str = "",
+        whisper_language: str = "",
+        slash_handler=None,
+        event_bus=None,
+    ) -> None:
         self._cfg = config
         self._llm = llm_thread
-        self._client: Optional[Client] = None
-        self._crypto_db: Optional[Database] = None
+        self._client: Client | None = None
+        self._crypto_db: Database | None = None
         self._running = False
         self._send_lock = asyncio.Lock()
         self._verifications: dict[str, _SasState] = {}
@@ -278,18 +293,21 @@ class MatrixThread:
         self._kimi_client = kimi_client
         # Subscribe to tool delivery events.
         self._event_bus = event_bus
-        self._send_file_sub_id: Optional[str] = None
-        self._send_message_sub_id: Optional[str] = None
+        self._send_file_sub_id: str | None = None
+        self._send_message_sub_id: str | None = None
         if event_bus is not None:
             self._send_file_sub_id = event_bus.subscribe("send_file", self._handle_send_file_event)
-            self._send_message_sub_id = event_bus.subscribe("send_message", self._handle_send_message_event)
+            self._send_message_sub_id = event_bus.subscribe(
+                "send_message", self._handle_send_message_event
+            )
 
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
 
-    async def send_message(self, text: str, room_id: str = None,
-                           _retries: int = 3, _delay: float = 2.0) -> None:
+    async def send_message(
+        self, text: str, room_id: str = None, _retries: int = 3, _delay: float = 2.0
+    ) -> None:
         """Send a message to a room.  Auto-encrypts if room has E2EE.
 
         Retries up to *_retries* times on transient failures so that
@@ -305,7 +323,7 @@ class MatrixThread:
         if not text.strip():
             return
 
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         for attempt in range(1, _retries + 1):
             async with self._send_lock:
                 try:
@@ -327,12 +345,14 @@ class MatrixThread:
                     last_exc = exc
                     logger.warning(
                         "Matrix send to %s failed (attempt %d/%d): %s",
-                        room_id, attempt, _retries, exc,
+                        room_id,
+                        attempt,
+                        _retries,
+                        exc,
                     )
             if attempt < _retries:
                 await asyncio.sleep(_delay * attempt)
-        logger.error("Matrix send to %s failed after %d attempts: %s",
-                     room_id, _retries, last_exc)
+        logger.error("Matrix send to %s failed after %d attempts: %s", room_id, _retries, last_exc)
 
     async def _handle_send_file_event(self, event) -> None:
         """EventBus handler for ``send_file`` events emitted by the tool."""
@@ -360,8 +380,9 @@ class MatrixThread:
             return
         await self.send_message(text, thread_id)
 
-    async def _send_file(self, file_path: str, room_id: str,
-                         _retries: int = 3, _delay: float = 2.0) -> None:
+    async def _send_file(
+        self, file_path: str, room_id: str, _retries: int = 3, _delay: float = 2.0
+    ) -> None:
         """Upload a local file and send it to *room_id* as a file or image."""
         p = Path(file_path)
         if not p.is_file():
@@ -373,12 +394,14 @@ class MatrixThread:
         filename = p.name
         file_size = len(data)
 
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         for attempt in range(1, _retries + 1):
             async with self._send_lock:
                 try:
                     mxc_uri = await self._client.upload_media(
-                        data, mime_type=mime_type, filename=filename,
+                        data,
+                        mime_type=mime_type,
+                        filename=filename,
                     )
                     if mime_type.startswith("image/"):
                         await self._client.send_image(
@@ -394,18 +417,29 @@ class MatrixThread:
                             file_name=filename,
                             info={"mimetype": mime_type, "size": file_size},
                         )
-                    logger.info("Sent file %s (%s, %d bytes) to %s", filename, mime_type, file_size, room_id)
+                    logger.info(
+                        "Sent file %s (%s, %d bytes) to %s", filename, mime_type, file_size, room_id
+                    )
                     return
                 except Exception as exc:  # noqa: BLE001
                     last_exc = exc
                     logger.warning(
                         "Matrix send_file %s to %s failed (attempt %d/%d): %s",
-                        file_path, room_id, attempt, _retries, exc,
+                        file_path,
+                        room_id,
+                        attempt,
+                        _retries,
+                        exc,
                     )
             if attempt < _retries:
                 await asyncio.sleep(_delay * attempt)
-        logger.error("Matrix send_file %s to %s failed after %d attempts: %s",
-                     file_path, room_id, _retries, last_exc)
+        logger.error(
+            "Matrix send_file %s to %s failed after %d attempts: %s",
+            file_path,
+            room_id,
+            _retries,
+            last_exc,
+        )
 
     @property
     def group_mode(self) -> bool:
@@ -420,7 +454,7 @@ class MatrixThread:
         try:
             # Access rooms through the state store's internal storage
             if isinstance(self._client.state_store, _CryptoMemoryStateStore):
-                return {str(r) for r in self._client.state_store.members.keys()}
+                return {str(r) for r in self._client.state_store.members}
             return set()
         except Exception:  # noqa: BLE001
             return set()
@@ -469,8 +503,12 @@ class MatrixThread:
         # the server still has OTKs registered for that device from a previous run.
         # A fresh Olm account would generate OTKs with the same IDs → server rejects them.
         # Force a new login so we get a fresh device_id with no server-side OTK conflicts.
-        if (self._cfg.access_token and self._cfg.device_id
-                and not CRYPTO_DB_PATH.exists() and self._cfg.password):
+        if (
+            self._cfg.access_token
+            and self._cfg.device_id
+            and not CRYPTO_DB_PATH.exists()
+            and self._cfg.password
+        ):
             logger.info(
                 "Crypto DB missing for existing device %s — forcing fresh login "
                 "to avoid OTK conflicts with server.",
@@ -506,10 +544,10 @@ class MatrixThread:
                     "  Option B: get a new token manually:\n"
                     "    curl -s -X POST '%s/_matrix/client/v3/login' \\\n"
                     "      -H 'Content-Type: application/json' \\\n"
-                    "      -d '{\"type\":\"m.login.password\","
-                    "\"identifier\":{\"type\":\"m.id.user\",\"user\":\"BOT_USER\"},"
-                    "\"password\":\"BOT_PASSWORD\","
-                    "\"initial_device_display_name\":\"Wintermute\"}' | python3 -m json.tool\n"
+                    '      -d \'{"type":"m.login.password",'
+                    '"identifier":{"type":"m.id.user","user":"BOT_USER"},'
+                    '"password":"BOT_PASSWORD",'
+                    '"initial_device_display_name":"Wintermute"}\' | python3 -m json.tool\n'
                     "  Then update access_token and device_id in config.yaml and restart.",
                     self._cfg.homeserver,
                 )
@@ -556,8 +594,8 @@ class MatrixThread:
                 # not a stale DB.  Re-raise so the outer retry loop handles it.
                 raise
             logger.warning(
-                "Crypto setup failed (%s). "
-                "Wiping stale crypto store and retrying once...", exc,
+                "Crypto setup failed (%s). Wiping stale crypto store and retrying once...",
+                exc,
             )
             _wipe_crypto_db()
             await self._setup_crypto(client)
@@ -663,24 +701,26 @@ class MatrixThread:
         client.add_event_handler(EventType.ROOM_MESSAGE, self._on_message)
         client.add_event_handler(InternalEventType.INVITE, self._on_invite)
         client.add_event_handler(
-            InternalEventType.SYNC_ERRORED, self._on_sync_error,
+            InternalEventType.SYNC_ERRORED,
+            self._on_sync_error,
         )
 
         # SAS verification (m.sas.v1) — to-device events
         if _HAS_OLM:
             client.add_event_handler(_VERIFY_REQUEST, self._on_verify_request)
-            client.add_event_handler(_VERIFY_READY,   self._on_verify_ready)
-            client.add_event_handler(_VERIFY_START,   self._on_verify_start)
-            client.add_event_handler(_VERIFY_ACCEPT,  self._on_verify_accept)
-            client.add_event_handler(_VERIFY_KEY,     self._on_verify_key)
-            client.add_event_handler(_VERIFY_MAC,     self._on_verify_mac)
-            client.add_event_handler(_VERIFY_CANCEL,  self._on_verify_cancel)
+            client.add_event_handler(_VERIFY_READY, self._on_verify_ready)
+            client.add_event_handler(_VERIFY_START, self._on_verify_start)
+            client.add_event_handler(_VERIFY_ACCEPT, self._on_verify_accept)
+            client.add_event_handler(_VERIFY_KEY, self._on_verify_key)
+            client.add_event_handler(_VERIFY_MAC, self._on_verify_mac)
+            client.add_event_handler(_VERIFY_CANCEL, self._on_verify_cancel)
             # UTD (Unable To Decrypt) recovery — request missing Megolm session keys
             client.add_event_handler(EventType.ROOM_ENCRYPTED, self._on_utd_event)
 
         logger.info(
             "Running as device_id=%s, homeserver=%s",
-            self._cfg.device_id, self._cfg.homeserver,
+            self._cfg.device_id,
+            self._cfg.homeserver,
         )
         return client
 
@@ -717,7 +757,8 @@ class MatrixThread:
 
         logger.info(
             "Crypto ready for device_id=%s (store=%s)",
-            self._cfg.device_id, CRYPTO_DB_PATH,
+            self._cfg.device_id,
+            CRYPTO_DB_PATH,
         )
 
     async def _ensure_cross_signed(self, olm: OlmMachine) -> None:
@@ -773,15 +814,15 @@ class MatrixThread:
                     # New device detected — ask allowed_users to verify even on path (a),
                     # because the user may not have verified this device before.
                     _t = asyncio.create_task(
-                        self._send_verification_requests(), name="send-verify-request",
+                        self._send_verification_requests(),
+                        name="send-verify-request",
                     )
                     self._background_tasks.add(_t)
                     _t.add_done_callback(self._background_tasks.discard)
                     return
                 except Exception as restore_exc:  # noqa: BLE001
                     logger.info(
-                        "Stored recovery key unusable (%s) — "
-                        "generating fresh cross-signing keys.",
+                        "Stored recovery key unusable (%s) — generating fresh cross-signing keys.",
                         restore_exc,
                     )
 
@@ -890,7 +931,9 @@ class MatrixThread:
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to download image from %s", evt.sender)
                 return
-            mimetype = getattr(getattr(evt.content, "info", None), "mimetype", "image/png") or "image/png"
+            mimetype = (
+                getattr(getattr(evt.content, "info", None), "mimetype", "image/png") or "image/png"
+            )
             b64data = _base64.b64encode(data).decode()
             text_for_db = sender_prefix + reply_prefix + (caption or "[image attached]")
             content_parts: list[dict] = []
@@ -901,17 +944,18 @@ class MatrixThread:
                 text_for_db = self._strip_bot_mention(text_for_db)
             if text_part.strip() and text_part.strip() != sender_prefix.strip():
                 content_parts.append({"type": "text", "text": text_part})
-            content_parts.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{mimetype};base64,{b64data}"},
-            })
+            content_parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mimetype};base64,{b64data}"},
+                }
+            )
             logger.info("Received image from %s in %s", evt.sender, thread_id)
             await self._dispatch(text_for_db, thread_id, content=content_parts, ephemeral=group)
             return
 
         # --- Audio / voice ---
         if msgtype == MessageType.AUDIO:
-
             try:
                 data = await self._download_media(evt)
             except Exception:  # noqa: BLE001
@@ -919,8 +963,14 @@ class MatrixThread:
                 return
             # Derive extension: prefer explicit mimetype, fall back to body suffix, then .ogg.
             mimetype = getattr(getattr(evt.content, "info", None), "mimetype", None) or ""
-            _MIME_TO_EXT = {"audio/ogg": ".ogg", "audio/mpeg": ".mp3", "audio/mp4": ".m4a",
-                            "audio/webm": ".webm", "audio/wav": ".wav", "audio/x-wav": ".wav"}
+            _MIME_TO_EXT = {
+                "audio/ogg": ".ogg",
+                "audio/mpeg": ".mp3",
+                "audio/mp4": ".m4a",
+                "audio/webm": ".webm",
+                "audio/wav": ".wav",
+                "audio/x-wav": ".wav",
+            }
             ext = _MIME_TO_EXT.get(mimetype.split(";")[0].strip())
             if not ext:
                 body = evt.content.body or str(evt.event_id)
@@ -932,7 +982,13 @@ class MatrixThread:
                 voice_path.write_bytes(data)
             except OSError:
                 logger.exception("Failed to save voice message to %s", voice_path)
-                await self._dispatch(sender_prefix + reply_prefix + "[Voice message received but could not be saved to disk]", thread_id, ephemeral=group)
+                await self._dispatch(
+                    sender_prefix
+                    + reply_prefix
+                    + "[Voice message received but could not be saved to disk]",
+                    thread_id,
+                    ephemeral=group,
+                )
                 return
             logger.info("Saved voice message from %s to %s", evt.sender, voice_path)
 
@@ -940,22 +996,36 @@ class MatrixThread:
             if self._whisper_client is not None:
                 try:
                     from openai import NOT_GIVEN
+
                     # Convert to WAV via ffmpeg if the audio is not already WAV.
                     # Many backends (including llama.cpp whisper) reject OGG/Opus.
                     audio_data = data
                     audio_filename = filename
                     if not filename.lower().endswith(".wav"):
                         proc = await asyncio.create_subprocess_exec(
-                            "ffmpeg", "-i", "pipe:0",
-                            "-ar", "16000", "-ac", "1", "-f", "wav",
-                            "-loglevel", "error", "pipe:1",
+                            "ffmpeg",
+                            "-i",
+                            "pipe:0",
+                            "-ar",
+                            "16000",
+                            "-ac",
+                            "1",
+                            "-f",
+                            "wav",
+                            "-loglevel",
+                            "error",
+                            "pipe:1",
                             stdin=asyncio.subprocess.PIPE,
                             stdout=asyncio.subprocess.PIPE,
                             stderr=asyncio.subprocess.PIPE,
                         )
                         wav_bytes, ffmpeg_err = await proc.communicate(input=data)
                         if proc.returncode != 0 or not wav_bytes:
-                            logger.error("ffmpeg conversion failed for %s: %s", voice_path, ffmpeg_err.decode())
+                            logger.error(
+                                "ffmpeg conversion failed for %s: %s",
+                                voice_path,
+                                ffmpeg_err.decode(),
+                            )
                         else:
                             audio_data = wav_bytes
                             audio_filename = Path(filename).stem + ".wav"
@@ -968,16 +1038,27 @@ class MatrixThread:
                     transcript = resp.text.strip()
                     if not transcript:
                         logger.warning("Whisper returned empty transcript for %s", voice_path)
-                        text = sender_prefix + reply_prefix + "[Voice message received — transcription was empty (silence?)]"
+                        text = (
+                            sender_prefix
+                            + reply_prefix
+                            + "[Voice message received — transcription was empty (silence?)]"
+                        )
                     else:
                         logger.info("Whisper transcript (%s): %s", evt.sender, transcript[:120])
-                        text = sender_prefix + reply_prefix + f"[Transcribed voice message] {transcript}"
+                        text = (
+                            sender_prefix
+                            + reply_prefix
+                            + f"[Transcribed voice message] {transcript}"
+                        )
                     if group:
                         text = self._strip_bot_mention(text)
                     await self._dispatch(text, thread_id, ephemeral=group)
                     return
                 except Exception:  # noqa: BLE001
-                    logger.exception("Whisper transcription failed for %s — falling back to placeholder", voice_path)
+                    logger.exception(
+                        "Whisper transcription failed for %s — falling back to placeholder",
+                        voice_path,
+                    )
 
             text = sender_prefix + reply_prefix + f"[Voice message received: {voice_path}]"
             await self._dispatch(text, thread_id, ephemeral=group)
@@ -1042,6 +1123,7 @@ class MatrixThread:
             return
         try:
             from mautrix.types import FilterID
+
             # Inline filter: suppress all joined-room noise.
             # rooms.invite is always returned in full by Matrix servers.
             _filter = FilterID(
@@ -1063,26 +1145,28 @@ class MatrixThread:
         logger.info("Found %d pending invite(s) at startup", len(invited))
         for room_id_str, room_data in invited.items():
             room_id = RoomID(room_id_str)
-            sender: Optional[str] = None
+            sender: str | None = None
             for ev in room_data.get("invite_state", {}).get("events", []):
-                if (ev.get("type") == "m.room.member"
-                        and ev.get("state_key") == self._cfg.user_id):
+                if ev.get("type") == "m.room.member" and ev.get("state_key") == self._cfg.user_id:
                     sender = ev.get("sender")
                     break
             if sender and not self._is_user_allowed(sender):
                 logger.warning(
                     "Startup: rejecting invite to %s from non-allowed user %s",
-                    room_id, sender,
+                    room_id,
+                    sender,
                 )
                 continue
             if self._cfg.allowed_rooms and str(room_id) not in self._cfg.allowed_rooms:
                 logger.warning(
-                    "Startup: rejecting invite to non-allowed room %s", room_id,
+                    "Startup: rejecting invite to non-allowed room %s",
+                    room_id,
                 )
                 continue
             logger.info(
                 "Startup: accepting pending invite to %s (inviter: %s)",
-                room_id, sender or "unknown",
+                room_id,
+                sender or "unknown",
             )
             try:
                 await self._client.join_room_by_id(room_id)
@@ -1152,7 +1236,10 @@ class MatrixThread:
             device_ids = list(devices.keys())
             logger.info(
                 "UTD: requesting missing session %.16s for %s from %s (%d device(s))",
-                session_id, room_id, sender, len(device_ids),
+                session_id,
+                room_id,
+                sender,
+                len(device_ids),
             )
             _t = asyncio.create_task(
                 self._client.crypto.request_room_key(
@@ -1169,7 +1256,9 @@ class MatrixThread:
         else:
             logger.warning(
                 "UTD: no known devices for %s, cannot request key for session %.16s in %s",
-                sender, session_id, room_id,
+                sender,
+                session_id,
+                room_id,
             )
 
         await self.send_message(
@@ -1195,7 +1284,11 @@ class MatrixThread:
     # ------------------------------------------------------------------
 
     async def _send_to_device(
-        self, event_type: EventType, user_id: str, device_id: str, content: dict,
+        self,
+        event_type: EventType,
+        user_id: str,
+        device_id: str,
+        content: dict,
     ) -> None:
         """Send a single to-device message."""
         try:
@@ -1206,17 +1299,30 @@ class MatrixThread:
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Failed to send to-device %s to %s/%s: %s",
-                event_type, user_id, device_id, exc,
+                event_type,
+                user_id,
+                device_id,
+                exc,
             )
 
     async def _send_verify_cancel(
-        self, user_id: str, device_id: str, txn_id: str, code: str, reason: str,
+        self,
+        user_id: str,
+        device_id: str,
+        txn_id: str,
+        code: str,
+        reason: str,
     ) -> None:
-        await self._send_to_device(_VERIFY_CANCEL, user_id, device_id, {
-            "transaction_id": txn_id,
-            "code": code,
-            "reason": reason,
-        })
+        await self._send_to_device(
+            _VERIFY_CANCEL,
+            user_id,
+            device_id,
+            {
+                "transaction_id": txn_id,
+                "code": code,
+                "reason": reason,
+            },
+        )
 
     async def _send_verification_requests(self) -> None:
         """Send m.key.verification.request to all allowed_users.
@@ -1228,7 +1334,9 @@ class MatrixThread:
         """
         if self._client is None or not self._cfg.allowed_users:
             return
-        import time as _time, uuid as _uuid
+        import time as _time
+        import uuid as _uuid
+
         for user_id in self._cfg.allowed_users:
             txn_id = str(_uuid.uuid4())
             self._verifications[txn_id] = _SasState(
@@ -1285,12 +1393,19 @@ class MatrixThread:
         state = self._verifications.get(txn_id)
         if state is None or state.sas is None or not state.is_initiator:
             return
-        await self._send_to_device(_VERIFY_KEY, state.their_user_id, state.their_device_id, {
-            "transaction_id": txn_id,
-            "key": state.sas.pubkey,
-        })
+        await self._send_to_device(
+            _VERIFY_KEY,
+            state.their_user_id,
+            state.their_device_id,
+            {
+                "transaction_id": txn_id,
+                "key": state.sas.pubkey,
+            },
+        )
         state.key_sent = True
-        logger.info("SAS: sent key to %s/%s (txn=%s)", state.their_user_id, state.their_device_id, txn_id)
+        logger.info(
+            "SAS: sent key to %s/%s (txn=%s)", state.their_user_id, state.their_device_id, txn_id
+        )
 
     async def _on_verify_request(self, evt) -> None:
         """m.key.verification.request — accept with ready."""
@@ -1300,15 +1415,18 @@ class MatrixThread:
         # (same-account cross-device verification, e.g. Element logged in as the bot).
         if sender != self._cfg.user_id and not self._is_user_allowed(sender):
             return
-        txn_id     = _v_field(c, "transaction_id")
-        from_dev   = _v_field(c, "from_device")
-        methods    = _v_field(c, "methods") or []
+        txn_id = _v_field(c, "transaction_id")
+        from_dev = _v_field(c, "from_device")
+        methods = _v_field(c, "methods") or []
         if isinstance(methods, str):
             methods = [methods]
         if "m.sas.v1" not in methods:
             await self._send_verify_cancel(
-                sender, from_dev, txn_id,
-                "m.unknown_method", "Only m.sas.v1 is supported",
+                sender,
+                from_dev,
+                txn_id,
+                "m.unknown_method",
+                "Only m.sas.v1 is supported",
             )
             return
         self._verifications[txn_id] = _SasState(
@@ -1317,25 +1435,33 @@ class MatrixThread:
             their_device_id=from_dev,
             txn_id=txn_id,
         )
-        await self._send_to_device(_VERIFY_READY, sender, from_dev, {
-            "transaction_id": txn_id,
-            "from_device": self._cfg.device_id,
-            "methods": ["m.sas.v1"],
-        })
+        await self._send_to_device(
+            _VERIFY_READY,
+            sender,
+            from_dev,
+            {
+                "transaction_id": txn_id,
+                "from_device": self._cfg.device_id,
+                "methods": ["m.sas.v1"],
+            },
+        )
         logger.info("SAS: accepted verification request from %s (txn=%s)", sender, txn_id)
 
     async def _on_verify_start(self, evt) -> None:
         """m.key.verification.start — create SAS, send accept with commitment."""
-        c      = evt.content
+        c = evt.content
         sender = str(evt.sender)
         txn_id = _v_field(c, "transaction_id")
-        state  = self._verifications.get(txn_id)
+        state = self._verifications.get(txn_id)
         if state is None:
             return
         if _v_field(c, "method") != "m.sas.v1":
             await self._send_verify_cancel(
-                sender, state.their_device_id, txn_id,
-                "m.unknown_method", "Unknown method",
+                sender,
+                state.their_device_id,
+                txn_id,
+                "m.unknown_method",
+                "Unknown method",
             )
             del self._verifications[txn_id]
             return
@@ -1350,30 +1476,33 @@ class MatrixThread:
         elif hasattr(c, "serialize"):
             state.start_content = c.serialize()
         else:
-            state.start_content = {
-                k: v for k, v in vars(c).items() if not k.startswith("_")
-            }
+            state.start_content = {k: v for k, v in vars(c).items() if not k.startswith("_")}
         # commitment = base64(sha256(our_pubkey_b64_string || canonical_json(start)))
-        canonical  = _canonical_json(state.start_content)
+        canonical = _canonical_json(state.start_content)
         commitment = _base64.b64encode(
             _hashlib.sha256((sas.pubkey + canonical).encode()).digest()
         ).decode()
 
-        await self._send_to_device(_VERIFY_ACCEPT, sender, state.their_device_id, {
-            "transaction_id": txn_id,
-            "key_agreement_protocol": "curve25519-hkdf-sha256",
-            "hash": "sha256",
-            "message_authentication_code": "hkdf-hmac-sha256.v2",
-            "short_authentication_string": ["decimal", "emoji"],
-            "commitment": commitment,
-        })
+        await self._send_to_device(
+            _VERIFY_ACCEPT,
+            sender,
+            state.their_device_id,
+            {
+                "transaction_id": txn_id,
+                "key_agreement_protocol": "curve25519-hkdf-sha256",
+                "hash": "sha256",
+                "message_authentication_code": "hkdf-hmac-sha256.v2",
+                "short_authentication_string": ["decimal", "emoji"],
+                "commitment": commitment,
+            },
+        )
         logger.info("SAS: sent accept to %s (txn=%s)", sender, txn_id)
 
     async def _on_verify_key(self, evt) -> None:
         """m.key.verification.key — set their pubkey, reply with ours."""
-        c      = evt.content
+        c = evt.content
         txn_id = _v_field(c, "transaction_id")
-        state  = self._verifications.get(txn_id)
+        state = self._verifications.get(txn_id)
         if state is None or state.sas is None:
             return
         their_key = _v_field(c, "key")
@@ -1382,96 +1511,128 @@ class MatrixThread:
         except Exception as exc:  # noqa: BLE001
             logger.warning("SAS: key exchange failed for %s: %s", txn_id, exc)
             await self._send_verify_cancel(
-                state.their_user_id, state.their_device_id, txn_id,
-                "m.key_mismatch", str(exc),
+                state.their_user_id,
+                state.their_device_id,
+                txn_id,
+                "m.key_mismatch",
+                str(exc),
             )
             del self._verifications[txn_id]
             return
         # Initiator already sent its key in _on_verify_accept; responder sends it here.
         if not state.key_sent:
-            await self._send_to_device(_VERIFY_KEY, state.their_user_id, state.their_device_id, {
-                "transaction_id": txn_id,
-                "key": state.sas.pubkey,
-            })
+            await self._send_to_device(
+                _VERIFY_KEY,
+                state.their_user_id,
+                state.their_device_id,
+                {
+                    "transaction_id": txn_id,
+                    "key": state.sas.pubkey,
+                },
+            )
             state.key_sent = True
         logger.info(
             "SAS: key exchange done with %s (txn=%s) — auto-accepting, awaiting MAC",
-            state.their_user_id, txn_id,
+            state.their_user_id,
+            txn_id,
         )
 
     async def _on_verify_mac(self, evt) -> None:
         """m.key.verification.mac — send our MAC, send done, log completion."""
-        c      = evt.content
+        c = evt.content
         txn_id = _v_field(c, "transaction_id")
-        state  = self._verifications.get(txn_id)
+        state = self._verifications.get(txn_id)
         if state is None or state.sas is None:
             return
 
-        olm_m      = self._client.crypto
-        our_user   = self._cfg.user_id
+        olm_m = self._client.crypto
+        our_user = self._cfg.user_id
         our_device = self._cfg.device_id
         their_user = state.their_user_id
-        their_dev  = state.their_device_id
+        their_dev = state.their_device_id
 
         # MAC info prefix — we are the sender of this MAC message.
         # Per the Matrix spec the info is a plain concatenation (no separators).
         info_pfx = (
-            f"MATRIX_KEY_VERIFICATION_MAC"
-            f"{our_user}{our_device}"
-            f"{their_user}{their_dev}"
-            f"{txn_id}"
+            f"MATRIX_KEY_VERIFICATION_MAC{our_user}{our_device}{their_user}{their_dev}{txn_id}"
         )
         our_ed25519 = olm_m.account.signing_key
-        our_key_id  = f"ed25519:{our_device}"
+        our_key_id = f"ed25519:{our_device}"
 
-        key_mac  = state.sas.calculate_mac_fixed_base64(
-            our_ed25519, f"{info_pfx}{our_key_id}",
+        key_mac = state.sas.calculate_mac_fixed_base64(
+            our_ed25519,
+            f"{info_pfx}{our_key_id}",
         )
         keys_mac = state.sas.calculate_mac_fixed_base64(
-            our_key_id, f"{info_pfx}KEY_IDS",
+            our_key_id,
+            f"{info_pfx}KEY_IDS",
         )
 
         logger.debug(
             "SAS MAC debug: our_user=%s our_device=%s their_user=%s their_dev=%s "
             "ed25519_key=%s key_id=%s key_mac=%s keys_mac=%s",
-            our_user, our_device, their_user, their_dev,
-            our_ed25519, our_key_id, key_mac, keys_mac,
+            our_user,
+            our_device,
+            their_user,
+            their_dev,
+            our_ed25519,
+            our_key_id,
+            key_mac,
+            keys_mac,
         )
 
-        await self._send_to_device(_VERIFY_MAC, their_user, their_dev, {
-            "transaction_id": txn_id,
-            "mac":  {our_key_id: key_mac},
-            "keys": keys_mac,
-        })
-        await self._send_to_device(_VERIFY_DONE, their_user, their_dev, {
-            "transaction_id": txn_id,
-        })
+        await self._send_to_device(
+            _VERIFY_MAC,
+            their_user,
+            their_dev,
+            {
+                "transaction_id": txn_id,
+                "mac": {our_key_id: key_mac},
+                "keys": keys_mac,
+            },
+        )
+        await self._send_to_device(
+            _VERIFY_DONE,
+            their_user,
+            their_dev,
+            {
+                "transaction_id": txn_id,
+            },
+        )
         del self._verifications[txn_id]
         logger.info(
             "SAS: verification complete with %s device %s (txn=%s) — "
             "device should show as verified in Element.",
-            their_user, their_dev, txn_id,
+            their_user,
+            their_dev,
+            txn_id,
         )
 
     async def _on_verify_cancel(self, evt) -> None:
         """m.key.verification.cancel — clean up state."""
-        c      = evt.content
+        c = evt.content
         txn_id = _v_field(c, "transaction_id")
         self._verifications.pop(txn_id, None)
         logger.info(
             "SAS: verification cancelled by %s (txn=%s): %s",
-            evt.sender, txn_id, _v_field(c, "reason", "no reason"),
+            evt.sender,
+            txn_id,
+            _v_field(c, "reason", "no reason"),
         )
 
     # ------------------------------------------------------------------
     # Command dispatch
     # ------------------------------------------------------------------
 
-    async def _dispatch(self, text: str, thread_id: str, *, content: list | None = None, ephemeral: bool = False) -> None:
+    async def _dispatch(
+        self, text: str, thread_id: str, *, content: list | None = None, ephemeral: bool = False
+    ) -> None:
         # Shared slash commands (delegated to SlashCommandHandler).
         if content is None and self._slash_handler is not None:
+
             async def send_fn(msg: str) -> None:
                 await self.send_message(msg, thread_id)
+
             if await self._slash_handler.dispatch(text, thread_id, send_fn):
                 return
 
@@ -1485,16 +1646,20 @@ class MatrixThread:
                 await self.send_message("E2EE not available.", thread_id)
                 return
             await self.send_message(
-                "Sending verification request to all allowed_users...", thread_id,
+                "Sending verification request to all allowed_users...",
+                thread_id,
             )
             await self._send_verification_requests()
             return
 
         typing_task = asyncio.create_task(
-            self._typing_loop(thread_id), name=f"typing_{thread_id}",
+            self._typing_loop(thread_id),
+            name=f"typing_{thread_id}",
         )
         try:
-            reply = await self._llm.enqueue_user_message(text, thread_id, content=content, ephemeral=ephemeral)
+            reply = await self._llm.enqueue_user_message(
+                text, thread_id, content=content, ephemeral=ephemeral
+            )
         finally:
             typing_task.cancel()
             try:
@@ -1658,9 +1823,11 @@ class MatrixThread:
 # Minimal Markdown -> HTML conversion for Matrix formatted_body
 # ---------------------------------------------------------------------------
 
+
 def _markdown_to_html(text: str) -> str:
     """Very small Markdown subset: bold, italic, code blocks, inline code."""
     import re
+
     # Code blocks
     text = re.sub(r"```(\w*)\n(.*?)```", r"<pre><code>\2</code></pre>", text, flags=re.DOTALL)
     # Inline code

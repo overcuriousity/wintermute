@@ -33,7 +33,6 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +56,7 @@ class SyntheticToolCall:
     type: str = "function"
 
     @staticmethod
-    def make(name: str, arguments: str) -> "SyntheticToolCall":
+    def make(name: str, arguments: str) -> SyntheticToolCall:
         return SyntheticToolCall(
             id=f"rescue_{uuid.uuid4().hex[:12]}",
             function=_FunctionStub(name=name, arguments=arguments),
@@ -89,9 +88,9 @@ _RE_FENCED = re.compile(
 # 4. MiniMax-style: <minimax:tool_call> tool_name\n key=value … [/tool_name]
 _RE_MINIMAX = re.compile(
     r"<\s*\w+:\s*tool_call\s*>\s*"
-    r"(\w+)\s+"                          # tool name
-    r"(.*?)"                             # body (key="value" or JSON)
-    r"\[/\1\]",                          # closing [/tool_name]
+    r"(\w+)\s+"  # tool name
+    r"(.*?)"  # body (key="value" or JSON)
+    r"\[/\1\]",  # closing [/tool_name]
     re.DOTALL | re.IGNORECASE,
 )
 
@@ -129,7 +128,8 @@ def _build_tool_name_pattern(tool_names: set[str]) -> re.Pattern[str]:
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
-def _try_parse_json_body(body: str, known_tools: set[str]) -> Optional[list[SyntheticToolCall]]:
+
+def _try_parse_json_body(body: str, known_tools: set[str]) -> list[SyntheticToolCall] | None:
     """Try to parse a JSON body into tool call(s).
 
     Accepts either:
@@ -170,8 +170,10 @@ def _try_parse_json_body(body: str, known_tools: set[str]) -> Optional[list[Synt
         has_args = "arguments" in item or "parameters" in item or nested_args is not None
         if not has_args:
             continue
-        args = item.get("arguments") if "arguments" in item else (
-            item.get("parameters") if "parameters" in item else (nested_args or {})
+        args = (
+            item.get("arguments")
+            if "arguments" in item
+            else (item.get("parameters") if "parameters" in item else (nested_args or {}))
         )
         if isinstance(args, str):
             args_str = args
@@ -184,7 +186,7 @@ def _try_parse_json_body(body: str, known_tools: set[str]) -> Optional[list[Synt
     return results or None
 
 
-def _try_parse_invoke_body(body: str, known_tools: set[str]) -> Optional[list[SyntheticToolCall]]:
+def _try_parse_invoke_body(body: str, known_tools: set[str]) -> list[SyntheticToolCall] | None:
     """Parse Anthropic-style ``<invoke>`` XML tool calls from *body*.
 
     Handles::
@@ -235,14 +237,14 @@ def _parse_cli_args(body: str) -> dict:
     result: dict = {}
     for m in re.finditer(
         r"--([\w][\w-]*)\s+"
-        r'(?:"((?:[^"\\]|\\.)*)"|'   # double-quoted
-        r"'((?:[^'\\]|\\.)*)'|"       # single-quoted
-        r"(\S+))",                     # bare word
+        r'(?:"((?:[^"\\]|\\.)*)"|'  # double-quoted
+        r"'((?:[^'\\]|\\.)*)'|"  # single-quoted
+        r"(\S+))",  # bare word
         body,
     ):
         key = m.group(1).replace("-", "_")
         if m.group(2) is not None:
-            val: "str | int | float" = m.group(2)
+            val: str | int | float = m.group(2)
         elif m.group(3) is not None:
             val = m.group(3)
         else:
@@ -258,18 +260,14 @@ def _parse_cli_args(body: str) -> dict:
     return result
 
 
-def _parse_arrow_style(
-    body: str, known_tools: set[str]
-) -> list["SyntheticToolCall"]:
+def _parse_arrow_style(body: str, known_tools: set[str]) -> list[SyntheticToolCall]:
     """Parse hash-rocket style: ``{tool => "name", args => {…}}``.
 
     The *args* block may contain JSON, key=value, YAML-like, or
     ``--flag value`` CLI-style pairs.
     """
     # Extract tool name (tool => "name" or tool => name)
-    name_m = re.search(
-        r'\btool\s*=>\s*["\']?([\w]+)["\']?', body, re.IGNORECASE
-    )
+    name_m = re.search(r'\btool\s*=>\s*["\']?([\w]+)["\']?', body, re.IGNORECASE)
     if not name_m:
         return []
     name = name_m.group(1).strip()
@@ -333,17 +331,17 @@ def _parse_yaml_like_kv(body: str) -> dict:
     """
     result: dict = {}
     for m in re.finditer(
-        r'^\s*-?\s*(\w+)\s*:\s*'
+        r"^\s*-?\s*(\w+)\s*:\s*"
         r'(?:"((?:[^"\\]|\\.)*)"'
-        r"|'((?:[^'\\]|\\.)*)'"   # single-quoted
-        r'|(.*?))'                    # unquoted – rest of line
-        r'\s*$',
+        r"|'((?:[^'\\]|\\.)*)'"  # single-quoted
+        r"|(.*?))"  # unquoted – rest of line
+        r"\s*$",
         body,
         re.MULTILINE,
     ):
         key = m.group(1)
         if m.group(2) is not None:
-            val: "str | int | float" = m.group(2)
+            val: str | int | float = m.group(2)
         elif m.group(3) is not None:
             val = m.group(3)
         else:
@@ -363,6 +361,7 @@ def _parse_yaml_like_kv(body: str) -> dict:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def rescue_tool_calls(
     content: str,

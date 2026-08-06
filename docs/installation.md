@@ -332,7 +332,23 @@ docker run -d --name qdrant -p 6333:6333 qdrant/qdrant
 
 See the [Qdrant documentation](https://qdrant.tech/documentation/quick-start/) for more options.
 
-An embeddings endpoint is **required** — without it, Wintermute will refuse to start. Any OpenAI-compatible `/v1/embeddings` endpoint works (local: `text-embeddings-inference`, `llama.cpp`, `Infinity`; cloud: OpenAI, Together, Fireworks).
+An embeddings endpoint is strongly recommended. Any OpenAI-compatible `/v1/embeddings` endpoint works (local: `text-embeddings-inference`, `llama.cpp`, `Infinity`; cloud: OpenAI, Together, Fireworks).
+
+### Zero-config fallback (no embeddings endpoint)
+
+If you leave `memory.embeddings.endpoint` empty, Wintermute can fall back to a bundled local model instead of refusing to start:
+
+```bash
+uv sync --extra local-embeddings
+```
+
+- **Model:** `sentence-transformers/all-MiniLM-L6-v2`, 384-dimensional, CPU-only via `onnxruntime`.
+- **First use** downloads ~87 MB over HTTPS into `data/.embedding_cache/`. The deployment host needs outbound HTTPS once; afterwards it runs fully offline. The cache is gitignored.
+- **Quality** is below a hosted embedding model. This is a floor that keeps memory working out of the box, not a recommended production default.
+- **Precedence:** a configured endpoint always wins. If a configured endpoint fails at runtime, memory fails loudly rather than silently switching — mixing 384- and 1536-dimensional vectors in one store would make similarity search meaningless.
+- **Switching later** between the local model and a hosted endpoint is refused at startup for that same reason. The store records the dimension that built it; to switch, delete `data/local_vectors.db` and start fresh (existing memories are lost).
+
+Without either an endpoint or the extra installed, startup fails with a message naming both options.
 
 > **Migration note:** The legacy `fts5` (SQLite keyword search) backend has been removed. If upgrading from an older version, update your `config.yaml`: set `memory.backend` to `"local_vector"` and configure `memory.embeddings.endpoint`.
 

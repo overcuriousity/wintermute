@@ -22,12 +22,16 @@ import re
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
 from wintermute.infra.llm_utils import (
     embed as _embed,
+)
+from wintermute.infra.llm_utils import (
     log_store_interaction as _log_interaction_impl,
+)
+from wintermute.infra.llm_utils import (
     make_content_id as _make_id,
 )
 from wintermute.infra.paths import (
@@ -43,30 +47,40 @@ _config: dict = {}
 _embed_cfg: dict = {}
 
 
-def _log_interaction(timestamp: float, action: str, input_text: str,
-                     output_text: str, status: str = "ok",
-                     llm: str = "") -> None:
+def _log_interaction(
+    timestamp: float,
+    action: str,
+    input_text: str,
+    output_text: str,
+    status: str = "ok",
+    llm: str = "",
+) -> None:
     """Log a skill store interaction (delegates to llm_utils)."""
-    _log_interaction_impl(timestamp, action, input_text, output_text,
-                          status, llm=llm, session="system:skill_store")
+    _log_interaction_impl(
+        timestamp, action, input_text, output_text, status, llm=llm, session="system:skill_store"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Backend protocol
 # ---------------------------------------------------------------------------
 
+
 @runtime_checkable
 class SkillBackend(Protocol):
     def init(self) -> None: ...
-    def add(self, name: str, summary: str, documentation: str,
-            changelog: str = "") -> str: ...
+    def add(self, name: str, summary: str, documentation: str, changelog: str = "") -> str: ...
     def get(self, name: str) -> dict | None: ...
     def search(self, query: str, top_k: int, threshold: float) -> list[dict]: ...
     def get_all(self) -> list[dict]: ...
     def delete(self, name: str) -> bool: ...
-    def update(self, name: str, summary: str | None = None,
-               documentation: str | None = None,
-               changelog: str | None = None) -> bool: ...
+    def update(
+        self,
+        name: str,
+        summary: str | None = None,
+        documentation: str | None = None,
+        changelog: str | None = None,
+    ) -> bool: ...
     def exists(self, name: str) -> bool: ...
     def count(self) -> int: ...
     def stats(self) -> dict: ...
@@ -84,6 +98,7 @@ def _build_full_text(summary: str, documentation: str) -> str:
 # ---------------------------------------------------------------------------
 # Local vector backend (numpy cosine similarity, persisted in SQLite BLOBs)
 # ---------------------------------------------------------------------------
+
 
 class LocalVectorSkillBackend:
     """numpy cosine similarity over skill vectors stored in SQLite BLOBs.
@@ -137,10 +152,10 @@ class LocalVectorSkillBackend:
     @staticmethod
     def _vec_to_blob(vec: list[float]) -> bytes:
         import numpy as np
+
         return np.array(vec, dtype=np.float32).tobytes()
 
-    def add(self, name: str, summary: str, documentation: str,
-            changelog: str = "") -> str:
+    def add(self, name: str, summary: str, documentation: str, changelog: str = "") -> str:
         sid = _make_id(name)
         full_text = _build_full_text(summary, documentation)
         vectors = _embed([full_text], self._embed_cfg)
@@ -159,7 +174,7 @@ class LocalVectorSkillBackend:
                 if row:
                     version = row[0] + 1
                     old_changelog = row[1] or ""
-                    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    date_str = datetime.now(UTC).strftime("%Y-%m-%d")
                     if changelog:
                         new_changelog = changelog
                     elif old_changelog:
@@ -170,8 +185,16 @@ class LocalVectorSkillBackend:
                         "UPDATE skill_vectors SET summary=?, documentation=?, "
                         "full_text=?, vector=?, version=?, changelog=?, "
                         "last_accessed=? WHERE name=?",
-                        (summary, documentation, full_text, blob, version,
-                         new_changelog, now, name),
+                        (
+                            summary,
+                            documentation,
+                            full_text,
+                            blob,
+                            version,
+                            new_changelog,
+                            now,
+                            name,
+                        ),
                     )
                 else:
                     version = 1
@@ -180,14 +203,25 @@ class LocalVectorSkillBackend:
                         "(skill_id, name, summary, documentation, full_text, vector, "
                         "created_at, last_accessed, access_count, version, changelog) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
-                        (sid, name, summary, documentation, full_text, blob,
-                         now, now, version, changelog),
+                        (
+                            sid,
+                            name,
+                            summary,
+                            documentation,
+                            full_text,
+                            blob,
+                            now,
+                            now,
+                            version,
+                            changelog,
+                        ),
                     )
                 conn.commit()
             finally:
                 conn.close()
-        _log_interaction(t0, "skill_vector_add", f"{name}: {summary[:100]}",
-                         f"v{version}", llm="local_vector")
+        _log_interaction(
+            t0, "skill_vector_add", f"{name}: {summary[:100]}", f"v{version}", llm="local_vector"
+        )
         logger.info("Skill '%s' saved (v%d) via local_vector", name, version)
         return sid
 
@@ -196,7 +230,8 @@ class LocalVectorSkillBackend:
             conn = self._connect()
             try:
                 row = conn.execute(
-                    "SELECT 1 FROM skill_vectors WHERE name = ?", (name,),
+                    "SELECT 1 FROM skill_vectors WHERE name = ?",
+                    (name,),
                 ).fetchone()
             finally:
                 conn.close()
@@ -224,10 +259,15 @@ class LocalVectorSkillBackend:
             finally:
                 conn.close()
         return {
-            "id": row[0], "name": row[1], "summary": row[2],
-            "documentation": row[3], "created_at": row[4],
-            "last_accessed": row[5], "access_count": row[6],
-            "version": row[7], "changelog": row[8],
+            "id": row[0],
+            "name": row[1],
+            "summary": row[2],
+            "documentation": row[3],
+            "created_at": row[4],
+            "last_accessed": row[5],
+            "access_count": row[6],
+            "version": row[7],
+            "changelog": row[8],
         }
 
     def search(self, query: str, top_k: int, threshold: float) -> list[dict]:
@@ -266,18 +306,29 @@ class LocalVectorSkillBackend:
                 continue
             score = float(np.dot(q_vec, vec / norm))
             if score >= threshold:
-                results.append({
-                    "id": r[0], "name": r[1], "summary": r[2],
-                    "documentation": r[3], "created_at": r[5],
-                    "last_accessed": r[6], "access_count": r[7],
-                    "version": r[8], "changelog": r[9], "score": score,
-                })
+                results.append(
+                    {
+                        "id": r[0],
+                        "name": r[1],
+                        "summary": r[2],
+                        "documentation": r[3],
+                        "created_at": r[5],
+                        "last_accessed": r[6],
+                        "access_count": r[7],
+                        "version": r[8],
+                        "changelog": r[9],
+                        "score": score,
+                    }
+                )
 
         results.sort(key=lambda x: x["score"], reverse=True)
         hits = results[:top_k]
         _log_interaction(
-            t0, "skill_vector_search", query[:200],
-            f"{len(hits)} hits (top_k={top_k})", llm="local_vector",
+            t0,
+            "skill_vector_search",
+            query[:200],
+            f"{len(hits)} hits (top_k={top_k})",
+            llm="local_vector",
         )
         return hits
 
@@ -293,9 +344,18 @@ class LocalVectorSkillBackend:
             finally:
                 conn.close()
         return [
-            {"id": r[0], "name": r[1], "summary": r[2], "documentation": r[3],
-             "created_at": r[4], "last_accessed": r[5], "access_count": r[6],
-             "version": r[7], "changelog": r[8], "score": 1.0}
+            {
+                "id": r[0],
+                "name": r[1],
+                "summary": r[2],
+                "documentation": r[3],
+                "created_at": r[4],
+                "last_accessed": r[5],
+                "access_count": r[6],
+                "version": r[7],
+                "changelog": r[8],
+                "score": 1.0,
+            }
             for r in rows
         ]
 
@@ -303,16 +363,19 @@ class LocalVectorSkillBackend:
         with self._lock:
             conn = self._connect()
             try:
-                cur = conn.execute(
-                    "DELETE FROM skill_vectors WHERE name = ?", (name,))
+                cur = conn.execute("DELETE FROM skill_vectors WHERE name = ?", (name,))
                 conn.commit()
                 return cur.rowcount > 0
             finally:
                 conn.close()
 
-    def update(self, name: str, summary: str | None = None,
-               documentation: str | None = None,
-               changelog: str | None = None) -> bool:
+    def update(
+        self,
+        name: str,
+        summary: str | None = None,
+        documentation: str | None = None,
+        changelog: str | None = None,
+    ) -> bool:
         # Phase 1: Read current row under lock.
         with self._lock:
             conn = self._connect()
@@ -333,7 +396,7 @@ class LocalVectorSkillBackend:
             new_changelog = changelog
         else:
             old_cl = row[3] or ""
-            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            date_str = datetime.now(UTC).strftime("%Y-%m-%d")
             if old_cl:
                 new_changelog = f"{old_cl}\n- {date_str}: updated"
             else:
@@ -352,8 +415,16 @@ class LocalVectorSkillBackend:
                     "UPDATE skill_vectors SET summary=?, documentation=?, "
                     "full_text=?, vector=?, version=?, changelog=?, "
                     "last_accessed=? WHERE name=?",
-                    (new_summary, new_doc, full_text, blob, new_version,
-                     new_changelog, time.time(), name),
+                    (
+                        new_summary,
+                        new_doc,
+                        full_text,
+                        blob,
+                        new_version,
+                        new_changelog,
+                        time.time(),
+                        name,
+                    ),
                 )
                 conn.commit()
             finally:
@@ -383,7 +454,9 @@ class LocalVectorSkillBackend:
         result: dict[str, dict] = {}
         for r in rows:
             result[r[0]] = {
-                "created": r[1], "last_read": r[2], "read_count": r[3],
+                "created": r[1],
+                "last_read": r[2],
+                "read_count": r[3],
                 "sessions_loaded": r[3],
                 "version": r[4],
                 "success_count": r[5] if len(r) > 5 else 0,
@@ -418,13 +491,13 @@ class LocalVectorSkillBackend:
             finally:
                 conn.close()
         return [
-            {"name": r[0], "summary": r[1], "last_accessed": r[2],
-             "access_count": r[3]}
+            {"name": r[0], "summary": r[1], "last_accessed": r[2], "access_count": r[3]}
             for r in rows
         ]
 
     def get_all_with_vectors(self) -> list[dict]:
         import numpy as np
+
         with self._lock:
             conn = self._connect()
             try:
@@ -438,12 +511,20 @@ class LocalVectorSkillBackend:
         results = []
         for r in rows:
             vec = np.frombuffer(r[4], dtype=np.float32).tolist()
-            results.append({
-                "id": r[0], "name": r[1], "summary": r[2],
-                "documentation": r[3], "vector": vec, "created_at": r[5],
-                "last_accessed": r[6], "access_count": r[7],
-                "version": r[8], "changelog": r[9],
-            })
+            results.append(
+                {
+                    "id": r[0],
+                    "name": r[1],
+                    "summary": r[2],
+                    "documentation": r[3],
+                    "vector": vec,
+                    "created_at": r[5],
+                    "last_accessed": r[6],
+                    "access_count": r[7],
+                    "version": r[8],
+                    "changelog": r[9],
+                }
+            )
         return results
 
     def bulk_delete(self, names: list[str]) -> int:
@@ -467,6 +548,7 @@ class LocalVectorSkillBackend:
 # Qdrant backend (vector semantic search)
 # ---------------------------------------------------------------------------
 
+
 class QdrantSkillBackend:
     """Qdrant vector DB with embedding-based semantic search for skills.
 
@@ -479,16 +561,14 @@ class QdrantSkillBackend:
         self._embed_cfg = embed_cfg
         # Connection config inherited from memory.qdrant if not overridden.
         memory_qdrant = config.get("_memory_qdrant", {})
-        self._url = self._qdrant_cfg.get("url",
-                     memory_qdrant.get("url", "http://localhost:6333"))
-        self._api_key = self._qdrant_cfg.get("api_key",
-                        memory_qdrant.get("api_key", "")) or None
+        self._url = self._qdrant_cfg.get("url", memory_qdrant.get("url", "http://localhost:6333"))
+        self._api_key = self._qdrant_cfg.get("api_key", memory_qdrant.get("api_key", "")) or None
         # Derive default skill collection name from the memory collection name
         # so separate instances using different memory collections automatically
         # get isolated skill collections too.
         mem_collection = memory_qdrant.get("collection", "wintermute_memories")
         if mem_collection.endswith("_memories"):
-            default_skill_collection = mem_collection[:-len("_memories")] + "_skills"
+            default_skill_collection = mem_collection[: -len("_memories")] + "_skills"
         else:
             default_skill_collection = mem_collection + "_skills"
         self._collection = self._qdrant_cfg.get("collection", default_skill_collection)
@@ -497,9 +577,10 @@ class QdrantSkillBackend:
         self._lock = threading.Lock()
 
     def init(self) -> None:
+        from urllib.parse import urlparse
+
         from qdrant_client import QdrantClient
         from qdrant_client.models import Distance, VectorParams
-        from urllib.parse import urlparse
 
         parsed = urlparse(self._url)
         use_https = parsed.scheme == "https"
@@ -507,8 +588,11 @@ class QdrantSkillBackend:
         port = parsed.port or (443 if use_https else 6333)
 
         self._client = QdrantClient(
-            host=host, port=port, https=use_https,
-            api_key=self._api_key, timeout=30,
+            host=host,
+            port=port,
+            https=use_https,
+            api_key=self._api_key,
+            timeout=30,
             prefer_grpc=False,
         )
         collections = [c.name for c in self._client.get_collections().collections]
@@ -520,15 +604,16 @@ class QdrantSkillBackend:
                     distance=Distance.COSINE,
                 ),
             )
-            logger.info("Qdrant: created skill collection %r (%d dims)",
-                        self._collection, self._dimensions)
-        logger.info("Skill backend: qdrant (url=%s, collection=%s)",
-                     self._url, self._collection)
+            logger.info(
+                "Qdrant: created skill collection %r (%d dims)", self._collection, self._dimensions
+            )
+        logger.info("Skill backend: qdrant (url=%s, collection=%s)", self._url, self._collection)
         self._ensure_payload_indexes()
 
     def _ensure_payload_indexes(self) -> None:
         try:
             from qdrant_client.models import PayloadSchemaType
+
             for field, schema in [
                 ("name", PayloadSchemaType.KEYWORD),
                 ("last_accessed", PayloadSchemaType.FLOAT),
@@ -550,8 +635,7 @@ class QdrantSkillBackend:
         """Deterministic point ID from skill name."""
         return _make_id(f"skill:{name}")
 
-    def add(self, name: str, summary: str, documentation: str,
-            changelog: str = "") -> str:
+    def add(self, name: str, summary: str, documentation: str, changelog: str = "") -> str:
         from qdrant_client.models import PointStruct
 
         full_text = _build_full_text(summary, documentation)
@@ -569,14 +653,15 @@ class QdrantSkillBackend:
         try:
             existing = self._client.retrieve(
                 collection_name=self._collection,
-                ids=[pid], with_payload=True,
+                ids=[pid],
+                with_payload=True,
             )
             if existing:
                 old_payload = existing[0].payload or {}
                 version = old_payload.get("version", 0) + 1
                 if not changelog:
                     old_cl = old_payload.get("changelog", "")
-                    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    date_str = datetime.now(UTC).strftime("%Y-%m-%d")
                     if old_cl:
                         new_changelog = f"{old_cl}\n- {date_str}: updated"
                     else:
@@ -608,8 +693,9 @@ class QdrantSkillBackend:
             collection_name=self._collection,
             points=[point],
         )
-        _log_interaction(t0, "qdrant_skill_add", f"{name}: {summary[:100]}",
-                         f"v{version}", llm="qdrant")
+        _log_interaction(
+            t0, "qdrant_skill_add", f"{name}: {summary[:100]}", f"v{version}", llm="qdrant"
+        )
         logger.info("Skill '%s' saved (v%d) via qdrant", name, version)
         return pid
 
@@ -618,7 +704,8 @@ class QdrantSkillBackend:
         try:
             results = self._client.retrieve(
                 collection_name=self._collection,
-                ids=[pid], with_payload=False,
+                ids=[pid],
+                with_payload=False,
             )
             return bool(results)
         except Exception:
@@ -629,7 +716,8 @@ class QdrantSkillBackend:
         try:
             results = self._client.retrieve(
                 collection_name=self._collection,
-                ids=[pid], with_payload=True,
+                ids=[pid],
+                with_payload=True,
             )
         except Exception:
             return None
@@ -641,14 +729,14 @@ class QdrantSkillBackend:
         try:
             self._client.set_payload(
                 collection_name=self._collection,
-                payload={"last_accessed": now,
-                         "access_count": p.get("access_count", 0) + 1},
+                payload={"last_accessed": now, "access_count": p.get("access_count", 0) + 1},
                 points=[pid],
             )
         except Exception:
             pass
         return {
-            "id": pid, "name": p.get("name", name),
+            "id": pid,
+            "name": p.get("name", name),
             "summary": p.get("summary", ""),
             "documentation": p.get("documentation", ""),
             "created_at": p.get("created_at", 0),
@@ -679,22 +767,28 @@ class QdrantSkillBackend:
         hits = []
         for r in results:
             p = r.payload or {}
-            hits.append({
-                "id": str(r.id), "name": p.get("name", ""),
-                "summary": p.get("summary", ""),
-                "documentation": p.get("documentation", ""),
-                "created_at": p.get("created_at", 0),
-                "last_accessed": p.get("last_accessed", 0),
-                "access_count": p.get("access_count", 0),
-                "version": p.get("version", 1),
-                "changelog": p.get("changelog", ""),
-                "success_count": p.get("success_count", 0),
-                "failure_count": p.get("failure_count", 0),
-                "score": r.score,
-            })
+            hits.append(
+                {
+                    "id": str(r.id),
+                    "name": p.get("name", ""),
+                    "summary": p.get("summary", ""),
+                    "documentation": p.get("documentation", ""),
+                    "created_at": p.get("created_at", 0),
+                    "last_accessed": p.get("last_accessed", 0),
+                    "access_count": p.get("access_count", 0),
+                    "version": p.get("version", 1),
+                    "changelog": p.get("changelog", ""),
+                    "success_count": p.get("success_count", 0),
+                    "failure_count": p.get("failure_count", 0),
+                    "score": r.score,
+                }
+            )
         _log_interaction(
-            t0, "qdrant_skill_search", query[:200],
-            f"{len(hits)} hits (top_k={top_k})", llm="qdrant",
+            t0,
+            "qdrant_skill_search",
+            query[:200],
+            f"{len(hits)} hits (top_k={top_k})",
+            llm="qdrant",
         )
         return hits
 
@@ -717,30 +811,33 @@ class QdrantSkillBackend:
         except Exception:
             return []
         return [
-            {"id": str(p.id),
-             "name": (p.payload or {}).get("name", ""),
-             "summary": (p.payload or {}).get("summary", ""),
-             "documentation": (p.payload or {}).get("documentation", ""),
-             "created_at": (p.payload or {}).get("created_at", 0),
-             "last_accessed": (p.payload or {}).get("last_accessed", 0),
-             "access_count": (p.payload or {}).get("access_count", 0),
-             "version": (p.payload or {}).get("version", 1),
-             "changelog": (p.payload or {}).get("changelog", ""),
-             "success_count": (p.payload or {}).get("success_count", 0),
-             "failure_count": (p.payload or {}).get("failure_count", 0),
-             "score": 1.0}
-            for p in sorted(all_points,
-                            key=lambda x: (x.payload or {}).get("name", ""))
+            {
+                "id": str(p.id),
+                "name": (p.payload or {}).get("name", ""),
+                "summary": (p.payload or {}).get("summary", ""),
+                "documentation": (p.payload or {}).get("documentation", ""),
+                "created_at": (p.payload or {}).get("created_at", 0),
+                "last_accessed": (p.payload or {}).get("last_accessed", 0),
+                "access_count": (p.payload or {}).get("access_count", 0),
+                "version": (p.payload or {}).get("version", 1),
+                "changelog": (p.payload or {}).get("changelog", ""),
+                "success_count": (p.payload or {}).get("success_count", 0),
+                "failure_count": (p.payload or {}).get("failure_count", 0),
+                "score": 1.0,
+            }
+            for p in sorted(all_points, key=lambda x: (x.payload or {}).get("name", ""))
         ]
 
     def delete(self, name: str) -> bool:
         from qdrant_client.models import PointIdsList
+
         pid = self._name_to_id(name)
         # Check existence first — Qdrant delete is a no-op for missing IDs.
         try:
             existing = self._client.retrieve(
                 collection_name=self._collection,
-                ids=[pid], with_payload=False,
+                ids=[pid],
+                with_payload=False,
             )
             if not existing:
                 return False
@@ -755,9 +852,13 @@ class QdrantSkillBackend:
         except Exception:
             return False
 
-    def update(self, name: str, summary: str | None = None,
-               documentation: str | None = None,
-               changelog: str | None = None) -> bool:
+    def update(
+        self,
+        name: str,
+        summary: str | None = None,
+        documentation: str | None = None,
+        changelog: str | None = None,
+    ) -> bool:
         # Fetch existing payload directly from Qdrant without updating access stats
         pid = self._name_to_id(name)
         try:
@@ -780,7 +881,7 @@ class QdrantSkillBackend:
             new_changelog = changelog
         else:
             old_cl = payload.get("changelog", "")
-            date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            date_str = datetime.now(UTC).strftime("%Y-%m-%d")
             if old_cl:
                 new_changelog = f"{old_cl}\n- {date_str}: updated"
             else:
@@ -790,6 +891,7 @@ class QdrantSkillBackend:
         if not vectors:
             raise RuntimeError("Embedding call returned no vectors")
         from qdrant_client.models import PointStruct
+
         now = time.time()
         point = PointStruct(
             id=pid,
@@ -827,7 +929,8 @@ class QdrantSkillBackend:
         result: dict[str, dict] = {}
         for s in all_skills:
             result[s["name"]] = {
-                "created": s["created_at"], "last_read": s["last_accessed"],
+                "created": s["created_at"],
+                "last_read": s["last_accessed"],
                 "read_count": s["access_count"],
                 "sessions_loaded": s["access_count"],
                 "version": s["version"],
@@ -847,7 +950,8 @@ class QdrantSkillBackend:
             with self._lock:
                 results = self._client.retrieve(
                     collection_name=self._collection,
-                    ids=[pid], with_payload=True,
+                    ids=[pid],
+                    with_payload=True,
                 )
                 if not results:
                     return
@@ -862,7 +966,8 @@ class QdrantSkillBackend:
             logger.debug("Qdrant: failed to record skill outcome for %s", name, exc_info=True)
 
     def get_stale(self, max_age_days: int, min_access: int) -> list[dict]:
-        from qdrant_client.models import Filter, FieldCondition, Range
+        from qdrant_client.models import FieldCondition, Filter, Range
+
         cutoff = time.time() - (max_age_days * 86400)
         try:
             all_points = []
@@ -870,12 +975,12 @@ class QdrantSkillBackend:
             while True:
                 points_page, offset = self._client.scroll(
                     collection_name=self._collection,
-                    scroll_filter=Filter(must=[
-                        FieldCondition(key="last_accessed",
-                                       range=Range(lt=cutoff)),
-                        FieldCondition(key="access_count",
-                                       range=Range(lt=min_access)),
-                    ]),
+                    scroll_filter=Filter(
+                        must=[
+                            FieldCondition(key="last_accessed", range=Range(lt=cutoff)),
+                            FieldCondition(key="access_count", range=Range(lt=min_access)),
+                        ]
+                    ),
                     limit=10000,
                     with_payload=True,
                     offset=offset,
@@ -888,10 +993,12 @@ class QdrantSkillBackend:
         except Exception:
             return []
         return [
-            {"name": (p.payload or {}).get("name", ""),
-             "summary": (p.payload or {}).get("summary", ""),
-             "last_accessed": (p.payload or {}).get("last_accessed", 0),
-             "access_count": (p.payload or {}).get("access_count", 0)}
+            {
+                "name": (p.payload or {}).get("name", ""),
+                "summary": (p.payload or {}).get("summary", ""),
+                "last_accessed": (p.payload or {}).get("last_accessed", 0),
+                "access_count": (p.payload or {}).get("access_count", 0),
+            }
             for p in all_points
         ]
 
@@ -915,27 +1022,30 @@ class QdrantSkillBackend:
         except Exception:
             return []
         return [
-            {"id": str(p.id),
-             "name": (p.payload or {}).get("name", ""),
-             "summary": (p.payload or {}).get("summary", ""),
-             "documentation": (p.payload or {}).get("documentation", ""),
-             "vector": (
-                 list(next(iter(p.vector.values())))
-                 if isinstance(p.vector, dict) and p.vector
-                 else (list(p.vector) if p.vector else [])
-             ),
-             "created_at": (p.payload or {}).get("created_at", 0),
-             "last_accessed": (p.payload or {}).get("last_accessed", 0),
-             "access_count": (p.payload or {}).get("access_count", 0),
-             "version": (p.payload or {}).get("version", 1),
-             "changelog": (p.payload or {}).get("changelog", ""),
-             "success_count": (p.payload or {}).get("success_count", 0),
-             "failure_count": (p.payload or {}).get("failure_count", 0)}
+            {
+                "id": str(p.id),
+                "name": (p.payload or {}).get("name", ""),
+                "summary": (p.payload or {}).get("summary", ""),
+                "documentation": (p.payload or {}).get("documentation", ""),
+                "vector": (
+                    list(next(iter(p.vector.values())))
+                    if isinstance(p.vector, dict) and p.vector
+                    else (list(p.vector) if p.vector else [])
+                ),
+                "created_at": (p.payload or {}).get("created_at", 0),
+                "last_accessed": (p.payload or {}).get("last_accessed", 0),
+                "access_count": (p.payload or {}).get("access_count", 0),
+                "version": (p.payload or {}).get("version", 1),
+                "changelog": (p.payload or {}).get("changelog", ""),
+                "success_count": (p.payload or {}).get("success_count", 0),
+                "failure_count": (p.payload or {}).get("failure_count", 0),
+            }
             for p in all_points
         ]
 
     def bulk_delete(self, names: list[str]) -> int:
         from qdrant_client.models import PointIdsList
+
         pids = [self._name_to_id(n) for n in names]
         try:
             with self._lock:
@@ -951,6 +1061,7 @@ class QdrantSkillBackend:
 # ---------------------------------------------------------------------------
 # One-time migration from data/skills/*.md flat files
 # ---------------------------------------------------------------------------
+
 
 def _migrate_from_flat_files() -> None:
     """Import existing markdown skill files into the active backend.
@@ -970,6 +1081,7 @@ def _migrate_from_flat_files() -> None:
     stats: dict[str, dict] = {}
     try:
         import yaml
+
         stats_path = SKILLS_DIR.parent / "skill_stats.yaml"
         if stats_path.exists():
             raw = yaml.safe_load(stats_path.read_text(encoding="utf-8")) or {}
@@ -985,7 +1097,7 @@ def _migrate_from_flat_files() -> None:
                 continue
             name = f.stem
             # Validate name against the same rules as skill_io.
-            if not re.match(r'^[A-Za-z0-9][A-Za-z0-9_-]*$', name):
+            if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_-]*$", name):
                 logger.warning("Skipping migration of '%s': invalid skill name", name)
                 continue
             # Parse: first line = summary, rest = documentation.
@@ -1014,12 +1126,15 @@ def _migrate_from_flat_files() -> None:
                         logger.debug(
                             "Found legacy stats for skill '%s' (reads=%d, last_read=%s); "
                             "not applied by migration",
-                            name, read_count, last_read,
+                            name,
+                            read_count,
+                            last_read,
                         )
                 except Exception:
                     logger.debug(
                         "Error while inspecting legacy stats for skill '%s'",
-                        name, exc_info=True,
+                        name,
+                        exc_info=True,
                     )
 
             imported += 1
@@ -1033,6 +1148,7 @@ def _migrate_from_flat_files() -> None:
 # ---------------------------------------------------------------------------
 # Module-level API
 # ---------------------------------------------------------------------------
+
 
 def init(config: dict, embed_cfg: dict | None = None) -> None:
     """Select and initialize the skill backend.
@@ -1061,14 +1177,24 @@ def init(config: dict, embed_cfg: dict | None = None) -> None:
 
     if backend_name not in ("local_vector", "qdrant"):
         raise ValueError(
-            f"Unknown skill backend {backend_name!r}. "
-            f"Supported backends: local_vector, qdrant"
+            f"Unknown skill backend {backend_name!r}. Supported backends: local_vector, qdrant"
         )
 
     if not _embed_cfg.get("endpoint"):
-        raise ValueError(
-            "memory.embeddings.endpoint is required for the skill store. "
-            "Configure an OpenAI-compatible /v1/embeddings endpoint in config.yaml."
+        from wintermute.infra import local_embeddings
+
+        if not local_embeddings.is_available():
+            raise ValueError(
+                "memory.embeddings.endpoint is required for the skill store. "
+                "Configure an OpenAI-compatible /v1/embeddings endpoint in config.yaml, "
+                "or install the zero-config local fallback: "
+                "uv sync --extra local-embeddings"
+            )
+        logger.warning(
+            "No embeddings endpoint configured — skill store is using the local "
+            "%s fallback (%d-dim).",
+            local_embeddings.MODEL_ID,
+            local_embeddings.DIMENSIONS,
         )
 
     if backend_name == "local_vector":
@@ -1087,15 +1213,14 @@ def init(config: dict, embed_cfg: dict | None = None) -> None:
         logger.warning("Skill migration failed", exc_info=True)
 
 
-def _b() -> "SkillBackend":
+def _b() -> SkillBackend:
     """Return the active backend, raising if init() was not called."""
     if _backend is None:
         raise RuntimeError("skill_store.init() has not been called")
     return _backend
 
 
-def add(name: str, summary: str, documentation: str,
-        changelog: str = "") -> str:
+def add(name: str, summary: str, documentation: str, changelog: str = "") -> str:
     return _b().add(name, summary, documentation, changelog)
 
 
@@ -1108,10 +1233,11 @@ def get(name: str) -> dict | None:
     return _b().get(name)
 
 
-def search(query: str, top_k: int | None = None,
-           threshold: float | None = None) -> list[dict]:
+def search(query: str, top_k: int | None = None, threshold: float | None = None) -> list[dict]:
     _top_k: int = top_k if top_k is not None else int(_config.get("top_k", 5))
-    _threshold: float = threshold if threshold is not None else float(_config.get("score_threshold", 0.3))
+    _threshold: float = (
+        threshold if threshold is not None else float(_config.get("score_threshold", 0.3))
+    )
     try:
         return _b().search(query, _top_k, _threshold)
     except Exception as exc:
@@ -1127,9 +1253,12 @@ def delete(name: str) -> bool:
     return _b().delete(name)
 
 
-def update(name: str, summary: str | None = None,
-           documentation: str | None = None,
-           changelog: str | None = None) -> bool:
+def update(
+    name: str,
+    summary: str | None = None,
+    documentation: str | None = None,
+    changelog: str | None = None,
+) -> bool:
     return _b().update(name, summary, documentation, changelog)
 
 

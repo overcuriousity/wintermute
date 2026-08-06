@@ -8,9 +8,9 @@ method used by the ``/status`` command.
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Awaitable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +41,8 @@ class UpdateCheckerLoop:
         self._broadcast = broadcast_fn
         self._matrix_rooms = matrix_rooms
         self._running = False
-        self._last_notified_head: Optional[str] = None
-        self._last_result: Optional[str] = None  # cached for /status
+        self._last_notified_head: str | None = None
+        self._last_result: str | None = None  # cached for /status
 
     # ------------------------------------------------------------------
     # Public
@@ -53,7 +53,9 @@ class UpdateCheckerLoop:
         interval = self._config.interval_hours * 3600
         logger.info("Update checker started (interval=%dh)", self._config.interval_hours)
         if not self._matrix_rooms:
-            logger.warning("Update checker: no Matrix rooms configured — notifications will not be sent")
+            logger.warning(
+                "Update checker: no Matrix rooms configured — notifications will not be sent"
+            )
 
         if self._config.check_on_startup:
             try:
@@ -78,11 +80,11 @@ class UpdateCheckerLoop:
         self._running = False
 
     @property
-    def last_result(self) -> Optional[str]:
+    def last_result(self) -> str | None:
         """Return the cached result from the last periodic check."""
         return self._last_result
 
-    async def check(self) -> Optional[str]:
+    async def check(self) -> str | None:
         """Check for upstream updates.
 
         Returns a human-readable message if updates are available,
@@ -111,14 +113,9 @@ class UpdateCheckerLoop:
             self._last_result = None
             return None
 
-        count = await self._git_output(
-            "rev-list", "--count", f"HEAD..{remote}/{branch}"
-        )
+        count = await self._git_output("rev-list", "--count", f"HEAD..{remote}/{branch}")
         n = int(count) if count and count.isdigit() else "?"
-        msg = (
-            f"Update available: {n} new commit(s) on {remote}/{branch}. "
-            f"Run 'git pull' to update."
-        )
+        msg = f"Update available: {n} new commit(s) on {remote}/{branch}. Run 'git pull' to update."
         self._last_result = msg
         self._last_notified_head = remote_head
         return msg
@@ -127,7 +124,7 @@ class UpdateCheckerLoop:
     # Internals
     # ------------------------------------------------------------------
 
-    async def _resolve_remote(self) -> Optional[str]:
+    async def _resolve_remote(self) -> str | None:
         if self._config.remote_url:
             url = self._config.remote_url
             existing = await self._git_output("remote", "get-url", "wintermute-upstream")
@@ -143,12 +140,14 @@ class UpdateCheckerLoop:
         url = await self._git_output("remote", "get-url", "origin")
         return "origin" if url else None
 
-    async def _current_branch(self) -> Optional[str]:
+    async def _current_branch(self) -> str | None:
         return await self._git_output("rev-parse", "--abbrev-ref", "HEAD")
 
     async def _notify(self, message: str) -> None:
         # Dedup: skip if we already notified for this remote HEAD.
-        if self._last_notified_head and self._last_notified_head == getattr(self, "_prev_notified_head", None):
+        if self._last_notified_head and self._last_notified_head == getattr(
+            self, "_prev_notified_head", None
+        ):
             return
         self._prev_notified_head = self._last_notified_head
 
@@ -164,14 +163,15 @@ class UpdateCheckerLoop:
 
     async def _git(self, *args: str) -> bool:
         proc = await asyncio.create_subprocess_exec(
-            "git", *args,
+            "git",
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=_REPO_DIR,
         )
         try:
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=_GIT_TIMEOUT)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             logger.warning("git %s timed out after %ds", " ".join(args), _GIT_TIMEOUT)
             return False
@@ -180,16 +180,17 @@ class UpdateCheckerLoop:
             return False
         return True
 
-    async def _git_output(self, *args: str) -> Optional[str]:
+    async def _git_output(self, *args: str) -> str | None:
         proc = await asyncio.create_subprocess_exec(
-            "git", *args,
+            "git",
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=_REPO_DIR,
         )
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_GIT_TIMEOUT)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             logger.warning("git %s timed out after %ds", " ".join(args), _GIT_TIMEOUT)
             return None

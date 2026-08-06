@@ -94,9 +94,14 @@ class RateLimitError(Exception):
 
 
 _CONTEXT_TOO_LARGE_PHRASES = (
-    "context length", "too many tokens", "maximum context",
-    "token limit", "content too large", "payload too large",
-    "context size", "exceeds the available context",
+    "context length",
+    "too many tokens",
+    "maximum context",
+    "token limit",
+    "content too large",
+    "payload too large",
+    "context size",
+    "exceeds the available context",
     "max_tokens must be at least",  # LiteLLM negative-budget rejection
 )
 
@@ -131,15 +136,15 @@ def classify_api_error(exc: Exception) -> type | None:
 
 @dataclass
 class ProviderConfig:
-    name: str               # unique backend name from inference_backends
+    name: str  # unique backend name from inference_backends
     model: str
-    context_size: int       # total token window the model supports (e.g. 65536)
+    context_size: int  # total token window the model supports (e.g. 65536)
     max_tokens: int = 4096  # maximum tokens in a single response
     max_output_tokens: int = 0  # model's hard output ceiling (e.g. 8192 for DeepSeek); 0 = not set
     reasoning: bool = False  # enable reasoning/thinking token support (o1/o3, DeepSeek R1, etc.)
     provider: str = "openai"  # "openai", "anthropic", "gemini-cli", or "kimi-code"
     api_key: str = ""
-    base_url: str = ""       # e.g. http://localhost:8080/v1  or  https://api.openai.com/v1
+    base_url: str = ""  # e.g. http://localhost:8080/v1  or  https://api.openai.com/v1
 
 
 class BackendPool:
@@ -178,15 +183,19 @@ class BackendPool:
 
     # -- Rate-limit retry settings --------------------------------------------
     RATE_LIMIT_MAX_RETRIES = 5
-    RATE_LIMIT_INITIAL_BACKOFF = 2.0   # seconds
-    RATE_LIMIT_MAX_BACKOFF = 60.0      # seconds
+    RATE_LIMIT_INITIAL_BACKOFF = 2.0  # seconds
+    RATE_LIMIT_MAX_BACKOFF = 60.0  # seconds
 
     # -- API call with failover -----------------------------------------------
 
-    async def call(self, *, messages: list[dict],
-                   tools: "list[dict] | None" = None,
-                   max_tokens_override: "int | None" = None,
-                   **extra_kwargs) -> LLMResponse:
+    async def call(
+        self,
+        *,
+        messages: list[dict],
+        tools: "list[dict] | None" = None,
+        max_tokens_override: "int | None" = None,
+        **extra_kwargs,
+    ) -> LLMResponse:
         """Call ``complete()`` on the first available backend, with failover.
 
         Each backend uses its own model, max_tokens, and reasoning setting.
@@ -245,7 +254,10 @@ class BackendPool:
                         backend_desc = f"'{cfg.name}' ({cfg.model})"
                         logger.warning(
                             "Backend %s rate-limited — retrying in %.1fs (attempt %d/%d)",
-                            backend_desc, wait, attempt + 1, self.RATE_LIMIT_MAX_RETRIES,
+                            backend_desc,
+                            wait,
+                            attempt + 1,
+                            self.RATE_LIMIT_MAX_RETRIES,
                         )
                         await asyncio.sleep(wait)
                         backoff = min(backoff * 2, self.RATE_LIMIT_MAX_BACKOFF)
@@ -282,6 +294,7 @@ class MultiProviderConfig:
 
     An empty list for *convergence_protocol* means "disabled".
     """
+
     main: list[ProviderConfig]
     compaction: list[ProviderConfig]
     sub_sessions: list[ProviderConfig]

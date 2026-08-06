@@ -22,14 +22,13 @@ import asyncio
 import logging
 import time as _time
 from dataclasses import dataclass
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
-from wintermute.infra import database
-from wintermute.infra import prompt_loader
+from wintermute.infra import database, prompt_loader
 
 if TYPE_CHECKING:
-    from wintermute.core.types import BackendPool
     from wintermute.core.sub_session import SubSessionManager
+    from wintermute.core.types import BackendPool
     from wintermute.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
@@ -58,9 +57,9 @@ class MemoryHarvestLoop:
     def __init__(
         self,
         config: MemoryHarvestConfig,
-        sub_session_manager: Optional[SubSessionManager] = None,
-        pool: Optional[BackendPool] = None,
-        event_bus: "Optional[EventBus]" = None,
+        sub_session_manager: SubSessionManager | None = None,
+        pool: BackendPool | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self._cfg = config
         self._sub_sessions = sub_session_manager
@@ -123,7 +122,9 @@ class MemoryHarvestLoop:
         if self._event_bus:
             sub_id = self._event_bus.subscribe("message.received", self._on_message_received)
             self._event_bus_subs.append(sub_id)
-            sub_id = self._event_bus.subscribe("sub_session.completed", self._on_harvest_session_completed)
+            sub_id = self._event_bus.subscribe(
+                "sub_session.completed", self._on_harvest_session_completed
+            )
             self._event_bus_subs.append(sub_id)
         # With event bus, increase fallback poll to 300s (events trigger checks sooner).
         fallback_poll = 300 if self._event_bus else self._cfg.poll_interval_seconds
@@ -137,7 +138,7 @@ class MemoryHarvestLoop:
             # Wait for either the fallback poll or an event-driven trigger.
             try:
                 await asyncio.wait_for(self._check_event.wait(), timeout=fallback_poll)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             self._check_event.clear()
             if not self._running:
@@ -184,10 +185,7 @@ class MemoryHarvestLoop:
     def _should_harvest(self, thread_id: str, messages: list[dict]) -> bool:
         """Decide whether a thread is ready for memory extraction."""
         last_id = self._last_harvested_id.get(thread_id, 0)
-        new_user_msgs = [
-            m for m in messages
-            if m["id"] > last_id and m["role"] == "user"
-        ]
+        new_user_msgs = [m for m in messages if m["id"] > last_id and m["role"] == "user"]
 
         if not new_user_msgs:
             return False
@@ -211,8 +209,7 @@ class MemoryHarvestLoop:
     # Conversation preparation
     # ------------------------------------------------------------------
 
-    def _prepare_conversation_blob(self, messages: list[dict],
-                                    since_id: int) -> str:
+    def _prepare_conversation_blob(self, messages: list[dict], since_id: int) -> str:
         """Build a formatted transcript from messages newer than since_id."""
         lines: list[str] = []
         for msg in messages:
@@ -237,7 +234,11 @@ class MemoryHarvestLoop:
         max_chars = self._cfg.max_blob_chars
         if len(blob) > max_chars:
             marker = "\n[... transcript truncated ...]"
-            blob = blob[:max_chars - len(marker)] + marker if len(marker) < max_chars else blob[:max_chars]
+            blob = (
+                blob[: max_chars - len(marker)] + marker
+                if len(marker) < max_chars
+                else blob[:max_chars]
+            )
         return blob
 
     @staticmethod
@@ -252,22 +253,17 @@ class MemoryHarvestLoop:
     # Harvest spawning
     # ------------------------------------------------------------------
 
-    async def _spawn_harvest(self, thread_id: str,
-                              messages: list[dict]) -> None:
+    async def _spawn_harvest(self, thread_id: str, messages: list[dict]) -> None:
         """Spawn a fire-and-forget sub-session to extract memories."""
         last_id = self._last_harvested_id.get(thread_id, 0)
         blob = self._prepare_conversation_blob(messages, last_id)
         if not blob.strip():
             return
 
-        prompt = prompt_loader.load("MEMORY_HARVEST_PROMPT.txt",
-                                    transcript=blob)
+        prompt = prompt_loader.load("MEMORY_HARVEST_PROMPT.txt", transcript=blob)
 
         max_id = max(m["id"] for m in messages)
-        new_count = sum(
-            1 for m in messages
-            if m["id"] > last_id and m["role"] == "user"
-        )
+        new_count = sum(1 for m in messages if m["id"] > last_id and m["role"] == "user")
 
         async with self._in_flight_lock:
             self._in_flight.add(thread_id)
@@ -279,30 +275,32 @@ class MemoryHarvestLoop:
 
         session_id = self._sub_sessions.spawn(
             objective=prompt,
-            parent_thread_id=None,      # fire-and-forget: no chat delivery
-            system_prompt_mode="none",   # all instructions in the objective
+            parent_thread_id=None,  # fire-and-forget: no chat delivery
+            system_prompt_mode="none",  # all instructions in the objective
             tool_names=["append_memory"],
-            timeout=600, # generous timeout for slow workers and large conversations
+            timeout=600,  # generous timeout for slow workers and large conversations
             pool=self._pool,
-            max_rounds=5,               # hard cap: prevent runaway tool-call loops
-            skip_cp_on_exit=True,       # don't let CP override "nothing to extract"
+            max_rounds=5,  # hard cap: prevent runaway tool-call loops
+            skip_cp_on_exit=True,  # don't let CP override "nothing to extract"
         )
 
         logger.info(
             "Memory harvest spawned %s for thread %s (%d new user msgs, up to id=%d)",
-            session_id, thread_id, new_count, max_id,
+            session_id,
+            thread_id,
+            new_count,
+            max_id,
         )
 
         # Monitor completion in background — only commit the harvested ID range
         # and write the interaction_log entry after the sub-session succeeds.
-        task = asyncio.create_task(
-            self._await_harvest(session_id, thread_id, max_id, new_count)
-        )
+        task = asyncio.create_task(self._await_harvest(session_id, thread_id, max_id, new_count))
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
-    async def _await_harvest(self, session_id: str, thread_id: str,
-                              max_id: int, new_count: int) -> None:
+    async def _await_harvest(
+        self, session_id: str, thread_id: str, max_id: int, new_count: int
+    ) -> None:
         """Poll sub-session status; commit harvest state only on success."""
         try:
             # Poll until terminal (completed/failed/timeout).
@@ -322,7 +320,8 @@ class MemoryHarvestLoop:
             else:
                 logger.warning(
                     "Memory harvest %s: poll timeout after %ds — treating as failed",
-                    session_id, _MAX_POLL_SECONDS,
+                    session_id,
+                    _MAX_POLL_SECONDS,
                 )
                 state = None
 
@@ -331,17 +330,22 @@ class MemoryHarvestLoop:
             if status == "completed":
                 self._last_harvested_id[thread_id] = max_id
                 if self._event_bus:
-                    self._event_bus.emit("harvest.completed", thread_id=thread_id,
-                                         session_id=session_id)
+                    self._event_bus.emit(
+                        "harvest.completed", thread_id=thread_id, session_id=session_id
+                    )
                 logger.info(
                     "Memory harvest %s completed — committed max_id=%d for thread %s",
-                    session_id, max_id, thread_id,
+                    session_id,
+                    max_id,
+                    thread_id,
                 )
             else:
                 logger.warning(
                     "Memory harvest %s ended with status=%s for thread %s — "
                     "ID range NOT committed (will retry next cycle)",
-                    session_id, status, thread_id,
+                    session_id,
+                    status,
+                    thread_id,
                 )
 
             try:

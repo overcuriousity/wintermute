@@ -28,19 +28,16 @@ import logging
 import re
 import time as _time
 from dataclasses import dataclass, field
-from datetime import datetime, time as dt_time, timedelta, timezone
-from zoneinfo import ZoneInfo
+from datetime import UTC, datetime, timedelta
+from datetime import time as dt_time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 import yaml
 
-from wintermute.infra import database
-from wintermute.infra import data_versioning
-from wintermute.infra import memory_store
-from wintermute.infra import prompt_loader
+from wintermute.infra import data_versioning, database, memory_store, prompt_loader
 from wintermute.infra.llm_utils import parse_json_from_llm
-from wintermute.infra.memory_io import read_text_safe
 
 if TYPE_CHECKING:
     from wintermute.core.types import BackendPool
@@ -53,6 +50,7 @@ logger = logging.getLogger(__name__)
 # Data classes
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @dataclass
 class DreamingConfig:
     hour: int = 1
@@ -63,6 +61,7 @@ class DreamingConfig:
 @dataclass
 class PhaseResult:
     """Result of a single dreaming phase."""
+
     phase_name: str = ""
     items_processed: int = 0
     summary: str = ""
@@ -72,6 +71,7 @@ class PhaseResult:
 @dataclass
 class DreamReport:
     """Aggregated results from a full dream cycle."""
+
     phases_run: list[str] = field(default_factory=list)
     results: list[PhaseResult] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -80,6 +80,7 @@ class DreamReport:
 @dataclass
 class SimilarityData:
     """Pre-computed similarity data shared across phases (single matrix)."""
+
     entries: list[dict] = field(default_factory=list)
     texts: list[str] = field(default_factory=list)
     ids: list[str] = field(default_factory=list)
@@ -92,11 +93,16 @@ class SimilarityData:
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def _consolidate(pool: "BackendPool",
-                        label: str, prompt_template: str, content: str,
-                        json_mode: bool = False,
-                        max_tokens: int = 2048,
-                        **extra_vars: str) -> str:
+
+async def _consolidate(
+    pool: BackendPool,
+    label: str,
+    prompt_template: str,
+    content: str,
+    json_mode: bool = False,
+    max_tokens: int = 2048,
+    **extra_vars: str,
+) -> str:
     """Call the LLM to consolidate a single memory component.
 
     When *json_mode* is True, passes ``response_format={"type": "json_object"}``
@@ -108,8 +114,10 @@ async def _consolidate(pool: "BackendPool",
         prompt = prompt.format(content=content, **extra_vars)
     else:
         prompt = prompt + "\n\n" + content
-    call_kwargs: dict = {"messages": [{"role": "user", "content": prompt}],
-                         "max_tokens_override": max_tokens}
+    call_kwargs: dict = {
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens_override": max_tokens,
+    }
     if json_mode:
         call_kwargs["response_format"] = {"type": "json_object"}
     response = await pool.call(**call_kwargs)
@@ -121,9 +129,13 @@ async def _consolidate(pool: "BackendPool",
     try:
         await database.async_call(
             database.save_interaction_log,
-            _time.time(), "dreaming", f"system:dreaming:{label}",
+            _time.time(),
+            "dreaming",
+            f"system:dreaming:{label}",
             pool.last_used,
-            prompt[:2000], result[:2000], "ok",
+            prompt[:2000],
+            result[:2000],
+            "ok",
         )
     except Exception:  # noqa: BLE001
         logger.debug("Failed to log dreaming interaction for %s", label, exc_info=True)
@@ -131,11 +143,13 @@ async def _consolidate(pool: "BackendPool",
     return result
 
 
-
-
 def _validate_dreaming_output(
-    text: str, phase: str, parsed: dict, context: dict,
-    *, cfg: dict | None = None,
+    text: str,
+    phase: str,
+    parsed: dict,
+    context: dict,
+    *,
+    cfg: dict | None = None,
 ) -> tuple[bool, str]:
     """Programmatic structural validation for creative-phase outputs.
 
@@ -179,6 +193,7 @@ def _validate_dreaming_output(
             # Near-substring of a single seed → model copied input
             if seed_texts:
                 from difflib import SequenceMatcher
+
                 for st in seed_texts:
                     if st and SequenceMatcher(None, text.lower(), st.lower()).ratio() > 0.6:
                         return False, "near_copy_of_seed"
@@ -200,6 +215,7 @@ def _validate_dreaming_output(
             activity = context.get("activity_summary", "")
             if activity:
                 from difflib import SequenceMatcher
+
                 max_overlap = cfg.get("confidence_max_input_overlap", 0.7)
                 if SequenceMatcher(None, text.lower(), activity.lower()).ratio() > max_overlap:
                     return False, "parrots_input"
@@ -211,8 +227,9 @@ def _validate_dreaming_output(
             pred_type = parsed.get("type", "behavioral")
             if pred_type == "temporal" and "||" in text:
                 import re as _re
-                hour_match = _re.findall(r'\|\|hours?=([\d,\-]+)\|\|', text)
-                day_match = _re.findall(r'\|\|days?=([\w,\-]+)\|\|', text)
+
+                hour_match = _re.findall(r"\|\|hours?=([\d,\-]+)\|\|", text)
+                day_match = _re.findall(r"\|\|days?=([\w,\-]+)\|\|", text)
                 valid_days = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
                 malformed = False
                 for hm in hour_match:
@@ -271,8 +288,9 @@ def _load_dreaming_config() -> dict:
     return defaults
 
 
-def _union_find_clusters(similarities: list[tuple[int, int, float]],
-                         n: int, threshold: float) -> list[list[int]]:
+def _union_find_clusters(
+    similarities: list[tuple[int, int, float]], n: int, threshold: float
+) -> list[list[int]]:
     """Union-find clustering from pairwise similarities above threshold."""
     parent = list(range(n))
 
@@ -301,6 +319,7 @@ def _union_find_clusters(similarities: list[tuple[int, int, float]],
 # ═══════════════════════════════════════════════════════════════════════════════
 # Single-pass similarity computation
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 async def _compute_similarity_data(cfg: dict) -> SimilarityData:
     """Compute similarity data for all phases.
@@ -338,13 +357,14 @@ async def _compute_similarity_data(cfg: dict) -> SimilarityData:
         neighbor_limit = min(n - 1, 50)
         neighbors_map = await asyncio.to_thread(
             memory_store.search_neighbors_batch,
-            sd.ids, limit=neighbor_limit, score_threshold=schema_threshold,
+            sd.ids,
+            limit=neighbor_limit,
+            score_threshold=schema_threshold,
         )
 
         if not neighbors_map:
             # search_batch failed — fall through to numpy path below.
-            logger.debug("Dreaming: Qdrant search_batch returned empty, "
-                         "falling back to numpy")
+            logger.debug("Dreaming: Qdrant search_batch returned empty, falling back to numpy")
         else:
             # Build index lookup.
             id_to_idx = {eid: i for i, eid in enumerate(sd.ids)}
@@ -391,9 +411,11 @@ async def _compute_similarity_data(cfg: dict) -> SimilarityData:
 
     entries_with_vecs = [e for e in all_entries if e.get("vector")]
     if not entries_with_vecs:
-        return SimilarityData(entries=all_entries,
-                              texts=[e["text"] for e in all_entries],
-                              ids=[e.get("id", "") for e in all_entries])
+        return SimilarityData(
+            entries=all_entries,
+            texts=[e["text"] for e in all_entries],
+            ids=[e.get("id", "") for e in all_entries],
+        )
 
     sd = SimilarityData(
         entries=entries_with_vecs,
@@ -440,8 +462,8 @@ async def _compute_similarity_data(cfg: dict) -> SimilarityData:
 # Housekeeping phases
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def _phase_dedup(pool: "BackendPool", cfg: dict,
-                       sim_data: SimilarityData) -> PhaseResult:
+
+async def _phase_dedup(pool: BackendPool, cfg: dict, sim_data: SimilarityData) -> PhaseResult:
     """Phase: merge near-duplicate entries using union-find clusters."""
     result = PhaseResult(phase_name="dedup")
     threshold = cfg["dedup_similarity_threshold"]
@@ -466,9 +488,7 @@ async def _phase_dedup(pool: "BackendPool", cfg: dict,
             merged_text = await _consolidate(pool, "dedup_merge", dedup_prompt, content)
             if merged_text:
                 await asyncio.to_thread(memory_store.bulk_delete, cluster_ids)
-                await asyncio.to_thread(
-                    memory_store.add, merged_text, None, "dreaming_merge"
-                )
+                await asyncio.to_thread(memory_store.add, merged_text, None, "dreaming_merge")
                 merged_count += 1
                 logger.debug("Dreaming: merged cluster of %d entries", len(cluster))
         except Exception:  # noqa: BLE001
@@ -480,8 +500,9 @@ async def _phase_dedup(pool: "BackendPool", cfg: dict,
     return result
 
 
-async def _phase_contradiction(pool: "BackendPool", cfg: dict,
-                               sim_data: SimilarityData) -> PhaseResult:
+async def _phase_contradiction(
+    pool: BackendPool, cfg: dict, sim_data: SimilarityData
+) -> PhaseResult:
     """Phase: detect and resolve contradictory memory pairs."""
     result = PhaseResult(phase_name="contradiction")
 
@@ -495,9 +516,11 @@ async def _phase_contradiction(pool: "BackendPool", cfg: dict,
     for i, j, _ in sim_data.contradiction_pairs:
         try:
             raw = await _consolidate(
-                pool, "contradiction",
-                contra_prompt.replace("{entry_1}", sim_data.texts[i])
-                             .replace("{entry_2}", sim_data.texts[j]),
+                pool,
+                "contradiction",
+                contra_prompt.replace("{entry_1}", sim_data.texts[i]).replace(
+                    "{entry_2}", sim_data.texts[j]
+                ),
                 "",
             )
             decision = parse_json_from_llm(raw, dict)
@@ -517,8 +540,7 @@ async def _phase_contradiction(pool: "BackendPool", cfg: dict,
                 )
                 resolved_count += 1
         except (_json.JSONDecodeError, Exception):  # noqa: BLE001
-            logger.debug("Dreaming: contradiction resolution failed for pair",
-                         exc_info=True)
+            logger.debug("Dreaming: contradiction resolution failed for pair", exc_info=True)
 
     result.items_processed = resolved_count
     result.summary = f"resolved {resolved_count} contradictions"
@@ -526,8 +548,9 @@ async def _phase_contradiction(pool: "BackendPool", cfg: dict,
     return result
 
 
-async def _phase_stale_pruning(pool: "BackendPool", cfg: dict,
-                               sim_data: SimilarityData) -> PhaseResult:
+async def _phase_stale_pruning(
+    pool: BackendPool, cfg: dict, sim_data: SimilarityData
+) -> PhaseResult:
     """Phase: remove old entries with low access counts."""
     result = PhaseResult(phase_name="stale_pruning")
     stale = await asyncio.to_thread(
@@ -535,8 +558,7 @@ async def _phase_stale_pruning(pool: "BackendPool", cfg: dict,
     )
     # Protect user-explicit memories and dreaming schemas from pruning.
     prune_ids = [
-        e["id"] for e in stale
-        if e.get("source") not in ("user_explicit", "dreaming_schema")
+        e["id"] for e in stale if e.get("source") not in ("user_explicit", "dreaming_schema")
     ]
     if prune_ids:
         deleted = await asyncio.to_thread(memory_store.bulk_delete, prune_ids)
@@ -548,9 +570,9 @@ async def _phase_stale_pruning(pool: "BackendPool", cfg: dict,
     return result
 
 
-
-async def _phase_task_consolidation(pool: "BackendPool", cfg: dict,
-                                    sim_data: SimilarityData) -> PhaseResult:
+async def _phase_task_consolidation(
+    pool: BackendPool, cfg: dict, sim_data: SimilarityData
+) -> PhaseResult:
     """Phase: review and clean up task database items."""
     result = PhaseResult(phase_name="task_consolidation")
     task_items = await database.async_call(database.list_tasks, "active")
@@ -579,13 +601,17 @@ async def _phase_task_consolidation(pool: "BackendPool", cfg: dict,
                 # Remove the scheduler job first so the task cannot fire again
                 # after being marked completed.
                 from wintermute.workers import scheduler_thread as _sched_mod
+
                 if _sched_mod._instance is not None:
                     try:
                         _sched_mod._instance.remove_job(str(aid))
                     except Exception:
-                        logger.warning("Dreaming: failed to remove scheduler job %s", aid, exc_info=True)
+                        logger.warning(
+                            "Dreaming: failed to remove scheduler job %s", aid, exc_info=True
+                        )
                 await database.async_call(
-                    database.complete_task, str(aid),
+                    database.complete_task,
+                    str(aid),
                     reason="Completed via dreaming consolidation",
                 )
                 applied += 1
@@ -595,7 +621,9 @@ async def _phase_task_consolidation(pool: "BackendPool", cfg: dict,
                     kwargs["content"] = act["content"]
                 if kwargs:
                     await database.async_call(
-                        database.update_task, str(aid), **kwargs,
+                        database.update_task,
+                        str(aid),
+                        **kwargs,
                     )
                     applied += 1
     result.items_processed = applied
@@ -604,8 +632,9 @@ async def _phase_task_consolidation(pool: "BackendPool", cfg: dict,
     return result
 
 
-async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
-                                     sim_data: SimilarityData) -> PhaseResult:
+async def _phase_skill_consolidation(
+    pool: BackendPool, cfg: dict, sim_data: SimilarityData
+) -> PhaseResult:
     """Phase: deduplicate and condense skills via skill_store."""
     from wintermute.infra import skill_store
 
@@ -652,17 +681,13 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
             raw = await _consolidate(pool, "skills_dedup", dedup_prompt, formatted)
             actions = parse_json_from_llm(raw, list)
             # Protect merge targets from contradictory delete instructions.
-            merge_targets = {
-                act.get("into") for act in actions if act.get("action") == "merge"
-            }
+            merge_targets = {act.get("into") for act in actions if act.get("action") == "merge"}
             for act in actions:
                 action = act.get("action")
                 name = act.get("file", "")
                 if action == "delete":
                     if name in merge_targets:
-                        logger.warning(
-                            "Dreaming: skipping delete of merge target '%s'", name
-                        )
+                        logger.warning("Dreaming: skipping delete of merge target '%s'", name)
                         continue
                     if name in skills:
                         skill_store.delete(name)
@@ -694,55 +719,8 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
         except Exception:  # noqa: BLE001
             logger.exception("Dreaming: skill dedup failed")
 
-    # Condense each surviving skill (less aggressive — only if doc > 600 chars).
-    condensed = 0
-    try:
-        condense_template = prompt_loader.load("DREAM_SKILLS_CONDENSATION_PROMPT.txt")
-    except FileNotFoundError:
-        logger.warning("Dreaming: DREAM_SKILLS_CONDENSATION_PROMPT.txt not found, skipping condensation")
-        condense_template = None
-    if condense_template is None:
-        result.items_processed = merged_skills
-        result.summary = f"merged {merged_skills}, condensed 0 skills (template missing)"
-        logger.info("Dreaming phase skill_consolidation: %s", result.summary)
-        return result
-    for name, rec in list(skills.items()):
-        doc = rec.get("documentation", "")
-        if len(doc) < 600:
-            continue  # skip short skills — no need to condense
-        try:
-            # Pass full skill text (summary + doc) to the condense prompt
-            # so the model can produce a complete condensed version.
-            summary = rec.get("summary", "")
-            full_content = f"{summary}\n\n{doc}".strip() if summary else doc
-            prompt = condense_template.format(skill_name=name, content=full_content)
-            response = await pool.call(
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens_override=600,
-            )
-            if response.content is None:
-                continue
-            condensed_text = (response.content or "").strip()
-            if condensed_text:
-                # Split output back into summary (first line) and documentation.
-                cond_first, _, cond_rest = condensed_text.partition("\n")
-                cond_summary = cond_first.strip()
-                cond_doc = cond_rest.lstrip("\n").strip()
-                skill_store.update(name, summary=cond_summary, documentation=cond_doc)
-                condensed += 1
-                try:
-                    await database.async_call(
-                        database.save_interaction_log,
-                        _time.time(), "dreaming", f"system:dreaming:skill:{name}",
-                        pool.last_used, prompt[:2000], condensed_text[:2000], "ok",
-                    )
-                except Exception:  # noqa: BLE001
-                    logger.debug("Failed to log skill consolidation for %s", name, exc_info=True)
-        except Exception:  # noqa: BLE001
-            logger.exception("Dreaming: failed to condense skill '%s'", name)
-
-    result.items_processed = merged_skills + condensed
-    result.summary = f"merged {merged_skills}, condensed {condensed} skills"
+    result.items_processed = merged_skills
+    result.summary = f"merged {merged_skills} skills"
     logger.info("Dreaming phase skill_consolidation: %s", result.summary)
     return result
 
@@ -751,8 +729,8 @@ async def _phase_skill_consolidation(pool: "BackendPool", cfg: dict,
 # Creative phase: Associative Discovery (REM-inspired)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def _phase_association(pool: "BackendPool", cfg: dict,
-                             sim_data: SimilarityData) -> PhaseResult:
+
+async def _phase_association(pool: BackendPool, cfg: dict, sim_data: SimilarityData) -> PhaseResult:
     """REM-inspired phase: find non-obvious cross-domain connections.
 
     Gate conditions:
@@ -762,28 +740,22 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
     result = PhaseResult(phase_name="association")
 
     # Check gate conditions.
-    state = await database.async_call(
-        database.get_dreaming_phase_state, "association"
-    )
+    state = await database.async_call(database.get_dreaming_phase_state, "association")
     last_run = state["last_run_at"] if state else 0
     now = _time.time()
     days_since = (now - last_run) / 86400 if last_run else float("inf")
 
     if days_since < cfg["association_days_interval"]:
         result.summary = (
-            f"skipped: only {days_since:.1f}d since last "
-            f"(need {cfg['association_days_interval']})"
+            f"skipped: only {days_since:.1f}d since last (need {cfg['association_days_interval']})"
         )
         return result
 
     since_ts = last_run if last_run else (now - 30 * 86400)
-    new_count = await database.async_call(
-        database.count_memories_added_since, since_ts
-    )
+    new_count = await database.async_call(database.count_memories_added_since, since_ts)
     if new_count < cfg["association_min_new_memories"]:
         result.summary = (
-            f"skipped: only {new_count} new memories "
-            f"(need {cfg['association_min_new_memories']})"
+            f"skipped: only {new_count} new memories (need {cfg['association_min_new_memories']})"
         )
         return result
 
@@ -800,16 +772,19 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
             # Use a few high-access entries as negatives to bias toward
             # less-accessed (surprising) memories.
             negative_candidates = [
-                sim_data.ids[idx] for idx in range(len(sim_data.ids) - 1, -1, -1)
+                sim_data.ids[idx]
+                for idx in range(len(sim_data.ids) - 1, -1, -1)
                 if sim_data.ids[idx] not in recent
             ][:3]
             seeds = await asyncio.to_thread(
-                memory_store.recommend, recent, negative_candidates,
-                seed_count, score_threshold=sim_low,
+                memory_store.recommend,
+                recent,
+                negative_candidates,
+                seed_count,
+                score_threshold=sim_low,
             )
         except Exception:
-            logger.debug("Dreaming: Qdrant recommend failed, falling back",
-                         exc_info=True)
+            logger.debug("Dreaming: Qdrant recommend failed, falling back", exc_info=True)
             seeds = []
     else:
         seeds = []
@@ -817,8 +792,7 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
     if not seeds and sim_data.texts:
         # Fallback: pick entries in the mid-similarity range.
         mid_pairs = [
-            (i, j, s) for i, j, s in sim_data.contradiction_pairs
-            if sim_low <= s <= sim_high
+            (i, j, s) for i, j, s in sim_data.contradiction_pairs if sim_low <= s <= sim_high
         ]
         if not mid_pairs:
             # Broaden: use any available pairs.
@@ -845,9 +819,7 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
         text = s.get("text", "") if isinstance(s, dict) else str(s)
         seed_texts.append(text)
 
-    content = "\n---\n".join(
-        f"[{k}] {text}" for k, text in enumerate(seed_texts)
-    )
+    content = "\n---\n".join(f"[{k}] {text}" for k, text in enumerate(seed_texts))
 
     assoc_prompt = prompt_loader.load("DREAM_ASSOCIATION_PROMPT.txt")
     max_insights = cfg["association_max_insights"]
@@ -856,8 +828,12 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
 
     try:
         raw = await _consolidate(
-            pool, "association", assoc_prompt, content,
-            json_mode=True, max_tokens=1024,
+            pool,
+            "association",
+            assoc_prompt,
+            content,
+            json_mode=True,
+            max_tokens=1024,
         )
         parsed = parse_json_from_llm(raw, dict)
         if parsed.get("no_insight", False):
@@ -873,15 +849,17 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
                 continue
             text = insight.get("text", "").strip()
             valid, reason = _validate_dreaming_output(
-                text, "association", insight, {"seed_texts": seed_texts}, cfg=cfg,
+                text,
+                "association",
+                insight,
+                {"seed_texts": seed_texts},
+                cfg=cfg,
             )
             if not valid:
                 logger.info("Dreaming association rejected: %s", reason)
                 continue
             if text:
-                eid = await asyncio.to_thread(
-                    memory_store.add, text, None, "dreaming_association"
-                )
+                eid = await asyncio.to_thread(memory_store.add, text, None, "dreaming_association")
                 collected_ids.append(eid)
                 insights_created += 1
                 logger.info("Dreaming association insight: %s", text[:100])
@@ -894,7 +872,8 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
     # partial failure (e.g. embedding backend error midway through the loop).
     if collected_ids:
         await database.async_call(
-            database.record_dreaming_entries, "association",
+            database.record_dreaming_entries,
+            "association",
             list(dict.fromkeys(collected_ids)),
         )
 
@@ -904,8 +883,10 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
     result.items_processed = insights_created
     result.summary = f"created {insights_created} insights from {len(seeds)} seeds"
     await database.async_call(
-        database.update_dreaming_phase_state, "association",
-        insights_created, result.summary,
+        database.update_dreaming_phase_state,
+        "association",
+        insights_created,
+        result.summary,
     )
     logger.info("Dreaming phase association: %s", result.summary)
     return result
@@ -915,8 +896,8 @@ async def _phase_association(pool: "BackendPool", cfg: dict,
 # Creative phase: Schema Abstraction (NREM slow-wave inspired)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def _phase_schema(pool: "BackendPool", cfg: dict,
-                        sim_data: SimilarityData) -> PhaseResult:
+
+async def _phase_schema(pool: BackendPool, cfg: dict, sim_data: SimilarityData) -> PhaseResult:
     """NREM-inspired phase: generalise episodic memories into schemas.
 
     Gate conditions:
@@ -927,23 +908,18 @@ async def _phase_schema(pool: "BackendPool", cfg: dict,
     result = PhaseResult(phase_name="schema")
 
     # Check gate conditions.
-    state = await database.async_call(
-        database.get_dreaming_phase_state, "schema"
-    )
+    state = await database.async_call(database.get_dreaming_phase_state, "schema")
     last_run = state["last_run_at"] if state else 0
     now = _time.time()
     days_since = (now - last_run) / 86400 if last_run else float("inf")
 
     store_count = await asyncio.to_thread(memory_store.count)
-    dedup_state = await database.async_call(
-        database.get_dreaming_phase_state, "dedup"
-    )
+    dedup_state = await database.async_call(database.get_dreaming_phase_state, "dedup")
     recent_merges = dedup_state["items_processed"] if dedup_state else 0
 
     if store_count < cfg["schema_min_store_size"]:
         result.summary = (
-            f"skipped: only {store_count} entries "
-            f"(need {cfg['schema_min_store_size']})"
+            f"skipped: only {store_count} entries (need {cfg['schema_min_store_size']})"
         )
         return result
 
@@ -976,13 +952,10 @@ async def _phase_schema(pool: "BackendPool", cfg: dict,
 
         # Check if an existing schema already covers this cluster.
         has_existing_schema = any(
-            sim_data.entries[idx].get("source") == "dreaming_schema"
-            for idx in cluster
+            sim_data.entries[idx].get("source") == "dreaming_schema" for idx in cluster
         )
 
-        content = "\n---\n".join(
-            f"[{k}] {text}" for k, text in enumerate(cluster_texts)
-        )
+        content = "\n---\n".join(f"[{k}] {text}" for k, text in enumerate(cluster_texts))
 
         if has_existing_schema:
             content = (
@@ -992,8 +965,12 @@ async def _phase_schema(pool: "BackendPool", cfg: dict,
 
         try:
             raw = await _consolidate(
-                pool, "schema", schema_prompt, content,
-                json_mode=True, max_tokens=1024,
+                pool,
+                "schema",
+                schema_prompt,
+                content,
+                json_mode=True,
+                max_tokens=1024,
             )
             parsed = parse_json_from_llm(raw, dict)
             schema_text = parsed.get("schema", "").strip()
@@ -1005,8 +982,11 @@ async def _phase_schema(pool: "BackendPool", cfg: dict,
                 continue
 
             valid, reason = _validate_dreaming_output(
-                schema_text, "schema", parsed,
-                {"cluster_texts": cluster_texts}, cfg=cfg,
+                schema_text,
+                "schema",
+                parsed,
+                {"cluster_texts": cluster_texts},
+                cfg=cfg,
             )
             if not valid:
                 logger.info("Dreaming schema rejected: %s", reason)
@@ -1016,43 +996,41 @@ async def _phase_schema(pool: "BackendPool", cfg: dict,
             replaces = parsed.get("replaces_entries", False)
 
             # Store the schema.
-            eid = await asyncio.to_thread(
-                memory_store.add, schema_text, None, "dreaming_schema"
-            )
+            eid = await asyncio.to_thread(memory_store.add, schema_text, None, "dreaming_schema")
             schema_collected_ids.append(eid)
             schemas_formed += 1
-            logger.info("Dreaming schema: %s (replaces=%s)",
-                        schema_text[:100], replaces)
+            logger.info("Dreaming schema: %s (replaces=%s)", schema_text[:100], replaces)
 
             # If high confidence and replaces, remove the originals.
             if replaces and confidence == "high":
                 # Don't delete entries that are themselves schemas (lineage).
                 delete_ids = [
-                    cid for cid, idx in zip(cluster_ids, cluster)
+                    cid
+                    for cid, idx in zip(cluster_ids, cluster, strict=False)
                     if sim_data.entries[idx].get("source") != "dreaming_schema"
                 ]
                 if delete_ids:
-                    await asyncio.to_thread(
-                        memory_store.bulk_delete, delete_ids
-                    )
+                    await asyncio.to_thread(memory_store.bulk_delete, delete_ids)
                     logger.info(
                         "Dreaming schema: replaced %d episodic entries",
                         len(delete_ids),
                     )
         except Exception:  # noqa: BLE001
-            logger.debug("Dreaming: schema extraction failed for cluster",
-                         exc_info=True)
+            logger.debug("Dreaming: schema extraction failed for cluster", exc_info=True)
 
     if schema_collected_ids:
         await database.async_call(
-            database.record_dreaming_entries, "schema",
+            database.record_dreaming_entries,
+            "schema",
             list(dict.fromkeys(schema_collected_ids)),
         )
     result.items_processed = schemas_formed
     result.summary = f"formed {schemas_formed} schemas from {len(clusters)} clusters"
     await database.async_call(
-        database.update_dreaming_phase_state, "schema",
-        schemas_formed, result.summary,
+        database.update_dreaming_phase_state,
+        "schema",
+        schemas_formed,
+        result.summary,
     )
     logger.info("Dreaming phase schema: %s", result.summary)
     return result
@@ -1062,8 +1040,8 @@ async def _phase_schema(pool: "BackendPool", cfg: dict,
 # Creative phase: Predictive Pattern Extraction
 # ═══════════════════════════════════════════════════════════════════════════════
 
-async def _phase_prediction(pool: "BackendPool", cfg: dict,
-                            sim_data: SimilarityData) -> PhaseResult:
+
+async def _phase_prediction(pool: BackendPool, cfg: dict, sim_data: SimilarityData) -> PhaseResult:
     """Extract behavioural/temporal patterns from operational history.
 
     Gate conditions:
@@ -1073,30 +1051,24 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
     result = PhaseResult(phase_name="prediction")
 
     # Check gate conditions.
-    state = await database.async_call(
-        database.get_dreaming_phase_state, "prediction"
-    )
+    state = await database.async_call(database.get_dreaming_phase_state, "prediction")
     last_run = state["last_run_at"] if state else 0
     now = _time.time()
     days_since = (now - last_run) / 86400 if last_run else float("inf")
 
     if days_since < cfg["prediction_days_interval"]:
         result.summary = (
-            f"skipped: only {days_since:.1f}d since last "
-            f"(need {cfg['prediction_days_interval']})"
+            f"skipped: only {days_since:.1f}d since last (need {cfg['prediction_days_interval']})"
         )
         return result
 
     lookback = cfg["prediction_lookback_days"] * 86400
     since = now - lookback
-    outcomes = await database.async_call(
-        database.get_outcomes_since, since, None, 200
-    )
+    outcomes = await database.async_call(database.get_outcomes_since, since, None, 200)
 
     if len(outcomes) < cfg["prediction_min_outcomes"]:
         result.summary = (
-            f"skipped: only {len(outcomes)} outcomes "
-            f"(need {cfg['prediction_min_outcomes']})"
+            f"skipped: only {len(outcomes)} outcomes (need {cfg['prediction_min_outcomes']})"
         )
         return result
 
@@ -1127,31 +1099,28 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
                 pass
         ts = o.get("timestamp", 0)
         if ts:
-            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            dt = datetime.fromtimestamp(ts, tz=UTC)
             hour_counts[dt.hour] = hour_counts.get(dt.hour, 0) + 1
             dow_counts[dt.weekday()] = dow_counts.get(dt.weekday(), 0) + 1
 
     # Conversation summaries for topic patterns.
-    summaries = await database.async_call(
-        database.get_summaries_since, since, 20
-    )
+    summaries = await database.async_call(database.get_summaries_since, since, 20)
     summary_texts = [s["content"][:200] for s in summaries] if summaries else []
 
     # Tool usage stats.
-    tool_stats = await database.async_call(
-        database.get_tool_usage_stats, since
-    )
+    tool_stats = await database.async_call(database.get_tool_usage_stats, since)
 
     # Build compact activity summary.
     dow_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     lines = [
         f"Period: {cfg['prediction_lookback_days']} days",
         f"Sub-sessions: {len(outcomes)} total, by status: {status_counts}",
-        (f"Avg duration: {duration_sum / duration_n:.0f}s"
-         if duration_n else "No duration data"),
+        (f"Avg duration: {duration_sum / duration_n:.0f}s" if duration_n else "No duration data"),
         f"Activity by hour: {dict(sorted(hour_counts.items()))}",
-        (f"Activity by day: "
-         f"{', '.join(f'{dow_names[k]}={v}' for k, v in sorted(dow_counts.items()))}"),
+        (
+            f"Activity by day: "
+            f"{', '.join(f'{dow_names[k]}={v}' for k, v in sorted(dow_counts.items()))}"
+        ),
         f"Top tools: {tool_stats[:10]}",
     ]
     if summary_texts:
@@ -1168,17 +1137,24 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
 
     try:
         raw = await _consolidate(
-            pool, "prediction", pred_prompt, content,
-            json_mode=True, max_tokens=1024,
+            pool,
+            "prediction",
+            pred_prompt,
+            content,
+            json_mode=True,
+            max_tokens=1024,
         )
         parsed = parse_json_from_llm(raw, dict)
         predictions = parsed.get("predictions", [])
 
         # Pre-fetch existing prediction texts for duplicate detection.
         _existing_raw = await asyncio.to_thread(
-            memory_store.get_by_source, "dreaming_prediction", 100, False,
+            memory_store.get_by_source,
+            "dreaming_prediction",
+            100,
+            False,
         )
-        _pred_tag_re = re.compile(r'^\[prediction:[^\]]+\]\s*', re.IGNORECASE)
+        _pred_tag_re = re.compile(r"^\[prediction:[^\]]+\]\s*", re.IGNORECASE)
         existing_pred_texts: set[str] = set()
         for _e in _existing_raw:
             _raw = (_e.get("text", "") or "").strip()
@@ -1201,15 +1177,19 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
             # comparison uses the same canonical form as stored entries.
             # e.g. "foo||hours=1||days=mon||" → "foo ||hours=1|| ||days=mon||"
             if "||" in text:
-                suffix_match = re.search(r'(?:\s*\|\|\w+=[\w,\-]+\|\|)+\s*$', text)
+                suffix_match = re.search(r"(?:\s*\|\|\w+=[\w,\-]+\|\|)+\s*$", text)
                 if suffix_match:
-                    suffix_parts = re.findall(r'\|\|(\w+=[\w,\-]+)\|\|', suffix_match.group(0))
+                    suffix_parts = re.findall(r"\|\|(\w+=[\w,\-]+)\|\|", suffix_match.group(0))
                     if suffix_parts:
                         normalized_suffix = " ".join(f"||{p}||" for p in suffix_parts)
-                        base_text = text[:suffix_match.start()].rstrip()
-                        text = f"{base_text} {normalized_suffix}" if base_text else normalized_suffix
+                        base_text = text[: suffix_match.start()].rstrip()
+                        text = (
+                            f"{base_text} {normalized_suffix}" if base_text else normalized_suffix
+                        )
             valid, reason = _validate_dreaming_output(
-                text, "prediction", pred,
+                text,
+                "prediction",
+                pred,
                 {"activity_summary": content, "existing_texts": existing_pred_texts},
                 cfg=cfg,
             )
@@ -1247,23 +1227,20 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
     if pred_collected_ids:
         unique_pred_ids = list(dict.fromkeys(pred_collected_ids))
         await database.async_call(
-            database.record_dreaming_entries, "prediction", unique_pred_ids,
+            database.record_dreaming_entries,
+            "prediction",
+            unique_pred_ids,
         )
 
     # Validate old predictions: prune unaccessed ones older than 30 days,
     # promote frequently-accessed ones (>= 5 accesses) to dreaming_schema.
     try:
-        stale_predictions = await asyncio.to_thread(
-            memory_store.get_stale, 30, 1
-        )
+        stale_predictions = await asyncio.to_thread(memory_store.get_stale, 30, 1)
         pred_to_prune = [
-            e["id"] for e in stale_predictions
-            if e.get("source") == "dreaming_prediction"
+            e["id"] for e in stale_predictions if e.get("source") == "dreaming_prediction"
         ]
         if pred_to_prune:
-            pruned = await asyncio.to_thread(
-                memory_store.bulk_delete, pred_to_prune
-            )
+            pruned = await asyncio.to_thread(memory_store.bulk_delete, pred_to_prune)
             # Mark pruned predictions as retired in accuracy tracking.
             if pruned == len(pred_to_prune):
                 for pid in pred_to_prune:
@@ -1283,8 +1260,7 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
                     len(pred_to_prune),
                 )
             result.summary += f", pruned {pruned} stale predictions"
-            logger.info("Dreaming prediction: pruned %d stale predictions",
-                        pruned)
+            logger.info("Dreaming prediction: pruned %d stale predictions", pruned)
     except Exception:  # noqa: BLE001
         logger.debug("Dreaming: prediction pruning failed", exc_info=True)
 
@@ -1296,37 +1272,33 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
             memory_store.get_by_source, "dreaming_prediction", 200, False
         )
         for entry in all_entries:
-            if (entry.get("source") == "dreaming_prediction"
-                    and entry.get("access_count", 0) >= 5):
+            if entry.get("source") == "dreaming_prediction" and entry.get("access_count", 0) >= 5:
                 # Re-store as schema, delete the prediction version.
                 text = entry.get("text", "")
                 if text.startswith("[prediction:"):
                     # Strip the prediction tag for the schema version.
                     bracket_end = text.find("] ")
                     if bracket_end != -1:
-                        text = text[bracket_end + 2:]
-                await asyncio.to_thread(
-                    memory_store.add, text, None, "dreaming_schema"
-                )
-                await asyncio.to_thread(
-                    memory_store.delete, entry["id"]
-                )
+                        text = text[bracket_end + 2 :]
+                await asyncio.to_thread(memory_store.add, text, None, "dreaming_schema")
+                await asyncio.to_thread(memory_store.delete, entry["id"])
                 # Retire the prediction in accuracy tracking (promoted, not pruned).
                 try:
                     await database.async_call(database.retire_prediction, entry["id"])
                 except Exception:  # noqa: BLE001
                     pass
                 promoted += 1
-                logger.info("Dreaming: promoted prediction to schema: %s",
-                            text[:100])
+                logger.info("Dreaming: promoted prediction to schema: %s", text[:100])
         if promoted:
             result.summary += f", promoted {promoted} to schema"
     except Exception:  # noqa: BLE001
         logger.debug("Dreaming: prediction promotion failed", exc_info=True)
 
     await database.async_call(
-        database.update_dreaming_phase_state, "prediction",
-        result.items_processed, result.summary,
+        database.update_dreaming_phase_state,
+        "prediction",
+        result.items_processed,
+        result.summary,
     )
     logger.info("Dreaming phase prediction: %s", result.summary)
     return result
@@ -1335,6 +1307,7 @@ async def _phase_prediction(pool: "BackendPool", cfg: dict,
 # ═══════════════════════════════════════════════════════════════════════════════
 # Dream Cycle Runner
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 async def _check_survival(cfg: dict) -> dict[str, bool]:
     """Check dreaming entry survival rates and decide which phases to run.
@@ -1361,7 +1334,8 @@ async def _check_survival(cfg: dict) -> dict[str, bool]:
         try:
             # Check unchecked rows and update survival counts.
             unchecked = await database.async_call(
-                database.get_unchecked_dreaming_entries, phase,
+                database.get_unchecked_dreaming_entries,
+                phase,
             )
             if unchecked:
                 # Decode all entry IDs and issue a single batched lookup to
@@ -1369,13 +1343,14 @@ async def _check_survival(cfg: dict) -> dict[str, bool]:
                 row_entry_ids: dict = {
                     row["id"]: _json.loads(row["entry_ids"]) for row in unchecked
                 }
-                all_entry_ids = list(dict.fromkeys(
-                    eid for ids in row_entry_ids.values() for eid in ids
-                ))
+                all_entry_ids = list(
+                    dict.fromkeys(eid for ids in row_entry_ids.values() for eid in ids)
+                )
                 surviving_set: set[str] = set()
                 if all_entry_ids:
                     surviving_set = await asyncio.to_thread(
-                        memory_store.exists_batch, all_entry_ids,
+                        memory_store.exists_batch,
+                        all_entry_ids,
                     )
                 survival_updates = []
                 for row in unchecked:
@@ -1384,12 +1359,15 @@ async def _check_survival(cfg: dict) -> dict[str, bool]:
                     survival_updates.append((row["id"], survived))
                 if survival_updates:
                     await database.async_call(
-                        database.batch_update_dreaming_survival, survival_updates,
+                        database.batch_update_dreaming_survival,
+                        survival_updates,
                     )
 
             # Compute rate and decide.
             rate_info = await database.async_call(
-                database.get_phase_survival_rate, phase, lookback,
+                database.get_phase_survival_rate,
+                phase,
+                lookback,
             )
             rate = rate_info[0] if rate_info is not None else None
             checked_count = rate_info[1] if rate_info is not None else 0
@@ -1398,7 +1376,9 @@ async def _check_survival(cfg: dict) -> dict[str, bool]:
                     logger.warning(
                         "Dreaming: auto-disabling phase '%s' "
                         "(survival rate %.1f%% < %.1f%% threshold)",
-                        phase, rate * 100, threshold * 100,
+                        phase,
+                        rate * 100,
+                        threshold * 100,
                     )
                     result[phase] = False
                     continue
@@ -1410,8 +1390,8 @@ async def _check_survival(cfg: dict) -> dict[str, bool]:
 
 
 async def run_dream_cycle(
-    pool: "BackendPool",
-    event_bus: "EventBus | None" = None,
+    pool: BackendPool,
+    event_bus: EventBus | None = None,
 ) -> DreamReport:
     """Run a full nightly dreaming cycle.
 
@@ -1430,7 +1410,9 @@ async def run_dream_cycle(
                 # Record in dreaming_state for provenance.
                 await database.async_call(
                     database.update_dreaming_phase_state,
-                    "snapshot", 0, snap_name,
+                    "snapshot",
+                    0,
+                    snap_name,
                 )
         except Exception:  # noqa: BLE001
             logger.debug("Dreaming: snapshot creation failed", exc_info=True)
@@ -1480,10 +1462,13 @@ async def run_dream_cycle(
         except Exception as exc:  # noqa: BLE001
             logger.exception("Dreaming: phase '%s' failed: %s", phase_name, exc)
             report.errors.append(f"{phase_name}: {exc}")
-            report.results.append(PhaseResult(
-                phase_name=phase_name, error=str(exc),
-                summary=f"failed: {exc}",
-            ))
+            report.results.append(
+                PhaseResult(
+                    phase_name=phase_name,
+                    error=str(exc),
+                    summary=f"failed: {exc}",
+                )
+            )
 
     # Check quality metrics to gate creative phases.
     should_run = await _check_survival(cfg)
@@ -1491,11 +1476,15 @@ async def run_dream_cycle(
     # Execute creative phases, filtered by survival check.
     for phase_name, phase_fn in creative_phases:
         if not should_run.get(phase_name, True):
-            logger.info("Dreaming: skipping phase '%s' (auto-disabled by quality metrics)", phase_name)
-            report.results.append(PhaseResult(
-                phase_name=phase_name,
-                summary="auto-disabled (low survival rate)",
-            ))
+            logger.info(
+                "Dreaming: skipping phase '%s' (auto-disabled by quality metrics)", phase_name
+            )
+            report.results.append(
+                PhaseResult(
+                    phase_name=phase_name,
+                    summary="auto-disabled (low survival rate)",
+                )
+            )
             continue
         logger.info("Dreaming: starting phase '%s'", phase_name)
         if event_bus:
@@ -1514,15 +1503,20 @@ async def run_dream_cycle(
         except Exception as exc:  # noqa: BLE001
             logger.exception("Dreaming: phase '%s' failed: %s", phase_name, exc)
             report.errors.append(f"{phase_name}: {exc}")
-            report.results.append(PhaseResult(
-                phase_name=phase_name, error=str(exc),
-                summary=f"failed: {exc}",
-            ))
+            report.results.append(
+                PhaseResult(
+                    phase_name=phase_name,
+                    error=str(exc),
+                    summary=f"failed: {exc}",
+                )
+            )
 
     # Auto-commit all changes.
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(
-        None, data_versioning.auto_commit, "dreaming: nightly consolidation",
+        None,
+        data_versioning.auto_commit,
+        "dreaming: nightly consolidation",
     )
 
     return report
@@ -1531,6 +1525,7 @@ async def run_dream_cycle(
 # ═══════════════════════════════════════════════════════════════════════════════
 # DreamingLoop (scheduler)
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class DreamingLoop:
     """Asyncio task that fires ``run_dream_cycle`` once per night.
@@ -1545,9 +1540,9 @@ class DreamingLoop:
     # Minimum seconds between early skill consolidation runs to avoid spamming.
     _SKILLS_COOLDOWN_SECONDS = 3600  # 1 hour
 
-    def __init__(self, config: DreamingConfig,
-                 pool: "BackendPool",
-                 event_bus: "EventBus | None" = None) -> None:
+    def __init__(
+        self, config: DreamingConfig, pool: BackendPool, event_bus: EventBus | None = None
+    ) -> None:
         self._cfg = config
         self._pool = pool
         self._event_bus = event_bus
@@ -1587,19 +1582,23 @@ class DreamingLoop:
         self._running = True
         if self._event_bus:
             sub_id = self._event_bus.subscribe(
-                "memory.appended", self._on_memory_appended,
+                "memory.appended",
+                self._on_memory_appended,
                 debounce_ms=5000,
             )
             self._event_bus_subs.append(sub_id)
             sub_id = self._event_bus.subscribe(
-                "skills.oversized", self._on_skills_oversized,
+                "skills.oversized",
+                self._on_skills_oversized,
                 debounce_ms=30_000,
             )
             self._event_bus_subs.append(sub_id)
         target = dt_time(self._cfg.hour, self._cfg.minute)
         logger.info(
             "Dreaming loop started (target=%02d:%02d %s, model=%s)",
-            target.hour, target.minute, self._cfg.timezone,
+            target.hour,
+            target.minute,
+            self._cfg.timezone,
             self._pool.primary.model,
         )
         while self._running:
@@ -1634,7 +1633,8 @@ class DreamingLoop:
                 self._event_bus.emit("dreaming.started")
             try:
                 report = await run_dream_cycle(
-                    pool=self._pool, event_bus=self._event_bus,
+                    pool=self._pool,
+                    event_bus=self._event_bus,
                 )
                 if self._event_bus:
                     self._event_bus.emit(
@@ -1642,14 +1642,18 @@ class DreamingLoop:
                         phases=report.phases_run,
                         errors=report.errors,
                         results=[
-                            {"phase": r.phase_name, "items": r.items_processed,
-                             "summary": r.summary}
+                            {
+                                "phase": r.phase_name,
+                                "items": r.items_processed,
+                                "summary": r.summary,
+                            }
                             for r in report.results
                         ],
                     )
                 logger.info(
                     "Dreaming: consolidation cycle complete (%d phases, %d errors)",
-                    len(report.phases_run), len(report.errors),
+                    len(report.phases_run),
+                    len(report.errors),
                 )
                 self._last_consolidation = _time.monotonic()
             except Exception as exc:  # noqa: BLE001
@@ -1663,11 +1667,13 @@ class DreamingLoop:
         try:
             tz = ZoneInfo(tz_name)
         except Exception:
-            tz = timezone.utc
+            tz = UTC
         now = datetime.now(tz)
         candidate = now.replace(
-            hour=target.hour, minute=target.minute,
-            second=0, microsecond=0,
+            hour=target.hour,
+            minute=target.minute,
+            second=0,
+            microsecond=0,
         )
         if candidate <= now:
             candidate += timedelta(days=1)

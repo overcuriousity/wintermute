@@ -24,11 +24,13 @@ def tool_execute_shell(inputs: dict, **_kw) -> str:
             text=True,
             timeout=timeout,
         )
-        return json.dumps({
-            "stdout":    result.stdout,
-            "stderr":    result.stderr,
-            "exit_code": result.returncode,
-        })
+        return json.dumps(
+            {
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "exit_code": result.returncode,
+            }
+        )
     except subprocess.TimeoutExpired:
         return json.dumps({"error": f"Command timed out after {timeout}s"})
     except Exception as exc:  # noqa: BLE001
@@ -57,8 +59,7 @@ def tool_write_file(inputs: dict, **_kw) -> str:
         return json.dumps({"error": str(exc)})
 
 
-def _resolve_delivery_thread(thread_id: Optional[str],
-                             parent_thread_id: Optional[str]) -> str:
+def _resolve_delivery_thread(thread_id: str | None, parent_thread_id: str | None) -> str:
     """Pick the user-facing thread for delivery.
 
     Sub-sessions have ``thread_id=sub_xxx`` (their own session ID) and
@@ -75,9 +76,14 @@ def _resolve_delivery_thread(thread_id: Optional[str],
     return ""
 
 
-def tool_send_file(inputs: dict, *, tool_deps: Optional["ToolDeps"] = None,
-                   thread_id: Optional[str] = None,
-                   parent_thread_id: Optional[str] = None, **_kw) -> str:
+def tool_send_file(
+    inputs: dict,
+    *,
+    tool_deps: Optional["ToolDeps"] = None,
+    thread_id: str | None = None,
+    parent_thread_id: str | None = None,
+    **_kw,
+) -> str:
     """Validate a file and emit a ``send_file`` event for frontends to handle."""
     import mimetypes
 
@@ -102,22 +108,31 @@ def tool_send_file(inputs: dict, *, tool_deps: Optional["ToolDeps"] = None,
             caption=caption,
             thread_id=delivery_thread,
         )
-        logger.info("send_file: emitted event for %s (%s, %d bytes)", path.name, mime_type, file_size)
-        return json.dumps({
-            "status": "ok",
-            "path": str(path.resolve()),
-            "filename": path.name,
-            "mime_type": mime_type,
-            "file_size": file_size,
-        })
+        logger.info(
+            "send_file: emitted event for %s (%s, %d bytes)", path.name, mime_type, file_size
+        )
+        return json.dumps(
+            {
+                "status": "ok",
+                "path": str(path.resolve()),
+                "filename": path.name,
+                "mime_type": mime_type,
+                "file_size": file_size,
+            }
+        )
 
     logger.warning("send_file: no event_bus available, file not delivered")
     return json.dumps({"error": "No delivery channel available (event_bus not configured)"})
 
 
-def tool_send_message(inputs: dict, *, tool_deps: Optional["ToolDeps"] = None,
-                      thread_id: Optional[str] = None,
-                      parent_thread_id: Optional[str] = None, **_kw) -> str:
+def tool_send_message(
+    inputs: dict,
+    *,
+    tool_deps: Optional["ToolDeps"] = None,
+    thread_id: str | None = None,
+    parent_thread_id: str | None = None,
+    **_kw,
+) -> str:
     """Emit a ``send_message`` event for frontends to deliver directly."""
     text = (inputs.get("text") or "").strip()
     if not text:
@@ -133,8 +148,9 @@ def tool_send_message(inputs: dict, *, tool_deps: Optional["ToolDeps"] = None,
             text=text,
             thread_id=delivery_thread,
         )
-        logger.info("send_message: emitted event for thread %s (%d chars)",
-                     delivery_thread, len(text))
+        logger.info(
+            "send_message: emitted event for thread %s (%d chars)", delivery_thread, len(text)
+        )
         return json.dumps({"status": "ok", "thread_id": delivery_thread})
 
     logger.warning("send_message: no event_bus available, message not delivered")

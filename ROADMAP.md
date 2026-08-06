@@ -22,30 +22,36 @@ machinery measurably real instead of advertised.
 
 ## Phase 0 — Engineering rigor (the existential gap)
 
-Wintermute currently has one 251-line test file and no test CI. Everything else
-in this roadmap is unsafe without fixing this first. This is the single largest
-lesson from hermes, which has a genuine ~640k-LOC test suite on its Python core.
+Wintermute had one 251-line test file and no test CI. Everything else in this
+roadmap is unsafe without fixing this first. This is the single largest lesson
+from hermes, which has a genuine ~640k-LOC test suite on its Python core.
 
-- [ ] Set up pytest + pytest-asyncio with coverage reporting.
-- [ ] CI workflow (GitHub Actions): lint (ruff, config already in
-  `pyproject.toml`) + tests on every PR. Currently only release-please runs.
+- [x] Set up pytest. `pytest-asyncio` is not needed yet — the covered surface
+  is synchronous. Coverage reporting deliberately skipped: a percentage target
+  invites tests written to move a number.
+- [x] CI workflow (GitHub Actions, `.github/workflows/ci.yml`): `ruff check`,
+  `ruff format --check`, and `pytest` on every push and PR, all blocking.
 - [ ] Test priority order, by risk:
-  1. `core/convergence_protocol.py` — it gates tool execution; a regression
-     here silently corrupts or blocks agent actions.
+  1. [x] `core/convergence_protocol.py` — it gates tool execution; a regression
+     here silently corrupts or blocks agent actions. All eight stage-2
+     validators covered, with false-positive cases.
   2. `core/inference_engine.py::process_tool_call` — the shared tool pipeline
      (JSON repair, NL translation, dispatch).
   3. `infra/memory_store.py` / `infra/skill_store.py` — vector math, dedup,
      outcome recording.
   4. `core/sub_session.py` — DAG resolution, failure propagation, timeout
      continuation.
-  5. `core/tool_call_rescue.py` / `core/nl_translator.py` — weak-model parsing;
-     golden-file tests with real malformed outputs.
+  5. [x] `core/tool_call_rescue.py` / `core/nl_translator.py` — weak-model
+     parsing. All six parser paths covered with synthetic malformed output;
+     a golden corpus from production logs is still outstanding.
 - [ ] Coverage gates only on the above modules first; do not chase a global
   percentage.
 - [ ] Audit the 311 broad `except Exception` handlers: narrow or annotate each
   in the core loop and tool pipeline.
-- [ ] Remove dead `asyncpg` dependency (declared, zero imports).
-- [ ] Update `CLAUDE.md`: stale module table (flat filenames vs. `core/`,
+- [x] Remove dead `asyncpg` dependency (declared, zero imports). `aiosqlite`
+  turned out to be dead too; both removed. `sqlalchemy` stays — APScheduler
+  does not install it, and `workers/scheduler_thread.py` uses its jobstore.
+- [x] Update `CLAUDE.md`: stale module table (flat filenames vs. `core/`,
   `tools/` packages) and the outdated "no test suite" claim.
 
 ## Phase 1 — Session store hardening (take from hermes)
@@ -53,8 +59,9 @@ lesson from hermes, which has a genuine ~640k-LOC test suite on its Python core.
 Hermes's `hermes_state.py` is the best-engineered part of their repo. Steal the
 techniques, not the code:
 
-- [ ] SQLite WAL mode for the main database (concurrent readers during long
-  inference calls).
+- [x] SQLite WAL mode for the main database (concurrent readers during long
+  inference calls). Already implemented: `infra/database.py:88`,
+  `infra/memory_store.py:113`, `infra/skill_store.py:134`.
 - [ ] FTS5 full-text search over conversation history — hermes's trigram/CJK
   tokenizer approach is worth copying. This gives cheap, local, deterministic
   recall that complements (not replaces) vector memory.

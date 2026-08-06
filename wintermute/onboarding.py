@@ -411,21 +411,21 @@ async def _tool_probe_endpoint(args: dict, config: dict) -> str:
     headers = args.get("headers", {})
     _status(f"Probing {url} ...")
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                body = await resp.text()
-                result = {
-                    "status": resp.status,
-                    "body_preview": body[:500],
-                    "reachable": True,
-                }
-                if resp.status < 400:
-                    _ok(f"Reachable (HTTP {resp.status})")
-                else:
-                    _warn(f"Responded with HTTP {resp.status}")
-                return json.dumps(result)
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp,
+        ):
+            body = await resp.text()
+            result = {
+                "status": resp.status,
+                "body_preview": body[:500],
+                "reachable": True,
+            }
+            if resp.status < 400:
+                _ok(f"Reachable (HTTP {resp.status})")
+            else:
+                _warn(f"Responded with HTTP {resp.status}")
+            return json.dumps(result)
     except Exception as exc:
         _err(f"Unreachable: {exc}")
         return json.dumps({"reachable": False, "error": str(exc)})
@@ -456,10 +456,12 @@ async def _tool_test_matrix_login(args: dict, config: dict) -> str:
                 errcode = data.get("errcode", "UNKNOWN")
                 error = data.get("error", "unknown error")
                 _err(f"Login failed: {errcode} — {error}")
-                return json.dumps({
-                    "success": False,
-                    "error": f"{errcode}: {error}",
-                })
+                return json.dumps(
+                    {
+                        "success": False,
+                        "error": f"{errcode}: {error}",
+                    }
+                )
 
             token = data["access_token"]
             _ok("Login successful.")
@@ -476,18 +478,20 @@ async def _tool_test_matrix_login(args: dict, config: dict) -> str:
             except Exception:
                 pass  # best-effort cleanup
 
-            return json.dumps({
-                "success": True,
-                "message": (
-                    "Credentials are valid. Test device has been discarded. "
-                    "After starting Wintermute:\n"
-                    "1. Log into the bot account in Element (browser) and accept "
-                    "the cross-signing verification request.\n"
-                    "2. Invite the bot to a Matrix room from your personal account.\n"
-                    "3. Optionally verify the bot's session from your client "
-                    "(Element > Settings > Sessions > Verify) for trusted E2E encryption."
-                ),
-            })
+            return json.dumps(
+                {
+                    "success": True,
+                    "message": (
+                        "Credentials are valid. Test device has been discarded. "
+                        "After starting Wintermute:\n"
+                        "1. Log into the bot account in Element (browser) and accept "
+                        "the cross-signing verification request.\n"
+                        "2. Invite the bot to a Matrix room from your personal account.\n"
+                        "3. Optionally verify the bot's session from your client "
+                        "(Element > Settings > Sessions > Verify) for trusted E2E encryption."
+                    ),
+                }
+            )
 
     except Exception as exc:
         _err(f"Connection error: {exc}")
@@ -539,9 +543,7 @@ async def _tool_send_matrix_message(args: dict, config: dict) -> str:
             import time
 
             txn_id = str(int(time.time() * 1000))
-            send_url = (
-                f"{hs}/_matrix/client/v3/rooms/{room_id}/send/m.room.message/{txn_id}"
-            )
+            send_url = f"{hs}/_matrix/client/v3/rooms/{room_id}/send/m.room.message/{txn_id}"
             async with session.put(
                 send_url,
                 headers=auth,
@@ -566,15 +568,17 @@ async def _tool_send_matrix_message(args: dict, config: dict) -> str:
             except Exception:
                 pass
 
-            return json.dumps({
-                "success": "event_id" in send_data,
-                "event_id": send_data.get("event_id"),
-                "room_id": room_id,
-                "note": (
-                    "Message sent as plaintext (no E2E encryption). "
-                    "After starting Wintermute, all messages will be E2E encrypted."
-                ),
-            })
+            return json.dumps(
+                {
+                    "success": "event_id" in send_data,
+                    "event_id": send_data.get("event_id"),
+                    "room_id": room_id,
+                    "note": (
+                        "Message sent as plaintext (no E2E encryption). "
+                        "After starting Wintermute, all messages will be E2E encrypted."
+                    ),
+                }
+            )
 
     except Exception as exc:
         _err(f"Error: {exc}")
@@ -592,6 +596,7 @@ async def _tool_run_kimi_auth(args: dict, config: dict) -> str:
 
     _status("Starting Kimi-Code device-code OAuth flow ...")
     try:
+
         async def _broadcast(msg: str) -> None:
             print(f"\n  {C_MAGENTA}{msg}{C_RESET}\n")
 
@@ -654,39 +659,55 @@ async def _tool_install_systemd(args: dict, config: dict) -> str:
         unit_file.write_text(unit_content)
 
         try:
-            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True, capture_output=True)
+            subprocess.run(
+                ["systemctl", "--user", "daemon-reload"], check=True, capture_output=True
+            )
             subprocess.run(
                 ["systemctl", "--user", "enable", "wintermute.service"],
-                check=True, capture_output=True,
+                check=True,
+                capture_output=True,
             )
             user = os.environ.get("USER", "")
             if user:
                 # Try without sudo first, fall back silently
-                if subprocess.run(["loginctl", "enable-linger", user], capture_output=True).returncode != 0:
+                if (
+                    subprocess.run(
+                        ["loginctl", "enable-linger", user], capture_output=True
+                    ).returncode
+                    != 0
+                ):
                     subprocess.run(["sudo", "loginctl", "enable-linger", user], capture_output=True)
             _ok(f"Service installed: {unit_file}")
             _status("Starting service ...")
-            subprocess.run(["systemctl", "--user", "start", "wintermute.service"], check=True, capture_output=True)
+            subprocess.run(
+                ["systemctl", "--user", "start", "wintermute.service"],
+                check=True,
+                capture_output=True,
+            )
             _ok("Wintermute service started.")
-            return json.dumps({
-                "success": True,
-                "mode": "user",
-                "unit_file": str(unit_file),
-                "commands": {
-                    "start": "systemctl --user start wintermute",
-                    "stop": "systemctl --user stop wintermute",
-                    "restart": "systemctl --user restart wintermute",
-                    "logs": "journalctl --user -u wintermute -f",
-                },
-            })
+            return json.dumps(
+                {
+                    "success": True,
+                    "mode": "user",
+                    "unit_file": str(unit_file),
+                    "commands": {
+                        "start": "systemctl --user start wintermute",
+                        "stop": "systemctl --user stop wintermute",
+                        "restart": "systemctl --user restart wintermute",
+                        "logs": "journalctl --user -u wintermute -f",
+                    },
+                }
+            )
         except subprocess.CalledProcessError as exc:
             _err(f"systemctl --user failed: {exc}")
-            return json.dumps({
-                "success": False,
-                "error": exc.stderr.decode() if exc.stderr else str(exc),
-                "unit_file": str(unit_file),
-                "note": "Unit file was written. You can start manually.",
-            })
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": exc.stderr.decode() if exc.stderr else str(exc),
+                    "unit_file": str(unit_file),
+                    "note": "Unit file was written. You can start manually.",
+                }
+            )
 
     else:
         # ── Fallback: system service (LXC / FreeIPA / SSSD environments) ──
@@ -718,36 +739,48 @@ async def _tool_install_systemd(args: dict, config: dict) -> str:
         """)
 
         try:
-            write_proc = subprocess.run(
+            subprocess.run(
                 ["sudo", "tee", str(unit_file)],
                 input=unit_content.encode(),
                 capture_output=True,
                 check=True,
             )
             subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True, capture_output=True)
-            subprocess.run(["sudo", "systemctl", "enable", "wintermute.service"], check=True, capture_output=True)
+            subprocess.run(
+                ["sudo", "systemctl", "enable", "wintermute.service"],
+                check=True,
+                capture_output=True,
+            )
             _ok(f"System service installed: {unit_file}")
             _status("Starting service ...")
-            subprocess.run(["sudo", "systemctl", "start", "wintermute.service"], check=True, capture_output=True)
+            subprocess.run(
+                ["sudo", "systemctl", "start", "wintermute.service"],
+                check=True,
+                capture_output=True,
+            )
             _ok("Wintermute system service started.")
-            return json.dumps({
-                "success": True,
-                "mode": "system",
-                "unit_file": str(unit_file),
-                "commands": {
-                    "start": "sudo systemctl start wintermute",
-                    "stop": "sudo systemctl stop wintermute",
-                    "restart": "sudo systemctl restart wintermute",
-                    "logs": "journalctl -u wintermute -f",
-                },
-            })
+            return json.dumps(
+                {
+                    "success": True,
+                    "mode": "system",
+                    "unit_file": str(unit_file),
+                    "commands": {
+                        "start": "sudo systemctl start wintermute",
+                        "stop": "sudo systemctl stop wintermute",
+                        "restart": "sudo systemctl restart wintermute",
+                        "logs": "journalctl -u wintermute -f",
+                    },
+                }
+            )
         except subprocess.CalledProcessError as exc:
             _err(f"System service installation failed: {exc}")
-            return json.dumps({
-                "success": False,
-                "error": exc.stderr.decode() if exc.stderr else str(exc),
-                "note": "sudo may not be available. Start manually: uv run wintermute",
-            })
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": exc.stderr.decode() if exc.stderr else str(exc),
+                    "note": "sudo may not be available. Start manually: uv run wintermute",
+                }
+            )
 
 
 def _build_full_config(config: dict) -> dict:
@@ -802,7 +835,9 @@ def _build_full_config(config: dict) -> dict:
             "max_inline_tool_rounds": 3,
         },
         # context
-        "context": {"component_size_limits": {"memories": 10000, "tasks": 5000, "skills_total": 3000}},
+        "context": {
+            "component_size_limits": {"memories": 10000, "tasks": 5000, "skills_total": 3000}
+        },
         # dreaming
         "dreaming": {"hour": 1, "minute": 0},
         # update checker
@@ -1038,9 +1073,7 @@ def _format_assistant_text(text: str) -> str:
     formatted = []
     for line in lines:
         # Bold lines that look like headers (start with # or **)
-        if line.strip().startswith("##"):
-            line = f"\n{C_BOLD}{line.strip().lstrip('#').strip()}{C_RESET}"
-        elif line.strip().startswith("#"):
+        if line.strip().startswith("##") or line.strip().startswith("#"):
             line = f"\n{C_BOLD}{line.strip().lstrip('#').strip()}{C_RESET}"
         formatted.append(f"  {line}")
     return "\n".join(formatted)
@@ -1059,6 +1092,7 @@ async def run_onboarding(
     # Build bootstrap client (LLMBackend protocol)
     if provider == "openai":
         from wintermute.backends.openai_wrapper import OpenAIBackend
+
         client = OpenAIBackend(api_key=api_key, base_url=base_url)
     elif provider == "kimi-code":
         from wintermute.backends import kimi_auth, kimi_client
@@ -1133,7 +1167,9 @@ async def run_onboarding(
 
     print()
     print(f"  {C_BOLD}Onboarding assistant connected.{C_RESET}")
-    print(f"  {C_DIM}Type your responses below. The AI will guide you through configuration.{C_RESET}")
+    print(
+        f"  {C_DIM}Type your responses below. The AI will guide you through configuration.{C_RESET}"
+    )
     print()
 
     consecutive_errors = 0
@@ -1191,11 +1227,13 @@ async def run_onboarding(
                 else:
                     result = json.dumps({"error": f"Unknown tool: {fn_name}"})
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result,
-                })
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": result,
+                    }
+                )
 
                 if fn_name == "finish_onboarding":
                     result_data = json.loads(result)
@@ -1206,7 +1244,9 @@ async def run_onboarding(
                 # Let the LLM give a final summary
                 try:
                     final = await client.complete(
-                        model=model, messages=messages, max_tokens=1024,
+                        model=model,
+                        messages=messages,
+                        max_tokens=1024,
                     )
                     if final.content:
                         print(_format_assistant_text(final.content))
@@ -1227,7 +1267,9 @@ async def run_onboarding(
         try:
             user_input = input(f"  {C_CYAN}>{C_RESET}  ")
         except (EOFError, KeyboardInterrupt):
-            print(f"\n\n  {C_DIM}Onboarding interrupted. Partial config may have been set.{C_RESET}")
+            print(
+                f"\n\n  {C_DIM}Onboarding interrupted. Partial config may have been set.{C_RESET}"
+            )
             # Write partial config if anything was configured
             if len(config) > 1 or len(config.get("inference_backends", [])) > 1:
                 _status("Saving partial config ...")

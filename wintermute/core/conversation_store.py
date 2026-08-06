@@ -9,11 +9,11 @@ Extracted from LLMThread as part of the Phase 4 god-object decomposition (#79).
 
 import json
 import logging
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
-from wintermute.infra import database
-from wintermute.infra import prompt_assembler
 from wintermute.core.types import ProviderConfig
+from wintermute.infra import database, prompt_assembler
+
 if TYPE_CHECKING:
     from wintermute.core.tool_deps import ToolDeps
     from wintermute.infra.event_bus import EventBus
@@ -29,6 +29,7 @@ def count_tokens(text: str, model: str) -> int:
     """
     try:
         import tiktoken
+
         try:
             enc = tiktoken.encoding_for_model(model)
         except KeyError:
@@ -44,16 +45,16 @@ class ConversationStore:
     def __init__(
         self,
         primary_config: ProviderConfig,
-        event_bus: "Optional[EventBus]" = None,
-        nl_translation_config: "Optional[dict]" = None,
-        tool_deps: "Optional[ToolDeps]" = None,
+        event_bus: "EventBus | None" = None,
+        nl_translation_config: "dict | None" = None,
+        tool_deps: "ToolDeps | None" = None,
     ) -> None:
         self._cfg = primary_config
         self._event_bus = event_bus
         self._nl_translation_config = nl_translation_config or {}
         self._tool_deps = tool_deps
         # Per-thread compaction summaries: thread_id -> summary text
-        self.compaction_summaries: dict[str, Optional[str]] = {}
+        self.compaction_summaries: dict[str, str | None] = {}
         # Per-thread sequence counter for user-facing turns.
         self.thread_seq: dict[str, int] = {}
         # Per-thread cache of the last system prompt actually sent to the LLM.
@@ -68,15 +69,15 @@ class ConversationStore:
             if summary:
                 self.compaction_summaries[tid] = summary
 
-    def get_compaction_summary(self, thread_id: str = "default") -> Optional[str]:
+    def get_compaction_summary(self, thread_id: str = "default") -> str | None:
         """Return the current in-memory compaction summary for a thread, or None."""
         return self.compaction_summaries.get(thread_id)
 
-    def get_last_system_prompt(self, thread_id: str = "default") -> Optional[str]:
+    def get_last_system_prompt(self, thread_id: str = "default") -> str | None:
         """Return the last system prompt actually sent to the LLM for *thread_id*."""
         return self.last_system_prompt.get(thread_id)
 
-    def get_last_tool_schemas(self, thread_id: str = "default") -> Optional[list]:
+    def get_last_tool_schemas(self, thread_id: str = "default") -> list | None:
         """Return the last tool schemas actually sent to the LLM for *thread_id*."""
         return self.last_tool_schemas.get(thread_id)
 
@@ -131,9 +132,11 @@ class ConversationStore:
         }
 
     async def build_messages(
-        self, new_text: str, is_system_event: bool,
+        self,
+        new_text: str,
+        is_system_event: bool,
         thread_id: str = "default",
-        content: Optional[list] = None,
+        content: list | None = None,
         ephemeral: bool = False,
     ) -> list[dict]:
         """Load active messages from DB and append the new user message.
@@ -145,10 +148,7 @@ class ConversationStore:
             messages: list[dict] = []
         else:
             rows = await database.async_call(database.load_active_messages, thread_id)
-            messages = [
-                {"role": r["role"], "content": r["content"] or "..."}
-                for r in rows
-            ]
+            messages = [{"role": r["role"], "content": r["content"] or "..."} for r in rows]
         prefix = "[SYSTEM EVENT] " if is_system_event else ""
         if content is not None and not is_system_event:
             messages.append({"role": "user", "content": content})
@@ -157,9 +157,14 @@ class ConversationStore:
         return messages
 
     async def save_user_message(
-        self, text: str, thread_id: str, is_system_event: bool,
-        is_sub_session_result: bool, convergence_depth: int,
-        content: Optional[list], model: str,
+        self,
+        text: str,
+        thread_id: str,
+        is_system_event: bool,
+        is_sub_session_result: bool,
+        convergence_depth: int,
+        content: list | None,
+        model: str,
     ) -> None:
         """Persist the incoming user/system message to DB and emit events."""
         if not is_system_event:
@@ -167,27 +172,46 @@ class ConversationStore:
             if content is not None:
                 db_text = text or "[image attached]"
             await database.async_call(
-                database.save_message, "user", db_text, thread_id,
-                token_count=count_tokens(db_text, model))
+                database.save_message,
+                "user",
+                db_text,
+                thread_id,
+                token_count=count_tokens(db_text, model),
+            )
             if self._event_bus:
                 self._event_bus.emit("message.received", thread_id=thread_id, text=db_text)
         elif is_sub_session_result:
             _se_text = f"[SYSTEM EVENT] {text}"
             await database.async_call(
-                database.save_message, "user", _se_text, thread_id,
-                token_count=count_tokens(_se_text, model))
+                database.save_message,
+                "user",
+                _se_text,
+                thread_id,
+                token_count=count_tokens(_se_text, model),
+            )
         elif convergence_depth > 0:
             await database.async_call(
-                database.save_message, "user", text, thread_id,
-                token_count=count_tokens(text, model))
+                database.save_message,
+                "user",
+                text,
+                thread_id,
+                token_count=count_tokens(text, model),
+            )
 
     async def save_assistant_message(
-        self, text: Optional[str], thread_id: str, model: str,
+        self,
+        text: str | None,
+        thread_id: str,
+        model: str,
     ) -> None:
         """Persist the assistant response to DB and emit events."""
         _assistant_text = text or "..."
         await database.async_call(
-            database.save_message, "assistant", _assistant_text, thread_id,
-            token_count=count_tokens(_assistant_text, model))
+            database.save_message,
+            "assistant",
+            _assistant_text,
+            thread_id,
+            token_count=count_tokens(_assistant_text, model),
+        )
         if self._event_bus:
             self._event_bus.emit("message.sent", thread_id=thread_id, text=_assistant_text)

@@ -18,15 +18,17 @@ up to 5 seconds under write contention).
 
 import asyncio
 import json
+import logging
 import re
 import sqlite3
 import struct
 import threading
 import time
-import logging
-from datetime import datetime, timezone
+import uuid as _uuid
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -226,7 +228,9 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     # Rename turing_verdict → convergence_verdict for existing databases.
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(sub_session_outcomes)")}
     if "turing_verdict" in existing_cols and "convergence_verdict" not in existing_cols:
-        conn.execute("ALTER TABLE sub_session_outcomes RENAME COLUMN turing_verdict TO convergence_verdict")
+        conn.execute(
+            "ALTER TABLE sub_session_outcomes RENAME COLUMN turing_verdict TO convergence_verdict"
+        )
         conn.commit()
 
 
@@ -238,8 +242,9 @@ def init_db() -> None:
     logger.debug("Database initialised at %s", CONVERSATION_DB)
 
 
-def save_message(role: str, content: str, thread_id: str = "default",
-                 token_count: Optional[int] = None) -> int:
+def save_message(
+    role: str, content: str, thread_id: str = "default", token_count: int | None = None
+) -> int:
     """Insert a message and return its row id."""
     with _connect() as conn:
         cur = conn.execute(
@@ -309,7 +314,8 @@ def update_message_content(
         logger.warning(
             "update_message_content updated 0 rows (msg_id=%s, thread_id=%s; "
             "row may not exist or values were unchanged)",
-            msg_id, thread_id,
+            msg_id,
+            thread_id,
         )
 
 
@@ -353,7 +359,7 @@ def save_summary(content: str, thread_id: str = "default") -> None:
         conn.commit()
 
 
-def load_latest_summary(thread_id: str = "default") -> Optional[str]:
+def load_latest_summary(thread_id: str = "default") -> str | None:
     """Return the most recent compaction summary for a thread, or None."""
     with _connect() as conn:
         row = conn.execute(
@@ -361,7 +367,6 @@ def load_latest_summary(thread_id: str = "default") -> Optional[str]:
             (thread_id,),
         ).fetchone()
     return row[0] if row else None
-
 
 
 def clear_active_messages(thread_id: str = "default") -> None:
@@ -377,9 +382,7 @@ def clear_active_messages(thread_id: str = "default") -> None:
 def get_active_thread_ids() -> list[str]:
     """Return distinct thread_ids that have non-archived messages."""
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT DISTINCT thread_id FROM messages WHERE archived=0"
-        ).fetchall()
+        rows = conn.execute("SELECT DISTINCT thread_id FROM messages WHERE archived=0").fetchall()
     return [r[0] for r in rows]
 
 
@@ -398,17 +401,21 @@ def get_thread_stats(thread_id: str = "default") -> dict:
 # Tasks CRUD
 # ---------------------------------------------------------------------------
 
-import uuid as _uuid
-
 
 def _new_task_id() -> str:
     return f"task_{_uuid.uuid4().hex[:8]}"
 
 
-def add_task(content: str, thread_id: Optional[str] = None,
-             schedule_type: Optional[str] = None, schedule_desc: Optional[str] = None,
-             schedule_config: Optional[str] = None, ai_prompt: Optional[str] = None,
-             background: bool = False, execution_mode: Optional[str] = None) -> str:
+def add_task(
+    content: str,
+    thread_id: str | None = None,
+    schedule_type: str | None = None,
+    schedule_desc: str | None = None,
+    schedule_config: str | None = None,
+    ai_prompt: str | None = None,
+    background: bool = False,
+    execution_mode: str | None = None,
+) -> str:
     """Insert a new active task. Returns the task_id."""
     task_id = _new_task_id()
     with _connect() as conn:
@@ -416,15 +423,24 @@ def add_task(content: str, thread_id: Optional[str] = None,
             "INSERT INTO tasks (id, thread_id, content, status, created, "
             "schedule_type, schedule_desc, schedule_config, ai_prompt, execution_mode, background) "
             "VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)",
-            (task_id, thread_id, content, time.time(),
-             schedule_type, schedule_desc, schedule_config, ai_prompt, execution_mode,
-             1 if background else 0),
+            (
+                task_id,
+                thread_id,
+                content,
+                time.time(),
+                schedule_type,
+                schedule_desc,
+                schedule_config,
+                ai_prompt,
+                execution_mode,
+                1 if background else 0,
+            ),
         )
         conn.commit()
     return task_id
 
 
-def get_task(task_id: str) -> Optional[dict]:
+def get_task(task_id: str) -> dict | None:
     """Return a single task by id, or None."""
     with _connect() as conn:
         conn.row_factory = sqlite3.Row
@@ -432,16 +448,24 @@ def get_task(task_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def update_task(task_id: str, thread_id: Optional[str] = None, **kwargs) -> bool:
+def update_task(task_id: str, thread_id: str | None = None, **kwargs) -> bool:
     """Update fields on a task. Supported: content, status, ai_prompt,
     execution_mode, schedule_type, schedule_desc, schedule_config, background,
     apscheduler_job_id.
 
     When *thread_id* is given the task must belong to that thread (ownership guard).
     """
-    allowed = {"content", "status", "ai_prompt", "execution_mode",
-               "schedule_type", "schedule_desc", "schedule_config", "background",
-               "apscheduler_job_id"}
+    allowed = {
+        "content",
+        "status",
+        "ai_prompt",
+        "execution_mode",
+        "schedule_type",
+        "schedule_desc",
+        "schedule_config",
+        "background",
+        "apscheduler_job_id",
+    }
     updates = {k: v for k, v in kwargs.items() if k in allowed}
     if not updates:
         return False
@@ -459,7 +483,7 @@ def update_task(task_id: str, thread_id: Optional[str] = None, **kwargs) -> bool
     return n > 0
 
 
-def complete_task(task_id: str, reason: str = "", thread_id: Optional[str] = None) -> bool:
+def complete_task(task_id: str, reason: str = "", thread_id: str | None = None) -> bool:
     """Mark a task as completed. Returns True if a row was updated."""
     now = time.time()
     with _connect() as conn:
@@ -516,7 +540,7 @@ def delete_task(task_id: str) -> bool:
     return n > 0
 
 
-def list_tasks(status: str = "active", thread_id: Optional[str] = None) -> list[dict]:
+def list_tasks(status: str = "active", thread_id: str | None = None) -> list[dict]:
     """Return tasks filtered by status, ordered by creation time (newest first)."""
     conditions: list[str] = []
     params: list = []
@@ -535,7 +559,7 @@ def list_tasks(status: str = "active", thread_id: Optional[str] = None) -> list[
     return [dict(r) for r in rows]
 
 
-def get_active_tasks_text(thread_id: Optional[str] = None) -> str:
+def get_active_tasks_text(thread_id: str | None = None) -> str:
     """Compact formatted string of active tasks for system prompt injection.
 
     Includes both thread-scoped tasks and all background tasks so the
@@ -564,7 +588,7 @@ def get_active_tasks_text(thread_id: Optional[str] = None) -> str:
         if it.get("schedule_desc"):
             next_info = ""
             if it.get("last_run_at"):
-                last = datetime.fromtimestamp(it['last_run_at'], tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
+                last = datetime.fromtimestamp(it["last_run_at"], tz=UTC).strftime("%Y-%m-%d %H:%M")
                 next_info = f", last: {last}"
                 if it.get("run_count"):
                     next_info += f", runs: {it['run_count']}"
@@ -599,8 +623,7 @@ def delete_old_completed_tasks(days: int = 30) -> int:
     cutoff = time.time() - days * 86400
     with _connect() as conn:
         n = conn.execute(
-            "DELETE FROM tasks WHERE status='completed' "
-            "AND COALESCE(completed_at, created) < ?",
+            "DELETE FROM tasks WHERE status='completed' AND COALESCE(completed_at, created) < ?",
             (cutoff,),
         ).rowcount
         conn.commit()
@@ -612,6 +635,7 @@ def delete_old_completed_tasks(days: int = 30) -> int:
 # ---------------------------------------------------------------------------
 # Interaction Log CRUD
 # ---------------------------------------------------------------------------
+
 
 def load_harvest_state() -> dict[str, int]:
     """Return {thread_id: max_message_id} from the last *successful* harvest per thread."""
@@ -630,10 +654,16 @@ def load_harvest_state() -> dict[str, int]:
     return result
 
 
-def save_interaction_log(timestamp: float, action: str, session: str,
-                         llm: str, input_text: str, output_text: str,
-                         status: str = "ok",
-                         raw_output: Optional[str] = None) -> int:
+def save_interaction_log(
+    timestamp: float,
+    action: str,
+    session: str,
+    llm: str,
+    input_text: str,
+    output_text: str,
+    status: str = "ok",
+    raw_output: str | None = None,
+) -> int:
     """Insert an interaction log entry and return its row id."""
     with _connect() as conn:
         cur = conn.execute(
@@ -645,11 +675,14 @@ def save_interaction_log(timestamp: float, action: str, session: str,
         return cur.lastrowid
 
 
-def get_interaction_log(limit: int = 200, offset: int = 0,
-                        session_filter: Optional[str] = None,
-                        action_filter: Optional[str] = None,
-                        before_id: Optional[int] = None,
-                        after_id: Optional[int] = None) -> list[dict]:
+def get_interaction_log(
+    limit: int = 200,
+    offset: int = 0,
+    session_filter: str | None = None,
+    action_filter: str | None = None,
+    before_id: int | None = None,
+    after_id: int | None = None,
+) -> list[dict]:
     """Return interaction log entries. Newest first unless after_id is set (then ASC)."""
     conditions: list[str] = []
     params: list = []
@@ -658,7 +691,11 @@ def get_interaction_log(limit: int = 200, offset: int = 0,
         params.append(session_filter)
     if action_filter:
         # Also match legacy turing_* action names for convergence_* filters.
-        legacy = action_filter.replace("convergence_", "turing_", 1) if action_filter.startswith("convergence_") else None
+        legacy = (
+            action_filter.replace("convergence_", "turing_", 1)
+            if action_filter.startswith("convergence_")
+            else None
+        )
         if legacy and legacy != action_filter:
             conditions.append("action IN (?, ?)")
             params.extend([action_filter, legacy])
@@ -685,24 +722,21 @@ def get_interaction_log(limit: int = 200, offset: int = 0,
 def get_interaction_log_max_id() -> int:
     """Return the highest id in interaction_log, or 0 if empty."""
     with _connect() as conn:
-        row = conn.execute(
-            "SELECT COALESCE(MAX(id), 0) FROM interaction_log"
-        ).fetchone()
+        row = conn.execute("SELECT COALESCE(MAX(id), 0) FROM interaction_log").fetchone()
     return row[0]
 
 
-def get_interaction_log_entry(entry_id: int) -> Optional[dict]:
+def get_interaction_log_entry(entry_id: int) -> dict | None:
     """Return a single interaction log entry by id, or None."""
     with _connect() as conn:
         conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT * FROM interaction_log WHERE id=?", (entry_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM interaction_log WHERE id=?", (entry_id,)).fetchone()
     return dict(row) if row else None
 
 
-def count_interaction_log(session_filter: Optional[str] = None,
-                          action_filter: Optional[str] = None) -> int:
+def count_interaction_log(
+    session_filter: str | None = None, action_filter: str | None = None
+) -> int:
     """Return total count of interaction log entries."""
     conditions: list[str] = []
     params: list = []
@@ -710,7 +744,11 @@ def count_interaction_log(session_filter: Optional[str] = None,
         conditions.append("session=?")
         params.append(session_filter)
     if action_filter:
-        legacy = action_filter.replace("convergence_", "turing_", 1) if action_filter.startswith("convergence_") else None
+        legacy = (
+            action_filter.replace("convergence_", "turing_", 1)
+            if action_filter.startswith("convergence_")
+            else None
+        )
         if legacy and legacy != action_filter:
             conditions.append("action IN (?, ?)")
             params.extend([action_filter, legacy])
@@ -719,9 +757,7 @@ def count_interaction_log(session_filter: Optional[str] = None,
             params.append(action_filter)
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     with _connect() as conn:
-        row = conn.execute(
-            f"SELECT COUNT(*) FROM interaction_log {where}", params
-        ).fetchone()
+        row = conn.execute(f"SELECT COUNT(*) FROM interaction_log {where}", params).fetchone()
     return row[0]
 
 
@@ -729,12 +765,48 @@ def count_interaction_log(session_filter: Optional[str] = None,
 # Sub-session Outcome Tracking
 # ---------------------------------------------------------------------------
 
-_STOPWORDS = frozenset({
-    "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
-    "of", "with", "by", "from", "is", "it", "as", "be", "was", "are",
-    "this", "that", "not", "has", "had", "have", "will", "can", "do",
-    "does", "did", "its", "all", "into", "also", "than", "then",
-})
+_STOPWORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "but",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "is",
+        "it",
+        "as",
+        "be",
+        "was",
+        "are",
+        "this",
+        "that",
+        "not",
+        "has",
+        "had",
+        "have",
+        "will",
+        "can",
+        "do",
+        "does",
+        "did",
+        "its",
+        "all",
+        "into",
+        "also",
+        "than",
+        "then",
+    }
+)
 
 
 def save_sub_session_outcome(**fields) -> int:
@@ -749,8 +821,10 @@ def save_sub_session_outcome(**fields) -> int:
     embedding_blob = None
     try:
         from wintermute.infra import memory_store
+
         if memory_store.is_vector_enabled():
             from wintermute.infra.llm_utils import embed
+
             embed_cfg = memory_store.get_embed_config()
             if embed_cfg and embed_cfg.get("endpoint"):
                 vectors = embed([objective], embed_cfg)
@@ -800,6 +874,7 @@ def get_similar_outcomes(objective: str, limit: int = 5) -> list[dict]:
     # Try vector search first.
     try:
         from wintermute.infra import memory_store
+
         if memory_store.is_vector_enabled() and memory_store._config:
             embed_cfg = memory_store._config.get("embeddings", {})
             if embed_cfg.get("endpoint"):
@@ -839,7 +914,7 @@ def _vector_search_outcomes(objective: str, embed_cfg: dict, limit: int) -> list
             continue
         vec = struct.unpack(f"{dim}f", blob)
         # Cosine similarity.
-        dot = sum(a * b for a, b in zip(qv, vec))
+        dot = sum(a * b for a, b in zip(qv, vec, strict=False))
         mag_q = sum(a * a for a in qv) ** 0.5
         mag_v = sum(a * a for a in vec) ** 0.5
         if mag_q == 0 or mag_v == 0:
@@ -938,7 +1013,15 @@ def get_outcome_stats() -> dict:
         cnt = row[2]
         avg_dur = row[3]
         if backend not in by_backend:
-            by_backend[backend] = {"total": 0, "completed": 0, "timeout": 0, "failed": 0, "avg_duration": None, "_dur_sum": 0.0, "_dur_cnt": 0}
+            by_backend[backend] = {
+                "total": 0,
+                "completed": 0,
+                "timeout": 0,
+                "failed": 0,
+                "avg_duration": None,
+                "_dur_sum": 0.0,
+                "_dur_cnt": 0,
+            }
         by_backend[backend]["total"] += cnt
         if status in ("completed", "timeout", "failed"):
             by_backend[backend][status] += cnt
@@ -1017,13 +1100,14 @@ def get_cp_violation_stats() -> dict:
             parsed = json.loads(r["output"])
             for v in parsed.get("confirmed", []):
                 vtype = v.get("type", "unknown")
-                violation_types_by_backend[backend][vtype] = \
+                violation_types_by_backend[backend][vtype] = (
                     violation_types_by_backend[backend].get(vtype, 0) + 1
+                )
         except (json.JSONDecodeError, TypeError):
             pass
 
     # Build per-backend summary
-    all_backends = set(confirmed_by_backend) | set(r["llm"] for r in detection_rows)
+    all_backends = set(confirmed_by_backend) | {r["llm"] for r in detection_rows}
     per_backend: dict[str, dict] = {}
     for backend in sorted(all_backends):
         det_row = next((r for r in detection_rows if r["llm"] == backend), None)
@@ -1052,7 +1136,7 @@ def get_cp_violation_stats() -> dict:
 
 def get_outcomes_since(
     since: float,
-    status_filter: Optional[str] = None,
+    status_filter: str | None = None,
     limit: int = 200,
 ) -> list[dict]:
     """Return sub-session outcomes newer than *since* timestamp."""
@@ -1099,8 +1183,8 @@ def get_task_failure_streak(task_id: str, limit: int = 10) -> int:
 def get_outcomes_page(
     limit: int = 200,
     offset: int = 0,
-    status_filter: Optional[str] = None,
-    source_filter: Optional[str] = None,
+    status_filter: str | None = None,
+    source_filter: str | None = None,
 ) -> tuple[list[dict], int, dict]:
     """Return a page of sub-session outcomes plus totals and aggregate stats.
 
@@ -1145,7 +1229,8 @@ def get_outcomes_page(
 # Dreaming State (per-phase tracking for gated dream phases)
 # ---------------------------------------------------------------------------
 
-def get_dreaming_phase_state(phase_name: str) -> Optional[dict]:
+
+def get_dreaming_phase_state(phase_name: str) -> dict | None:
     """Return the stored state for a dream phase, or None if never run."""
     with _connect() as conn:
         conn.row_factory = sqlite3.Row
@@ -1180,9 +1265,11 @@ def update_dreaming_phase_state(
 # Dreaming Quality Metrics
 # ---------------------------------------------------------------------------
 
+
 def record_dreaming_entries(phase_name: str, entry_ids: list[str]) -> None:
     """Record which memory entries were created by a dreaming phase."""
     import json as _json
+
     now = time.time()
     with _connect() as conn:
         conn.execute(
@@ -1195,7 +1282,8 @@ def record_dreaming_entries(phase_name: str, entry_ids: list[str]) -> None:
 
 
 def get_unchecked_dreaming_entries(
-    phase_name: str, limit: int = 500,
+    phase_name: str,
+    limit: int = 500,
 ) -> list[dict]:
     """Return rows where survival has not yet been checked (>24h old).
 
@@ -1224,8 +1312,7 @@ def update_dreaming_survival(row_id: int, survived_count: int) -> None:
     now = time.time()
     with _connect() as conn:
         conn.execute(
-            "UPDATE dreaming_quality SET survived_count = ?, checked_at = ? "
-            "WHERE id = ?",
+            "UPDATE dreaming_quality SET survived_count = ?, checked_at = ? WHERE id = ?",
             (survived_count, now, row_id),
         )
         conn.commit()
@@ -1238,15 +1325,15 @@ def batch_update_dreaming_survival(updates: list[tuple[int, int]]) -> None:
     now = time.time()
     with _connect() as conn:
         conn.executemany(
-            "UPDATE dreaming_quality SET survived_count = ?, checked_at = ? "
-            "WHERE id = ?",
+            "UPDATE dreaming_quality SET survived_count = ?, checked_at = ? WHERE id = ?",
             [(survived_count, now, row_id) for row_id, survived_count in updates],
         )
         conn.commit()
 
 
 def get_phase_survival_rate(
-    phase_name: str, lookback_cycles: int = 5,
+    phase_name: str,
+    lookback_cycles: int = 5,
 ) -> tuple[float, int] | None:
     """Compute survival rate for a phase over the last N checked cycles.
 
@@ -1304,12 +1391,11 @@ def get_summaries_since(since: float, limit: int = 50) -> list[dict]:
 # Per-Thread Configuration
 # ---------------------------------------------------------------------------
 
+
 def get_all_thread_configs() -> list[tuple[str, str]]:
     """Return all (thread_id, config_json) pairs."""
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT thread_id, config_json FROM thread_config"
-        ).fetchall()
+        rows = conn.execute("SELECT thread_id, config_json FROM thread_config").fetchall()
     return rows
 
 
@@ -1330,8 +1416,8 @@ def set_thread_config(thread_id: str, config_json: str) -> None:
 # Prediction Accuracy Tracking
 # ---------------------------------------------------------------------------
 
-def upsert_prediction(prediction_id: str, source_text: str,
-                      pred_type: str) -> None:
+
+def upsert_prediction(prediction_id: str, source_text: str, pred_type: str) -> None:
     """Record a newly generated prediction."""
     with _connect() as conn:
         conn.execute(
@@ -1348,8 +1434,9 @@ def upsert_prediction(prediction_id: str, source_text: str,
         conn.commit()
 
 
-def record_prediction_check(prediction_id: str, confirmed: bool,
-                            source_text: str = "", pred_type: str = "") -> None:
+def record_prediction_check(
+    prediction_id: str, confirmed: bool, source_text: str = "", pred_type: str = ""
+) -> None:
     """Increment confirmed or missed counter for a prediction.
 
     Uses UPSERT so checks against previously-untracked predictions
@@ -1369,8 +1456,7 @@ def record_prediction_check(prediction_id: str, confirmed: bool,
             "confirmed = prediction_accuracy.confirmed + excluded.confirmed, "
             "missed = prediction_accuracy.missed + excluded.missed, "
             "last_checked_at = excluded.last_checked_at",
-            (prediction_id, inc_confirmed, inc_missed, now, now,
-             source_text, pred_type),
+            (prediction_id, inc_confirmed, inc_missed, now, now, source_text, pred_type),
         )
         conn.commit()
 
@@ -1379,8 +1465,7 @@ def retire_prediction(prediction_id: str) -> None:
     """Mark a prediction as retired (pruned/promoted) without deleting it."""
     with _connect() as conn:
         conn.execute(
-            "UPDATE prediction_accuracy SET retired_at = ? "
-            "WHERE prediction_id = ?",
+            "UPDATE prediction_accuracy SET retired_at = ? WHERE prediction_id = ?",
             (time.time(), prediction_id),
         )
         conn.commit()

@@ -17,22 +17,28 @@ import json
 import logging
 import time
 from collections import deque
-from typing import Any, Optional
+from typing import Any
 
 from wintermute.core.tool_deps import ToolDeps
 from wintermute.core.tool_schemas import (  # noqa: F401 — re-exported
-    TOOL_SCHEMAS,
-    TOOL_CATEGORIES,
-    SUB_SESSION_EXCLUDE,
-    NL_TOOL_SCHEMAS,
     NL_SCHEMA_MAP,
+    NL_TOOL_SCHEMAS,
+    SUB_SESSION_EXCLUDE,
+    TOOL_CATEGORIES,
+    TOOL_SCHEMAS,
     get_tool_schemas,
 )
-from wintermute.tools.task_tools import tool_task, _describe_schedule  # noqa: F401
+from wintermute.tools.io_tools import (
+    tool_execute_shell,
+    tool_read_file,
+    tool_send_file,
+    tool_send_message,
+    tool_write_file,
+)
 from wintermute.tools.memory_tools import tool_append_memory, tool_skill
-from wintermute.tools.io_tools import tool_execute_shell, tool_read_file, tool_write_file, tool_send_file, tool_send_message
-from wintermute.tools.web_tools import tool_search_web, tool_fetch_url
-from wintermute.tools.session_tools import tool_worker_delegation, tool_query_telemetry
+from wintermute.tools.session_tools import tool_query_telemetry, tool_worker_delegation
+from wintermute.tools.task_tools import _describe_schedule, tool_task  # noqa: F401
+from wintermute.tools.web_tools import tool_fetch_url, tool_search_web
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +46,7 @@ logger = logging.getLogger(__name__)
 def _tool_restart_self(inputs: dict, **kwargs: Any) -> str:
     """Trigger a graceful restart of the Wintermute process."""
     reason = inputs.get("reason", "no reason given")
-    tool_deps: Optional[ToolDeps] = kwargs.get("tool_deps")
+    tool_deps: ToolDeps | None = kwargs.get("tool_deps")
     if not tool_deps or not tool_deps.shutdown_coordinator:
         return json.dumps({"error": "Restart not available — shutdown coordinator not wired"})
     logger.info("restart_self requested: %s", reason)
@@ -63,25 +69,31 @@ _TOOL_CALL_LOG: deque[dict] = deque(maxlen=500)
 # ---------------------------------------------------------------------------
 
 _DISPATCH: dict[str, Any] = {
-    "worker_delegation":  tool_worker_delegation,
-    "task":               tool_task,
-    "append_memory":      tool_append_memory,
-    "skill":              tool_skill,
-    "execute_shell":      tool_execute_shell,
-    "read_file":          tool_read_file,
-    "write_file":         tool_write_file,
-    "send_file":          tool_send_file,
-    "send_message":       tool_send_message,
-    "search_web":         tool_search_web,
-    "fetch_url":          tool_fetch_url,
-    "query_telemetry":    tool_query_telemetry,
-    "restart_self":       _tool_restart_self,
+    "worker_delegation": tool_worker_delegation,
+    "task": tool_task,
+    "append_memory": tool_append_memory,
+    "skill": tool_skill,
+    "execute_shell": tool_execute_shell,
+    "read_file": tool_read_file,
+    "write_file": tool_write_file,
+    "send_file": tool_send_file,
+    "send_message": tool_send_message,
+    "search_web": tool_search_web,
+    "fetch_url": tool_fetch_url,
+    "query_telemetry": tool_query_telemetry,
+    "restart_self": _tool_restart_self,
 }
 
 
-def execute_tool(name: str, inputs: dict, thread_id: Optional[str] = None,
-                 nesting_depth: int = 0, parent_thread_id: Optional[str] = None,
-                 tool_deps: Optional[ToolDeps] = None, **kwargs) -> str:
+def execute_tool(
+    name: str,
+    inputs: dict,
+    thread_id: str | None = None,
+    nesting_depth: int = 0,
+    parent_thread_id: str | None = None,
+    tool_deps: ToolDeps | None = None,
+    **kwargs,
+) -> str:
     """Execute a tool by name and return its JSON-string result."""
     fn = _DISPATCH.get(name)
     if fn is None:
@@ -89,22 +101,29 @@ def execute_tool(name: str, inputs: dict, thread_id: Optional[str] = None,
     logger.debug("Executing tool '%s' with inputs: %s", name, inputs)
     t0 = time.monotonic()
     try:
-        result = fn(inputs, thread_id=thread_id, nesting_depth=nesting_depth,
-                    parent_thread_id=parent_thread_id, tool_deps=tool_deps,
-                    **kwargs)
+        result = fn(
+            inputs,
+            thread_id=thread_id,
+            nesting_depth=nesting_depth,
+            parent_thread_id=parent_thread_id,
+            tool_deps=tool_deps,
+            **kwargs,
+        )
         error_flag = None
     except (KeyError, TypeError, ValueError) as exc:
         result = json.dumps({"error": f"Tool '{name}' called with invalid arguments: {exc}"})
         error_flag = str(exc)
         logger.warning("Tool '%s' raised %s: %s", name, type(exc).__name__, exc)
     duration_ms = round((time.monotonic() - t0) * 1000, 1)
-    _TOOL_CALL_LOG.append({
-        "ts": time.time(),
-        "tool": name,
-        "inputs": inputs,
-        "thread_id": thread_id or "unknown",
-        "result_preview": result[:300] if result else "",
-        "duration_ms": duration_ms,
-        "error": error_flag,
-    })
+    _TOOL_CALL_LOG.append(
+        {
+            "ts": time.time(),
+            "tool": name,
+            "inputs": inputs,
+            "thread_id": thread_id or "unknown",
+            "result_preview": result[:300] if result else "",
+            "duration_ms": duration_ms,
+            "error": error_flag,
+        }
+    )
     return result

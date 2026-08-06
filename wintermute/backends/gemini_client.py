@@ -33,6 +33,7 @@ MAX_BACKOFF = 60.0
 # Main client
 # ---------------------------------------------------------------------------
 
+
 class GeminiCloudClient:
     """LLMBackend client backed by Google Cloud Code Assist."""
 
@@ -64,9 +65,7 @@ class GeminiCloudClient:
             self._creds = await loop.run_in_executor(
                 None, gemini_auth.refresh_access_token, self._creds
             )
-            await loop.run_in_executor(
-                None, gemini_auth.save_credentials, self._creds
-            )
+            await loop.run_in_executor(None, gemini_auth.save_credentials, self._creds)
             return self._creds["access_token"]
 
     # -------------------------------------------------------------------
@@ -87,7 +86,11 @@ class GeminiCloudClient:
         for msg in messages:
             role = msg["role"] if isinstance(msg, dict) else msg.role
             if role == "assistant":
-                tool_calls = msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
+                tool_calls = (
+                    msg.get("tool_calls")
+                    if isinstance(msg, dict)
+                    else getattr(msg, "tool_calls", None)
+                )
                 if tool_calls:
                     for tc in tool_calls:
                         if isinstance(tc, dict):
@@ -116,30 +119,37 @@ class GeminiCloudClient:
                     system_parts.append(content)
                 continue
 
-            if role == "assistant":
-                google_role = "model"
-            else:
-                google_role = "user"
+            google_role = "model" if role == "assistant" else "user"
 
             parts = []
 
             # Handle tool call results
             if role == "tool":
-                tool_call_id = msg.get("tool_call_id", "") if isinstance(msg, dict) else getattr(msg, "tool_call_id", "")
+                tool_call_id = (
+                    msg.get("tool_call_id", "")
+                    if isinstance(msg, dict)
+                    else getattr(msg, "tool_call_id", "")
+                )
                 name = msg.get("name", "") if isinstance(msg, dict) else getattr(msg, "name", "")
                 fn_name = name or tc_id_to_name.get(tool_call_id, "") or tool_call_id
                 if tool_call_id in tc_id_has_sig:
                     # Has matching signed call — send as proper functionResponse
-                    parts.append({
-                        "functionResponse": {
-                            "name": fn_name,
-                            "response": {"result": content or ""},
+                    parts.append(
+                        {
+                            "functionResponse": {
+                                "name": fn_name,
+                                "response": {"result": content or ""},
+                            }
                         }
-                    })
+                    )
                 # else: skip unsigned tool results from old history
             # Handle assistant messages with tool calls
             elif role == "assistant":
-                tool_calls = msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
+                tool_calls = (
+                    msg.get("tool_calls")
+                    if isinstance(msg, dict)
+                    else getattr(msg, "tool_calls", None)
+                )
                 if tool_calls:
                     for tc in tool_calls:
                         if isinstance(tc, dict):
@@ -156,16 +166,21 @@ class GeminiCloudClient:
                         except json.JSONDecodeError as _exc:
                             logger.warning(
                                 "Malformed tool args in history for %s: %s",
-                                fn_name, _exc,
+                                fn_name,
+                                _exc,
                             )
                             args_dict = {}
                         if thought_sig:
                             # Has signature — send as proper functionCall
-                            parts.append({"functionCall": {
-                                "name": fn_name,
-                                "args": args_dict,
-                                "thoughtSignature": thought_sig,
-                            }})
+                            parts.append(
+                                {
+                                    "functionCall": {
+                                        "name": fn_name,
+                                        "args": args_dict,
+                                        "thoughtSignature": thought_sig,
+                                    }
+                                }
+                            )
                         # else: skip unsigned tool calls from old history
                 if content:
                     parts.append({"text": content})
@@ -260,20 +275,20 @@ class GeminiCloudClient:
                     if "functionCall" in part:
                         fc = part["functionCall"]
                         tc_counter += 1
-                        tool_calls.append(LLMToolCall(
-                            id=f"call_{tc_counter}",
-                            name=fc.get("name", ""),
-                            arguments=json.dumps(fc.get("args", {})),
-                            thought_signature=fc.get("thoughtSignature"),
-                        ))
+                        tool_calls.append(
+                            LLMToolCall(
+                                id=f"call_{tc_counter}",
+                                name=fc.get("name", ""),
+                                arguments=json.dumps(fc.get("args", {})),
+                                thought_signature=fc.get("thoughtSignature"),
+                            )
+                        )
 
                 # Map finish reason
                 fr = candidate.get("finishReason", "")
                 if fr == "MAX_TOKENS":
                     finish_reason = "length"
-                elif fr == "STOP":
-                    finish_reason = "stop"
-                elif fr == "SAFETY":
+                elif fr == "STOP" or fr == "SAFETY":
                     finish_reason = "stop"
 
         if tool_calls:
@@ -313,7 +328,9 @@ class GeminiCloudClient:
             "user_prompt_id": str(uuid.uuid4()),
             "request": inner,
         }
-        logger.debug("Gemini request: model=%s, contents=%d blocks", model, len(inner.get("contents", [])))
+        logger.debug(
+            "Gemini request: model=%s, contents=%d blocks", model, len(inner.get("contents", []))
+        )
         backoff = INITIAL_BACKOFF
 
         for attempt in range(MAX_RETRIES + 1):
@@ -333,7 +350,9 @@ class GeminiCloudClient:
                 if attempt < MAX_RETRIES:
                     jitter = random.uniform(0, backoff * 0.5)
                     wait = min(backoff + jitter, MAX_BACKOFF)
-                    logger.warning("Gemini transport error (attempt %d/%d): %s", attempt + 1, MAX_RETRIES, exc)
+                    logger.warning(
+                        "Gemini transport error (attempt %d/%d): %s", attempt + 1, MAX_RETRIES, exc
+                    )
                     await asyncio.sleep(wait)
                     backoff = min(backoff * 2, MAX_BACKOFF)
                     continue
@@ -347,9 +366,7 @@ class GeminiCloudClient:
                     self._creds = await loop.run_in_executor(
                         None, gemini_auth.refresh_access_token, self._creds
                     )
-                    await loop.run_in_executor(
-                        None, gemini_auth.save_credentials, self._creds
-                    )
+                    await loop.run_in_executor(None, gemini_auth.save_credentials, self._creds)
                 continue
 
             # 429/503: exponential backoff with jitter
@@ -360,8 +377,13 @@ class GeminiCloudClient:
                 else:
                     jitter = random.uniform(0, backoff * 0.5)
                     wait = min(backoff + jitter, MAX_BACKOFF)
-                logger.warning("Gemini %d — retrying after %.1fs (attempt %d/%d)",
-                               resp.status_code, wait, attempt + 1, MAX_RETRIES)
+                logger.warning(
+                    "Gemini %d — retrying after %.1fs (attempt %d/%d)",
+                    resp.status_code,
+                    wait,
+                    attempt + 1,
+                    MAX_RETRIES,
+                )
                 await asyncio.sleep(wait)
                 backoff = min(backoff * 2, MAX_BACKOFF)
                 continue
@@ -375,7 +397,9 @@ class GeminiCloudClient:
             # Parse SSE response
             chunks = self._parse_sse(resp.text)
             if not chunks:
-                logger.warning("Gemini: no SSE chunks parsed from response (%d bytes)", len(resp.text))
+                logger.warning(
+                    "Gemini: no SSE chunks parsed from response (%d bytes)", len(resp.text)
+                )
             # Temporary: log response parts for debugging tool call parsing
             for ci, chunk in enumerate(chunks):
                 inner = chunk.get("response", chunk)
@@ -387,7 +411,9 @@ class GeminiCloudClient:
                             preview = part["text"][:150]
                         elif "functionCall" in part:
                             preview = f"name={part['functionCall'].get('name', '?')}"
-                        logger.debug("Gemini response part [%d]: keys=%s preview=%s", ci, keys, preview)
+                        logger.debug(
+                            "Gemini response part [%d]: keys=%s preview=%s", ci, keys, preview
+                        )
             return self._translate_response(chunks)
 
         raise RuntimeError("Gemini request failed after all retries")
@@ -408,10 +434,7 @@ class GeminiCloudClient:
         if not chunks:
             try:
                 parsed = json.loads(text)
-                if isinstance(parsed, list):
-                    chunks = parsed
-                else:
-                    chunks = [parsed]
+                chunks = parsed if isinstance(parsed, list) else [parsed]
             except json.JSONDecodeError:
                 pass
         return chunks

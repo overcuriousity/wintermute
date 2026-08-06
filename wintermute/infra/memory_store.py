@@ -17,16 +17,17 @@ import logging
 import sqlite3
 import threading
 import time
-
 from typing import Any, Protocol, runtime_checkable
 
 from wintermute.infra.llm_utils import (
     embed as _embed,
-
+)
+from wintermute.infra.llm_utils import (
     log_store_interaction as _log_interaction_impl,
+)
+from wintermute.infra.llm_utils import (
     make_content_id as _make_id,
 )
-
 from wintermute.infra.paths import DATA_DIR
 
 logger = logging.getLogger(__name__)
@@ -40,12 +41,14 @@ _config: dict = {}
 # Backend protocol
 # ---------------------------------------------------------------------------
 
+
 @runtime_checkable
 class MemoryBackend(Protocol):
     def init(self) -> None: ...
     def add(self, entry: str, entry_id: str | None = None, source: str = "unknown") -> str: ...
-    def search(self, query: str, top_k: int, threshold: float,
-               *, bump_access: bool = True) -> list[dict]: ...
+    def search(
+        self, query: str, top_k: int, threshold: float, *, bump_access: bool = True
+    ) -> list[dict]: ...
     def get_all(self) -> list[dict]: ...
     def get_page(self, limit: int, offset: int) -> tuple[list[dict], int]: ...
     def replace_all(self, entries: list[str]) -> None: ...
@@ -57,7 +60,9 @@ class MemoryBackend(Protocol):
     def get_stale(self, max_age_days: int, min_access: int) -> list[dict]: ...
     def bulk_delete(self, entry_ids: list[str]) -> int: ...
     def get_top_accessed(self, limit: int) -> list[dict]: ...
-    def get_by_source(self, source: str, limit: int = 50, bump_access: bool = True) -> list[dict]: ...
+    def get_by_source(
+        self, source: str, limit: int = 50, bump_access: bool = True
+    ) -> list[dict]: ...
     def track_access(self, entry_ids: list[str]) -> None: ...
     def promote_source(self, entry_id: str, new_source: str) -> None: ...
     def exists_batch(self, entry_ids: list[str]) -> set[str]: ...
@@ -103,9 +108,77 @@ class LocalVectorBackend:
                     conn.execute(f"ALTER TABLE local_vectors ADD COLUMN {col} DEFAULT {default}")
                 except sqlite3.OperationalError:
                     pass  # Column already exists.
+            # Record which embedding provider built this store.  Switching
+            # providers changes the vector dimension, which silently breaks
+            # similarity search — fail loudly instead.
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS store_meta ("
+                "  key TEXT PRIMARY KEY,"
+                "  value TEXT NOT NULL"
+                ")"
+            )
             conn.commit()
             conn.close()
+        self._check_provider_compatibility()
         logger.info("Memory backend: local_vector (SQLite+numpy at %s)", self._db_path)
+
+    def _active_provider(self) -> tuple[str, int]:
+        """Return (provider_name, dimension) for the currently configured
+        embedding source."""
+        if self._embed_cfg.get("endpoint"):
+            model = self._embed_cfg.get("model", "text-embedding-3-small")
+            return f"endpoint:{model}", int(self._embed_cfg.get("dimensions", 0))
+        from wintermute.infra import local_embeddings
+
+        return local_embeddings.provider_name(), local_embeddings.DIMENSIONS
+
+    def _check_provider_compatibility(self) -> None:
+        """Refuse to start when the stored vectors were built by a provider
+        with a different dimension."""
+        provider, dimension = self._active_provider()
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT value FROM store_meta WHERE key = 'embedding_dimension'"
+                ).fetchone()
+                stored_dim = int(row[0]) if row else None
+                has_vectors = (
+                    conn.execute("SELECT 1 FROM local_vectors LIMIT 1").fetchone() is not None
+                )
+
+                if stored_dim is None:
+                    if has_vectors and dimension:
+                        # Pre-existing store from before the guard existed:
+                        # adopt its dimension from an actual stored vector.
+                        blob = conn.execute("SELECT vector FROM local_vectors LIMIT 1").fetchone()[
+                            0
+                        ]
+                        stored_dim = len(blob) // 4  # float32
+                    else:
+                        stored_dim = dimension
+                    conn.execute(
+                        "INSERT OR REPLACE INTO store_meta (key, value) VALUES (?, ?)",
+                        ("embedding_dimension", str(stored_dim)),
+                    )
+                    conn.execute(
+                        "INSERT OR REPLACE INTO store_meta (key, value) VALUES (?, ?)",
+                        ("embedding_provider", provider),
+                    )
+                    conn.commit()
+
+                if dimension and stored_dim and stored_dim != dimension:
+                    raise ValueError(
+                        f"Memory store was built with {stored_dim}-dimensional "
+                        f"vectors, but the active embedding provider "
+                        f"({provider}) produces {dimension}-dimensional ones. "
+                        f"Similarity search would be meaningless.\n"
+                        f"  Either restore the previous embeddings "
+                        f"configuration, or delete {self._db_path} to start "
+                        f"fresh (existing memories will be lost)."
+                    )
+            finally:
+                conn.close()
 
     def _connect(self) -> sqlite3.Connection:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -116,6 +189,7 @@ class LocalVectorBackend:
     @staticmethod
     def _vec_to_blob(vec: list[float]) -> bytes:
         import numpy as np
+
         return np.array(vec, dtype=np.float32).tobytes()
 
     def add(self, entry: str, entry_id: str | None = None, source: str = "unknown") -> str:
@@ -165,8 +239,9 @@ class LocalVectorBackend:
                 conn.close()
         return existing
 
-    def search(self, query: str, top_k: int, threshold: float,
-               *, bump_access: bool = True) -> list[dict]:
+    def search(
+        self, query: str, top_k: int, threshold: float, *, bump_access: bool = True
+    ) -> list[dict]:
         import numpy as np
 
         t0 = time.time()
@@ -200,14 +275,18 @@ class LocalVectorBackend:
                 continue
             score = float(np.dot(q_vec, vec / norm))
             if score >= threshold:
-                results.append({"id": entry_id, "text": text, "score": score, "source": source or "unknown"})
+                results.append(
+                    {"id": entry_id, "text": text, "score": score, "source": source or "unknown"}
+                )
 
         results.sort(key=lambda x: x["score"], reverse=True)
         hits = results[:top_k]
         if bump_access:
             self._track_access([h["id"] for h in hits])
         _log_interaction(
-            t0, "local_vector_search", query[:200],
+            t0,
+            "local_vector_search",
+            query[:200],
             f"{len(hits)} hits (top_k={top_k}, threshold={threshold})",
             llm="local_vector",
         )
@@ -252,8 +331,9 @@ class LocalVectorBackend:
                 ).fetchall()
             finally:
                 conn.close()
-        items = [{"id": r[0], "text": r[1], "score": 1.0, "source": r[2] or "unknown"}
-                 for r in rows]
+        items = [
+            {"id": r[0], "text": r[1], "score": 1.0, "source": r[2] or "unknown"} for r in rows
+        ]
         return items, total
 
     def replace_all(self, entries: list[str]) -> None:
@@ -267,7 +347,9 @@ class LocalVectorBackend:
                     conn.commit()
                 finally:
                     conn.close()
-            _log_interaction(t0, "local_vector_replace_all", "0 entries", "cleared", llm="local_vector")
+            _log_interaction(
+                t0, "local_vector_replace_all", "0 entries", "cleared", llm="local_vector"
+            )
             return
 
         vectors = _embed(entries, self._embed_cfg)
@@ -280,7 +362,7 @@ class LocalVectorBackend:
         now = time.time()
         rows = [
             (_make_id(entry), entry, self._vec_to_blob(vec), now, now)
-            for entry, vec in zip(entries, vectors)
+            for entry, vec in zip(entries, vectors, strict=False)
         ]
         new_ids = [r[0] for r in rows]
         with self._lock:
@@ -317,17 +399,18 @@ class LocalVectorBackend:
                 conn.close()
         logger.info("LocalVector: replaced all entries (%d)", len(entries))
         _log_interaction(
-            t0, "local_vector_replace_all", f"{len(entries)} entries",
-            f"upserted {len(entries)} rows", llm="local_vector",
+            t0,
+            "local_vector_replace_all",
+            f"{len(entries)} entries",
+            f"upserted {len(entries)} rows",
+            llm="local_vector",
         )
 
     def delete(self, entry_id: str) -> bool:
         with self._lock:
             conn = self._connect()
             try:
-                cur = conn.execute(
-                    "DELETE FROM local_vectors WHERE entry_id = ?", (entry_id,)
-                )
+                cur = conn.execute("DELETE FROM local_vectors WHERE entry_id = ?", (entry_id,))
                 conn.commit()
                 return cur.rowcount > 0
             finally:
@@ -353,9 +436,7 @@ class LocalVectorBackend:
         with self._lock:
             conn = self._connect()
             try:
-                rows = conn.execute(
-                    "SELECT entry_id, text FROM local_vectors"
-                ).fetchall()
+                rows = conn.execute("SELECT entry_id, text FROM local_vectors").fetchall()
             finally:
                 conn.close()
         if not rows:
@@ -367,7 +448,7 @@ class LocalVectorBackend:
         with self._lock:
             conn = self._connect()
             try:
-                for (eid, _text), vec in zip(rows, vectors):
+                for (eid, _text), vec in zip(rows, vectors, strict=False):
                     conn.execute(
                         "UPDATE local_vectors SET vector = ? WHERE entry_id = ?",
                         (self._vec_to_blob(vec), eid),
@@ -379,6 +460,7 @@ class LocalVectorBackend:
 
     def get_all_with_vectors(self) -> list[dict]:
         import numpy as np
+
         with self._lock:
             conn = self._connect()
             try:
@@ -391,10 +473,17 @@ class LocalVectorBackend:
         results = []
         for r in rows:
             vec = np.frombuffer(r[2], dtype=np.float32).tolist()
-            results.append({
-                "id": r[0], "text": r[1], "vector": vec, "created_at": r[3],
-                "last_accessed": r[4], "access_count": r[5], "source": r[6],
-            })
+            results.append(
+                {
+                    "id": r[0],
+                    "text": r[1],
+                    "vector": vec,
+                    "created_at": r[3],
+                    "last_accessed": r[4],
+                    "access_count": r[5],
+                    "source": r[6],
+                }
+            )
         return results
 
     def get_stale(self, max_age_days: int, min_access: int) -> list[dict]:
@@ -410,8 +499,14 @@ class LocalVectorBackend:
             finally:
                 conn.close()
         return [
-            {"id": r[0], "text": r[1], "created_at": r[2],
-             "last_accessed": r[3], "access_count": r[4], "source": r[5]}
+            {
+                "id": r[0],
+                "text": r[1],
+                "created_at": r[2],
+                "last_accessed": r[3],
+                "access_count": r[4],
+                "source": r[5],
+            }
             for r in rows
         ]
 
@@ -456,8 +551,14 @@ class LocalVectorBackend:
             finally:
                 conn.close()
         hits = [
-            {"id": r[0], "text": r[1], "created_at": r[2],
-             "last_accessed": r[3], "access_count": r[4], "source": r[5]}
+            {
+                "id": r[0],
+                "text": r[1],
+                "created_at": r[2],
+                "last_accessed": r[3],
+                "access_count": r[4],
+                "source": r[5],
+            }
             for r in rows
         ]
         if bump_access:
@@ -493,6 +594,7 @@ class LocalVectorBackend:
 # Qdrant backend (vector semantic search)
 # ---------------------------------------------------------------------------
 
+
 class QdrantBackend:
     """Qdrant vector DB with embedding-based semantic search."""
 
@@ -507,9 +609,10 @@ class QdrantBackend:
         self._lock = threading.Lock()
 
     def init(self) -> None:
+        from urllib.parse import urlparse
+
         from qdrant_client import QdrantClient
         from qdrant_client.models import Distance, VectorParams
-        from urllib.parse import urlparse
 
         # Parse URL into host/port/https components — qdrant-client's url=
         # parameter doesn't work reliably with HTTPS endpoints.
@@ -519,8 +622,11 @@ class QdrantBackend:
         port = parsed.port or (443 if use_https else 6333)
 
         self._client = QdrantClient(
-            host=host, port=port, https=use_https,
-            api_key=self._api_key, timeout=30,
+            host=host,
+            port=port,
+            https=use_https,
+            api_key=self._api_key,
+            timeout=30,
             prefer_grpc=False,
         )
         # Create collection if it doesn't exist.
@@ -533,10 +639,10 @@ class QdrantBackend:
                     distance=Distance.COSINE,
                 ),
             )
-            logger.info("Qdrant: created collection %r (%d dims)",
-                        self._collection, self._dimensions)
-        logger.info("Memory backend: qdrant (url=%s, collection=%s)",
-                     self._url, self._collection)
+            logger.info(
+                "Qdrant: created collection %r (%d dims)", self._collection, self._dimensions
+            )
+        logger.info("Memory backend: qdrant (url=%s, collection=%s)", self._url, self._collection)
         # Create payload indexes for efficient filtered queries (dreaming, stale detection).
         self._ensure_payload_indexes()
 
@@ -548,6 +654,7 @@ class QdrantBackend:
         """
         try:
             from qdrant_client.models import PayloadSchemaType
+
             for field, schema in [
                 ("last_accessed", PayloadSchemaType.FLOAT),
                 ("access_count", PayloadSchemaType.INTEGER),
@@ -580,7 +687,6 @@ class QdrantBackend:
         Falls back to empty list if recommend is unavailable.
         """
         try:
-            from qdrant_client.models import RecommendRequest
             with self._lock:
                 results = self._client.recommend(
                     collection_name=self._collection,
@@ -628,6 +734,7 @@ class QdrantBackend:
         """
         try:
             from qdrant_client.models import QueryRequest
+
             # Fetch vectors for the requested entries.
             with self._lock:
                 points = self._client.retrieve(
@@ -647,12 +754,14 @@ class QdrantBackend:
                 vec = id_to_vec.get(eid)
                 if vec is None:
                     continue
-                requests.append(QueryRequest(
-                    query=vec,
-                    limit=limit + 1,  # +1 to exclude self.
-                    score_threshold=score_threshold,
-                    with_payload=True,
-                ))
+                requests.append(
+                    QueryRequest(
+                        query=vec,
+                        limit=limit + 1,  # +1 to exclude self.
+                        score_threshold=score_threshold,
+                        with_payload=True,
+                    )
+                )
                 order.append(eid)
 
             if not requests:
@@ -665,10 +774,14 @@ class QdrantBackend:
                 )
 
             result: dict[str, list[dict]] = {}
-            for eid, resp in zip(order, batch_results):
+            for eid, resp in zip(order, batch_results, strict=False):
                 neighbors = [
-                    {"id": str(h.id), "text": h.payload.get("text", ""),
-                     "score": h.score, "source": h.payload.get("source", "unknown")}
+                    {
+                        "id": str(h.id),
+                        "text": h.payload.get("text", ""),
+                        "score": h.score,
+                        "source": h.payload.get("source", "unknown"),
+                    }
                     for h in resp.points
                     if str(h.id) != eid  # Exclude self.
                 ][:limit]
@@ -694,7 +807,9 @@ class QdrantBackend:
             existing_payload: dict = {}
             pts = self._client.retrieve(
                 collection_name=self._collection,
-                ids=[eid], with_payload=True, with_vectors=False,
+                ids=[eid],
+                with_payload=True,
+                with_vectors=False,
             )
             if pts:
                 existing_payload = pts[0].payload or {}
@@ -707,11 +822,13 @@ class QdrantBackend:
             }
             self._client.upsert(
                 collection_name=self._collection,
-                points=[PointStruct(
-                    id=eid,
-                    vector=vectors[0],
-                    payload=payload,
-                )],
+                points=[
+                    PointStruct(
+                        id=eid,
+                        vector=vectors[0],
+                        payload=payload,
+                    )
+                ],
             )
         _log_interaction(t0, "qdrant_add", entry[:200], f"id={eid}", llm="qdrant")
         return eid
@@ -729,8 +846,9 @@ class QdrantBackend:
             )
         return {str(p.id) for p in pts}
 
-    def search(self, query: str, top_k: int, threshold: float,
-               *, bump_access: bool = True) -> list[dict]:
+    def search(
+        self, query: str, top_k: int, threshold: float, *, bump_access: bool = True
+    ) -> list[dict]:
         vectors = _embed([query], self._embed_cfg, task="query")
         if not vectors:
             logger.warning("Qdrant: embedding failed for query, falling back to get_all")
@@ -744,13 +862,14 @@ class QdrantBackend:
                 score_threshold=threshold,
             ).points
         hits = [
-            {"id": str(r.id), "text": r.payload.get("text", ""), "score": r.score}
-            for r in results
+            {"id": str(r.id), "text": r.payload.get("text", ""), "score": r.score} for r in results
         ]
         if bump_access:
             self._track_access([h["id"] for h in hits])
         _log_interaction(
-            t0, "qdrant_search", query[:200],
+            t0,
+            "qdrant_search",
+            query[:200],
             f"{len(hits)} hits (top_k={top_k}, threshold={threshold})",
             llm="qdrant",
         )
@@ -769,8 +888,7 @@ class QdrantBackend:
                     with_payload=["access_count"],
                 )
                 count_map = {
-                    str(p.id): int((p.payload or {}).get("access_count") or 0)
-                    for p in pts
+                    str(p.id): int((p.payload or {}).get("access_count") or 0) for p in pts
                 }
                 for pt in pts:
                     eid = str(pt.id)
@@ -804,8 +922,12 @@ class QdrantBackend:
             if offset is None:
                 break
         return [
-            {"id": str(p.id), "text": p.payload.get("text", ""), "score": 1.0,
-             "source": p.payload.get("source", "unknown")}
+            {
+                "id": str(p.id),
+                "text": p.payload.get("text", ""),
+                "score": 1.0,
+                "source": p.payload.get("source", "unknown"),
+            }
             for p in points
         ]
 
@@ -845,8 +967,12 @@ class QdrantBackend:
             )
         points = result[0] if result else []
         items = [
-            {"id": str(p.id), "text": p.payload.get("text", ""), "score": 1.0,
-             "source": p.payload.get("source", "unknown")}
+            {
+                "id": str(p.id),
+                "text": p.payload.get("text", ""),
+                "score": 1.0,
+                "source": p.payload.get("source", "unknown"),
+            }
             for p in points
         ]
         return items, total
@@ -861,7 +987,9 @@ class QdrantBackend:
                 # Delete all points.
                 self._client.delete_collection(self._collection)
             self.init()  # Recreate empty collection.
-            _log_interaction(t0, "qdrant_replace_all", "0 entries", "collection cleared", llm="qdrant")
+            _log_interaction(
+                t0, "qdrant_replace_all", "0 entries", "collection cleared", llm="qdrant"
+            )
             return
 
         # Batch embed.
@@ -911,7 +1039,7 @@ class QdrantBackend:
                         "source": existing_meta.get(eid, {}).get("source", "dreaming"),
                     },
                 )
-                for entry, vec, eid in zip(entries, vectors, new_ids)
+                for entry, vec, eid in zip(entries, vectors, new_ids, strict=False)
             ]
 
             # Delete points no longer present (avoids delete_collection race window).
@@ -934,8 +1062,11 @@ class QdrantBackend:
                 )
         logger.info("Qdrant: replaced all entries (%d)", len(entries))
         _log_interaction(
-            t0, "qdrant_replace_all", f"{len(entries)} entries",
-            f"upserted {len(points)} points", llm="qdrant",
+            t0,
+            "qdrant_replace_all",
+            f"{len(entries)} entries",
+            f"upserted {len(points)} points",
+            llm="qdrant",
         )
 
     def delete(self, entry_id: str) -> bool:
@@ -989,7 +1120,7 @@ class QdrantBackend:
                     "source": e.get("source", "unknown"),
                 },
             )
-            for e, vec in zip(all_entries, vectors)
+            for e, vec in zip(all_entries, vectors, strict=False)
         ]
         with self._lock:
             for i in range(0, len(points), 100):
@@ -1031,12 +1162,15 @@ class QdrantBackend:
         ]
 
     def get_stale(self, max_age_days: int, min_access: int) -> list[dict]:
-        from qdrant_client.models import Filter, FieldCondition, Range
+        from qdrant_client.models import FieldCondition, Filter, Range
+
         cutoff = time.time() - (max_age_days * 86400)
-        scroll_filter = Filter(must=[
-            FieldCondition(key="last_accessed", range=Range(lt=cutoff)),
-            FieldCondition(key="access_count", range=Range(lt=min_access)),
-        ])
+        scroll_filter = Filter(
+            must=[
+                FieldCondition(key="last_accessed", range=Range(lt=cutoff)),
+                FieldCondition(key="access_count", range=Range(lt=min_access)),
+            ]
+        )
         points = []
         offset = None
         while True:
@@ -1056,7 +1190,8 @@ class QdrantBackend:
                 break
         return [
             {
-                "id": str(p.id), "text": p.payload.get("text", ""),
+                "id": str(p.id),
+                "text": p.payload.get("text", ""),
                 "created_at": p.payload.get("created_at", 0),
                 "last_accessed": p.payload.get("last_accessed", 0),
                 "access_count": p.payload.get("access_count", 0),
@@ -1069,6 +1204,7 @@ class QdrantBackend:
         if not entry_ids:
             return 0
         from qdrant_client.models import PointIdsList
+
         with self._lock:
             self._client.delete(
                 collection_name=self._collection,
@@ -1095,10 +1231,13 @@ class QdrantBackend:
         ]
 
     def get_by_source(self, source: str, limit: int = 50, bump_access: bool = True) -> list[dict]:
-        from qdrant_client.models import Filter, FieldCondition, MatchValue
-        scroll_filter = Filter(must=[
-            FieldCondition(key="source", match=MatchValue(value=source)),
-        ])
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+        scroll_filter = Filter(
+            must=[
+                FieldCondition(key="source", match=MatchValue(value=source)),
+            ]
+        )
         points: list = []
         offset = None
         while len(points) < limit:
@@ -1118,11 +1257,14 @@ class QdrantBackend:
                 break
         hits = sorted(
             [
-                {"id": str(p.id), "text": p.payload.get("text", ""),
-                 "created_at": p.payload.get("created_at", 0),
-                 "last_accessed": p.payload.get("last_accessed", 0),
-                 "access_count": p.payload.get("access_count", 0),
-                 "source": p.payload.get("source", "unknown")}
+                {
+                    "id": str(p.id),
+                    "text": p.payload.get("text", ""),
+                    "created_at": p.payload.get("created_at", 0),
+                    "last_accessed": p.payload.get("last_accessed", 0),
+                    "access_count": p.payload.get("access_count", 0),
+                    "source": p.payload.get("source", "unknown"),
+                }
                 for p in points
             ],
             key=lambda h: h["created_at"],
@@ -1141,7 +1283,9 @@ class QdrantBackend:
             with self._lock:
                 pts = self._client.retrieve(
                     collection_name=self._collection,
-                    ids=[entry_id], with_payload=True, with_vectors=False,
+                    ids=[entry_id],
+                    with_payload=True,
+                    with_vectors=False,
                 )
                 if pts:
                     existing_source = pts[0].payload.get("source", "unknown")
@@ -1159,17 +1303,25 @@ class QdrantBackend:
 # Helpers — thin wrappers around llm_utils shared functions
 # ---------------------------------------------------------------------------
 
-def _log_interaction(timestamp: float, action: str, input_text: str,
-                     output_text: str, status: str = "ok",
-                     llm: str = "") -> None:
+
+def _log_interaction(
+    timestamp: float,
+    action: str,
+    input_text: str,
+    output_text: str,
+    status: str = "ok",
+    llm: str = "",
+) -> None:
     """Log a memory store interaction (delegates to llm_utils)."""
-    _log_interaction_impl(timestamp, action, input_text, output_text,
-                          status, llm=llm, session="system:memory_store")
+    _log_interaction_impl(
+        timestamp, action, input_text, output_text, status, llm=llm, session="system:memory_store"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Module-level API
 # ---------------------------------------------------------------------------
+
 
 def init(config: dict) -> None:
     """Select and initialize the memory backend.
@@ -1199,19 +1351,33 @@ def init(config: dict) -> None:
 
     if backend_name not in ("local_vector", "qdrant"):
         raise ValueError(
-            f"Unknown memory backend {backend_name!r}. "
-            f"Supported backends: local_vector, qdrant"
+            f"Unknown memory backend {backend_name!r}. Supported backends: local_vector, qdrant"
         )
+
+    if not has_embeddings:
+        from wintermute.infra import local_embeddings
+
+        if local_embeddings.is_available():
+            logger.warning(
+                "No embeddings endpoint configured — using the local %s fallback "
+                "(%d-dim). Quality is below a hosted model; configure "
+                "memory.embeddings.endpoint for better recall.",
+                local_embeddings.MODEL_ID,
+                local_embeddings.DIMENSIONS,
+            )
+            has_embeddings = True
 
     if not has_embeddings:
         raise ValueError(
             "memory.embeddings.endpoint is required. "
-            "Configure an OpenAI-compatible /v1/embeddings endpoint in config.yaml.\n"
+            "Configure an OpenAI-compatible /v1/embeddings endpoint in config.yaml,\n"
+            "  or install the zero-config local fallback: "
+            "uv sync --extra local-embeddings\n"
             "  Example:\n"
             "    memory:\n"
             "      embeddings:\n"
-            "        endpoint: \"http://localhost:8080/v1\"\n"
-            "        model: \"text-embedding-3-small\"\n"
+            '        endpoint: "http://localhost:8080/v1"\n'
+            '        model: "text-embedding-3-small"\n'
             "        dimensions: 1536"
         )
 
@@ -1224,8 +1390,13 @@ def init(config: dict) -> None:
     logger.info("Memory backend initialized: %s (%d entries)", backend_name, _backend.count())
 
 
-def search(query: str, top_k: int | None = None, threshold: float | None = None,
-           *, bump_access: bool = True) -> list[dict]:
+def search(
+    query: str,
+    top_k: int | None = None,
+    threshold: float | None = None,
+    *,
+    bump_access: bool = True,
+) -> list[dict]:
     """Search memories by relevance.  Uses configured defaults for top_k/threshold.
 
     Set *bump_access* to False for internal lookups (e.g. dedup) that should
@@ -1403,10 +1574,14 @@ async def add_with_dedup(entry: str, source: str = "unknown", *, pool=None) -> s
     Returns the entry_id of the new/merged entry.
     """
     import asyncio
+
     from wintermute.infra import prompt_loader
 
     hits = await asyncio.to_thread(
-        search, entry, top_k=1, threshold=_DEDUP_SIMILARITY_THRESHOLD,
+        search,
+        entry,
+        top_k=1,
+        threshold=_DEDUP_SIMILARITY_THRESHOLD,
         bump_access=False,
     )
     if hits and pool is not None and pool.enabled:
@@ -1429,15 +1604,15 @@ async def add_with_dedup(entry: str, source: str = "unknown", *, pool=None) -> s
                 # Upsert under the existing entry_id.  Both backends'
                 # ON CONFLICT / upsert logic preserves created_at,
                 # access_count, and last_accessed — no delete needed.
-                new_id = await asyncio.to_thread(
-                    add, merged, entry_id=existing_id, source=source
-                )
+                new_id = await asyncio.to_thread(add, merged, entry_id=existing_id, source=source)
                 # Promote source if the new entry has higher priority
                 # (e.g. user_explicit merged into a harvest entry).
                 await asyncio.to_thread(_promote_source, existing_id, source)
                 logger.info(
                     "Memory dedup: merged existing %s (%.0f%% sim) → %s",
-                    existing_id, hits[0].get("score", 0) * 100, new_id,
+                    existing_id,
+                    hits[0].get("score", 0) * 100,
+                    new_id,
                 )
                 return new_id
         except Exception as exc:

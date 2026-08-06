@@ -24,8 +24,8 @@ All mutations are logged to the interaction_log for auditability.
 import json
 import logging
 import time
-from dataclasses import asdict, dataclass, field, fields
-from typing import Any, Callable, Optional
+from dataclasses import asdict, dataclass, fields
+from typing import Any
 
 from wintermute.infra import database
 
@@ -36,21 +36,23 @@ logger = logging.getLogger(__name__)
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ThreadConfig:
     """Per-thread config overrides.  ``None`` means 'use global default'."""
-    backend_name: Optional[str] = None
-    backend_overrides: Optional[dict[str, str]] = None  # role → backend name
-    session_timeout_minutes: Optional[int] = None
-    sub_sessions_enabled: Optional[bool] = None
-    system_prompt_mode: Optional[str] = None          # 'full' | 'minimal'
-    seed_language: Optional[str] = None
-    nl_translation_enabled: Optional[bool] = None
-    memory_top_k: Optional[int] = None
-    memory_score_threshold: Optional[float] = None
-    compaction_keep_recent: Optional[int] = None
-    max_inline_tool_rounds: Optional[int] = None
-    proactive_enabled: Optional[bool] = None  # opt-in for proactive message delivery [experimental]
+
+    backend_name: str | None = None
+    backend_overrides: dict[str, str] | None = None  # role → backend name
+    session_timeout_minutes: int | None = None
+    sub_sessions_enabled: bool | None = None
+    system_prompt_mode: str | None = None  # 'full' | 'minimal'
+    seed_language: str | None = None
+    nl_translation_enabled: bool | None = None
+    memory_top_k: int | None = None
+    memory_score_threshold: float | None = None
+    compaction_keep_recent: int | None = None
+    max_inline_tool_rounds: int | None = None
+    proactive_enabled: bool | None = None  # opt-in for proactive message delivery [experimental]
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -67,11 +69,12 @@ class ThreadConfig:
 @dataclass
 class ResolvedThreadConfig:
     """Fully resolved config — no ``None`` values remain."""
-    backend_name: Optional[str]          # None means "use role-based pool"
-    backend_overrides: dict[str, str]    # role → backend name (empty = no overrides)
-    session_timeout_minutes: Optional[int]  # None means "no auto-renewal"
+
+    backend_name: str | None  # None means "use role-based pool"
+    backend_overrides: dict[str, str]  # role → backend name (empty = no overrides)
+    session_timeout_minutes: int | None  # None means "no auto-renewal"
     sub_sessions_enabled: bool
-    system_prompt_mode: str              # 'full' | 'minimal'
+    system_prompt_mode: str  # 'full' | 'minimal'
     seed_language: str
     nl_translation_enabled: bool
     memory_top_k: int
@@ -102,7 +105,11 @@ _VALID_PROMPT_MODES = {"full", "minimal"}
 
 # Valid role names for backend_overrides (session-scoped roles only).
 _VALID_BACKEND_OVERRIDE_ROLES = {
-    "main", "compaction", "sub_sessions", "convergence_protocol", "nl_translation",
+    "main",
+    "compaction",
+    "sub_sessions",
+    "convergence_protocol",
+    "nl_translation",
 }
 
 # Valid 2-char language codes for seed_language.
@@ -112,6 +119,7 @@ _VALID_SEED_LANGUAGES = {"en", "de", "fr", "es", "it", "pt", "nl", "pl", "ru", "
 # ---------------------------------------------------------------------------
 # Validation helpers
 # ---------------------------------------------------------------------------
+
 
 def _parse_bool(value: Any) -> bool:
     """Parse a bool from various representations."""
@@ -135,6 +143,7 @@ def _parse_float(value: Any) -> float:
 # ThreadConfigManager
 # ---------------------------------------------------------------------------
 
+
 class ThreadConfigManager:
     """In-memory cache + SQLite persistence for per-thread configuration.
 
@@ -144,8 +153,9 @@ class ThreadConfigManager:
         Names from ``inference_backends`` — used to validate ``backend_name``.
     """
 
-    def __init__(self, available_backends: list[str],
-                 global_defaults: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self, available_backends: list[str], global_defaults: dict[str, Any] | None = None
+    ) -> None:
         self._available_backends = list(available_backends)
         self._global_defaults: dict[str, Any] = dict(global_defaults or {})
         self._cache: dict[str, ThreadConfig] = {}
@@ -238,7 +248,9 @@ class ThreadConfigManager:
                 for role in sorted(_VALID_BACKEND_OVERRIDE_ROLES):
                     dotted = f"backend_overrides.{role}"
                     role_val = val.get(role) if isinstance(val, dict) else None
-                    tc_overrides = tc.backend_overrides if isinstance(tc.backend_overrides, dict) else {}
+                    tc_overrides = (
+                        tc.backend_overrides if isinstance(tc.backend_overrides, dict) else {}
+                    )
                     _raw_global = self._global_defaults.get("backend_overrides")
                     global_overrides = _raw_global if isinstance(_raw_global, dict) else {}
                     if role in tc_overrides:
@@ -312,10 +324,7 @@ class ThreadConfigManager:
 
     def get_proactive_thread_ids(self) -> list[str]:
         """Return thread_ids that have opted in to proactive message delivery."""
-        return [
-            tid for tid, tc in self._cache.items()
-            if tc.proactive_enabled is True
-        ]
+        return [tid for tid, tc in self._cache.items() if tc.proactive_enabled is True]
 
     def get_all_overrides(self) -> dict[str, dict]:
         """Return all thread_ids that have custom config (for SSE/debug)."""
@@ -333,8 +342,9 @@ class ThreadConfigManager:
 
     # ── Write ────────────────────────────────────────────────────────
 
-    def set(self, thread_id: str, key: str, value: Any,
-            source: str = "api") -> ResolvedThreadConfig:
+    def set(
+        self, thread_id: str, key: str, value: Any, source: str = "api"
+    ) -> ResolvedThreadConfig:
         """Validate and set a single config key for a thread.
 
         Supports dotted keys for backend_overrides (e.g. ``backend_overrides.compaction``).
@@ -353,7 +363,9 @@ class ThreadConfigManager:
                     f"Valid: {', '.join(sorted(_VALID_BACKEND_OVERRIDE_ROLES))}"
                 )
             overrides = dict(tc.backend_overrides or {})
-            is_clear = value is None or (isinstance(value, str) and value.strip().lower() in ("null", "none", ""))
+            is_clear = value is None or (
+                isinstance(value, str) and value.strip().lower() in ("null", "none", "")
+            )
             old_value = overrides.get(role)
             if is_clear:
                 overrides.pop(role, None)
@@ -377,7 +389,9 @@ class ThreadConfigManager:
             raise ValueError(f"Unknown config key {key!r}. Valid keys: {valid_keys}")
 
         # Treat null / "null" / "" as "clear override" for any key.
-        if value is None or (isinstance(value, str) and value.strip().lower() in ("null", "none", "")):
+        if value is None or (
+            isinstance(value, str) and value.strip().lower() in ("null", "none", "")
+        ):
             value = None
         elif key == "backend_name":
             if value not in self._available_backends:
@@ -389,8 +403,10 @@ class ThreadConfigManager:
             if isinstance(value, str):
                 try:
                     value = json.loads(value)
-                except json.JSONDecodeError:
-                    raise ValueError("backend_overrides must be a JSON dict (role → backend name)")
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        "backend_overrides must be a JSON dict (role → backend name)"
+                    ) from exc
             if not isinstance(value, dict):
                 raise ValueError("backend_overrides must be a dict (role → backend name)")
             for role, bname in value.items():
@@ -462,7 +478,10 @@ class ThreadConfigManager:
         old_dict = asdict(old_tc) if old_tc else {}
         try:
             database.save_interaction_log(
-                time.time(), "config_reset", thread_id, "",
+                time.time(),
+                "config_reset",
+                thread_id,
+                "",
                 json.dumps({"old_config": old_dict, "source": source}),
                 json.dumps(self.resolve_as_dict(thread_id)),
                 "ok",
@@ -481,12 +500,16 @@ class ThreadConfigManager:
         except Exception:
             logger.exception("Failed to persist thread config for %s", thread_id)
 
-    def _log_change(self, thread_id: str, key: str, old_value: Any,
-                    new_value: Any, source: str) -> None:
+    def _log_change(
+        self, thread_id: str, key: str, old_value: Any, new_value: Any, source: str
+    ) -> None:
         """Record the change in interaction_log for auditability."""
         try:
             database.save_interaction_log(
-                time.time(), "config_change", thread_id, "",
+                time.time(),
+                "config_change",
+                thread_id,
+                "",
                 json.dumps({"key": key, "old": old_value, "new": new_value, "source": source}),
                 json.dumps(self.resolve_as_dict(thread_id)),
                 "ok",
@@ -496,5 +519,9 @@ class ThreadConfigManager:
 
         logger.info(
             "Thread config %s.%s: %r → %r (source=%s)",
-            thread_id, key, old_value, new_value, source,
+            thread_id,
+            key,
+            old_value,
+            new_value,
+            source,
         )

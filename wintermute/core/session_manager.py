@@ -10,14 +10,15 @@ Extracted from LLMThread as part of the Phase 4 god-object decomposition (#79).
 import logging
 import time as _time
 from collections.abc import Callable
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
-from wintermute.infra import database
 from wintermute.core.types import BackendPool
+from wintermute.infra import database
+
 if TYPE_CHECKING:
-    from wintermute.core.sub_session import SubSessionManager
-    from wintermute.infra.thread_config import ThreadConfigManager, ResolvedThreadConfig
     from wintermute.core.conversation_store import ConversationStore
+    from wintermute.core.sub_session import SubSessionManager
+    from wintermute.infra.thread_config import ResolvedThreadConfig, ThreadConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +29,10 @@ class SessionManager:
     def __init__(
         self,
         main_pool: BackendPool,
-        thread_config_manager: "Optional[ThreadConfigManager]" = None,
-        backend_pools_by_name: "Optional[dict[str, BackendPool]]" = None,
-        sub_session_getter: "Optional[Callable[[], Optional[SubSessionManager]]]" = None,
-        store: "Optional[ConversationStore]" = None,
+        thread_config_manager: "ThreadConfigManager | None" = None,
+        backend_pools_by_name: "dict[str, BackendPool] | None" = None,
+        sub_session_getter: "Callable[[], SubSessionManager | None] | None" = None,
+        store: "ConversationStore | None" = None,
     ) -> None:
         self._main_pool = main_pool
         self._thread_config_manager = thread_config_manager
@@ -44,7 +45,7 @@ class SessionManager:
         self.prior_tool_calls: dict[str, list[str]] = {}
 
     @property
-    def thread_config_manager(self) -> "Optional[ThreadConfigManager]":
+    def thread_config_manager(self) -> "ThreadConfigManager | None":
         return self._thread_config_manager
 
     def resolve_pool(self, thread_id: str) -> BackendPool:
@@ -56,8 +57,9 @@ class SessionManager:
             return self._backend_pools_by_name[resolved.backend_name]
         return self._main_pool
 
-    def resolve_role_pool(self, thread_id: str, role: str,
-                          default_pool: BackendPool) -> BackendPool:
+    def resolve_role_pool(
+        self, thread_id: str, role: str, default_pool: BackendPool
+    ) -> BackendPool:
         """Return the pool for a specific role, respecting per-thread backend_overrides."""
         if not self._thread_config_manager:
             return default_pool
@@ -67,7 +69,7 @@ class SessionManager:
             return self._backend_pools_by_name[override_name]
         return default_pool
 
-    def resolve_role_pool_override(self, thread_id: str, role: str) -> "Optional[BackendPool]":
+    def resolve_role_pool_override(self, thread_id: str, role: str) -> "BackendPool | None":
         """Return the override pool for a role, or None if no override is set."""
         if not self._thread_config_manager:
             return None
@@ -77,7 +79,7 @@ class SessionManager:
             return self._backend_pools_by_name[override_name]
         return None
 
-    def resolve_config(self, thread_id: str) -> "Optional[ResolvedThreadConfig]":
+    def resolve_config(self, thread_id: str) -> "ResolvedThreadConfig | None":
         """Return resolved per-thread config, or None if no manager is set."""
         if not self._thread_config_manager:
             return None

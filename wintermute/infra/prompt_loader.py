@@ -20,7 +20,6 @@ REQUIRED_FILES = [
     "DREAM_MEMORIES_PROMPT.txt",
     "DREAM_TASK_PROMPT.txt",
     "DREAM_SKILLS_DEDUP_PROMPT.txt",
-    "DREAM_SKILLS_CONDENSATION_PROMPT.txt",
     "DREAM_ASSOCIATION_PROMPT.txt",
     "DREAM_SCHEMA_PROMPT.txt",
     "DREAM_PREDICTION_PROMPT.txt",
@@ -51,8 +50,7 @@ def validate_nl_translation() -> None:
     missing = [f for f in NL_TRANSLATION_FILES if not (PROMPTS_DIR / f).is_file()]
     if missing:
         raise FileNotFoundError(
-            f"Missing NL translation prompt files in {PROMPTS_DIR}/: "
-            + ", ".join(missing)
+            f"Missing NL translation prompt files in {PROMPTS_DIR}/: " + ", ".join(missing)
         )
     logger.info("NL translation prompt files validated (%d files)", len(NL_TRANSLATION_FILES))
 
@@ -88,7 +86,6 @@ def validate_all() -> None:
     missing = [f for f in REQUIRED_FILES if not (PROMPTS_DIR / f).is_file()]
     if missing:
         raise FileNotFoundError(
-            f"Missing required prompt files in {PROMPTS_DIR}/: "
-            + ", ".join(missing)
+            f"Missing required prompt files in {PROMPTS_DIR}/: " + ", ".join(missing)
         )
     logger.info("All %d prompt files validated in %s", len(REQUIRED_FILES), PROMPTS_DIR)

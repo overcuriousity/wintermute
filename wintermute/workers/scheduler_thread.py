@@ -20,7 +20,7 @@ import logging
 import re
 import time as _time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Optional
 from zoneinfo import ZoneInfo
 
@@ -32,13 +32,13 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from dateutil import parser as dateutil_parser
 
+from wintermute import tools as tool_module
 from wintermute.infra import database
 from wintermute.infra.paths import DATA_DIR, SCHEDULER_DB
-from wintermute import tools as tool_module
 
 if TYPE_CHECKING:
-    from wintermute.core.sub_session import SubSessionManager
     from wintermute.core.session_manager import SessionManager
+    from wintermute.core.sub_session import SubSessionManager
     from wintermute.infra.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
@@ -48,12 +48,16 @@ logger = logging.getLogger(__name__)
 _instance: Optional["TaskScheduler"] = None
 
 
-async def _fire_task_job(task_id: str, message: str, ai_prompt: Optional[str],
-                          thread_id: Optional[str] = None,
-                          background: bool = False,
-                          execution_mode: Optional[str] = None,
-                          schedule_type: Optional[str] = None,
-                          **_extra) -> None:
+async def _fire_task_job(
+    task_id: str,
+    message: str,
+    ai_prompt: str | None,
+    thread_id: str | None = None,
+    background: bool = False,
+    execution_mode: str | None = None,
+    schedule_type: str | None = None,
+    **_extra,
+) -> None:
     """
     Module-level coroutine used as the APScheduler job callable.
     Must be at module level so pickle can serialize it by reference.
@@ -69,16 +73,21 @@ async def _fire_task_job(task_id: str, message: str, ai_prompt: Optional[str],
 # Backward-compat aliases: jobs persisted in scheduler.db before the
 # routine→task rename reference these names. APScheduler resolves
 # callables by dotted name at load time, so the aliases must exist.
-async def _fire_routine_job(job_id: str, message: str, ai_prompt: Optional[str],
-                             thread_id: Optional[str] = None,
-                             background: bool = False,
-                             execution_mode: Optional[str] = None,
-                             schedule_type: Optional[str] = None,
-                             **_extra) -> None:
+async def _fire_routine_job(
+    job_id: str,
+    message: str,
+    ai_prompt: str | None,
+    thread_id: str | None = None,
+    background: bool = False,
+    execution_mode: str | None = None,
+    schedule_type: str | None = None,
+    **_extra,
+) -> None:
     if _instance is not None:
         await _instance._fire_task(
             job_id, message, ai_prompt, thread_id, background, execution_mode, schedule_type
         )
+
 
 _fire_reminder_job = _fire_routine_job
 
@@ -124,19 +133,24 @@ class TaskScheduler:
     retrieved without a second store.
     """
 
-    def __init__(self, config: SchedulerConfig, broadcast_fn, llm_enqueue_fn,
-                 sub_session_manager: "Optional[SubSessionManager]" = None,
-                 event_bus: "Optional[EventBus]" = None) -> None:
+    def __init__(
+        self,
+        config: SchedulerConfig,
+        broadcast_fn,
+        llm_enqueue_fn,
+        sub_session_manager: "SubSessionManager | None" = None,
+        event_bus: "EventBus | None" = None,
+    ) -> None:
         self._cfg = config
         self._broadcast = broadcast_fn
         self._llm_enqueue = llm_enqueue_fn
         self._sub_sessions = sub_session_manager
         self._event_bus = event_bus
         self._event_bus_subs: list[str] = []
-        self._scheduler: Optional[AsyncIOScheduler] = None
+        self._scheduler: AsyncIOScheduler | None = None
         # Track last proactive fire time per prediction ID to enforce cooldowns.
         self._prediction_last_fired: dict[str, float] = {}
-        self._session_manager: Optional["SessionManager"] = None
+        self._session_manager: SessionManager | None = None
 
     def set_session_manager(self, mgr: "SessionManager") -> None:
         """Wire a session manager for timeout enforcement."""
@@ -148,9 +162,7 @@ class TaskScheduler:
 
     def start(self) -> None:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        jobstores = {
-            "default": SQLAlchemyJobStore(url=f"sqlite:///{SCHEDULER_DB.as_posix()}")
-        }
+        jobstores = {"default": SQLAlchemyJobStore(url=f"sqlite:///{SCHEDULER_DB.as_posix()}")}
         executors = {"default": AsyncIOExecutor()}
         self._scheduler = AsyncIOScheduler(
             jobstores=jobstores,
@@ -242,20 +254,30 @@ class TaskScheduler:
                 return
             # Skip if already scheduled (task_tools._task_add calls ensure_job before emitting).
             if task.get("apscheduler_job_id"):
-                logger.info("[scheduler] Task %s already has apscheduler_job_id — skipping", task_id)
+                logger.info(
+                    "[scheduler] Task %s already has apscheduler_job_id — skipping", task_id
+                )
                 return
             raw_config = task.get("schedule_config")
             if not raw_config:
-                logger.info("[scheduler] New task %s has no schedule_config — skipping job creation", task_id)
+                logger.info(
+                    "[scheduler] New task %s has no schedule_config — skipping job creation",
+                    task_id,
+                )
                 return
             schedule_config = json.loads(raw_config) if isinstance(raw_config, str) else raw_config
             ai_prompt = task.get("ai_prompt")
             thread_id = task.get("thread_id")
             background = bool(task.get("background"))
             execution_mode = task.get("execution_mode")
-            self.ensure_job(task_id, schedule_config, ai_prompt=ai_prompt,
-                            thread_id=thread_id, background=background,
-                            execution_mode=execution_mode)
+            self.ensure_job(
+                task_id,
+                schedule_config,
+                ai_prompt=ai_prompt,
+                thread_id=thread_id,
+                background=background,
+                execution_mode=execution_mode,
+            )
             # Persist job ID so pause/complete/delete can manage it later.
             await database.async_call(database.update_task, task_id, apscheduler_job_id=task_id)
             logger.info("[scheduler] Scheduled job for new task %s", task_id)
@@ -281,8 +303,10 @@ class TaskScheduler:
                     if ts > existing:
                         self._prediction_last_fired[pred_id] = ts
             if self._prediction_last_fired:
-                logger.info("[scheduler] Restored %d prediction cooldown(s) from DB",
-                            len(self._prediction_last_fired))
+                logger.info(
+                    "[scheduler] Restored %d prediction cooldown(s) from DB",
+                    len(self._prediction_last_fired),
+                )
         except Exception:
             logger.debug("[scheduler] Failed to restore prediction cooldowns", exc_info=True)
 
@@ -299,11 +323,15 @@ class TaskScheduler:
     # Job management (called by tools.py _tool_task)
     # ------------------------------------------------------------------
 
-    def ensure_job(self, task_id: str, schedule_config: dict,
-                   ai_prompt: Optional[str] = None,
-                   thread_id: Optional[str] = None,
-                   background: bool = False,
-                   execution_mode: Optional[str] = None) -> None:
+    def ensure_job(
+        self,
+        task_id: str,
+        schedule_config: dict,
+        ai_prompt: str | None = None,
+        thread_id: str | None = None,
+        background: bool = False,
+        execution_mode: str | None = None,
+    ) -> None:
         """Create or update an APScheduler job for a task."""
         trigger = self._parse_trigger(schedule_config)
         message = database.get_task(task_id) or {}
@@ -322,7 +350,7 @@ class TaskScheduler:
                 "execution_mode": execution_mode,
                 "schedule_type": schedule_config.get("schedule_type"),
                 "schedule": tool_module._describe_schedule(schedule_config),
-                "created": datetime.now(timezone.utc).isoformat(),
+                "created": datetime.now(UTC).isoformat(),
             },
             replace_existing=True,
             misfire_grace_time=3600,
@@ -330,8 +358,12 @@ class TaskScheduler:
 
         next_run = self._scheduler.get_job(task_id)
         if next_run:
-            logger.info("Task job scheduled: %s at %s (thread=%s)",
-                        task_id, next_run.next_run_time, thread_id)
+            logger.info(
+                "Task job scheduled: %s at %s (thread=%s)",
+                task_id,
+                next_run.next_run_time,
+                thread_id,
+            )
 
     def remove_job(self, task_id: str) -> None:
         """Remove an APScheduler job for a task."""
@@ -343,24 +375,31 @@ class TaskScheduler:
         """Return serialisable info about all APScheduler jobs."""
         result = []
         for job in self._scheduler.get_jobs():
-            result.append({
-                "id": job.id,
-                "name": job.name,
-                "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
-                "trigger": str(job.trigger),
-                "kwargs": {k: str(v)[:300] for k, v in (job.kwargs or {}).items()},
-            })
+            result.append(
+                {
+                    "id": job.id,
+                    "name": job.name,
+                    "next_run_time": job.next_run_time.isoformat() if job.next_run_time else None,
+                    "trigger": str(job.trigger),
+                    "kwargs": {k: str(v)[:300] for k, v in (job.kwargs or {}).items()},
+                }
+            )
         return result
 
     # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
 
-    async def _fire_task(self, task_id: str, message: str, ai_prompt: Optional[str],
-                          thread_id: Optional[str] = None,
-                          background: bool = False,
-                          execution_mode: Optional[str] = None,
-                          schedule_type: Optional[str] = None) -> None:
+    async def _fire_task(
+        self,
+        task_id: str,
+        message: str,
+        ai_prompt: str | None,
+        thread_id: str | None = None,
+        background: bool = False,
+        execution_mode: str | None = None,
+        schedule_type: str | None = None,
+    ) -> None:
         # Always fetch the latest task row: validate status and use DB schedule_type
         # as authoritative so stale APScheduler job kwargs never cause a zombie execution.
         task_row = await database.async_call(database.get_task, task_id)
@@ -372,13 +411,16 @@ class TaskScheduler:
             try:
                 self.remove_job(task_id)
             except Exception:
-                logger.exception("Failed to remove orphaned scheduled job for missing task %s", task_id)
+                logger.exception(
+                    "Failed to remove orphaned scheduled job for missing task %s", task_id
+                )
             return
         task_status = task_row.get("status")
         if task_status and task_status != "active":
             logger.info(
                 "Scheduled task %s fired but status is %r; skipping execution and removing job.",
-                task_id, task_status,
+                task_id,
+                task_status,
             )
             self.remove_job(task_id)
             return
@@ -409,8 +451,13 @@ class TaskScheduler:
             else:
                 mode = "reminder"
 
-        logger.info("Firing task %s (thread=%s, background=%s, execution_mode=%s)",
-                    task_id, thread_id, background, mode)
+        logger.info(
+            "Firing task %s (thread=%s, background=%s, execution_mode=%s)",
+            task_id,
+            thread_id,
+            background,
+            mode,
+        )
         if self._event_bus:
             self._event_bus.emit("task.fired", task_id=task_id, thread_id=thread_id)
 
@@ -430,14 +477,17 @@ class TaskScheduler:
                     delivery = "execution_mode=reminder, delivery=not_delivered_no_thread"
                     logger.warning(
                         "Task %s is reminder mode but has no thread_id — "
-                        "message was NOT delivered: %s", task_id, message
+                        "message was NOT delivered: %s",
+                        task_id,
+                        message,
                     )
             else:
                 if not ai_prompt:
                     delivery = f"execution_mode={mode}, delivery=not_executed_missing_ai_prompt"
                     logger.warning(
                         "Task %s execution_mode=%s requires ai_prompt but none provided — skipping",
-                        task_id, mode,
+                        task_id,
+                        mode,
                     )
                 elif self._sub_sessions is not None:
                     attempted = True
@@ -445,16 +495,10 @@ class TaskScheduler:
                     if ai_prompt == message:
                         objective = f"[TASK {task_id}] {ai_prompt}\n\n"
                     else:
-                        objective = (
-                            f"[TASK {task_id}] {ai_prompt}\n\n"
-                            f"(Task: {message})\n\n"
-                        )
+                        objective = f"[TASK {task_id}] {ai_prompt}\n\n(Task: {message})\n\n"
                     if pred_ctx:
                         capped = pred_ctx[:800]
-                        objective += (
-                            f"## Relevant predictions about the user\n"
-                            f"{capped}\n\n"
-                        )
+                        objective += f"## Relevant predictions about the user\n{capped}\n\n"
                     # Inject run history so recurring tasks can build on prior runs.
                     task_record = await database.async_call(database.get_task, task_id)
                     if task_record:
@@ -463,7 +507,7 @@ class TaskScheduler:
                         last_summary = task_record.get("last_result_summary")
                         if run_count > 0 and last_run_at:
                             try:
-                                last_dt = datetime.fromtimestamp(last_run_at, tz=timezone.utc)
+                                last_dt = datetime.fromtimestamp(last_run_at, tz=UTC)
                                 last_run_fmt = last_dt.strftime("%Y-%m-%d %H:%M UTC")
                             except (OSError, ValueError):
                                 last_run_fmt = "unknown"
@@ -502,10 +546,14 @@ class TaskScheduler:
                     else:
                         delivery = "execution_mode=autonomous_silent, delivery=silent"
                 else:
-                    delivery = f"execution_mode={mode}, delivery=not_executed_no_sub_session_manager"
+                    delivery = (
+                        f"execution_mode={mode}, delivery=not_executed_no_sub_session_manager"
+                    )
                     logger.warning(
                         "Task %s execution_mode=%s has ai_prompt but SubSessionManager "
-                        "is not available — skipping", task_id, mode
+                        "is not available — skipping",
+                        task_id,
+                        mode,
                     )
 
             if executed:
@@ -589,7 +637,7 @@ class TaskScheduler:
         cooldown_seconds = self._cfg.prediction_proactive_cooldown_hours * 3600
 
         # Use UTC to match dreaming phase which generates predictions in UTC.
-        current = datetime.now(timezone.utc)
+        current = datetime.now(UTC)
         current_hour = current.hour
         current_day = current.strftime("%A").lower()
 
@@ -613,8 +661,8 @@ class TaskScheduler:
                 continue
 
             # Try structured ||key=val|| suffix first, fall back to regex.
-            structured_hours = re.search(r'\|\|hours=(\d{1,2})-(\d{1,2})\|\|', text, re.IGNORECASE)
-            structured_days = re.search(r'\|\|days=([\w,]+)\|\|', text, re.IGNORECASE)
+            structured_hours = re.search(r"\|\|hours=(\d{1,2})-(\d{1,2})\|\|", text, re.IGNORECASE)
+            structured_days = re.search(r"\|\|days=([\w,]+)\|\|", text, re.IGNORECASE)
 
             in_time_window = False
             used_structured = bool(structured_hours or structured_days)
@@ -645,11 +693,11 @@ class TaskScheduler:
             if not used_structured:
                 # Legacy regex parsing for predictions without structured suffix.
                 hour_matches = re.findall(
-                    r'(\d{1,2})(?::\d{2})?\s*(am|pm)?\s*(?:-|to)\s*(\d{1,2})(?::\d{2})?\s*(am|pm)?',
+                    r"(\d{1,2})(?::\d{2})?\s*(am|pm)?\s*(?:-|to)\s*(\d{1,2})(?::\d{2})?\s*(am|pm)?",
                     text_lower,
                 )
                 day_matches = re.findall(
-                    r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?',
+                    r"(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?",
                     text_lower,
                 )
 
@@ -689,22 +737,26 @@ class TaskScheduler:
                 continue
 
             # Spawn a proactive sub-session.
-            logger.info(
-                "[scheduler] Proactive prediction trigger: %s", text[:120]
-            )
+            logger.info("[scheduler] Proactive prediction trigger: %s", text[:120])
             self._prediction_last_fired[pred_id] = now
             # Persist cooldown to interaction_log so it survives restarts.
             try:
                 await database.async_call(
                     database.save_interaction_log,
-                    now, "prediction_fired", "system:scheduler",
-                    "scheduler", pred_id, text[:200], "ok",
+                    now,
+                    "prediction_fired",
+                    "system:scheduler",
+                    "scheduler",
+                    pred_id,
+                    text[:200],
+                    "ok",
                 )
             except Exception:
                 logger.debug("[scheduler] Failed to log prediction firing", exc_info=True)
             # Bump access count — this prediction was actually used.
             try:
                 from wintermute.infra import memory_store
+
                 await asyncio.to_thread(memory_store.track_access, [pred_id])
             except Exception:
                 pass  # Best-effort.
@@ -779,7 +831,10 @@ class TaskScheduler:
             used_ids: list[str] = []
             for pred in predictions:
                 text = pred.get("text", "")
-                if "[prediction:behavioral]" in text.lower() or "[prediction:preference]" in text.lower():
+                if (
+                    "[prediction:behavioral]" in text.lower()
+                    or "[prediction:preference]" in text.lower()
+                ):
                     lines.append(text.strip())
                     pred_id = pred.get("id")
                     if pred_id is not None:
@@ -797,7 +852,11 @@ class TaskScheduler:
         """Reconcile task lifecycle state and purge old completed rows."""
         retention_days = max(0, int(self._cfg.task_completed_retention_days or 0))
         purged = database.delete_old_completed_tasks(days=retention_days)
-        reconciled = self._reconcile_stale_one_time_tasks() if self._cfg.auto_complete_stale_once_tasks else 0
+        reconciled = (
+            self._reconcile_stale_one_time_tasks()
+            if self._cfg.auto_complete_stale_once_tasks
+            else 0
+        )
         if purged or reconciled or startup:
             logger.info(
                 "[scheduler] Task maintenance: purged_completed=%d (retention_days=%d), auto_completed_stale_once=%d",
@@ -819,7 +878,7 @@ class TaskScheduler:
 
         reconciled = 0
         if self._cfg.auto_complete_stale_once_tasks:
-            now_utc = datetime.now(timezone.utc)
+            now_utc = datetime.now(UTC)
             active_tasks = await database.async_call(database.list_tasks, "active")
 
             for task in active_tasks:
@@ -865,9 +924,9 @@ class TaskScheduler:
         if job is not None and job.next_run_time is not None:
             next_run = job.next_run_time
             if next_run.tzinfo is None:
-                next_run = next_run.replace(tzinfo=timezone.utc)
+                next_run = next_run.replace(tzinfo=UTC)
             else:
-                next_run = next_run.astimezone(timezone.utc)
+                next_run = next_run.astimezone(UTC)
             if next_run > now_utc:
                 return False
             # Job is past due; respect misfire_grace_time — the job may still fire
@@ -886,13 +945,15 @@ class TaskScheduler:
             try:
                 self.remove_job(task_id)
             except Exception:
-                logger.debug("[scheduler] Failed removing stale once-job %s", task_id, exc_info=True)
+                logger.debug(
+                    "[scheduler] Failed removing stale once-job %s", task_id, exc_info=True
+                )
 
         return True
 
     def _reconcile_stale_one_time_tasks(self) -> int:
         """Complete active one-time tasks that are already due and no longer executable."""
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(UTC)
         count = 0
         for task in database.list_tasks("active"):
             if not self._should_complete_stale_once(task, now_utc):
@@ -906,11 +967,11 @@ class TaskScheduler:
         """Return True when a one-time task scheduled datetime is in the past."""
         # For relative specs ("in 10 minutes") we need the task's creation time
         # as the reference so the past-due check is stable across maintenance runs.
-        created_base: Optional[datetime] = None
+        created_base: datetime | None = None
         created_ts = task.get("created")
         if created_ts is not None:
             try:
-                created_base = datetime.fromtimestamp(float(created_ts), tz=timezone.utc)
+                created_base = datetime.fromtimestamp(float(created_ts), tz=UTC)
             except (TypeError, ValueError):
                 pass
 
@@ -920,11 +981,13 @@ class TaskScheduler:
                 cfg = json.loads(raw_config) if isinstance(raw_config, str) else raw_config
                 at = (cfg or {}).get("at")
                 if at:
-                    fire_at = _parse_once_at(str(at), tz_name=self._cfg.timezone, base_time=created_base)
+                    fire_at = _parse_once_at(
+                        str(at), tz_name=self._cfg.timezone, base_time=created_base
+                    )
                     if fire_at.tzinfo is None:
-                        fire_at = fire_at.replace(tzinfo=timezone.utc)
+                        fire_at = fire_at.replace(tzinfo=UTC)
                     else:
-                        fire_at = fire_at.astimezone(timezone.utc)
+                        fire_at = fire_at.astimezone(UTC)
                     return fire_at <= now_utc
             except Exception:
                 logger.debug(
@@ -937,11 +1000,13 @@ class TaskScheduler:
         match = re.search(r"once at\s+(.+)$", desc, re.IGNORECASE)
         if match:
             try:
-                fire_at = _parse_once_at(match.group(1).strip(), tz_name=self._cfg.timezone, base_time=created_base)
+                fire_at = _parse_once_at(
+                    match.group(1).strip(), tz_name=self._cfg.timezone, base_time=created_base
+                )
                 if fire_at.tzinfo is None:
-                    fire_at = fire_at.replace(tzinfo=timezone.utc)
+                    fire_at = fire_at.replace(tzinfo=UTC)
                 else:
-                    fire_at = fire_at.astimezone(timezone.utc)
+                    fire_at = fire_at.astimezone(UTC)
                 return fire_at <= now_utc
             except Exception:
                 logger.debug(
@@ -975,7 +1040,7 @@ class TaskScheduler:
         One-time (DateTrigger) jobs that already ran are excluded because
         APScheduler removes them after execution.
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cutoff = now - timedelta(hours=self._MAX_MISSED_AGE_HOURS)
         recovered = 0
 
@@ -985,9 +1050,9 @@ class TaskScheduler:
             # Normalise to UTC for comparison.
             next_run = job.next_run_time
             if next_run.tzinfo is None:
-                next_run = next_run.replace(tzinfo=timezone.utc)
+                next_run = next_run.replace(tzinfo=UTC)
             else:
-                next_run = next_run.astimezone(timezone.utc)
+                next_run = next_run.astimezone(UTC)
 
             if next_run >= now:
                 logger.debug("Loaded job %s, next_run=%s (upcoming)", job.id, next_run)
@@ -996,7 +1061,9 @@ class TaskScheduler:
             if next_run < cutoff:
                 logger.info(
                     "[scheduler] Skipping stale missed job %s (next_run=%s, older than %dh)",
-                    job.id, next_run, self._MAX_MISSED_AGE_HOURS,
+                    job.id,
+                    next_run,
+                    self._MAX_MISSED_AGE_HOURS,
                 )
                 continue
 
@@ -1019,33 +1086,56 @@ class TaskScheduler:
 
             logger.info(
                 "[scheduler] Recovering missed job %s (next_run=%s, missed by %.0fs)",
-                job.id, next_run, (now - next_run).total_seconds(),
+                job.id,
+                next_run,
+                (now - next_run).total_seconds(),
             )
             # Schedule immediate async execution via the event loop.
             self._loop_call_soon(
-                task_id, message, ai_prompt, thread_id, background, execution_mode, schedule_type,
+                task_id,
+                message,
+                ai_prompt,
+                thread_id,
+                background,
+                execution_mode,
+                schedule_type,
             )
             recovered += 1
 
         if recovered:
             logger.info("[scheduler] Recovered %d missed job(s)", recovered)
 
-    def _loop_call_soon(self, task_id: str, message: str,
-                        ai_prompt: str | None, thread_id: str | None,
-                        background: bool, execution_mode: str | None,
-                        schedule_type: str | None) -> None:
+    def _loop_call_soon(
+        self,
+        task_id: str,
+        message: str,
+        ai_prompt: str | None,
+        thread_id: str | None,
+        background: bool,
+        execution_mode: str | None,
+        schedule_type: str | None,
+    ) -> None:
         """Schedule _fire_task on the event loop from the synchronous start() context."""
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(
-                self._fire_task(task_id, message, ai_prompt, thread_id, background, execution_mode, schedule_type),
+                self._fire_task(
+                    task_id,
+                    message,
+                    ai_prompt,
+                    thread_id,
+                    background,
+                    execution_mode,
+                    schedule_type,
+                ),
                 name=f"recover_{task_id}",
             )
         except RuntimeError:
             # No running loop yet — defer via call_soon_threadsafe if possible.
             logger.warning(
                 "[scheduler] No running event loop during recovery — job %s will "
-                "fire at its next scheduled time", task_id,
+                "fire at its next scheduled time",
+                task_id,
             )
 
     # ------------------------------------------------------------------
@@ -1073,11 +1163,11 @@ class TaskScheduler:
         if schedule_type == "interval":
             interval_seconds = int(inputs["interval_seconds"])
             window_start = inputs.get("window_start")
-            window_end   = inputs.get("window_end")
+            window_end = inputs.get("window_end")
 
             if window_start and window_end:
                 sh, sm = _parse_hhmm(window_start)
-                eh, _  = _parse_hhmm(window_end)
+                eh, _ = _parse_hhmm(window_end)
 
                 if interval_seconds >= 3600 and interval_seconds % 3600 == 0:
                     interval_hours = interval_seconds // 3600
@@ -1107,6 +1197,7 @@ RoutineScheduler = TaskScheduler
 # Parsing helpers
 # ---------------------------------------------------------------------------
 
+
 def _parse_hhmm(s: str) -> tuple[int, int]:
     """Parse 'HH:MM' → (hour, minute). Defaults to (9, 0) on failure."""
     m = re.search(r"(\d{1,2}):(\d{2})", s.strip())
@@ -1115,7 +1206,7 @@ def _parse_hhmm(s: str) -> tuple[int, int]:
     return 9, 0
 
 
-def _parse_once_at(spec: str, tz_name: str = "UTC", base_time: Optional[datetime] = None) -> datetime:
+def _parse_once_at(spec: str, tz_name: str = "UTC", base_time: datetime | None = None) -> datetime:
     """Parse a one-time fire datetime from natural language or ISO-8601.
 
     For relative specs like "in 10 minutes", the optional *base_time* is used
@@ -1132,10 +1223,12 @@ def _parse_once_at(spec: str, tz_name: str = "UTC", base_time: Optional[datetime
     m = re.match(r"in\s+(\d+)\s+(minute|hour|day)s?", s)
     if m:
         amount = int(m.group(1))
-        unit   = m.group(2)
-        delta  = {"minute": timedelta(minutes=amount),
-                  "hour":   timedelta(hours=amount),
-                  "day":    timedelta(days=amount)}[unit]
+        unit = m.group(2)
+        delta = {
+            "minute": timedelta(minutes=amount),
+            "hour": timedelta(hours=amount),
+            "day": timedelta(days=amount),
+        }[unit]
         ref = base_time if base_time is not None else now
         return ref + delta
 

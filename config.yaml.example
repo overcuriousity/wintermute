@@ -582,6 +582,14 @@ memory:
   #   - Local: text-embeddings-inference, llama.cpp, Infinity
   #   - Cloud: OpenAI, Together, Fireworks
   embeddings:
+    # Leaving `endpoint` empty enables the zero-config local fallback, provided
+    # the optional extra is installed (`uv sync --extra local-embeddings`):
+    # a bundled 384-dimensional all-MiniLM-L6-v2 model, downloaded once
+    # (~87 MB) to data/.embedding_cache/ and run on CPU. Recall quality is
+    # below a hosted model — the fallback is a floor that keeps memory working,
+    # not a recommended default. A configured endpoint always takes precedence
+    # and is never silently replaced. Switching between the two later is
+    # refused at startup, because the vector dimensions differ.
     endpoint: "http://localhost:8080/v1"
     api_key: ""                           # API key for the embeddings endpoint (if required)
     model: "text-embedding-3-small"

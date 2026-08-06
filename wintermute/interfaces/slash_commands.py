@@ -16,7 +16,9 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
-from typing import Awaitable, Callable, Optional, TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from datetime import UTC
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from wintermute.core.llm_thread import LLMThread
@@ -57,8 +59,8 @@ class SlashCommandHandler:
     def __init__(
         self,
         llm: LLMThread,
-        sub_sessions: Optional[SubSessionManager] = None,
-        thread_config_manager: Optional[ThreadConfigManager] = None,
+        sub_sessions: SubSessionManager | None = None,
+        thread_config_manager: ThreadConfigManager | None = None,
         dreaming_loop: object = None,
         memory_harvest: object = None,
         scheduler: object = None,
@@ -130,6 +132,7 @@ class SlashCommandHandler:
         await self._llm.reset_session(thread_id)
         await send_fn("Session reset. Starting fresh conversation.")
         from wintermute.infra import prompt_loader
+
         try:
             # Use per-thread seed_language override if available.
             mgr = self._thread_config_manager
@@ -154,6 +157,7 @@ class SlashCommandHandler:
 
     async def _cmd_tasks(self, send_fn: SendFn) -> None:
         from wintermute import tools as tool_module
+
         result = tool_module.execute_tool("task", {"action": "list"})
         await send_fn(f"Tasks:\n```json\n{result}\n```")
 
@@ -208,6 +212,7 @@ class SlashCommandHandler:
                 mem_count = 0
             try:
                 from wintermute.infra import skill_store
+
                 all_skills = skill_store.get_all()
             except Exception:
                 all_skills = []
@@ -245,8 +250,9 @@ class SlashCommandHandler:
             try:
                 dream_state = await db.async_call(db.get_dreaming_phase_state, "consolidation")
                 if dream_state and dream_state.get("last_run_at"):
-                    from datetime import datetime as _dt, timezone as _tz
-                    last_dream = _dt.fromtimestamp(dream_state["last_run_at"], tz=_tz.utc)
+                    from datetime import datetime as _dt
+
+                    last_dream = _dt.fromtimestamp(dream_state["last_run_at"], tz=UTC)
                     dream_extra = f", last: {last_dream.strftime('%Y-%m-%d %H:%M')} UTC"
             except Exception:
                 pass
@@ -283,9 +289,10 @@ class SlashCommandHandler:
                     nrt = j.get("next_run_time")
                     if nrt:
                         try:
-                            from datetime import datetime as _dt, timezone as _tz
+                            from datetime import datetime as _dt
+
                             next_dt = _dt.fromisoformat(nrt)
-                            delta = next_dt - _dt.now(tz=_tz.utc)
+                            delta = next_dt - _dt.now(tz=UTC)
                             total_sec = int(delta.total_seconds())
                             if total_sec < 0:
                                 next_str = "overdue"
@@ -304,8 +311,9 @@ class SlashCommandHandler:
                     try:
                         task_row = await db.async_call(db.get_task, jid)
                         if task_row and task_row.get("last_run_at"):
-                            from datetime import datetime as _dt, timezone as _tz
-                            last_dt = _dt.fromtimestamp(task_row["last_run_at"], tz=_tz.utc)
+                            from datetime import datetime as _dt
+
+                            last_dt = _dt.fromtimestamp(task_row["last_run_at"], tz=UTC)
                             runs = task_row.get("run_count", 0)
                             last_str = f", last: {last_dt.strftime('%m-%d %H:%M')}, runs: {runs}"
                     except Exception:
@@ -333,8 +341,13 @@ class SlashCommandHandler:
             last_changes = sm._state.get("last_tuning_changes", [])
             ts_str = ""
             if last_updated:
-                from datetime import datetime as _dt, timezone as _tz
-                ts_str = " (updated " + _dt.fromtimestamp(last_updated, tz=_tz.utc).strftime("%Y-%m-%d %H:%M UTC") + ")"
+                from datetime import datetime as _dt
+
+                ts_str = (
+                    " (updated "
+                    + _dt.fromtimestamp(last_updated, tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
+                    + ")"
+                )
             lines.append(f"\n**Self-Model**{ts_str}")
             if summary:
                 lines.append(summary)
@@ -375,9 +388,7 @@ class SlashCommandHandler:
             if running_wfs:
                 lines.append(f"\n{len(running_wfs)} active workflow(s):")
                 for w in running_wfs:
-                    nodes_summary = ", ".join(
-                        f"{n['node_id']}[{n['status']}]" for n in w["nodes"]
-                    )
+                    nodes_summary = ", ".join(f"{n['node_id']}[{n['status']}]" for n in w["nodes"])
                     lines.append(f"- `{w['workflow_id']}`: {nodes_summary}")
         else:
             lines.append("Not available")
@@ -385,8 +396,8 @@ class SlashCommandHandler:
         await send_fn("\n".join(lines))
 
     async def _cmd_dream(self, thread_id: str, send_fn: SendFn) -> None:
-        from wintermute.workers import dreaming
         from wintermute.infra import memory_store
+        from wintermute.workers import dreaming
 
         if not self._dreaming_loop:
             await send_fn("Dreaming loop not available.")
@@ -402,6 +413,7 @@ class SlashCommandHandler:
                 mem_count = 0
             try:
                 from wintermute.infra import skill_store
+
                 skills_count = skill_store.count()
             except Exception:
                 skills_count = 0
@@ -474,24 +486,24 @@ class SlashCommandHandler:
         await send_fn("\n".join(lines))
 
     async def _cmd_rebuild_index(self, send_fn: SendFn) -> None:
-        from wintermute.infra import database as db, memory_store
+        from wintermute.infra import database as db
+        from wintermute.infra import memory_store
+
         await send_fn("Rebuilding memory index...")
         try:
             await db.async_call(memory_store.rebuild)
             st = await db.async_call(memory_store.stats)
-            await send_fn(
-                f"Memory index rebuilt.\n```json\n{_json.dumps(st, indent=2)}\n```"
-            )
+            await send_fn(f"Memory index rebuilt.\n```json\n{_json.dumps(st, indent=2)}\n```")
         except Exception as exc:
             await send_fn(f"Rebuild failed: {exc}")
 
     async def _cmd_memory_stats(self, send_fn: SendFn) -> None:
-        from wintermute.infra import database as db, memory_store
+        from wintermute.infra import database as db
+        from wintermute.infra import memory_store
+
         try:
             st = await db.async_call(memory_store.stats)
-            await send_fn(
-                f"**Memory Store**\n```json\n{_json.dumps(st, indent=2)}\n```"
-            )
+            await send_fn(f"**Memory Store**\n```json\n{_json.dumps(st, indent=2)}\n```")
         except Exception as exc:
             await send_fn(f"Failed to get memory stats: {exc}")
 
