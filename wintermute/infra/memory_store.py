@@ -108,9 +108,77 @@ class LocalVectorBackend:
                     conn.execute(f"ALTER TABLE local_vectors ADD COLUMN {col} DEFAULT {default}")
                 except sqlite3.OperationalError:
                     pass  # Column already exists.
+            # Record which embedding provider built this store.  Switching
+            # providers changes the vector dimension, which silently breaks
+            # similarity search — fail loudly instead.
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS store_meta ("
+                "  key TEXT PRIMARY KEY,"
+                "  value TEXT NOT NULL"
+                ")"
+            )
             conn.commit()
             conn.close()
+        self._check_provider_compatibility()
         logger.info("Memory backend: local_vector (SQLite+numpy at %s)", self._db_path)
+
+    def _active_provider(self) -> tuple[str, int]:
+        """Return (provider_name, dimension) for the currently configured
+        embedding source."""
+        if self._embed_cfg.get("endpoint"):
+            model = self._embed_cfg.get("model", "text-embedding-3-small")
+            return f"endpoint:{model}", int(self._embed_cfg.get("dimensions", 0))
+        from wintermute.infra import local_embeddings
+
+        return local_embeddings.provider_name(), local_embeddings.DIMENSIONS
+
+    def _check_provider_compatibility(self) -> None:
+        """Refuse to start when the stored vectors were built by a provider
+        with a different dimension."""
+        provider, dimension = self._active_provider()
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT value FROM store_meta WHERE key = 'embedding_dimension'"
+                ).fetchone()
+                stored_dim = int(row[0]) if row else None
+                has_vectors = (
+                    conn.execute("SELECT 1 FROM local_vectors LIMIT 1").fetchone() is not None
+                )
+
+                if stored_dim is None:
+                    if has_vectors and dimension:
+                        # Pre-existing store from before the guard existed:
+                        # adopt its dimension from an actual stored vector.
+                        blob = conn.execute("SELECT vector FROM local_vectors LIMIT 1").fetchone()[
+                            0
+                        ]
+                        stored_dim = len(blob) // 4  # float32
+                    else:
+                        stored_dim = dimension
+                    conn.execute(
+                        "INSERT OR REPLACE INTO store_meta (key, value) VALUES (?, ?)",
+                        ("embedding_dimension", str(stored_dim)),
+                    )
+                    conn.execute(
+                        "INSERT OR REPLACE INTO store_meta (key, value) VALUES (?, ?)",
+                        ("embedding_provider", provider),
+                    )
+                    conn.commit()
+
+                if dimension and stored_dim and stored_dim != dimension:
+                    raise ValueError(
+                        f"Memory store was built with {stored_dim}-dimensional "
+                        f"vectors, but the active embedding provider "
+                        f"({provider}) produces {dimension}-dimensional ones. "
+                        f"Similarity search would be meaningless.\n"
+                        f"  Either restore the previous embeddings "
+                        f"configuration, or delete {self._db_path} to start "
+                        f"fresh (existing memories will be lost)."
+                    )
+            finally:
+                conn.close()
 
     def _connect(self) -> sqlite3.Connection:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1287,9 +1355,24 @@ def init(config: dict) -> None:
         )
 
     if not has_embeddings:
+        from wintermute.infra import local_embeddings
+
+        if local_embeddings.is_available():
+            logger.warning(
+                "No embeddings endpoint configured — using the local %s fallback "
+                "(%d-dim). Quality is below a hosted model; configure "
+                "memory.embeddings.endpoint for better recall.",
+                local_embeddings.MODEL_ID,
+                local_embeddings.DIMENSIONS,
+            )
+            has_embeddings = True
+
+    if not has_embeddings:
         raise ValueError(
             "memory.embeddings.endpoint is required. "
-            "Configure an OpenAI-compatible /v1/embeddings endpoint in config.yaml.\n"
+            "Configure an OpenAI-compatible /v1/embeddings endpoint in config.yaml,\n"
+            "  or install the zero-config local fallback: "
+            "uv sync --extra local-embeddings\n"
             "  Example:\n"
             "    memory:\n"
             "      embeddings:\n"

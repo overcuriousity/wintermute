@@ -1181,9 +1181,20 @@ def init(config: dict, embed_cfg: dict | None = None) -> None:
         )
 
     if not _embed_cfg.get("endpoint"):
-        raise ValueError(
-            "memory.embeddings.endpoint is required for the skill store. "
-            "Configure an OpenAI-compatible /v1/embeddings endpoint in config.yaml."
+        from wintermute.infra import local_embeddings
+
+        if not local_embeddings.is_available():
+            raise ValueError(
+                "memory.embeddings.endpoint is required for the skill store. "
+                "Configure an OpenAI-compatible /v1/embeddings endpoint in config.yaml, "
+                "or install the zero-config local fallback: "
+                "uv sync --extra local-embeddings"
+            )
+        logger.warning(
+            "No embeddings endpoint configured — skill store is using the local "
+            "%s fallback (%d-dim).",
+            local_embeddings.MODEL_ID,
+            local_embeddings.DIMENSIONS,
         )
 
     if backend_name == "local_vector":

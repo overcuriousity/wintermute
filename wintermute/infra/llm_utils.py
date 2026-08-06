@@ -249,7 +249,24 @@ def embed(texts: list[str], embed_cfg: dict, task: str = "document") -> list[lis
     model = embed_cfg.get("model", "text-embedding-3-small")
     api_key = embed_cfg.get("api_key", "") or None
     if not endpoint:
-        raise RuntimeError("embeddings.endpoint is not configured")
+        # Zero-config fallback: no endpoint configured at all.  A configured
+        # endpoint always takes precedence and is never silently replaced —
+        # mixing vector dimensions would corrupt an existing store.
+        #
+        # Deliberately returns before the prefix and truncation handling
+        # below: task prefixes are model-specific (e.g. EmbeddingGemma's
+        # "search_query: ") and the local model truncates at its own token
+        # limit rather than the endpoint's max_text_chars.
+        from wintermute.infra import local_embeddings
+
+        if local_embeddings.is_available():
+            return local_embeddings.embed_local(texts)
+        raise RuntimeError(
+            "embeddings.endpoint is not configured and the local embedding "
+            "fallback is unavailable. Either set memory.embeddings.endpoint "
+            "in config.yaml, or install the optional extra: "
+            "uv sync --extra local-embeddings"
+        )
 
     # --- task-type prefix handling ---
     _AUTO_PREFIXES: dict[str, dict[str, str]] = {
