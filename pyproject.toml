@@ -5,7 +5,7 @@ description = "A multi-interface AI runtime environment with persistent memory, 
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "mautrix[encryption]>=0.21.0",
+    "mautrix[encryption]>=0.21.1",
     "asyncpg>=0.30.0",
     "aiosqlite>=0.20.0",
     "openai>=2.53.0",
